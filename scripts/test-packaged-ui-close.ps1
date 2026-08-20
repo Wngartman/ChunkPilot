@@ -5,7 +5,9 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$script:AppStartupTimeoutMilliseconds = 15000
+# A clean hosted runner pays WebView2 profile creation plus antivirus scanning on
+# its first preview launch. Keep the gate bounded, but allow that cold-start work.
+$script:AppStartupTimeoutMilliseconds = 45000
 $script:AgentStartupTimeoutMilliseconds = 10000
 $script:UiExitTimeoutMilliseconds = 3000
 $script:AgentShutdownTimeoutMilliseconds = 10000
