@@ -37,7 +37,10 @@ describe('managed-loader creation', () => {
     window.history.replaceState({}, '', '/?fixture=running&page=create');
     const fixture = new FixtureBridge('running');
     const bridge: BridgeAdapter = {
-      request: async <T,>(method: BridgeMethod, params: Record<string, unknown> = {}) => fixture.request<T>(method, params),
+      request: async <T,>(method: BridgeMethod, params: Record<string, unknown> = {}) => {
+        calls.push({ method, params });
+        return fixture.request<T>(method, params);
+      },
       subscribe: listener => fixture.subscribe(listener),
       dispose: () => fixture.dispose()
     };
@@ -48,6 +51,9 @@ describe('managed-loader creation', () => {
     fireEvent.click(screen.getByRole('button', { name: /Modpacks/ }));
     fireEvent.click(await screen.findByRole('button', { name: /Build a custom modded server/ }));
     fireEvent.change(screen.getByRole('combobox', { name: 'Custom modded server loader' }), { target: { value: 'NeoForge' } });
+    await waitFor(() => expect(calls).toContainEqual({
+      method: 'creation.loaderBuilds', params: { platform: 'NeoForge', versionId: '1.21.8' }
+    }));
     fireEvent.click(screen.getByRole('button', { name: /Continue/ }));
     expect(await screen.findByText('Exact NeoForge version')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: /Back/ }));
