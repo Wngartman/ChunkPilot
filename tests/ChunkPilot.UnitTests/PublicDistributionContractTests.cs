@@ -51,6 +51,8 @@ public sealed class PublicDistributionContractTests
         Assert.Contains("GITHUB_ACTIONS", source, StringComparison.Ordinal);
         Assert.Contains("Installer Fixture Server", source, StringComparison.Ordinal);
         Assert.Contains("chunkpilot.db", source, StringComparison.Ordinal);
+        Assert.Contains("{C609C59D-FD5A-4A18-91C8-2D04F7177A69}_is1", source, StringComparison.Ordinal);
+        Assert.Contains("DisplayVersion -ne '1.3.0'", source, StringComparison.Ordinal);
         Assert.Contains("PersistentDataUnchanged", source, StringComparison.Ordinal);
         Assert.Contains("WebUiPreviewLaunch", source, StringComparison.Ordinal);
     }
