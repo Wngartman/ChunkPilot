@@ -27,7 +27,8 @@ public sealed class NatPmpMappingProviderTests
     public async Task A_silent_gateway_is_reported_as_unconfirmed_rather_than_unsupported()
     {
         await using var gateway = FakeDatagramGateway.Silent();
-        var provider = new NatPmpMappingProvider(new UdpGatewayDatagramChannel(), gateway.Options(attempts: 2));
+        var provider = new NatPmpMappingProvider(new UdpGatewayDatagramChannel(),
+            gateway.Options(attempts: 2, attemptTimeout: TimeSpan.FromMilliseconds(300)));
 
         var result = await provider.DiscoverAsync(gateway.Binding(), CancellationToken.None);
 

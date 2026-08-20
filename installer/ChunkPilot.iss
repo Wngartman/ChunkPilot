@@ -107,11 +107,10 @@ begin
       'Check the installer log and network access, then retry. Error code: ' + IntToStr(ResultCode) + '.';
 end;
 
-function InitializeUninstall(): Boolean;
+procedure InitializeUninstallProgressForm;
 var
   TopPosition: Integer;
 begin
-  Result := True;
   UninstallProgressForm.Height := UninstallProgressForm.Height + ScaleY(210);
   UninstallProgressForm.InnerNotebook.Height := UninstallProgressForm.InnerNotebook.Height + ScaleY(210);
   TopPosition := UninstallProgressForm.StatusLabel.Top + ScaleY(42);

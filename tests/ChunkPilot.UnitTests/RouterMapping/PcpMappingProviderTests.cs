@@ -45,7 +45,8 @@ public sealed class PcpMappingProviderTests
     public async Task A_silent_gateway_is_unconfirmed_and_bounded()
     {
         await using var gateway = FakeDatagramGateway.Silent();
-        var provider = new PcpMappingProvider(new UdpGatewayDatagramChannel(), gateway.Options(attempts: 3));
+        var provider = new PcpMappingProvider(new UdpGatewayDatagramChannel(),
+            gateway.Options(attempts: 3, attemptTimeout: TimeSpan.FromMilliseconds(300)));
 
         var result = await provider.DiscoverAsync(gateway.Binding(), CancellationToken.None);
 
