@@ -111,6 +111,11 @@ procedure InitializeUninstallProgressForm;
 var
   TopPosition: Integer;
 begin
+  { Silent automation cannot make cleanup choices, so preserve every data category and avoid
+    constructing interactive controls on the hidden uninstall form. }
+  if UninstallSilent then
+    exit;
+
   UninstallProgressForm.Height := UninstallProgressForm.Height + ScaleY(210);
   UninstallProgressForm.InnerNotebook.Height := UninstallProgressForm.InnerNotebook.Height + ScaleY(210);
   TopPosition := UninstallProgressForm.StatusLabel.Top + ScaleY(42);
