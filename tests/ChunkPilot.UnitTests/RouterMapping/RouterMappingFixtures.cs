@@ -64,10 +64,15 @@ internal sealed class FakeDatagramGateway : IAsyncDisposable
     public RouterLanBinding Binding() =>
         new("loopback-fixture", "Fixture", IPAddress.Loopback, 8, IPAddress.Loopback);
 
-    public RouterMappingOptions Options(int attempts = 2) => new()
+    public RouterMappingOptions Options(int attempts = 2, TimeSpan? attemptTimeout = null) => new()
     {
         GatewayControlPort = Port,
-        DatagramAttemptTimeouts = Enumerable.Repeat(TimeSpan.FromMilliseconds(300), attempts).ToArray(),
+        // These tests intentionally use a real loopback UDP socket. Hosted Windows runners can
+        // occasionally leave its responder task unscheduled for longer than 300 ms, so response
+        // fixtures need a realistic window. Tests that exercise silence pass the shorter timeout
+        // explicitly and retain their bounded retry assertions.
+        DatagramAttemptTimeouts = Enumerable.Repeat(
+            attemptTimeout ?? TimeSpan.FromSeconds(2), attempts).ToArray(),
         DiscoveryBudget = TimeSpan.FromSeconds(10),
         OperationBudget = TimeSpan.FromSeconds(10)
     };
