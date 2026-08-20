@@ -75,6 +75,13 @@ public sealed class PublicDistributionContractTests
     }
 
     [Fact]
+    public void Packaged_ui_smoke_allows_a_bounded_cold_WebView_startup()
+    {
+        var source = File.ReadAllText(Path.Combine(Root, "scripts", "test-packaged-ui-close.ps1"));
+        Assert.Contains("$script:AppStartupTimeoutMilliseconds = 45000", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Public_snapshot_declares_pre_alpha_unsigned_and_no_source_license()
     {
         var readme = File.ReadAllText(Path.Combine(Root, "README.md"));
