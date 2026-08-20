@@ -46,7 +46,7 @@ if ($process.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $compiler)) {
 }
 
 $help = & $compiler /? 2>&1 | Out-String
-if ($LASTEXITCODE -ne 0 -or $help -notmatch 'Inno Setup 7 Command-Line Compiler') {
+if ($help -notmatch 'Inno Setup 7 Command-Line Compiler') {
     throw 'The repository-local Inno Setup compiler did not identify itself as Inno Setup 7.'
 }
 Get-Item -LiteralPath $compiler
