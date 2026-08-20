@@ -87,10 +87,18 @@ foreach ($required in @($app, $agent, (Join-Path $installRoot 'WebUi\index.html'
 }
 $uninstallEntry = Get-ChunkPilotUninstallEntry
 if (-not $uninstallEntry) { throw 'ChunkPilot uninstall registration was not created.' }
-if ($uninstallEntry.DisplayName -ne 'ChunkPilot 1.3.0' -or $uninstallEntry.DisplayVersion -ne '1.3.0' -or
-    [IO.Path]::GetFullPath($uninstallEntry.InstallLocation) -ne [IO.Path]::GetFullPath($installRoot) -or
-    [string]::IsNullOrWhiteSpace($uninstallEntry.UninstallString)) {
-    throw 'ChunkPilot uninstall registration metadata is incorrect.'
+$displayNameMatches = $uninstallEntry.DisplayName -eq 'ChunkPilot 1.3.0'
+$displayVersionMatches = $uninstallEntry.DisplayVersion -eq '1.3.0'
+$registeredInstallRoot = [IO.Path]::GetFullPath([string]$uninstallEntry.InstallLocation).TrimEnd(
+    [IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+$expectedInstallRoot = [IO.Path]::GetFullPath($installRoot).TrimEnd(
+    [IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+$installLocationMatches = $registeredInstallRoot -eq $expectedInstallRoot
+$hasUninstallString = -not [string]::IsNullOrWhiteSpace($uninstallEntry.UninstallString)
+if (-not ($displayNameMatches -and $displayVersionMatches -and $installLocationMatches -and $hasUninstallString)) {
+    throw "ChunkPilot uninstall registration metadata is incorrect. " +
+        "DisplayNameMatches=$displayNameMatches; DisplayVersionMatches=$displayVersionMatches; " +
+        "InstallLocationMatches=$installLocationMatches; HasUninstallString=$hasUninstallString."
 }
 
 $normalShortcutPath = Join-Path $startMenuRoot 'ChunkPilot.lnk'
