@@ -80,6 +80,18 @@ public sealed class PublicDistributionContractTests
     }
 
     [Fact]
+    public void Evergreen_webview_bootstrapper_uses_identity_verification_instead_of_a_stale_hash()
+    {
+        var source = File.ReadAllText(Path.Combine(Root, "scripts", "acquire-webview2-bootstrapper.ps1"));
+        Assert.Contains("https://go.microsoft.com/fwlink/p/?LinkId=2124703", source, StringComparison.Ordinal);
+        Assert.Contains("Get-AuthenticodeSignature", source, StringComparison.Ordinal);
+        Assert.Contains("O=Microsoft Corporation", source, StringComparison.Ordinal);
+        Assert.Contains("MicrosoftEdgeUpdateSetup.exe", source, StringComparison.Ordinal);
+        Assert.Contains("Get-FileHash", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("$expectedSha256", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Packaged_ui_smoke_allows_a_bounded_cold_WebView_startup()
     {
         var source = File.ReadAllText(Path.Combine(Root, "scripts", "test-packaged-ui-close.ps1"));
