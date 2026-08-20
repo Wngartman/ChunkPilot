@@ -33,10 +33,11 @@ function Invoke-Setup([string]$LogPath) {
 }
 
 function Get-ChunkPilotUninstallEntry {
-    $root = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall'
-    if (-not (Test-Path $root)) { return $null }
-    Get-ChildItem $root | ForEach-Object { Get-ItemProperty $_.PSPath } |
-        Where-Object { $_.DisplayName -eq 'ChunkPilot' } | Select-Object -First 1
+    # Inno derives the key from AppId and defaults DisplayName to AppVerName
+    # ("ChunkPilot 1.3.0"), not AppName. Check the stable identity directly.
+    $path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{C609C59D-FD5A-4A18-91C8-2D04F7177A69}_is1'
+    if (-not (Test-Path -LiteralPath $path)) { return $null }
+    Get-ItemProperty -LiteralPath $path
 }
 
 function Get-Shortcut([string]$Path) {
@@ -84,7 +85,13 @@ $agent = Join-Path $installRoot 'Agent\ChunkPilot.Agent.exe'
 foreach ($required in @($app, $agent, (Join-Path $installRoot 'WebUi\index.html'), (Join-Path $installRoot 'THIRD-PARTY-NOTICES.txt'))) {
     if (-not (Test-Path -LiteralPath $required)) { throw "Installed payload is missing: $required" }
 }
-if (-not (Get-ChunkPilotUninstallEntry)) { throw 'ChunkPilot uninstall registration was not created.' }
+$uninstallEntry = Get-ChunkPilotUninstallEntry
+if (-not $uninstallEntry) { throw 'ChunkPilot uninstall registration was not created.' }
+if ($uninstallEntry.DisplayName -ne 'ChunkPilot 1.3.0' -or $uninstallEntry.DisplayVersion -ne '1.3.0' -or
+    [IO.Path]::GetFullPath($uninstallEntry.InstallLocation) -ne [IO.Path]::GetFullPath($installRoot) -or
+    [string]::IsNullOrWhiteSpace($uninstallEntry.UninstallString)) {
+    throw 'ChunkPilot uninstall registration metadata is incorrect.'
+}
 
 $normalShortcutPath = Join-Path $startMenuRoot 'ChunkPilot.lnk'
 $previewShortcutPath = Join-Path $startMenuRoot 'ChunkPilot WebUI Preview.lnk'
