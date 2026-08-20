@@ -1,0 +1,297 @@
+﻿<!--
+    Buttons.
+
+    One shared template supplies structure, the focus ring, the optional leading icon and the
+    disabled treatment. Variants differ only in resting tokens and their own hover/pressed triggers,
+    which is why no variant can drift into a different shape, radius or focus behaviour.
+
+    Variant intent:
+      AppPrimaryButton        the single most likely safe action on the surface
+      AppSecondaryButton      supporting actions (also the implicit Button style)
+      AppSubtleButton         low-emphasis actions inside dense rows and toolbars
+      AppDangerButton         a confirmed destructive action, after review
+      AppDangerSubtleButton   a destructive action offered inline, before review
+      AppLinkButton           navigation to detail, never a state change
+      AppIconButton           a repeated, well-known action with a tooltip and accessible name
+-->
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:ds="clr-namespace:ChunkPilot.App.DesignSystem">
+
+    <ControlTemplate x:Key="InternalButtonTemplate" TargetType="ButtonBase">
+        <Border x:Name="FocusRing" Style="{StaticResource InternalFocusRing}"
+                CornerRadius="{StaticResource AppCornerCard}">
+            <Border x:Name="Root"
+                    Background="{TemplateBinding Background}"
+                    BorderBrush="{TemplateBinding BorderBrush}"
+                    BorderThickness="{TemplateBinding BorderThickness}"
+                    CornerRadius="{StaticResource AppCornerControl}"
+                    Padding="{TemplateBinding Padding}"
+                    SnapsToDevicePixels="True"
+                    RenderTransformOrigin="0.5,0.5">
+                <Border.RenderTransform>
+                    <ScaleTransform ScaleX="1" ScaleY="1" />
+                </Border.RenderTransform>
+                <Grid HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                      VerticalAlignment="Center">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <ds:AppIcon x:Name="LeadingIcon" Scale="Small"
+                                Margin="{StaticResource AppInlineGap}"
+                                Foreground="{TemplateBinding Foreground}"
+                                Kind="{Binding Path=(ds:AppButton.Icon), RelativeSource={RelativeSource TemplatedParent}, TargetNullValue=Question}" />
+                    <ContentPresenter x:Name="Label"
+                                      Grid.Column="1"
+                                      VerticalAlignment="Center"
+                                      RecognizesAccessKey="True" />
+                </Grid>
+            </Border>
+        </Border>
+        <ControlTemplate.Triggers>
+            <!-- No icon declared: collapse the slot rather than reserving space for it. -->
+            <Trigger Property="ds:AppButton.Icon" Value="{x:Null}">
+                <Setter TargetName="LeadingIcon" Property="Visibility" Value="Collapsed" />
+            </Trigger>
+            <!-- Icon-only content still needs the icon, without a trailing gap. -->
+            <Trigger Property="Content" Value="{x:Null}">
+                <Setter TargetName="LeadingIcon" Property="Margin" Value="{StaticResource AppInsetNone}" />
+            </Trigger>
+            <Trigger Property="IsKeyboardFocused" Value="True">
+                <Setter TargetName="FocusRing" Property="BorderBrush" Value="{DynamicResource AppFocusRing}" />
+            </Trigger>
+            <Trigger Property="IsEnabled" Value="False">
+                <Setter TargetName="Root" Property="Background" Value="{DynamicResource AppSurfaceDisabled}" />
+                <Setter TargetName="Root" Property="BorderBrush" Value="{DynamicResource AppStrokeDisabled}" />
+                <Setter Property="Foreground" Value="{DynamicResource AppTextDisabled}" />
+            </Trigger>
+            <MultiTrigger>
+                <MultiTrigger.Conditions>
+                    <Condition Property="IsPressed" Value="True" />
+                    <Condition Property="ds:AppMotion.IsEnabled" Value="True" />
+                </MultiTrigger.Conditions>
+                <MultiTrigger.EnterActions>
+                    <BeginStoryboard>
+                        <Storyboard>
+                            <DoubleAnimation Storyboard.TargetName="Root"
+                                             Storyboard.TargetProperty="RenderTransform.(ScaleTransform.ScaleX)"
+                                             To="0.985" Duration="{StaticResource AppDurationPressIn}" />
+                            <DoubleAnimation Storyboard.TargetName="Root"
+                                             Storyboard.TargetProperty="RenderTransform.(ScaleTransform.ScaleY)"
+                                             To="0.985" Duration="{StaticResource AppDurationPressIn}" />
+                        </Storyboard>
+                    </BeginStoryboard>
+                </MultiTrigger.EnterActions>
+                <MultiTrigger.ExitActions>
+                    <BeginStoryboard>
+                        <Storyboard>
+                            <DoubleAnimation Storyboard.TargetName="Root"
+                                             Storyboard.TargetProperty="RenderTransform.(ScaleTransform.ScaleX)"
+                                             To="1" Duration="{StaticResource AppDurationPressOut}" />
+                            <DoubleAnimation Storyboard.TargetName="Root"
+                                             Storyboard.TargetProperty="RenderTransform.(ScaleTransform.ScaleY)"
+                                             To="1" Duration="{StaticResource AppDurationPressOut}" />
+                        </Storyboard>
+                    </BeginStoryboard>
+                </MultiTrigger.ExitActions>
+            </MultiTrigger>
+        </ControlTemplate.Triggers>
+    </ControlTemplate>
+
+    <!-- Shared shape, metrics and behaviour. Carries no resting colour of its own. -->
+    <Style x:Key="InternalButtonBase" TargetType="Button">
+        <Setter Property="Template" Value="{StaticResource InternalButtonTemplate}" />
+        <Setter Property="MinHeight" Value="{StaticResource AppControlHeight}" />
+        <Setter Property="Padding" Value="{StaticResource AppControlPadding}" />
+        <Setter Property="BorderThickness" Value="{StaticResource AppStrokeThickness}" />
+        <Setter Property="FontSize" Value="{StaticResource AppFontSizeBody}" />
+        <!-- Regular, not Strong. Secondary and subtle buttons are chrome; only the one primary
+             action on a surface earns emphasis. This previously asked for Medium, which Windows
+             resolves to SemiBold, so every button shouted as loudly as a section heading. -->
+        <Setter Property="FontWeight" Value="{StaticResource AppFontWeightRegular}" />
+        <Setter Property="HorizontalContentAlignment" Value="Center" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="SnapsToDevicePixels" Value="True" />
+        <!-- The system focus rectangle is invisible on these surfaces; the template draws its own. -->
+        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+    </Style>
+
+    <Style x:Key="AppSecondaryButton" TargetType="Button" BasedOn="{StaticResource InternalButtonBase}">
+        <Setter Property="Background" Value="{DynamicResource AppSurfaceRaised}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource AppStroke}" />
+        <Setter Property="Foreground" Value="{DynamicResource AppTextPrimary}" />
+        <Style.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Background" Value="{DynamicResource AppSurfaceHover}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource AppStrokeStrong}" />
+            </Trigger>
+            <Trigger Property="IsPressed" Value="True">
+                <Setter Property="Background" Value="{DynamicResource AppSurfacePressed}" />
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+    <Style TargetType="Button" BasedOn="{StaticResource AppSecondaryButton}" />
+
+    <Style x:Key="AppPrimaryButton" TargetType="Button" BasedOn="{StaticResource InternalButtonBase}">
+        <Setter Property="Background" Value="{DynamicResource AppAccent}" />
+        <!-- A darker edge, not the fill colour. The accent fill is only 2.98:1 against a raised
+             card, which is below the 3:1 a control boundary needs; the pressed-tone stroke gives
+             the button a perceivable edge without lightening the fill, which would in turn drop
+             white label text below AA. -->
+        <Setter Property="BorderBrush" Value="{DynamicResource AppAccentPressed}" />
+        <Setter Property="Foreground" Value="{DynamicResource AppTextOnAccent}" />
+        <Setter Property="FontWeight" Value="{StaticResource AppFontWeightStrong}" />
+        <Setter Property="Padding" Value="{StaticResource AppControlPaddingLarge}" />
+        <Style.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Background" Value="{DynamicResource AppAccentHover}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource AppAccentHover}" />
+            </Trigger>
+            <Trigger Property="IsPressed" Value="True">
+                <Setter Property="Background" Value="{DynamicResource AppAccentPressed}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource AppAccentPressed}" />
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+
+    <Style x:Key="AppSubtleButton" TargetType="Button" BasedOn="{StaticResource InternalButtonBase}">
+        <Setter Property="Background" Value="{DynamicResource AppSurfaceTransparent}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource AppSurfaceTransparent}" />
+        <Setter Property="Foreground" Value="{DynamicResource AppTextSecondary}" />
+        <Style.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Background" Value="{DynamicResource AppSurfaceHover}" />
+                <Setter Property="Foreground" Value="{DynamicResource AppTextPrimary}" />
+            </Trigger>
+            <Trigger Property="IsPressed" Value="True">
+                <Setter Property="Background" Value="{DynamicResource AppSurfacePressed}" />
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+
+    <Style x:Key="AppDangerButton" TargetType="Button" BasedOn="{StaticResource InternalButtonBase}">
+        <Setter Property="Background" Value="{DynamicResource AppDanger}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource AppDanger}" />
+        <Setter Property="Foreground" Value="{DynamicResource AppTextOnAccent}" />
+        <Setter Property="FontWeight" Value="{StaticResource AppFontWeightStrong}" />
+        <Setter Property="Padding" Value="{StaticResource AppControlPaddingLarge}" />
+        <Style.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Background" Value="{DynamicResource AppDangerText}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource AppDangerText}" />
+            </Trigger>
+            <Trigger Property="IsPressed" Value="True">
+                <Setter Property="Background" Value="{DynamicResource AppDanger}" />
+                <Setter Property="Opacity" Value="0.9" />
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+
+    <Style x:Key="AppDangerSubtleButton" TargetType="Button" BasedOn="{StaticResource InternalButtonBase}">
+        <Setter Property="Background" Value="{DynamicResource AppSurfaceTransparent}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource AppSurfaceTransparent}" />
+        <Setter Property="Foreground" Value="{DynamicResource AppDangerText}" />
+        <Style.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Background" Value="{DynamicResource AppDangerSubtle}" />
+            </Trigger>
+            <Trigger Property="IsPressed" Value="True">
+                <Setter Property="Background" Value="{DynamicResource AppDangerSubtle}" />
+                <Setter Property="Opacity" Value="0.9" />
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+
+    <Style x:Key="AppLinkButton" TargetType="Button" BasedOn="{StaticResource InternalButtonBase}">
+        <Setter Property="Background" Value="{DynamicResource AppSurfaceTransparent}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource AppSurfaceTransparent}" />
+        <Setter Property="Foreground" Value="{DynamicResource AppTextAccent}" />
+        <Setter Property="Padding" Value="{StaticResource AppControlPaddingCompact}" />
+        <Setter Property="MinHeight" Value="{StaticResource AppControlHeightCompact}" />
+        <Setter Property="FontWeight" Value="{StaticResource AppFontWeightRegular}" />
+        <Style.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Foreground" Value="{DynamicResource AppAccentHover}" />
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+
+    <!-- Square, icon-only. A tooltip and AutomationProperties.Name are mandatory. -->
+    <Style x:Key="AppIconButton" TargetType="Button">
+        <Setter Property="Width" Value="{StaticResource AppIconButtonSize}" />
+        <Setter Property="Height" Value="{StaticResource AppIconButtonSize}" />
+        <Setter Property="Background" Value="{DynamicResource AppSurfaceTransparent}" />
+        <Setter Property="Foreground" Value="{DynamicResource AppTextSecondary}" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="SnapsToDevicePixels" Value="True" />
+        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Border x:Name="FocusRing" Style="{StaticResource InternalFocusRing}">
+                        <Border x:Name="Root" Background="{TemplateBinding Background}"
+                                CornerRadius="{StaticResource AppCornerControl}"
+                                RenderTransformOrigin="0.5,0.5">
+                            <Border.RenderTransform>
+                                <ScaleTransform ScaleX="1" ScaleY="1" />
+                            </Border.RenderTransform>
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Root" Property="Background" Value="{DynamicResource AppSurfaceHover}" />
+                            <Setter Property="Foreground" Value="{DynamicResource AppTextPrimary}" />
+                        </Trigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Setter TargetName="Root" Property="Background" Value="{DynamicResource AppSurfacePressed}" />
+                        </Trigger>
+                        <Trigger Property="IsKeyboardFocused" Value="True">
+                            <Setter TargetName="FocusRing" Property="BorderBrush" Value="{DynamicResource AppFocusRing}" />
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter Property="Foreground" Value="{DynamicResource AppTextDisabled}" />
+                        </Trigger>
+                        <MultiTrigger>
+                            <MultiTrigger.Conditions>
+                                <Condition Property="IsPressed" Value="True" />
+                                <Condition Property="ds:AppMotion.IsEnabled" Value="True" />
+                            </MultiTrigger.Conditions>
+                            <MultiTrigger.EnterActions>
+                                <BeginStoryboard>
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetName="Root"
+                                                         Storyboard.TargetProperty="RenderTransform.(ScaleTransform.ScaleX)"
+                                                         To="0.96" Duration="{StaticResource AppDurationPressIn}" />
+                                        <DoubleAnimation Storyboard.TargetName="Root"
+                                                         Storyboard.TargetProperty="RenderTransform.(ScaleTransform.ScaleY)"
+                                                         To="0.96" Duration="{StaticResource AppDurationPressIn}" />
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </MultiTrigger.EnterActions>
+                            <MultiTrigger.ExitActions>
+                                <BeginStoryboard>
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetName="Root"
+                                                         Storyboard.TargetProperty="RenderTransform.(ScaleTransform.ScaleX)"
+                                                         To="1" Duration="{StaticResource AppDurationPressOut}" />
+                                        <DoubleAnimation Storyboard.TargetName="Root"
+                                                         Storyboard.TargetProperty="RenderTransform.(ScaleTransform.ScaleY)"
+                                                         To="1" Duration="{StaticResource AppDurationPressOut}" />
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </MultiTrigger.ExitActions>
+                        </MultiTrigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- Destructive variant of the icon button, for row-level remove actions. -->
+    <Style x:Key="AppIconButtonDanger" TargetType="Button" BasedOn="{StaticResource AppIconButton}">
+        <Setter Property="Foreground" Value="{DynamicResource AppDangerText}" />
+    </Style>
+</ResourceDictionary>

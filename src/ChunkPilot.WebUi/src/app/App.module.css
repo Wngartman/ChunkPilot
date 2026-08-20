@@ -1,0 +1,2 @@
+.startup { height: 100%; display: grid; place-items: center; background: var(--cp-canvas); color: var(--cp-text-secondary); font-size: 12px; }
+.routeLoading { padding: 32px; color: var(--cp-text-secondary); font-size: 12px; }

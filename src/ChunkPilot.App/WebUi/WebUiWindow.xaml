@@ -1,0 +1,27 @@
+<Window x:Class="ChunkPilot.App.WebUi.WebUiWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
+        Title="ChunkPilot"
+        Width="1280" Height="820" MinWidth="920" MinHeight="620"
+        WindowStartupLocation="CenterScreen"
+        WindowStyle="None" ResizeMode="CanResizeWithGrip"
+        Background="{DynamicResource AppSurfaceCanvas}"
+        Foreground="{DynamicResource AppTextPrimary}">
+    <WindowChrome.WindowChrome>
+        <WindowChrome CaptionHeight="0" ResizeBorderThickness="6" CornerRadius="0" GlassFrameThickness="0" UseAeroCaptionButtons="False" />
+    </WindowChrome.WindowChrome>
+    <Grid Background="{DynamicResource AppSurfaceCanvas}">
+        <wv2:WebView2 x:Name="Browser" />
+        <Border x:Name="FailureSurface" Visibility="Collapsed" Background="{DynamicResource AppSurfaceCanvas}" Padding="48">
+            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="560">
+                <TextBlock Text="ChunkPilot WebUI could not start" Style="{StaticResource AppTitleLargeText}" Margin="0,0,0,12" />
+                <TextBlock x:Name="FailureDetail" Style="{StaticResource AppSecondaryText}" />
+                <StackPanel Orientation="Horizontal" Margin="0,24,0,0">
+                    <Button x:Name="RetryButton" Content="Try again" Click="RetryButton_OnClick" Style="{StaticResource AppPrimaryButton}" Margin="0,0,10,0" />
+                    <Button Content="Close" Click="CloseButton_OnClick" Padding="18,9" />
+                </StackPanel>
+            </StackPanel>
+        </Border>
+    </Grid>
+</Window>

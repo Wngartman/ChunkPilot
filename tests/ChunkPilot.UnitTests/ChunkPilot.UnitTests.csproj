@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <!--
+      The design-system contract tests load the real resource dictionaries through a WPF
+      Application on an STA thread, which is the only way to prove that every StaticResource and
+      Style BasedOn actually resolves. A framework reference is used rather than UseWPF because
+      UseWPF switches the SDK to the desktop implicit-using set and would silently drop System.IO
+      and System.Net.Http from every existing test in this project.
+    -->
+    <FrameworkReference Include="Microsoft.WindowsDesktop.App.WPF" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+  </ItemGroup>
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\ChunkPilot.Core\ChunkPilot.Core.csproj" />
+    <ProjectReference Include="..\..\src\ChunkPilot.Infrastructure\ChunkPilot.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src\ChunkPilot.App\ChunkPilot.App.csproj" />
+  </ItemGroup>
+</Project>

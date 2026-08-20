@@ -1,0 +1,568 @@
+﻿<UserControl x:Class="ChunkPilot.App.ServerManagePage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ds="clr-namespace:ChunkPilot.App.DesignSystem"
+             xmlns:components="clr-namespace:ChunkPilot.App.DesignSystem.Components">
+    <!--
+        Manage destination sub-sections, beginner first:
+        - Configuration      the settings people actually come here to change
+        - Worlds
+        - Mods & packs
+        - Version & updates
+        - Files              raw filesystem access, last, because it is the advanced way in
+
+        Files used to be the first thing on the page, so the ordinary path to "make it easier" or
+        "let more people in" started with a folder listing and a text editor.
+    -->
+    <StackPanel DataContext="{Binding DataContext, RelativeSource={RelativeSource AncestorType=Window}}">
+
+        <TextBlock Text="GENERAL" Style="{StaticResource AppEyebrowText}"
+                   Margin="{StaticResource AppNavSectionLabelInset}"/>
+        <components:AppSectionCard Icon="Server" Header="Server identity"
+                                   Description="The display name changes only how this server appears in ChunkPilot. Its folder and files stay where they are.">
+            <StackPanel>
+                <components:AppInfoRow Label="Display name" Value="{Binding SelectedServer.Definition.Name}"/>
+                <components:AppInfoRow Label="Server folder" Value="{Binding SelectedServer.Definition.RootPath}"/>
+                <WrapPanel Margin="{StaticResource AppStackGapTop}">
+                    <Button Content="Rename" ds:AppButton.Icon="Edit"
+                            Command="{Binding RenameServerCommand}" Margin="{StaticResource AppInlineGap}"/>
+                    <Button Content="Open server folder" ds:AppButton.Icon="FolderOpen"
+                            Command="{Binding OpenServerFolderCommand}"/>
+                </WrapPanel>
+                <components:AppAlert Tone="Danger" Title="Display name was not changed"
+                                     Message="{Binding RenameServerError}"
+                                     Margin="{StaticResource AppStackGapTop}"
+                                     Visibility="{Binding HasRenameServerError, Converter={StaticResource BoolVisibility}}"/>
+            </StackPanel>
+        </components:AppSectionCard>
+
+        <!-- ═══ Configuration ═══
+             The canonical server.properties editor. Settings owns Java, memory and the launch
+             profile; none of these controls appear there as well.
+
+             Values are read from the file through the Agent and written back through its atomic
+             path. Enum values are shown in title case and stored in the file's own lower case. -->
+        <TextBlock Text="CONFIGURATION" Style="{StaticResource AppEyebrowText}"
+                   Margin="{StaticResource AppNavSectionLabelInset}"
+                   Visibility="{Binding ShowsJavaGameplay, Converter={StaticResource BoolVisibility}}"/>
+        <components:AppSectionCard Icon="Hardware" Header="Memory allocation"
+                                   Description="The maximum memory this server may use. Detailed JVM controls remain in Settings."
+                                   Visibility="{Binding ShowsJavaGameplay, Converter={StaticResource BoolVisibility}}">
+            <StackPanel>
+                <DockPanel LastChildFill="False">
+                    <StackPanel DockPanel.Dock="Left">
+                        <TextBlock Text="Maximum memory" Style="{StaticResource AppLabelText}"/>
+                        <WrapPanel>
+                            <TextBox Text="{Binding MaximumMemoryText, UpdateSourceTrigger=PropertyChanged}"
+                                     ds:AppInput.Placeholder="Example: 4.6"
+                                     AutomationProperties.Name="Maximum memory"/>
+                            <TextBlock Text="GB" Style="{StaticResource AppBodyStrongText}"
+                                       VerticalAlignment="Center" Margin="{StaticResource AppInlineGapLeadingLarge}"/>
+                            <ComboBox ItemsSource="{Binding MemoryPresets}"
+                                      SelectedItem="{Binding SelectedMaximumMemoryPreset, Mode=TwoWay}"
+                                      Margin="{StaticResource AppInlineGapLeadingLarge}"
+                                      AutomationProperties.Name="Memory presets"/>
+                        </WrapPanel>
+                    </StackPanel>
+                    <Button Content="Apply" ds:AppButton.Icon="Save"
+                            Style="{StaticResource AppPrimaryButton}"
+                            Margin="{StaticResource AppInlineGapLeadingLarge}"
+                            VerticalAlignment="Bottom"
+                            Command="{Binding ApplyMemoryCommand}"/>
+                </DockPanel>
+                <components:AppAlert Tone="Info" Margin="{StaticResource AppStackGapTop}"
+                                     Title="Restart required" Message="{Binding MemoryRestartNotice}"
+                                     Visibility="{Binding MemoryNeedsRestart, Converter={StaticResource BoolVisibility}}">
+                    <components:AppAlert.ActionContent>
+                        <Button Content="Save &amp; restart now" ds:AppButton.Icon="Refresh"
+                                Command="{Binding ApplyMemoryAndRestartCommand}"
+                                Visibility="{Binding HasMemoryChanges, Converter={StaticResource BoolVisibility}}"/>
+                    </components:AppAlert.ActionContent>
+                </components:AppAlert>
+                <WrapPanel Margin="{StaticResource AppStackGapSmall}">
+                    <Button Content="Restart now" ds:AppButton.Icon="Refresh"
+                            Command="{Binding RestartForMemoryCommand}"
+                            Visibility="{Binding ShowsMemoryRestartNow, Converter={StaticResource BoolVisibility}}"/>
+                    <TextBlock Text="{Binding MemorySavedNotice}" Style="{StaticResource AppMutedText}"
+                               VerticalAlignment="Center" Margin="{StaticResource AppInlineGapLeadingLarge}"/>
+                </WrapPanel>
+                <components:AppAlert Tone="Danger" Margin="{StaticResource AppStackGapSmall}"
+                                     Title="Memory allocation was not saved" Message="{Binding MemorySaveError}"
+                                     Visibility="{Binding HasMemorySaveError, Converter={StaticResource BoolVisibility}}"/>
+                <components:AppAlert Tone="Danger" Margin="{StaticResource AppStackGapSmall}"
+                                     Title="Choose a valid memory amount" Message="{Binding MemoryInputErrorText}"
+                                     Visibility="{Binding HasMemoryInputError, Converter={StaticResource BoolVisibility}}"/>
+            </StackPanel>
+        </components:AppSectionCard>
+        <components:AppSectionCard Icon="Star" Header="Server icon"
+                                   Description="Crop any image into Minecraft's 64×64 server icon, or reuse one you saved before."
+                                   Visibility="{Binding ShowsJavaGameplay, Converter={StaticResource BoolVisibility}}">
+            <DockPanel>
+                <Border DockPanel.Dock="Left" Width="88" Height="88"
+                        Background="{DynamicResource AppSurfaceSunken}"
+                        BorderBrush="{DynamicResource AppStrokeStrong}" BorderThickness="1"
+                        CornerRadius="{StaticResource AppCornerControl}"
+                        Margin="{StaticResource AppInlineGapLarge}">
+                    <Grid>
+                        <ds:AppIcon Kind="Star" Scale="Large" Foreground="{DynamicResource AppTextMuted}"
+                                    HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        <Image Source="{Binding ServerIconImage}" Stretch="Uniform"
+                               RenderOptions.BitmapScalingMode="NearestNeighbor"/>
+                    </Grid>
+                </Border>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="Minecraft server icon" Style="{StaticResource AppBodyStrongText}"/>
+                    <TextBlock Text="Drag the crop, then ChunkPilot makes and stores the pixel-sized PNG automatically."
+                               Style="{StaticResource AppMutedText}" TextWrapping="Wrap"/>
+                    <WrapPanel Margin="{StaticResource AppStackGapTop}">
+                        <Button Content="Choose &amp; crop image" ds:AppButton.Icon="Upload"
+                                Style="{StaticResource AppPrimaryButton}" Command="{Binding InstallServerIconCommand}"/>
+                        <Button Content="Saved icons" ds:AppButton.Icon="FolderOpen"
+                                Margin="{StaticResource AppInlineGapLeadingLarge}"
+                                Command="{Binding UseSavedServerIconCommand}"/>
+                    </WrapPanel>
+                </StackPanel>
+            </DockPanel>
+        </components:AppSectionCard>
+        <components:AppSectionCard Icon="Settings" Header="Server settings"
+                                   Description="Core gameplay first, less common controls below. Nothing changes until you press Apply."
+                                   Visibility="{Binding ShowsJavaGameplay, Converter={StaticResource BoolVisibility}}">
+            <StackPanel>
+                <!-- ─── General ───
+                     What a server is: what it is called, how many people, how hard, which mode. -->
+                <TextBlock Text="GENERAL" Style="{StaticResource AppEyebrowText}"
+                           Margin="{StaticResource AppStackGapSmall}"/>
+                <TextBlock Text="How this server presents itself and the defaults new players enter with."
+                           Style="{StaticResource AppMutedText}" Margin="{StaticResource AppStackGapTiny}"/>
+                <UniformGrid Columns="2">
+                    <StackPanel Margin="{StaticResource AppInlineGapLarge}">
+                        <TextBlock Text="Server message" Style="{StaticResource AppLabelText}"/>
+                        <TextBox Text="{Binding PropertyMotd, UpdateSourceTrigger=PropertyChanged}"
+                                 ToolTip="motd" AutomationProperties.Name="Server message"/>
+                    </StackPanel>
+                    <StackPanel Margin="{StaticResource AppInlineGapLarge}">
+                        <TextBlock Text="Maximum players" Style="{StaticResource AppLabelText}"/>
+                        <components:AppNumberBox Value="{Binding PropertyMaxPlayers, Mode=TwoWay}"
+                                                 Minimum="1" Maximum="10000"
+                                                 ToolTip="max-players" AutomationProperties.Name="Maximum players"/>
+                    </StackPanel>
+                    <StackPanel Margin="{StaticResource AppInlineGapLarge}">
+                        <TextBlock Text="Difficulty" Style="{StaticResource AppLabelText}"/>
+                        <!-- ItemTemplate, not DisplayMemberPath. The shared ComboBox template binds
+                             its closed-state presenter to SelectionBoxItemTemplate, which WPF only
+                             populates from an ItemTemplate; with DisplayMemberPath alone it stayed
+                             null and the presenter fell back to the item's ToString, which is how
+                             "ServerPropertyChoice { Value = normal, Label = Normal }" reached the
+                             screen. SelectedValuePath keeps the stored value exact. -->
+                        <ComboBox ItemsSource="{Binding DifficultyChoices}"
+                                  ItemTemplate="{StaticResource AppPropertyChoiceTemplate}"
+                                  SelectedValuePath="Value"
+                                  SelectedValue="{Binding PropertyDifficulty, Mode=TwoWay}"
+                                  ToolTip="difficulty" AutomationProperties.Name="Difficulty"/>
+                    </StackPanel>
+                    <StackPanel Margin="{StaticResource AppInlineGapLarge}">
+                        <TextBlock Text="Game mode" Style="{StaticResource AppLabelText}"/>
+                        <ComboBox ItemsSource="{Binding GameModeChoices}"
+                                  ItemTemplate="{StaticResource AppPropertyChoiceTemplate}"
+                                  SelectedValuePath="Value"
+                                  SelectedValue="{Binding PropertyGameMode, Mode=TwoWay}"
+                                  ToolTip="gamemode" AutomationProperties.Name="Game mode"/>
+                    </StackPanel>
+                </UniformGrid>
+
+                <!-- ─── World & gameplay ───
+                     What playing on it is like. The port used to sit in the middle of this, between
+                     view distance and difficulty; it is a networking detail and has moved down. -->
+                <TextBlock Text="WORLD &amp; GAMEPLAY" Style="{StaticResource AppEyebrowText}"
+                           Margin="{StaticResource AppStackGapTop}"/>
+                <TextBlock Text="Distances affect CPU and memory use; lower values are easier to host."
+                           Style="{StaticResource AppMutedText}" Margin="{StaticResource AppStackGapTiny}"/>
+                <UniformGrid Columns="2">
+                    <StackPanel Margin="{StaticResource AppInlineGapLarge}">
+                        <TextBlock Text="View distance" Style="{StaticResource AppLabelText}"/>
+                        <components:AppNumberBox Value="{Binding PropertyViewDistance, Mode=TwoWay}"
+                                                 Minimum="2" Maximum="32"
+                                                 ToolTip="view-distance" AutomationProperties.Name="View distance"/>
+                    </StackPanel>
+                    <StackPanel Margin="{StaticResource AppInlineGapLarge}">
+                        <TextBlock Text="Simulation distance" Style="{StaticResource AppLabelText}"/>
+                        <components:AppNumberBox Value="{Binding PropertySimulationDistance, Mode=TwoWay}"
+                                                 Minimum="2" Maximum="32"
+                                                 ToolTip="simulation-distance"
+                                                 AutomationProperties.Name="Simulation distance"/>
+                    </StackPanel>
+                </UniformGrid>
+
+                <!-- Check boxes rather than switches: five stacked slider pills read as decoration,
+                     and a column of ticks is scannable. Two columns so the group is compact. -->
+                <UniformGrid Columns="2" Margin="{StaticResource AppStackGapTop}">
+                    <CheckBox Content="Allow flight" Style="{StaticResource AppToggleSwitch}"
+                              Margin="{StaticResource AppStackGapSmall}"
+                              IsChecked="{Binding PropertyAllowFlight, Mode=TwoWay}"
+                              ToolTip="allow-flight"
+                              AutomationProperties.Name="Allow flight"
+                              AutomationProperties.HelpText="Lets players fly in Survival when a mod or plugin permits it."/>
+                    <CheckBox Content="PvP enabled" Style="{StaticResource AppToggleSwitch}"
+                              Margin="{StaticResource AppStackGapSmall}"
+                              IsChecked="{Binding PropertyPvp, Mode=TwoWay}"
+                              ToolTip="pvp"
+                              AutomationProperties.Name="PvP enabled"/>
+                    <CheckBox Content="Whitelist" Style="{StaticResource AppToggleSwitch}"
+                              Margin="{StaticResource AppStackGapSmall}"
+                              IsChecked="{Binding PropertyWhiteList, Mode=TwoWay}"
+                              ToolTip="white-list"
+                              AutomationProperties.Name="Whitelist"
+                              AutomationProperties.HelpText="Who is on the whitelist is managed on the Access page."/>
+                    <CheckBox Content="Command blocks" Style="{StaticResource AppToggleSwitch}"
+                              Margin="{StaticResource AppStackGapSmall}"
+                              IsChecked="{Binding PropertyCommandBlocks, Mode=TwoWay}"
+                              ToolTip="enable-command-block"
+                              AutomationProperties.Name="Command blocks"/>
+                </UniformGrid>
+
+                <!-- ─── Advanced ───
+                     Real, supported properties that most people never change. Collapsed, and sized
+                     to what it holds: it was a full-width card with three controls adrift in it. -->
+                <components:AppSectionCard Header="Advanced" IsCollapsible="True" IsExpanded="False"
+                                           Background="{DynamicResource AppAccentSubtle}"
+                                           BorderBrush="{DynamicResource AppAccentMuted}"
+                                           Margin="{StaticResource AppStackGapTop}">
+                    <StackPanel>
+                        <UniformGrid Columns="2">
+                            <StackPanel Margin="{StaticResource AppInlineGapLarge}">
+                                <TextBlock Text="Server port" Style="{StaticResource AppLabelText}"/>
+                                <ComboBox ItemsSource="{Binding CommonServerPorts}"
+                                          Text="{Binding PropertyPort, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                          IsEditable="True" IsTextSearchEnabled="False"
+                                          ToolTip="Choose a familiar port or type any value from 1 to 65535."
+                                          AutomationProperties.Name="Server port"/>
+                                <TextBlock Text="Type a custom port or open the list for familiar alternatives."
+                                           Style="{StaticResource AppMutedText}" TextWrapping="Wrap"
+                                           Margin="{StaticResource AppStackGapTiny}"/>
+                            </StackPanel>
+                            <StackPanel Margin="{StaticResource AppInlineGapLarge}">
+                                <TextBlock Text="Spawn protection radius" Style="{StaticResource AppLabelText}"/>
+                                <components:AppNumberBox Value="{Binding PropertySpawnProtection, Mode=TwoWay}"
+                                                         Minimum="0" Maximum="65535"
+                                                         ToolTip="spawn-protection"
+                                                         AutomationProperties.Name="Spawn protection radius"/>
+                            </StackPanel>
+                            <StackPanel Margin="{StaticResource AppInlineGapLarge}">
+                                <TextBlock Text="Idle disconnect (minutes)" Style="{StaticResource AppLabelText}"/>
+                                <components:AppNumberBox Value="{Binding PropertyPlayerIdleTimeout, Mode=TwoWay}"
+                                                         Minimum="0" Maximum="525600"
+                                                         ToolTip="player-idle-timeout. 0 never disconnects."
+                                                         AutomationProperties.Name="Idle disconnect in minutes"/>
+                            </StackPanel>
+                        </UniformGrid>
+                        <UniformGrid Columns="2" Margin="{StaticResource AppStackGapTop}">
+                            <CheckBox Content="Verify accounts with Mojang" Style="{StaticResource AppToggleSwitch}"
+                                      Margin="{StaticResource AppStackGapSmall}"
+                                      IsChecked="{Binding PropertyOnlineMode, Mode=TwoWay}"
+                                      ToolTip="online-mode"
+                                      AutomationProperties.Name="Verify accounts with Mojang"
+                                      AutomationProperties.HelpText="Turning this off lets anyone join under any name."/>
+                            <CheckBox Content="Hardcore" Style="{StaticResource AppToggleSwitch}"
+                                      Margin="{StaticResource AppStackGapSmall}"
+                                      IsChecked="{Binding PropertyHardcore, Mode=TwoWay}"
+                                      ToolTip="hardcore"
+                                      AutomationProperties.Name="Hardcore"
+                                      AutomationProperties.HelpText="Death is permanent for players on this server."/>
+                            <CheckBox Content="Force game mode on join" Style="{StaticResource AppToggleSwitch}"
+                                      Margin="{StaticResource AppStackGapSmall}"
+                                      IsChecked="{Binding PropertyForceGameMode, Mode=TwoWay}"
+                                      ToolTip="force-gamemode"
+                                      AutomationProperties.Name="Force game mode on join"/>
+                            <CheckBox Content="Enforce whitelist immediately" Style="{StaticResource AppToggleSwitch}"
+                                      Margin="{StaticResource AppStackGapSmall}"
+                                      IsChecked="{Binding PropertyEnforceWhitelist, Mode=TwoWay}"
+                                      ToolTip="enforce-whitelist"
+                                      AutomationProperties.HelpText="Removes connected players who are no longer whitelisted when the whitelist reloads."/>
+                            <CheckBox Content="Hide online player count" Style="{StaticResource AppToggleSwitch}"
+                                      Margin="{StaticResource AppStackGapSmall}"
+                                      IsChecked="{Binding PropertyHideOnlinePlayers, Mode=TwoWay}"
+                                      ToolTip="hide-online-players"
+                                      AutomationProperties.HelpText="Hides the sample player list in the multiplayer server browser."/>
+                        </UniformGrid>
+                    </StackPanel>
+                </components:AppSectionCard>
+
+                <components:AppAlert Tone="Info" Title="Restart required after saving"
+                                     Message="{Binding RestartRequiredNotice}"
+                                     Margin="{StaticResource AppStackGapTop}"
+                                     Visibility="{Binding ShowsRestartRequiredNotice, Converter={StaticResource BoolVisibility}}">
+                    <components:AppAlert.ActionContent>
+                        <StackPanel Orientation="Horizontal">
+                            <Button Content="Save &amp; restart now" ds:AppButton.Icon="Refresh"
+                                    Command="{Binding SaveServerPropertiesAndRestartCommand}"
+                                    Visibility="{Binding HasServerPropertyChanges, Converter={StaticResource BoolVisibility}}"/>
+                            <Button Content="Restart now" ds:AppButton.Icon="Refresh"
+                                    Command="{Binding RestartServerCommand}" CommandParameter="{Binding SelectedServer}"
+                                    Visibility="{Binding HasServerPropertyChanges, Converter={StaticResource FalseMeansVisible}}"/>
+                        </StackPanel>
+                    </components:AppAlert.ActionContent>
+                </components:AppAlert>
+
+                <components:AppAlert Tone="Danger" Margin="{StaticResource AppStackGapTop}"
+                                     Title="These settings were not saved"
+                                     Message="{Binding ServerPropertySaveError}"
+                                     Visibility="{Binding HasServerPropertySaveError, Converter={StaticResource BoolVisibility}}"/>
+
+                <DockPanel Margin="{StaticResource AppStackGapTop}">
+                    <Button DockPanel.Dock="Left" Content="Apply" ds:AppButton.Icon="Save"
+                            Style="{StaticResource AppPrimaryButton}"
+                            Command="{Binding SaveServerPropertiesCommand}"
+                            AutomationProperties.Name="Apply these server settings"/>
+                    <TextBlock VerticalAlignment="Center" Style="{StaticResource AppMutedText}"
+                               Margin="{StaticResource AppInlineGapLeadingLarge}"
+                               Text="{Binding ServerPropertySavedNotice}"
+                               AutomationProperties.LiveSetting="Polite"
+                               Visibility="{Binding ServerPropertySavedNotice, Converter={StaticResource NonEmptyVisibility}}"/>
+                </DockPanel>
+            </StackPanel>
+        </components:AppSectionCard>
+
+        <!-- ═══ Worlds ═══ -->
+        <TextBlock Text="WORLDS" Style="{StaticResource AppEyebrowText}" Margin="18,20,18,6"
+                   Visibility="{Binding ShowsWorldManagement, Converter={StaticResource BoolVisibility}}"/>
+        <components:AppSectionCard Icon="Globe" Header="World manager"
+                                   Description="Import, activate, and export complete world folders. Imports never overwrite the active world."
+                                   Visibility="{Binding ShowsWorldManagement, Converter={StaticResource BoolVisibility}}">
+            <StackPanel>
+                <Button Content="Import world ZIP" ds:AppButton.Icon="Upload"
+                        Style="{StaticResource AppPrimaryButton}" HorizontalAlignment="Left"
+                        Command="{Binding ImportWorldCommand}"/>
+                <components:AppEmptyState Icon="Globe" Title="No worlds found"
+                                          Message="Import a world ZIP, or start the server once so Minecraft can create its first world."
+                                          Visibility="{Binding HasWorlds, Converter={StaticResource FalseMeansVisible}}"/>
+                <DataGrid ItemsSource="{Binding Worlds}" SelectedItem="{Binding SelectedWorld}"
+                          MinHeight="88" MaxHeight="240"
+                          Margin="0,12,0,0" IsReadOnly="True"
+                          Visibility="{Binding HasWorlds, Converter={StaticResource BoolVisibility}}">
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="World" Binding="{Binding Name}" Width="160"/>
+                        <DataGridCheckBoxColumn Header="Active" Binding="{Binding IsActive}" Width="60"/>
+                        <DataGridTextColumn Header="Modified" Binding="{Binding ModifiedAt, StringFormat=g}" Width="140"/>
+                        <DataGridTextColumn Header="Size" Binding="{Binding SizeBytes, Converter={StaticResource Bytes}}" Width="90"/>
+                    </DataGrid.Columns>
+                </DataGrid>
+                <StackPanel Orientation="Horizontal" Margin="0,8,0,0"
+                            Visibility="{Binding HasWorlds, Converter={StaticResource BoolVisibility}}">
+                    <Button Content="Make active" Command="{Binding SwitchWorldCommand}" Margin="3"/>
+                    <Button Content="Export" Command="{Binding ExportWorldCommand}" Margin="3"/>
+                </StackPanel>
+            </StackPanel>
+        </components:AppSectionCard>
+
+        <!-- ═══ Mods & packs ═══ -->
+        <TextBlock Text="MODS &amp; PACKS" Style="{StaticResource AppEyebrowText}" Margin="18,20,18,6"
+                   Visibility="{Binding ShowsAddonManagement, Converter={StaticResource BoolVisibility}}"/>
+        <Border Style="{StaticResource AppCard}" Visibility="{Binding ShowsAddonManagement, Converter={StaticResource BoolVisibility}}">
+            <StackPanel>
+                <DockPanel>
+                    <TextBlock Text="Add-on inventory" FontSize="{StaticResource AppFontSizeSubtitle}" FontWeight="SemiBold"/>
+                    <Button DockPanel.Dock="Right" Content="Install jar" Style="{StaticResource AppPrimaryButton}" Command="{Binding InstallJarCommand}"/>
+                </DockPanel>
+                <DataGrid ItemsSource="{Binding Inventory}" SelectedItem="{Binding SelectedInventoryItem}" Height="180" Margin="0,8,0,0">
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="*"/>
+                        <DataGridTextColumn Header="Version" Binding="{Binding Version}" Width="100"/>
+                        <DataGridTextColumn Header="Compatibility" Binding="{Binding Compatibility}" Width="110"/>
+                        <DataGridCheckBoxColumn Header="Enabled" Binding="{Binding Enabled}" Width="70"/>
+                    </DataGrid.Columns>
+                </DataGrid>
+            </StackPanel>
+        </Border>
+
+        <!-- ═══ Version & updates ═══ -->
+        <TextBlock Text="VERSION &amp; UPDATES" Style="{StaticResource AppEyebrowText}" Margin="18,20,18,6"
+                   Visibility="{Binding ShowsVersionManager, Converter={StaticResource BoolVisibility}}"/>
+        <components:AppSectionCard Icon="ArrowRestart" Header="Version manager"
+                                   Description="Detect where this server came from, check safely, then build rollback history as updates are installed."
+                                   Visibility="{Binding ShowsVersionManager, Converter={StaticResource BoolVisibility}}">
+            <StackPanel>
+                <components:AppInfoRow Label="Installed version" Value="{Binding ActivePackVersion}" IsMonospaced="True"/>
+                <components:AppInfoRow Label="Required Java" Value="{Binding ActualPackJava}"/>
+                <components:AppInfoRow Label="Recovery" Value="{Binding RollbackAvailability}"/>
+                <Border Style="{StaticResource AppSunkenSurface}" Padding="12" Margin="0,10,0,0">
+                    <StackPanel>
+                        <TextBlock Text="{Binding UpdateStatusText}" Style="{StaticResource AppBodyStrongText}"/>
+                        <TextBlock Text="{Binding UpdateStatusDetail}" Style="{StaticResource AppMutedText}"
+                                   TextWrapping="Wrap" Margin="{StaticResource AppStackGapTiny}"/>
+                    </StackPanel>
+                </Border>
+                <WrapPanel Margin="0,10,0,0">
+                    <Button Content="Detect source" Command="{Binding DetectUpdateSourceCommand}" Margin="3"/>
+                    <Button Content="Check updates" Command="{Binding CheckForUpdatesCommand}" Margin="3"/>
+                    <Button Content="Download" Command="{Binding DownloadAvailableUpdateCommand}" Margin="3"/>
+                    <Button Content="Install" Style="{StaticResource AppPrimaryButton}" Command="{Binding InstallAvailableUpdateCommand}" Margin="3"/>
+                </WrapPanel>
+                <!-- A table with no rows is a table nobody can read. Until this server has an
+                     installed-version history, the card says so in a line instead of drawing a
+                     180px grid of empty headers. -->
+                <StackPanel Margin="{StaticResource AppStackGapTop}"
+                            Visibility="{Binding HasVersionHistory, Converter={StaticResource FalseMeansVisible}}">
+                    <TextBlock Text="No version history yet" Style="{StaticResource AppBodyStrongText}"/>
+                    <TextBlock Text="ChunkPilot records a version here the first time it installs or updates this server."
+                               TextWrapping="Wrap" Style="{StaticResource AppMutedText}"
+                               Margin="{StaticResource AppStackGapTiny}"/>
+                </StackPanel>
+                <DataGrid ItemsSource="{Binding Versions}" SelectedItem="{Binding SelectedVersion}"
+                          MinHeight="88" MaxHeight="240" Margin="0,10,0,0" IsReadOnly="True"
+                          Visibility="{Binding HasVersionHistory, Converter={StaticResource BoolVisibility}}">
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="Version" Binding="{Binding VersionName}" Width="130"/>
+                        <DataGridTextColumn Header="Installed" Binding="{Binding InstalledAt, StringFormat={}{0:M/d h:mm tt}}" Width="140"/>
+                        <DataGridCheckBoxColumn Header="Active" Binding="{Binding IsActive}" Width="60"/>
+                        <DataGridTextColumn Header="Health" Binding="{Binding Health}" Width="110"/>
+                        <DataGridTextColumn Header="Snapshot" Binding="{Binding SnapshotSize, Converter={StaticResource Bytes}}" Width="90"/>
+                    </DataGrid.Columns>
+                </DataGrid>
+                <StackPanel Orientation="Horizontal" Margin="0,8,0,0"
+                            Visibility="{Binding HasVersionHistory, Converter={StaticResource BoolVisibility}}">
+                    <Button Content="Roll back" Command="{Binding RollbackVersionCommand}" Margin="3"/>
+                    <Button Content="Delete old" Style="{StaticResource AppDangerButton}" Command="{Binding DeleteVersionCommand}" Margin="3"/>
+                </StackPanel>
+            </StackPanel>
+        </components:AppSectionCard>
+
+        <!-- ═══ Files ═══
+             Left: exactly what is in the folder, by name. The previous template bound a TextBlock to
+             the boolean IsDirectory, which is why every row read "Falseeula.txt": the flag rendered as
+             the word False immediately in front of the file name. The kind is an icon now, and only the
+             name is text.
+
+             Right: one pane with a state for each thing that can be true of a selection - nothing
+             chosen, loading, text, empty, not text, too large, unreadable - because a blank box that
+             means six different things is indistinguishable from a broken one. -->
+        <TextBlock Text="FILES" Style="{StaticResource AppEyebrowText}" Margin="18,20,18,6"/>
+        <Border Style="{StaticResource AppCard}">
+            <Grid Height="320">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="300"/><ColumnDefinition Width="16"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                <Grid>
+                    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                    <DockPanel Margin="{StaticResource AppStackGapSmall}">
+                        <Button Content="Up" DockPanel.Dock="Left" ds:AppButton.Icon="ChevronUp"
+                                Command="{Binding NavigateFolderUpCommand}"
+                                AutomationProperties.Name="Go up one folder"/>
+                        <TextBlock Text="{Binding CurrentFolderText}" VerticalAlignment="Center"
+                                   Margin="{StaticResource AppInlineGapLeading}"
+                                   Style="{StaticResource AppMutedText}"
+                                   TextTrimming="CharacterEllipsis" ToolTip="{Binding CurrentFolderText}"/>
+                    </DockPanel>
+                    <ListBox Grid.Row="1" ItemsSource="{Binding FileEntries}"
+                             SelectedItem="{Binding SelectedFileEntry}"
+                             AutomationProperties.Name="Files in this folder">
+                        <ListBox.InputBindings>
+                            <MouseBinding MouseAction="LeftDoubleClick" Command="{Binding OpenSelectedFileCommand}"/>
+                            <KeyBinding Key="Return" Command="{Binding OpenSelectedFileCommand}"/>
+                        </ListBox.InputBindings>
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <DockPanel>
+                                    <ds:AppIcon DockPanel.Dock="Left" Scale="Small"
+                                                Margin="{StaticResource AppInlineGap}"
+                                                Foreground="{DynamicResource AppTextMuted}">
+                                        <ds:AppIcon.Style>
+                                            <Style TargetType="ds:AppIcon" BasedOn="{StaticResource AppIcon}">
+                                                <Setter Property="Kind" Value="Document"/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsDirectory}" Value="True">
+                                                        <Setter Property="Kind" Value="Folder"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </ds:AppIcon.Style>
+                                    </ds:AppIcon>
+                                    <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis"
+                                               ToolTip="{Binding Name}"/>
+                                </DockPanel>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </Grid>
+                <Border Grid.Column="1" Width="{StaticResource AppHairlineHeight}"
+                        Background="{DynamicResource AppStrokeSubtle}"/>
+                <Grid Grid.Column="2">
+                    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+
+                    <StackPanel Margin="{StaticResource AppStackGapSmall}">
+                        <TextBlock Text="{Binding EditorTitle}" Style="{StaticResource AppBodyStrongText}"
+                                   Visibility="{Binding EditorTitle, Converter={StaticResource NonEmptyVisibility}}"/>
+                        <TextBlock Text="{Binding EditorFacts}" Style="{StaticResource AppMutedText}"
+                                   Visibility="{Binding EditorFacts, Converter={StaticResource NonEmptyVisibility}}"/>
+                    </StackPanel>
+
+                    <!-- Nothing selected -->
+                    <components:AppEmptyState Grid.Row="1" Icon="Document" Title="No file selected"
+                        Message="Pick a file on the left. Text files open here; anything else shows what it is."
+                        Visibility="{Binding EditorState, Converter={StaticResource EditorStateVisibility}, ConverterParameter=NoSelection}"/>
+
+                    <!-- Folder -->
+                    <components:AppEmptyState Grid.Row="1" Icon="Folder" Title="{Binding EditorTitle}"
+                        Message="{Binding EditorMessage}"
+                        Visibility="{Binding EditorState, Converter={StaticResource EditorStateVisibility}, ConverterParameter=Folder}">
+                        <Button Content="Open folder" ds:AppButton.Icon="FolderOpen"
+                                Command="{Binding OpenSelectedFileCommand}"
+                                AutomationProperties.Name="Open this folder"/>
+                    </components:AppEmptyState>
+
+                    <!-- Loading -->
+                    <components:AppLoadingState Grid.Row="1" Title="Opening file"
+                        Message="Reading it through the background service."
+                        Visibility="{Binding EditorState, Converter={StaticResource EditorStateVisibility}, ConverterParameter=Loading}"/>
+
+                    <!-- Editable text, including an empty file -->
+                    <Grid Grid.Row="1"
+                          Visibility="{Binding EditorState, Converter={StaticResource EditorStateVisibility}, ConverterParameter='Text,Empty'}">
+                        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                        <TextBlock Text="{Binding EditorMessage}" Style="{StaticResource AppMutedText}"
+                                   Margin="{StaticResource AppStackGapSmall}"
+                                   Visibility="{Binding ShowsEditorEmptyNotice, Converter={StaticResource BoolVisibility}}"/>
+                        <TextBox Grid.Row="1" Style="{StaticResource AppMonoTextBox}"
+                                 Text="{Binding EditorContent, UpdateSourceTrigger=PropertyChanged}"
+                                 AcceptsReturn="True" AcceptsTab="True"
+                                 VerticalContentAlignment="Top"
+                                 VerticalScrollBarVisibility="Auto"
+                                 AutomationProperties.Name="File contents"/>
+                    </Grid>
+
+                    <!-- Not a text file, or too large for the editor -->
+                    <components:AppEmptyState Grid.Row="1" Icon="Document" Title="{Binding EditorTitle}"
+                        Message="{Binding EditorMessage}"
+                        Visibility="{Binding EditorState, Converter={StaticResource EditorStateVisibility}, ConverterParameter='Binary,TooLarge'}">
+                        <Button Content="Open folder" ds:AppButton.Icon="FolderOpen"
+                                Command="{Binding OpenEditorFolderCommand}"
+                                AutomationProperties.Name="Show this file in its folder"/>
+                    </components:AppEmptyState>
+
+                    <!-- Read failure, in the service's own words -->
+                    <components:AppAlert Grid.Row="1" Tone="Danger" VerticalAlignment="Top"
+                        Title="This file could not be opened"
+                        Message="{Binding EditorMessage}"
+                        Visibility="{Binding EditorState, Converter={StaticResource EditorStateVisibility}, ConverterParameter=Error}"/>
+
+                    <DockPanel Grid.Row="2" Margin="{StaticResource AppStackGapTop}"
+                               Visibility="{Binding EditorState, Converter={StaticResource EditorStateVisibility}, ConverterParameter='Text,Empty'}">
+                        <!-- Save changes, not "Save atomically". Atomic writes are how ChunkPilot works,
+                             not a choice the user makes. -->
+                        <Button DockPanel.Dock="Right" Content="Save changes"
+                                Style="{StaticResource AppPrimaryButton}" ds:AppButton.Icon="Save"
+                                Command="{Binding SaveFileCommand}"
+                                AutomationProperties.Name="Save changes to this file"/>
+                        <TextBlock VerticalAlignment="Center" Style="{StaticResource AppMutedText}"
+                                   Text="{Binding EditorSavedNotice}"
+                                   AutomationProperties.LiveSetting="Polite"
+                                   Visibility="{Binding EditorSavedNotice, Converter={StaticResource NonEmptyVisibility}}"/>
+                        <TextBlock VerticalAlignment="Center" Style="{StaticResource AppMutedText}"
+                                   Foreground="{DynamicResource AppDangerText}" TextWrapping="Wrap"
+                                   Text="{Binding EditorSaveError}"
+                                   AutomationProperties.LiveSetting="Assertive"
+                                   Visibility="{Binding EditorSaveError, Converter={StaticResource NonEmptyVisibility}}"/>
+                    </DockPanel>
+                </Grid>
+            </Grid>
+        </Border>
+
+    </StackPanel>
+</UserControl>

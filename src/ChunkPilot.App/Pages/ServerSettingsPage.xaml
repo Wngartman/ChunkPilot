@@ -1,0 +1,243 @@
+<UserControl x:Class="ChunkPilot.App.ServerSettingsPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ds="clr-namespace:ChunkPilot.App.DesignSystem"
+             xmlns:components="clr-namespace:ChunkPilot.App.DesignSystem.Components">
+    <!--
+        Settings destination sub-sections:
+        - General
+        - Game rules
+        - Java & memory
+        - Startup
+        - Advanced
+        - Diagnostics
+
+        Settings owns how ChunkPilot runs this server: Java, memory, the launch profile, automation
+        and diagnostics. It does not own server.properties. Performance and Network used to repeat
+        view distance, simulation distance, port, maximum players and online mode, each with its own
+        Apply, writing the same file as Manage › Configuration - two sets of controls for one file,
+        and no way to tell which one had won. Those controls now exist once, on Manage.
+    -->
+    <StackPanel DataContext="{Binding DataContext, RelativeSource={RelativeSource AncestorType=Window}}" MaxWidth="900">
+
+        <!-- ═══ General ═══ -->
+        <TextBlock Text="GENERAL" Style="{StaticResource AppEyebrowText}" Margin="{StaticResource AppNavSectionLabelInset}"/>
+        <Border Style="{StaticResource AppCard}">
+            <StackPanel>
+                <TextBlock Text="Server identity" FontSize="{StaticResource AppFontSizeSubtitle}" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                <TextBlock Text="Public hostname or IP (optional)"/><TextBox Text="{Binding UserConfiguredHostname}" Margin="0,4,0,0"
+                    ToolTip="Used only for display and external probes. ChunkPilot does not change DNS, router, or firewall settings."/>
+            </StackPanel>
+        </Border>
+
+        <!-- ═══ Game rules ═══
+             Direct controls, one per rule, replacing the preset selector that exposed raw enum names
+             such as NormalSurvival and TechnicalVanilla and hid what it would actually change.
+
+             Values come from the running server and are labelled with where they came from. A stopped
+             server gets an explanation instead of controls: a switch showing Vanilla's documented
+             default would be a guess about somebody's world. -->
+        <TextBlock Text="GAME RULES" Style="{StaticResource AppEyebrowText}" Margin="18,20,18,6"
+                   Visibility="{Binding ShowsJavaGameplay, Converter={StaticResource BoolVisibility}}"/>
+        <components:AppSectionCard Icon="World" Header="Game rules"
+                                   Description="Read from the running server."
+                                   Visibility="{Binding ShowsJavaGameplay, Converter={StaticResource BoolVisibility}}">
+            <StackPanel>
+                <components:AppLoadingState Title="Reading game rules"
+                                            Message="Asking the server for its current values."
+                                            Visibility="{Binding IsLoadingGamerules, Converter={StaticResource BoolVisibility}}"/>
+
+                <!-- One concise state, and no controls behind it. ChunkPilot does not discover rules
+                     by sending its whole list at the server and reading the refusals, so nothing about
+                     a failed probe is shown here either. -->
+                <components:AppEmptyState Icon="Info" Title="Not available"
+                                          Message="{Binding GameruleUnavailableReason}"
+                                          Visibility="{Binding ShowsGameruleUnavailable, Converter={StaticResource BoolVisibility}}"/>
+
+                <ItemsControl ItemsSource="{Binding Gamerules}"
+                              Visibility="{Binding ShowsGamerules, Converter={StaticResource BoolVisibility}}"
+                              AutomationProperties.Name="Game rules">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Grid MinHeight="{StaticResource AppRowHeight}" Margin="{StaticResource AppNavRowGap}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel VerticalAlignment="Center">
+                                    <TextBlock Text="{Binding Label}" Style="{StaticResource AppBodyText}"
+                                               ToolTip="{Binding Name}"/>
+                                    <TextBlock Style="{StaticResource AppMutedText}" TextWrapping="Wrap"
+                                               Text="{Binding Description}"/>
+                                    <TextBlock Style="{StaticResource AppMutedText}" Text="{Binding ProvenanceText}"/>
+                                </StackPanel>
+                                <!-- Boolean rules get a switch, whole-number rules a bounded number box.
+                                     Both are disabled while their own change is in flight. -->
+                                <CheckBox Grid.Column="1" VerticalAlignment="Center"
+                                          Style="{StaticResource AppToggleSwitch}"
+                                          IsChecked="{Binding BooleanValue, Mode=TwoWay}"
+                                          IsEnabled="{Binding IsEnabled}"
+                                          Visibility="{Binding IsBoolean, Converter={StaticResource BoolVisibility}}"
+                                          AutomationProperties.Name="{Binding Label}"
+                                          AutomationProperties.HelpText="{Binding Name}"/>
+                                <components:AppNumberBox Grid.Column="1" VerticalAlignment="Center"
+                                                         Value="{Binding IntegerValue, Mode=TwoWay}"
+                                                         Minimum="{Binding Minimum}" Maximum="{Binding Maximum}"
+                                                         IsEnabled="{Binding IsEnabled}"
+                                                         Visibility="{Binding IsInteger, Converter={StaticResource BoolVisibility}}"
+                                                         AutomationProperties.Name="{Binding Label}"
+                                                         AutomationProperties.HelpText="{Binding Name}"/>
+                            </Grid>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+
+                <Button Content="Refresh" ds:AppButton.Icon="Refresh" HorizontalAlignment="Left"
+                        Margin="{StaticResource AppStackGapTop}"
+                        Command="{Binding RefreshGamerulesCommand}"
+                        AutomationProperties.Name="Re-read game rules from the server"/>
+
+                <Border Style="{StaticResource AppSunkenSurface}" Padding="{StaticResource AppInset16}"
+                        Margin="{StaticResource AppStackGapTop}">
+                    <StackPanel>
+                        <TextBlock Text="Rule for this exact version" Style="{StaticResource AppBodyStrongText}"/>
+                        <TextBlock Text="Use a rule name from this server version. The running server validates it before ChunkPilot reports success."
+                                   Style="{StaticResource AppMutedText}" TextWrapping="Wrap"/>
+                        <UniformGrid Columns="2" Margin="{StaticResource AppStackGapTop}">
+                            <StackPanel Margin="{StaticResource AppInlineGapLarge}">
+                                <TextBlock Text="Game rule name" Style="{StaticResource AppLabelText}"/>
+                                <TextBox Text="{Binding CustomGameruleName, UpdateSourceTrigger=PropertyChanged}"
+                                         ds:AppInput.Placeholder="Example: keepInventory"/>
+                            </StackPanel>
+                            <StackPanel>
+                                <TextBlock Text="Value" Style="{StaticResource AppLabelText}"/>
+                                <TextBox Text="{Binding CustomGameruleValue, UpdateSourceTrigger=PropertyChanged}"
+                                         ds:AppInput.Placeholder="Example: true"/>
+                            </StackPanel>
+                        </UniformGrid>
+                        <WrapPanel Margin="{StaticResource AppStackGapTop}">
+                            <Button Content="Apply and verify" ds:AppButton.Icon="Save"
+                                    Command="{Binding ApplyCustomGameruleCommand}" Margin="{StaticResource AppInlineGap}"/>
+                            <TextBlock Text="{Binding CustomGameruleResult}" Style="{StaticResource AppSecondaryText}"
+                                       VerticalAlignment="Center" TextWrapping="Wrap"/>
+                        </WrapPanel>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </components:AppSectionCard>
+
+        <!-- ═══ Java & memory ═══
+             Gigabytes, because that is the unit people think in and the one every guide uses. The
+             stored values and the JVM arguments stay in MiB; the exact figures are shown below as
+             detail rather than as the control. -->
+        <TextBlock Text="JAVA &amp; MEMORY" Style="{StaticResource AppEyebrowText}" Margin="18,20,18,6"/>
+        <components:AppSectionCard Icon="Hardware" Header="Memory"
+                                   Description="How much of this computer's memory the server may use.">
+            <StackPanel>
+                <UniformGrid Columns="2">
+                    <StackPanel Margin="{StaticResource AppInlineGapLarge}">
+                        <TextBlock Text="Minimum memory (GB)" Style="{StaticResource AppLabelText}"/>
+                        <DockPanel>
+                            <TextBlock DockPanel.Dock="Right" Text="GB" Style="{StaticResource AppBodyStrongText}"
+                                       VerticalAlignment="Center" Margin="{StaticResource AppInlineGapLeadingLarge}"/>
+                            <TextBox Text="{Binding MinimumMemoryText, UpdateSourceTrigger=PropertyChanged}"
+                                     AutomationProperties.Name="Minimum memory"/>
+                        </DockPanel>
+                    </StackPanel>
+                    <StackPanel>
+                        <TextBlock Text="Maximum memory (GB)" Style="{StaticResource AppLabelText}"/>
+                        <DockPanel>
+                            <ComboBox DockPanel.Dock="Right" ItemsSource="{Binding MemoryPresets}"
+                                      SelectedItem="{Binding SelectedMaximumMemoryPreset, Mode=TwoWay}"
+                                      Margin="{StaticResource AppInlineGapLeadingLarge}"
+                                      AutomationProperties.Name="Memory presets"/>
+                            <TextBlock DockPanel.Dock="Right" Text="GB" Style="{StaticResource AppBodyStrongText}"
+                                       VerticalAlignment="Center" Margin="{StaticResource AppInlineGapLeadingLarge}"/>
+                            <TextBox Text="{Binding MaximumMemoryText, UpdateSourceTrigger=PropertyChanged}"
+                                     AutomationProperties.Name="Maximum memory"/>
+                        </DockPanel>
+                    </StackPanel>
+                </UniformGrid>
+                <!-- The exact JVM flags are a technical detail, not the control. They stay reachable
+                     as a tooltip on the fields they describe; the default view is two numbers in the
+                     unit people think in. -->
+                <TextBlock Style="{StaticResource AppMutedText}"
+                           Margin="{StaticResource AppStackGapTop}"
+                           ToolTip="{Binding MemoryDetailText}"
+                           Text="Applies the next time this server starts."/>
+                <WrapPanel Margin="{StaticResource AppStackGapTop}">
+                    <Button Content="Apply memory" ds:AppButton.Icon="Save"
+                            Style="{StaticResource AppPrimaryButton}"
+                            Command="{Binding ApplyMemoryCommand}"/>
+                    <Button Content="Save &amp; restart now" ds:AppButton.Icon="Refresh"
+                            Margin="{StaticResource AppInlineGapLeadingLarge}"
+                            Command="{Binding ApplyMemoryAndRestartCommand}"
+                            Visibility="{Binding CanRestartForMemory, Converter={StaticResource BoolVisibility}}"/>
+                </WrapPanel>
+                <components:AppAlert Tone="Info" Title="Restart required"
+                                     Message="{Binding MemoryRestartNotice}"
+                                     Margin="{StaticResource AppStackGapTop}"
+                                     Visibility="{Binding MemoryNeedsRestart, Converter={StaticResource BoolVisibility}}"/>
+                <components:AppAlert Tone="Danger" Title="Memory allocation was not saved"
+                                     Message="{Binding MemorySaveError}"
+                                     Margin="{StaticResource AppStackGapSmall}"
+                                     Visibility="{Binding HasMemorySaveError, Converter={StaticResource BoolVisibility}}"/>
+                <components:AppAlert Tone="Danger" Title="Choose valid memory amounts"
+                                     Message="{Binding MemoryInputErrorText}"
+                                     Margin="{StaticResource AppStackGapSmall}"
+                                     Visibility="{Binding HasMemoryInputError, Converter={StaticResource BoolVisibility}}"/>
+            </StackPanel>
+        </components:AppSectionCard>
+
+        <!-- ═══ Startup ═══ -->
+        <TextBlock Text="STARTUP" Style="{StaticResource AppEyebrowText}" Margin="18,20,18,6"/>
+        <Border Style="{StaticResource AppCard}">
+            <StackPanel>
+                <TextBlock Text="Launch profile" FontSize="{StaticResource AppFontSizeSubtitle}" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                <TextBlock Text="Working directory"/><TextBox Text="{Binding StartupWorkingDirectory}" Margin="0,4,0,10"/>
+                <TextBlock Text="Executable"/><TextBox Text="{Binding StartupExecutable}" Margin="0,4,0,10"/>
+                <TextBlock Text="Arguments"/><TextBox Text="{Binding StartupArguments}" AcceptsReturn="True" Height="70" Margin="0,4,0,10"/>
+                <CheckBox Content="Run in background" IsChecked="{Binding RunInBackground}" Margin="0,0,0,10"/>
+                <TextBlock Text="Readiness pattern"/><TextBox Text="{Binding StartupReadinessPattern}" Margin="0,4,0,10"/>
+                <UniformGrid Columns="2">
+                    <StackPanel Margin="0,0,10,0"><TextBlock Text="Startup timeout (s)"/><TextBox Text="{Binding StartupTimeoutSeconds}"/></StackPanel>
+                    <StackPanel Margin="10,0,0,0"><TextBlock Text="Shutdown timeout (s)"/><TextBox Text="{Binding ShutdownTimeoutSeconds}"/></StackPanel>
+                </UniformGrid>
+                <Button Content="Save launch profile" Style="{StaticResource AppPrimaryButton}" Command="{Binding SaveStartupProfileCommand}" HorizontalAlignment="Left" Margin="0,14,0,0"/>
+            </StackPanel>
+        </Border>
+
+        <!-- ═══ Advanced ═══ -->
+        <TextBlock Text="ADVANCED" Style="{StaticResource AppEyebrowText}" Margin="18,20,18,6"/>
+        <Border Style="{StaticResource AppCard}">
+            <StackPanel>
+                <TextBlock Text="Automation recipes" FontSize="{StaticResource AppFontSizeSubtitle}" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                <DockPanel Margin="0,0,0,8">
+                    <Button DockPanel.Dock="Right" Content="Enable template" Command="{Binding EnableAutomationTemplateCommand}" Margin="8,0,0,0"/>
+                    <ComboBox ItemsSource="{Binding AutomationTemplates}" SelectedItem="{Binding SelectedAutomationTemplate}" DisplayMemberPath="Name"/>
+                </DockPanel>
+                <DataGrid ItemsSource="{Binding AutomationRecipes}" SelectedItem="{Binding SelectedAutomationRecipe}" Height="140">
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="Recipe" Binding="{Binding Name}" Width="*"/>
+                        <DataGridTextColumn Header="Trigger" Binding="{Binding Trigger}" Width="140"/>
+                        <DataGridCheckBoxColumn Header="Enabled" Binding="{Binding Enabled}" Width="70"/>
+                    </DataGrid.Columns>
+                </DataGrid>
+                <Button Content="Remove selected" Style="{StaticResource AppDangerButton}" Command="{Binding DeleteAutomationRecipeCommand}" HorizontalAlignment="Left" Margin="0,8,0,0"/>
+            </StackPanel>
+        </Border>
+
+        <!-- ═══ Diagnostics ═══ -->
+        <TextBlock Text="DIAGNOSTICS" Style="{StaticResource AppEyebrowText}" Margin="18,20,18,6"/>
+        <Border Style="{StaticResource AppCard}">
+            <StackPanel>
+                <DockPanel>
+                    <TextBlock Text="Server health" FontSize="{StaticResource AppFontSizeSubtitle}" FontWeight="SemiBold"/>
+                    <Button DockPanel.Dock="Right" Content="Run checks" Command="{Binding RunDiagnosticsCommand}" Margin="3"/>
+                </DockPanel>
+                <TextBlock Foreground="{DynamicResource AppTextSecondary}" Margin="0,4,0,0"
+                           Text="Findings include evidence, likely cause, and suggested action."/>
+            </StackPanel>
+        </Border>
+    </StackPanel>
+</UserControl>

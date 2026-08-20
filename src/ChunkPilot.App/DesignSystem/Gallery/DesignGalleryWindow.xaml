@@ -1,0 +1,69 @@
+<!--
+    Design Gallery host window. DEVELOPMENT ONLY.
+
+    Reachable only by launching ChunkPilot with the design-gallery command-line switch. There is no
+    product control that opens it, and it is not a developer status bar bolted onto the real shell.
+
+    The toolbar previews accessibility states for this window alone, so a reviewer can check high
+    contrast and Reduced Motion without changing their Windows settings and without the risk of
+    forgetting to change them back.
+-->
+<Window x:Class="ChunkPilot.App.DesignSystem.Gallery.DesignGalleryWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ds="clr-namespace:ChunkPilot.App.DesignSystem"
+        xmlns:gallery="clr-namespace:ChunkPilot.App.DesignSystem.Gallery"
+        Title="ChunkPilot design system (development only)"
+        Width="1440" Height="960" MinWidth="700" MinHeight="600"
+        WindowStartupLocation="CenterScreen"
+        ds:AppLayout.IsResponsive="True">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Border Grid.Row="0" Background="{DynamicResource AppSurfaceSunken}"
+                BorderBrush="{DynamicResource AppStrokeSubtle}"
+                BorderThickness="{StaticResource AppBottomStrokeThickness}"
+                Padding="{StaticResource AppRowPadding}">
+            <WrapPanel>
+                <StackPanel Orientation="Horizontal" Margin="{StaticResource AppInlineGapLarge}"
+                            VerticalAlignment="Center">
+                    <ds:AppIcon Kind="Lab" Scale="Medium" Margin="{StaticResource AppInlineGap}" />
+                    <TextBlock Style="{StaticResource AppBodyStrongText}" VerticalAlignment="Center"
+                               Text="Preview state" />
+                </StackPanel>
+                <CheckBox x:Name="HighContrastToggle" Style="{StaticResource AppToggleSwitch}"
+                          Content="High contrast" VerticalAlignment="Center"
+                          Margin="{StaticResource AppInlineGapLarge}"
+                          Checked="PreviewStateChanged" Unchecked="PreviewStateChanged" />
+                <CheckBox x:Name="ReducedMotionToggle" Style="{StaticResource AppToggleSwitch}"
+                          Content="Reduced Motion" VerticalAlignment="Center"
+                          Margin="{StaticResource AppInlineGapLarge}"
+                          Checked="PreviewStateChanged" Unchecked="PreviewStateChanged" />
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center"
+                            Margin="{StaticResource AppInlineGapLarge}">
+                    <TextBlock Style="{StaticResource AppLabelText}" VerticalAlignment="Center"
+                               Margin="{StaticResource AppInlineGap}" Text="Layout" />
+                    <ItemsControl Style="{StaticResource AppSegmentedControl}">
+                        <RadioButton x:Name="LayoutFollowsWindow" Style="{StaticResource AppSegmentedItem}"
+                                     Content="Follows window" GroupName="GalleryLayout" IsChecked="True"
+                                     Checked="LayoutModeChanged" />
+                        <RadioButton x:Name="LayoutWide" Style="{StaticResource AppSegmentedItem}"
+                                     Content="Wide" GroupName="GalleryLayout" Checked="LayoutModeChanged" />
+                        <RadioButton x:Name="LayoutStandard" Style="{StaticResource AppSegmentedItem}"
+                                     Content="Standard" GroupName="GalleryLayout" Checked="LayoutModeChanged" />
+                        <RadioButton x:Name="LayoutCompact" Style="{StaticResource AppSegmentedItem}"
+                                     Content="Compact" GroupName="GalleryLayout" Checked="LayoutModeChanged" />
+                    </ItemsControl>
+                </StackPanel>
+            </WrapPanel>
+        </Border>
+
+        <!-- The single page scroller. Components inside must not add another scroll region. -->
+        <ScrollViewer Grid.Row="1" Style="{StaticResource AppPageScrollViewer}">
+            <gallery:DesignGalleryContent x:Name="GalleryBody" />
+        </ScrollViewer>
+    </Grid>
+</Window>

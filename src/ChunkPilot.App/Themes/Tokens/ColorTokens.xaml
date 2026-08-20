@@ -1,0 +1,115 @@
+<!--
+    Semantic colour tokens. Components and pages consume ONLY these keys.
+
+    Naming: App<Role><Variant>. A role describes intent (surface, stroke, text, accent,
+    status), never a literal colour. Adding a token is a design-system change: update
+    docs/UI-DESIGN-SYSTEM.md and Themes/Overlays/HighContrast.xaml in the same change.
+
+    Brushes are referenced with DynamicResource from control styles so the high-contrast
+    overlay can replace them at runtime.
+-->
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!-- Self-sufficient: brushes are realised lazily and must resolve their palette colour
+         regardless of merge context. -->
+    <ResourceDictionary.MergedDictionaries>
+        <ResourceDictionary Source="Palette.xaml" />
+    </ResourceDictionary.MergedDictionaries>
+
+    <!-- ============ Surfaces ============
+         Well     = console and read-only data payloads, the one true black level
+         Sunken   = navigation rail and inset wells
+         Canvas   = window backdrop
+         Base     = primary working surface, toolbars
+         Raised   = cards and grouped content
+         Overlay  = popups, dialogs, toasts     Hover/Pressed = interactive feedback -->
+    <SolidColorBrush x:Key="AppSurfaceWell" Color="{StaticResource PaletteNeutral03}" />
+    <SolidColorBrush x:Key="AppSurfaceSunken" Color="{StaticResource PaletteNeutral06}" />
+    <SolidColorBrush x:Key="AppSurfaceCanvas" Color="{StaticResource PaletteNeutral10}" />
+    <SolidColorBrush x:Key="AppSurface" Color="{StaticResource PaletteNeutral14}" />
+    <SolidColorBrush x:Key="AppSurfaceRaised" Color="{StaticResource PaletteNeutral18}" />
+    <SolidColorBrush x:Key="AppSurfaceOverlay" Color="{StaticResource PaletteNeutral26}" />
+    <SolidColorBrush x:Key="AppSurfaceHover" Color="{StaticResource PaletteNeutral22}" />
+    <SolidColorBrush x:Key="AppSurfacePressed" Color="{StaticResource PaletteNeutral26}" />
+    <SolidColorBrush x:Key="AppSurfaceSelected" Color="{StaticResource PalettePurpleTint}" />
+    <SolidColorBrush x:Key="AppSurfaceDisabled" Color="{StaticResource PaletteNeutral14}" />
+    <SolidColorBrush x:Key="AppSurfaceTransparent" Color="{StaticResource PaletteTransparent}" />
+    <SolidColorBrush x:Key="AppSurfaceScrim" Color="{StaticResource PaletteScrim}" />
+
+    <!-- ============ Strokes ============
+         Subtle separates within a surface, Default outlines a card, Strong is interactive
+         emphasis. Default sits 14.4 L* above a raised card: on a dark theme the stroke, not
+         the fill, is what makes a card readable as an object. -->
+    <SolidColorBrush x:Key="AppStrokeSubtle" Color="{StaticResource PaletteNeutral22}" />
+    <SolidColorBrush x:Key="AppStroke" Color="{StaticResource PaletteNeutral32}" />
+    <SolidColorBrush x:Key="AppStrokeStrong" Color="{StaticResource PaletteNeutral40}" />
+    <SolidColorBrush x:Key="AppStrokeDisabled" Color="{StaticResource PaletteNeutral22}" />
+    <!-- Retained legacy-compatible aliases for the mandated border vocabulary. -->
+    <SolidColorBrush x:Key="AppBorder" Color="{StaticResource PaletteNeutral32}" />
+    <SolidColorBrush x:Key="AppBorderStrong" Color="{StaticResource PaletteNeutral40}" />
+
+    <!-- ============ Text ============
+         Primary is 14.06:1 on the canvas. The previous ramp put it at 16.99:1, which is
+         harsher than it needs to be; lifting the surfaces softened it without touching
+         this token.
+
+         Secondary and Muted each moved up one step of the ramp. Segoe UI Variable has no
+         Medium face, so a role between Regular and SemiBold does not exist and cannot be
+         faked; the honest way to make body and label text read more solidly is more
+         contrast, not more weight. Secondary now measures 9.7:1 on the canvas and Muted
+         7.1:1 on a raised card, both well clear of AA, and the four steps stay distinct:
+         Primary 92, Secondary 84, Muted 74, Tertiary 62, Disabled 52.
+
+         Tertiary stays the dimmest label tone. It is for text that is deliberately
+         recessive - a column heading beside its own values - where lifting it would
+         flatten the very hierarchy it exists to create. -->
+    <SolidColorBrush x:Key="AppTextPrimary" Color="{StaticResource PaletteNeutral92}" />
+    <SolidColorBrush x:Key="AppTextSecondary" Color="{StaticResource PaletteNeutral84}" />
+    <SolidColorBrush x:Key="AppTextTertiary" Color="{StaticResource PaletteNeutral62}" />
+    <SolidColorBrush x:Key="AppTextMuted" Color="{StaticResource PaletteNeutral74}" />
+    <SolidColorBrush x:Key="AppTextDisabled" Color="{StaticResource PaletteNeutral52}" />
+    <SolidColorBrush x:Key="AppTextOnAccent" Color="{StaticResource PaletteWhite}" />
+    <SolidColorBrush x:Key="AppTextAccent" Color="{StaticResource PalettePurpleLight}" />
+
+    <!-- ============ Accent and focus ============
+         Three separate responsibilities. See the note in Palette.xaml before reusing one
+         for another's job.
+           Accent          filled control BEHIND A LABEL      white on it 4.72:1 (AA)
+           AccentIndicator unlabelled mark, edge, pill, fill  4.45:1 on a raised card
+           FocusRing       keyboard focus only                3.59:1 on an accent fill -->
+    <SolidColorBrush x:Key="AppAccent" Color="{StaticResource PalettePurpleBase}" />
+    <SolidColorBrush x:Key="AppAccentHover" Color="{StaticResource PalettePurpleHover}" />
+    <SolidColorBrush x:Key="AppAccentPressed" Color="{StaticResource PalettePurplePressed}" />
+    <SolidColorBrush x:Key="AppAccentIndicator" Color="{StaticResource PalettePurpleIndicator}" />
+    <SolidColorBrush x:Key="AppAccentMuted" Color="{StaticResource PalettePurpleMuted}" />
+    <SolidColorBrush x:Key="AppAccentSubtle" Color="{StaticResource PalettePurpleDeep}" />
+    <SolidColorBrush x:Key="AppAccentDisabled" Color="{StaticResource PaletteNeutral22}" />
+    <SolidColorBrush x:Key="AppFocusRing" Color="{StaticResource PalettePurpleFocus}" />
+
+    <!-- ============ Status ============
+         Each tone has a fill (solid indicator), a subtle surface (banner background),
+         a stroke and a foreground safe for text on dark surfaces. -->
+    <SolidColorBrush x:Key="AppSuccess" Color="{StaticResource PaletteGreenBase}" />
+    <SolidColorBrush x:Key="AppSuccessSubtle" Color="{StaticResource PaletteGreenTint}" />
+    <SolidColorBrush x:Key="AppSuccessText" Color="{StaticResource PaletteGreenLight}" />
+
+    <SolidColorBrush x:Key="AppWarning" Color="{StaticResource PaletteAmberBase}" />
+    <SolidColorBrush x:Key="AppWarningSubtle" Color="{StaticResource PaletteAmberTint}" />
+    <SolidColorBrush x:Key="AppWarningText" Color="{StaticResource PaletteAmberLight}" />
+
+    <SolidColorBrush x:Key="AppDanger" Color="{StaticResource PaletteRedBase}" />
+    <SolidColorBrush x:Key="AppDangerSubtle" Color="{StaticResource PaletteRedTint}" />
+    <SolidColorBrush x:Key="AppDangerText" Color="{StaticResource PaletteRedLight}" />
+
+    <SolidColorBrush x:Key="AppInfo" Color="{StaticResource PaletteBlueBase}" />
+    <SolidColorBrush x:Key="AppInfoSubtle" Color="{StaticResource PaletteBlueTint}" />
+    <SolidColorBrush x:Key="AppInfoText" Color="{StaticResource PaletteBlueLight}" />
+
+    <!-- Neutral tone communicates "unknown" or "not applicable" and must never imply health. -->
+    <SolidColorBrush x:Key="AppNeutral" Color="{StaticResource PaletteNeutral52}" />
+    <SolidColorBrush x:Key="AppNeutralSubtle" Color="{StaticResource PaletteNeutral14}" />
+    <SolidColorBrush x:Key="AppNeutralText" Color="{StaticResource PaletteNeutral74}" />
+
+    <!-- ============ Shadow colour used by elevation tokens ============ -->
+    <SolidColorBrush x:Key="AppShadowBrush" Color="{StaticResource PaletteShadow}" />
+</ResourceDictionary>

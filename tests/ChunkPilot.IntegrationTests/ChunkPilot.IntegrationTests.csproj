@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+  </ItemGroup>
+  <ItemGroup>
+    <Using Include="Xunit" />
+    <None Update="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\ChunkPilot.Core\ChunkPilot.Core.csproj" />
+    <ProjectReference Include="..\..\src\ChunkPilot.Infrastructure\ChunkPilot.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src\ChunkPilot.Agent\ChunkPilot.Agent.csproj" />
+    <ProjectReference Include="..\ChunkPilot.FakeServer\ChunkPilot.FakeServer.csproj" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+  <Target Name="BuildAppForIntegrationTest" BeforeTargets="VSTest">
+    <MSBuild Projects="..\..\src\ChunkPilot.App\ChunkPilot.App.csproj"
+             Targets="Build"
+             Properties="Configuration=$(Configuration)" />
+  </Target>
+</Project>

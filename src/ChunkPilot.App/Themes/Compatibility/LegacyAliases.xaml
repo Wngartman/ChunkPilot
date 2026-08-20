@@ -1,0 +1,107 @@
+<!--
+    TEMPORARY compatibility layer. Scheduled for deletion.
+
+    MainWindow, ImportServerWindow and InstallServerWindow have not been rebuilt yet. They reference
+    resource keys from the previous design system. Rather than leave those windows broken, or freeze
+    the old dictionaries in place beside the new ones, this file maps the old key names onto the new
+    tokens and components.
+
+    Rules for this file:
+      * Nothing new may be added. It only ever shrinks.
+      * New or rebuilt views must not reference any key defined here.
+      * When a view is rebuilt, delete the aliases it was the last consumer of.
+      * When the file is empty, delete the file and its entry in Theme.xaml.
+
+    Deliberate limitation: these aliases are resolved with StaticResource, so unlike the semantic
+    tokens they do not follow the high-contrast overlay. That is a cost of not having rebuilt those
+    windows yet, and it is intentional pressure to finish the job rather than a design position.
+
+    Tracked by DesignSystemContractTests, which fails if the list of views permitted to use this
+    layer grows.
+-->
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <ResourceDictionary.MergedDictionaries>
+        <ResourceDictionary Source="../Tokens/Palette.xaml" />
+    </ResourceDictionary.MergedDictionaries>
+
+    <!-- ============ Legacy brushes ============ -->
+    <SolidColorBrush x:Key="AppBackground" Color="{StaticResource PaletteNeutral10}" />
+    <SolidColorBrush x:Key="SidebarBackground" Color="{StaticResource PaletteNeutral06}" />
+    <SolidColorBrush x:Key="Surface" Color="{StaticResource PaletteNeutral14}" />
+    <SolidColorBrush x:Key="SurfaceRaised" Color="{StaticResource PaletteNeutral18}" />
+    <SolidColorBrush x:Key="SurfaceHover" Color="{StaticResource PaletteNeutral22}" />
+    <SolidColorBrush x:Key="Border" Color="{StaticResource PaletteNeutral32}" />
+    <SolidColorBrush x:Key="BorderStrong" Color="{StaticResource PaletteNeutral40}" />
+    <SolidColorBrush x:Key="Accent" Color="{StaticResource PalettePurpleBase}" />
+    <SolidColorBrush x:Key="AccentHover" Color="{StaticResource PalettePurpleHover}" />
+    <!-- The old interface used cyan for focus. Focus is now the brand purple everywhere. -->
+    <SolidColorBrush x:Key="CyanAccent" Color="{StaticResource PalettePurpleLight}" />
+    <SolidColorBrush x:Key="TextPrimary" Color="{StaticResource PaletteNeutral92}" />
+    <SolidColorBrush x:Key="TextMuted" Color="{StaticResource PaletteNeutral74}" />
+    <SolidColorBrush x:Key="TextDim" Color="{StaticResource PaletteNeutral62}" />
+    <SolidColorBrush x:Key="Success" Color="{StaticResource PaletteGreenBase}" />
+    <SolidColorBrush x:Key="Warning" Color="{StaticResource PaletteAmberBase}" />
+    <SolidColorBrush x:Key="Danger" Color="{StaticResource PaletteRedBase}" />
+
+    <!-- ============ Legacy fonts ============ -->
+    <FontFamily x:Key="InterfaceFont">Segoe UI Variable Text, Segoe UI</FontFamily>
+    <FontFamily x:Key="MonospaceFont">Cascadia Mono, Consolas, Courier New</FontFamily>
+
+    <!-- ============ Legacy text styles ============ -->
+    <Style x:Key="TitleText" TargetType="TextBlock" BasedOn="{StaticResource AppTitleLargeText}" />
+    <Style x:Key="SectionTitle" TargetType="TextBlock" BasedOn="{StaticResource AppSubtitleText}" />
+    <Style x:Key="MutedText" TargetType="TextBlock" BasedOn="{StaticResource AppMutedText}" />
+    <Style x:Key="SecondaryText" TargetType="TextBlock" BasedOn="{StaticResource AppSecondaryText}" />
+    <Style x:Key="InlineLabel" TargetType="TextBlock" BasedOn="{StaticResource AppCaptionText}" />
+    <Style x:Key="PageHeaderTitle" TargetType="TextBlock" BasedOn="{StaticResource AppTitleLargeText}">
+        <Setter Property="Margin" Value="{StaticResource AppStackGapTiny}" />
+    </Style>
+    <Style x:Key="PageHeaderDescription" TargetType="TextBlock" BasedOn="{StaticResource AppSecondaryText}" />
+
+    <!-- ============ Legacy surfaces ============ -->
+    <Style x:Key="Card" TargetType="Border" BasedOn="{StaticResource AppCard}">
+        <Setter Property="Margin" Value="0,0,12,12" />
+    </Style>
+    <Style x:Key="PageSurface" TargetType="Border" BasedOn="{StaticResource AppCard}">
+        <Setter Property="Padding" Value="{StaticResource AppSurfacePadding}" />
+    </Style>
+    <Style x:Key="RaisedSurface" TargetType="Border" BasedOn="{StaticResource AppRaisedCard}" />
+    <Style x:Key="StateSurface" TargetType="Border" BasedOn="{StaticResource AppRaisedCard}">
+        <Setter Property="Margin" Value="{StaticResource AppStackGap}" />
+    </Style>
+    <Style x:Key="StatusBadge" TargetType="Border">
+        <Setter Property="Background" Value="{DynamicResource AppNeutralSubtle}" />
+        <Setter Property="CornerRadius" Value="{StaticResource AppCornerPill}" />
+        <Setter Property="Padding" Value="{StaticResource AppBadgePadding}" />
+    </Style>
+    <Style x:Key="CompactStateBadge" TargetType="Border" BasedOn="{StaticResource StatusBadge}">
+        <Setter Property="BorderBrush" Value="{DynamicResource AppStrokeSubtle}" />
+        <Setter Property="BorderThickness" Value="{StaticResource AppStrokeThickness}" />
+    </Style>
+
+    <!-- ============ Legacy buttons ============ -->
+    <Style x:Key="PrimaryButton" TargetType="Button" BasedOn="{StaticResource AppPrimaryButton}" />
+    <Style x:Key="PrimaryActionButton" TargetType="Button" BasedOn="{StaticResource AppPrimaryButton}" />
+    <Style x:Key="DangerButton" TargetType="Button" BasedOn="{StaticResource AppDangerButton}" />
+    <Style x:Key="DangerActionButton" TargetType="Button" BasedOn="{StaticResource AppDangerButton}" />
+    <Style x:Key="QuietButton" TargetType="Button" BasedOn="{StaticResource AppSubtleButton}" />
+    <Style x:Key="NavButton" TargetType="Button" BasedOn="{StaticResource AppSubtleButton}">
+        <Setter Property="HorizontalContentAlignment" Value="Left" />
+        <Setter Property="Padding" Value="{StaticResource AppNavRowPadding}" />
+    </Style>
+    <Style x:Key="NavigationButton" TargetType="Button" BasedOn="{StaticResource NavButton}">
+        <Setter Property="MinHeight" Value="{StaticResource AppNavRowHeight}" />
+        <Setter Property="Margin" Value="{StaticResource AppNavRowGap}" />
+    </Style>
+
+    <!-- ============ Legacy lists ============ -->
+    <Style x:Key="ConsoleSurface" TargetType="ListBox" BasedOn="{StaticResource AppConsoleSurface}" />
+
+    <!-- ============ Legacy accessibility helpers ============ -->
+    <Style x:Key="AccessibleFocusBorder" TargetType="Border">
+        <Setter Property="BorderThickness" Value="{StaticResource AppFocusRingThickness}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource AppFocusRing}" />
+    </Style>
+    <Style x:Key="ScreenReaderText" TargetType="TextBlock" BasedOn="{StaticResource AppScreenReaderText}" />
+</ResourceDictionary>

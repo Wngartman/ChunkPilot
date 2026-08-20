@@ -1,0 +1,97 @@
+<!--
+    ChunkPilot palette - the ONLY file in the application allowed to declare literal colours.
+
+    Neutral dark surfaces carry the interface; purple is reserved for brand, selection,
+    focus and primary intent. Do not reference these keys outside ColorTokens.xaml:
+    components consume the semantic brushes, never the raw palette.
+
+    The neutral ramp is named by PERCEPTUAL LIGHTNESS (CIE L*), not by an arbitrary index,
+    because that is the only number that predicts whether two dark surfaces look different.
+    WCAG contrast ratios are meaningless between two near-black colours: the +0.05 term in the
+    formula dominates, so every dark pair reports ~1.0 no matter how visible it is. Judge
+    surfaces by delta-L*, and reserve WCAG ratios for text and for anything that conveys state.
+
+    Ramp targets (verified by calculation, then by eye in the Design Gallery):
+      canvas -> raised card   dL* 7.8    a card is visible without hunting for it
+      raised -> stroke        dL* 14.4   the edge, not the fill, is what delineates a card
+      raised -> hover         dL* 4.2    perceptible without being loud
+      hover  -> pressed       dL* 4.0
+
+    The working range sits at L* 6..18. The previous ramp sat at L* 3..14.5, which read as
+    black rather than dark, left no headroom for a deeper console well, and pushed primary
+    text to a harsh 17:1. Lifting the range fixed all three at once.
+-->
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- Neutral ramp: cool-tinted greys (blue channel runs a few points above red/green),
+         no purple cast. Suffix = approximate L*. -->
+    <Color x:Key="PaletteNeutral03">#0B0B0E</Color>
+    <Color x:Key="PaletteNeutral06">#131317</Color>
+    <Color x:Key="PaletteNeutral10">#1B1B20</Color>
+    <Color x:Key="PaletteNeutral14">#232329</Color>
+    <Color x:Key="PaletteNeutral18">#2B2B32</Color>
+    <Color x:Key="PaletteNeutral22">#34343C</Color>
+    <Color x:Key="PaletteNeutral26">#3D3D45</Color>
+    <Color x:Key="PaletteNeutral32">#4B4B54</Color>
+    <Color x:Key="PaletteNeutral40">#5D5D67</Color>
+    <Color x:Key="PaletteNeutral52">#7B7B85</Color>
+    <Color x:Key="PaletteNeutral62">#95959F</Color>
+    <Color x:Key="PaletteNeutral74">#B5B5BE</Color>
+    <Color x:Key="PaletteNeutral84">#CFCFD6</Color>
+    <Color x:Key="PaletteNeutral92">#E8E8EE</Color>
+    <Color x:Key="PaletteWhite">#FFFFFF</Color>
+
+    <!--
+        Brand purple, split by responsibility.
+
+        One purple cannot do every job once the surfaces are lifted. A fill dark enough to carry
+        white label text at AA (4.5:1) is too dark to clear 3:1 against a raised card, and a fill
+        light enough to clear 3:1 cannot carry white text. Rather than pick which rule to break,
+        the roles are separated:
+
+          Base      solid fill BEHIND A LABEL. White on it measures 4.72:1 (AA). Its own edge
+                    against a card is only 2.98:1, so a filled control also draws a Pressed-toned
+                    stroke to give the component a perceivable boundary.
+          Indicator UNLABELLED accent marks - selection pills, active edges, progress fills.
+                    4.45:1 against a raised card, so it satisfies non-text contrast on its own.
+          Focus     the keyboard focus ring. 3.59:1 against Base and 10.69:1 against a card, so
+                    it is visible both on and off an accent fill. The previous ring measured
+                    2.24:1 on an accent fill and failed.
+    -->
+    <Color x:Key="PalettePurpleDeep">#221C3A</Color>
+    <Color x:Key="PalettePurpleTint">#2C2450</Color>
+    <Color x:Key="PalettePurpleMuted">#5B4A96</Color>
+    <Color x:Key="PalettePurpleBase">#7B5CE0</Color>
+    <Color x:Key="PalettePurpleHover">#8E72EC</Color>
+    <Color x:Key="PalettePurplePressed">#6A4CC8</Color>
+    <Color x:Key="PalettePurpleIndicator">#9B7DF5</Color>
+    <Color x:Key="PalettePurpleLight">#B9A6FF</Color>
+    <Color x:Key="PalettePurpleFocus">#E4DCFF</Color>
+
+    <!-- Status hues: a base fill, a dark tint for banners, a light tone for text on dark.
+         Red is #CE4553 rather than the previous #D9525F so that white label text on a danger
+         button reaches 4.56:1 (AA) while the fill still clears 3:1 against a card. -->
+    <Color x:Key="PaletteGreenBase">#3FBF7F</Color>
+    <Color x:Key="PaletteGreenTint">#16291D</Color>
+    <Color x:Key="PaletteGreenLight">#6FD9A3</Color>
+
+    <Color x:Key="PaletteAmberBase">#D9A038</Color>
+    <Color x:Key="PaletteAmberTint">#2E2517</Color>
+    <Color x:Key="PaletteAmberLight">#F0C570</Color>
+
+    <Color x:Key="PaletteRedBase">#CE4553</Color>
+    <Color x:Key="PaletteRedTint">#30181C</Color>
+    <Color x:Key="PaletteRedLight">#F08B93</Color>
+
+    <Color x:Key="PaletteBlueBase">#4A97D9</Color>
+    <Color x:Key="PaletteBlueTint">#16232F</Color>
+    <Color x:Key="PaletteBlueLight">#7FC0F0</Color>
+
+    <!-- Scrims and separators use alpha so they compose over any surface. -->
+    <Color x:Key="PaletteScrim">#A6000000</Color>
+    <Color x:Key="PaletteShadow">#8C000000</Color>
+    <Color x:Key="PaletteOverlayHover">#14FFFFFF</Color>
+    <Color x:Key="PaletteOverlayPressed">#0A000000</Color>
+    <Color x:Key="PaletteTransparent">#00000000</Color>
+</ResourceDictionary>

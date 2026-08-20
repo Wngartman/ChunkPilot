@@ -1,0 +1,24 @@
+<!--
+    Internal design-system plumbing. Keys prefixed "Internal" are private to the theme:
+    pages must not reference them, and they are exempt from component-catalog coverage.
+-->
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:ds="clr-namespace:ChunkPilot.App.DesignSystem">
+
+    <ds:AppIconKindToGlyphConverter x:Key="InternalIconGlyphConverter" />
+    <ds:AppIconScaleToSizeConverter x:Key="InternalIconSizeConverter" />
+    <ds:AppIconVariantConverter x:Key="InternalIconVariantConverter" />
+
+    <!--
+        WPF's default focus rectangle is a dotted outline that vanishes on dark surfaces.
+        Every interactive template draws its own ring instead, using a permanently present
+        transparent border so gaining focus never changes layout.
+    -->
+    <Style x:Key="InternalFocusRing" TargetType="Border">
+        <Setter Property="BorderThickness" Value="{StaticResource AppFocusRingThickness}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource AppSurfaceTransparent}" />
+        <Setter Property="CornerRadius" Value="{StaticResource AppCornerCard}" />
+        <Setter Property="SnapsToDevicePixels" Value="True" />
+    </Style>
+</ResourceDictionary>

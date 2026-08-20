@@ -1,0 +1,42 @@
+// @vitest-environment jsdom
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { NavigationGuardProvider } from '../app/NavigationGuard';
+import type { BridgeAdapter } from '../bridge/client';
+import type { BridgeMethod } from '../bridge/types';
+import { FixtureBridge, fixtures } from '../fixtures/catalog';
+import { useAppStore } from '../state/store';
+import { ServerWorkspace } from './ServerWorkspace';
+
+const calls: { method: BridgeMethod; params: Record<string, unknown> }[] = [];
+
+beforeEach(() => {
+  calls.length = 0;
+  window.history.replaceState({}, '', '/?fixture=modpack&page=servers&tab=content');
+  const fixture = new FixtureBridge('modpack');
+  const bridge: BridgeAdapter = {
+    request: async <T,>(method: BridgeMethod, params: Record<string, unknown> = {}) => {
+      calls.push({ method, params });
+      return fixture.request<T>(method, params);
+    },
+    subscribe: listener => fixture.subscribe(listener),
+    dispose: () => fixture.dispose()
+  };
+  useAppStore.setState({ snapshot: structuredClone(fixtures.modpack), bridge, busy: new Set(), pendingOperations: new Map(), completedOperations: new Set(), error: null });
+});
+afterEach(cleanup);
+
+describe('installed modpack workspace', () => {
+  it('uses exact pack identity and whole-pack update actions', async () => {
+    const server = useAppStore.getState().snapshot!.servers[0];
+    render(<NavigationGuardProvider><ServerWorkspace serverId={server.id} /></NavigationGuardProvider>);
+
+    expect(screen.getByRole('button', { name: 'Modpack' })).toBeTruthy();
+    expect(screen.getAllByText('Adventure Ridge Pack').length).toBeGreaterThan(0);
+    expect(screen.getByText('Whole pack release')).toBeTruthy();
+    expect(screen.getByText(/never update constituent mods independently/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Check pack release' }));
+    await waitFor(() => expect(calls).toContainEqual({ method: 'versions.check', params: { serverId: server.id } }));
+    expect(calls.some(call => call.method.startsWith('mods.install'))).toBe(false);
+  });
+});

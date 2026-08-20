@@ -1,0 +1,106 @@
+@font-face {
+  font-family: "Inter Variable";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url("@fontsource-variable/inter/files/inter-latin-wght-normal.woff2") format("woff2-variations");
+}
+
+:root {
+  color-scheme: dark;
+  font-family: "Inter Variable", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  font-synthesis: none;
+  --cp-canvas: #0c0d12;
+  --cp-shell: #101117;
+  --cp-sidebar: #111219;
+  --cp-surface: #17181f;
+  --cp-surface-raised: #1c1d26;
+  --cp-surface-hover: #22232e;
+  --cp-surface-active: #272836;
+  --cp-input: #12131a;
+  --cp-border: #2b2d38;
+  --cp-border-strong: #424556;
+  --cp-text: #f4f4f1;
+  --cp-text-secondary: #b7bdba;
+  --cp-text-muted: #7f8987;
+  --cp-accent: #8d87f2;
+  --cp-accent-strong: #aaa5ff;
+  --cp-accent-muted: #292642;
+  --cp-success: #64ce8e;
+  --cp-warning: #e7b85b;
+  --cp-danger: #ef727a;
+  --cp-info: #77a9ee;
+  --cp-focus: #b9b5ff;
+  --cp-on-accent: #0d0c16;
+  --cp-on-success: #07150d;
+  --cp-selected-surface: #242238;
+  --cp-selected-border: #514d7d;
+  --cp-selected-text: #f3f7f5;
+  --cp-danger-surface: #69282e;
+  --cp-danger-surface-deep: #32191c;
+  --cp-danger-border: #8d4248;
+  --cp-warning-surface: #2d2618;
+  --cp-warning-border: #6f5830;
+  --cp-titlebar-border: #262833;
+  --cp-logo-edge: #b2aeff;
+  --cp-logo-start: #716ce8;
+  --cp-logo-end: #938cf5;
+  --cp-hero-start: #171722;
+  --cp-hero-middle: #1b1a2a;
+  --cp-hero-end: #151925;
+  --cp-icon-start: #302d4e;
+  --cp-icon-end: #1c1b2c;
+  --cp-console: #0d1012;
+  --cp-console-text: #d0d6d3;
+  --cp-console-muted: #65706d;
+  --cp-notice-surface: #1c1a2e;
+  --cp-notice-border: #403c66;
+  --cp-translucent-raised: rgb(28 29 38 / .97);
+  --cp-subtle-overlay: rgb(255 255 255 / .022);
+  --cp-accent-haze: rgb(141 135 242 / .14);
+  --cp-accent-line: rgb(141 135 242 / .065);
+  --cp-focus-ring: rgb(141 135 242 / .22);
+  --cp-canvas-haze: rgb(77 72 132 / .10);
+  --cp-surface-highlight: rgb(255 255 255 / .018);
+  --cp-space-1: 4px;
+  --cp-space-2: 8px;
+  --cp-space-3: 12px;
+  --cp-space-4: 16px;
+  --cp-space-5: 20px;
+  --cp-space-6: 24px;
+  --cp-space-8: 32px;
+  --cp-radius-sm: 4px;
+  --cp-radius-md: 6px;
+  --cp-radius-lg: 8px;
+  --cp-control-sm: 30px;
+  --cp-control: 35px;
+  --cp-control-lg: 40px;
+  --cp-sidebar-width: 210px;
+  --cp-titlebar-height: 44px;
+  --cp-shadow: 0 16px 44px rgb(0 0 0 / .26);
+  --cp-shadow-compact: 0 8px 24px rgb(0 0 0 / .22);
+  --cp-fast: 80ms;
+  --cp-medium: 130ms;
+  --cp-page: 120ms;
+}
+
+* { box-sizing: border-box; }
+.sr-only { position: absolute !important; width: 1px !important; height: 1px !important; padding: 0 !important; margin: -1px !important; overflow: hidden !important; clip: rect(0, 0, 0, 0) !important; white-space: nowrap !important; border: 0 !important; }
+html, body, #root { width: 100%; height: 100%; margin: 0; overflow: hidden; background: var(--cp-canvas); color: var(--cp-text); }
+button, input, select, textarea { font: inherit; }
+button { color: inherit; }
+::selection { background: rgb(141 135 242 / .34); }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #3d3f4f; border: 3px solid transparent; background-clip: padding-box; border-radius: 8px; }
+::-webkit-scrollbar-thumb:hover { background-color: #585a70; }
+:focus-visible { outline: 2px solid var(--cp-focus); outline-offset: 2px; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; transition-duration: .01ms !important; }
+}
+
+@media (forced-colors: active) {
+  :root { --cp-border: CanvasText; --cp-border-strong: CanvasText; --cp-accent: Highlight; --cp-text: CanvasText; --cp-text-secondary: CanvasText; }
+  * { forced-color-adjust: auto; }
+}

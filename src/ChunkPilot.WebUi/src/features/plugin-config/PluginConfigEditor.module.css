@@ -1,0 +1,18 @@
+.editor { display: grid; gap: 14px; min-height: 420px; }
+.editor > header, .toolbar, .dirty { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.editor > header p { margin: 0; color: var(--cp-text-muted); max-width: 64ch; }
+.toolbar select { min-width: min(440px, 55vw); }
+.toolbar > div, .dirty { display: flex; gap: 8px; }
+.fields { display: grid; border: 1px solid var(--cp-border); border-radius: var(--cp-radius-md); overflow: auto; max-height: 480px; }
+.fields label { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(260px, 1.3fr); gap: 18px; align-items: center; padding: 11px 13px; border-bottom: 1px solid var(--cp-border); }
+.fields label:last-child { border-bottom: 0; }
+.fields span { display: grid; gap: 3px; }
+.fields small { color: var(--cp-text-muted); }
+.raw { display: grid; min-height: 370px; border: 1px solid var(--cp-border); border-radius: var(--cp-radius-md); overflow: hidden; background: var(--cp-console); }
+.raw textarea { min-height: 330px; resize: vertical; border: 0; outline: 0; padding: 14px; background: transparent; color: var(--cp-console-text); font: 12px/1.55 "Cascadia Mono", Consolas, monospace; tab-size: 2; }
+.raw textarea:focus { box-shadow: inset 0 0 0 2px var(--cp-focus-ring); }
+.raw p { margin: 0; padding: 9px 13px; border-top: 1px solid var(--cp-border); color: var(--cp-text-muted); }
+.dirty { padding: 9px 12px; border: 1px solid var(--cp-warning-border); background: var(--cp-warning-soft); border-radius: var(--cp-radius-md); }
+.error { color: var(--cp-danger); }
+.status { color: var(--cp-success); }
+@media (max-width: 760px) { .toolbar, .editor > header { align-items: stretch; flex-direction: column; } .toolbar select { min-width: 0; width: 100%; } .fields label { grid-template-columns: 1fr; } }

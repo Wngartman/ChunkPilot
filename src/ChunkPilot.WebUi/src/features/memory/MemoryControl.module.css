@@ -1,0 +1,7 @@
+.control { display: grid; gap: 10px; min-width: min(100%, 340px); }
+.select, .custom { width: 100%; min-height: var(--cp-control); border: 1px solid var(--cp-border); border-radius: var(--cp-radius-md); background: var(--cp-input); color: var(--cp-text); padding: 0 12px; font: inherit; }
+.select:focus-visible, .custom:focus-visible { outline: 2px solid var(--cp-focus); outline-offset: 2px; }
+.customRow { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; align-items: center; }
+.error, .warning { margin: 0; max-width: 420px; font-size: 12px; line-height: 1.45; }
+.error { color: var(--cp-danger); }
+.warning { color: var(--cp-warning); }

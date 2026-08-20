@@ -1,0 +1,38 @@
+<!--
+    Elevation tokens.
+
+    Depth comes primarily from surface value, not shadow. Shadows are reserved for
+    layers that genuinely float above the page: popups, menus, dialogs, toasts and
+    the compact navigation flyout. Cards use surface value plus a hairline stroke,
+    which keeps large scrolling lists cheap to render.
+
+    Effects are shared, frozen instances. Never declare a DropShadowEffect in a page.
+-->
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!-- Self-sufficient: an Effect is realised lazily, and at that point it must be able to see its
+         shadow colour without depending on which dictionary happened to be merged alongside it. -->
+    <ResourceDictionary.MergedDictionaries>
+        <ResourceDictionary Source="Palette.xaml" />
+    </ResourceDictionary.MergedDictionaries>
+
+    <!--
+        There is deliberately no "low" elevation. It used to exist as an 8px blur of near-black
+        onto near-black, which rendered indistinguishable from a flat card while still costing a
+        render-target pass per card. With the lifted surface ramp a card separates on value plus
+        a hairline, so the token was removed rather than strengthened: a shadow under every card
+        in a long virtualised list is exactly the cost this design system exists to avoid.
+    -->
+
+    <!-- Level 2: popups, menus, combo drop-downs, toasts. -->
+    <DropShadowEffect x:Key="AppElevationOverlay"
+                      Color="{StaticResource PaletteShadow}"
+                      BlurRadius="16" ShadowDepth="3" Direction="270" Opacity="0.5"
+                      RenderingBias="Performance" />
+
+    <!-- Level 3: modal dialog surfaces only. -->
+    <DropShadowEffect x:Key="AppElevationDialog"
+                      Color="{StaticResource PaletteShadow}"
+                      BlurRadius="28" ShadowDepth="6" Direction="270" Opacity="0.6"
+                      RenderingBias="Performance" />
+</ResourceDictionary>

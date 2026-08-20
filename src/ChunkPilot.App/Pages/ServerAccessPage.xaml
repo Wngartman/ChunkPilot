@@ -1,0 +1,427 @@
+<UserControl x:Class="ChunkPilot.App.ServerAccessPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ds="clr-namespace:ChunkPilot.App.DesignSystem"
+             xmlns:components="clr-namespace:ChunkPilot.App.DesignSystem.Components">
+    <!--
+        Access: who can reach this server, and who is on it.
+
+        One player list, not four sections. The page used to show Players, Whitelist and a separate
+        "Operators & bans" pad of buttons that acted on whatever name happened to be in a text box, so
+        the same player was managed in three places - and the row check boxes did nothing at all,
+        because the shared table style is read-only, which is what made them look broken.
+
+        Every row now carries its own switches and its own menu, bound to state the Agent read from the
+        server. Status is a word before it is a colour, and the connected count is stated separately
+        from the slot count, because "0 / 10 online" above a list of known players said neither clearly.
+
+        Column widths come from SharedSizeGroup rather than pixel constants: each column is as wide as
+        the widest thing in it, header included, which is why "Whitelisted" and "Banned" can no longer
+        be clipped to "Whitelis" and "Banne".
+    -->
+    <StackPanel DataContext="{Binding DataContext, RelativeSource={RelativeSource AncestorType=Window}}"
+                Grid.IsSharedSizeScope="True">
+
+        <!-- Networking is the first, authoritative destination for deciding who can connect.
+             Overview links here instead of presenting a second method selector. -->
+        <TextBlock Text="CONNECTIVITY" Style="{StaticResource AppEyebrowText}"
+                   Margin="{StaticResource AppNavSectionLabelInset}"/>
+        <components:AppSectionCard Icon="Network" Header="Networking"
+                                   Description="{Binding NetworkChoiceSummary}">
+            <StackPanel>
+                <TextBlock Text="Who should be able to join" Style="{StaticResource AppLabelText}"/>
+                <ComboBox ItemsSource="{Binding ConnectionMethods}" SelectedValuePath="Mode"
+                          SelectedValue="{Binding SelectedNetworkMode}"
+                          MinWidth="{StaticResource AppSearchWidth}" HorizontalAlignment="Left"
+                          AutomationProperties.Name="Who should be able to join">
+                    <ComboBox.ItemTemplate>
+                        <DataTemplate>
+                            <StackPanel>
+                                <TextBlock Text="{Binding Title}" Style="{StaticResource AppBodyStrongText}"/>
+                                <TextBlock Text="{Binding Description}" Style="{StaticResource AppMutedText}"/>
+                            </StackPanel>
+                        </DataTemplate>
+                    </ComboBox.ItemTemplate>
+                </ComboBox>
+                <WrapPanel Margin="{StaticResource AppStackGapTop}">
+                    <Button Content="Save choice" Style="{StaticResource AppPrimaryButton}"
+                            ds:AppButton.Icon="Save" Margin="{StaticResource AppInlineGap}"
+                            Command="{Binding SaveNetworkModeCommand}"
+                            AutomationProperties.Name="Save who should be able to join"/>
+                    <Button Content="Continue setup" ds:AppButton.Icon="ArrowRight"
+                            Command="{Binding OpenOverviewCommand}"
+                            Visibility="{Binding IsDirectInternetSelected, Converter={StaticResource BoolVisibility}}"
+                            AutomationProperties.Name="Continue Direct internet setup on Overview"/>
+                </WrapPanel>
+                <TextBlock Text="No router port, firewall permission, or public access changes until you separately review and confirm that action."
+                           Style="{StaticResource AppMutedText}" TextWrapping="Wrap"
+                           Margin="{StaticResource AppStackGapTop}"
+                           Visibility="{Binding IsDirectInternetSelected, Converter={StaticResource BoolVisibility}}"/>
+            </StackPanel>
+        </components:AppSectionCard>
+
+        <!-- ═══ Players ═══ -->
+        <TextBlock Text="PLAYERS" Style="{StaticResource AppEyebrowText}" Margin="{StaticResource AppNavSectionLabelInset}"
+                   Visibility="{Binding ShowsJavaGameplay, Converter={StaticResource BoolVisibility}}"/>
+        <components:AppSectionCard Icon="People" Header="Players"
+                                   Visibility="{Binding ShowsJavaGameplay, Converter={StaticResource BoolVisibility}}">
+            <StackPanel>
+                <!-- Two separate facts, said as two. -->
+                <WrapPanel>
+                    <components:AppStatusBadge Margin="{StaticResource AppInlineGap}"
+                                               Icon="People" Tone="Neutral" IsSubtle="True"
+                                               Text="{Binding OnlineCountText}"
+                                               AutomationProperties.LiveSetting="Polite"/>
+                    <components:AppStatusBadge Margin="{StaticResource AppInlineGap}"
+                                               Icon="Server" Tone="Neutral" IsSubtle="True"
+                                               Text="{Binding SlotCountText}"/>
+                    <Button Content="Refresh" ds:AppButton.Icon="Refresh"
+                            Style="{StaticResource AppSubtleButton}"
+                            Command="{Binding RefreshPlayerAccessCommand}"
+                            AutomationProperties.Name="Re-read player access from the server"/>
+                </WrapPanel>
+
+                <!-- The whitelist switch, with what it means in words next to it.
+                     HorizontalAlignment is Left so the control is the size of a switch and its focus
+                     ring is the size of a switch: stretched across the card it drew as a page-wide
+                     ellipse with the label inside it. -->
+                <Border Style="{StaticResource AppAccentSurface}" Margin="{StaticResource AppStackGapTop}"
+                        Padding="12">
+                    <Grid>
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                        <StackPanel>
+                            <TextBlock Text="Join policy" Style="{StaticResource AppLabelText}"/>
+                            <TextBlock Text="{Binding WhitelistStateText}" Style="{StaticResource AppSecondaryText}"
+                                       Margin="{StaticResource AppStackGapTiny}" TextWrapping="Wrap"/>
+                        </StackPanel>
+                        <CheckBox Grid.Column="1" Content="Whitelist" VerticalAlignment="Center"
+                                  Margin="{StaticResource AppInlineGapLeadingLarge}"
+                                  IsChecked="{Binding WhitelistSwitch, Mode=TwoWay}"
+                                  IsEnabled="{Binding CanModeratePlayers}"
+                                  AutomationProperties.Name="Whitelist"
+                                  AutomationProperties.HelpText="Only listed players can join while this is on."/>
+                    </Grid>
+                </Border>
+
+                <!-- Two views of one subject, in the app's own tab language rather than a capsule:
+                     banned players are part of who can reach this server, not another destination. -->
+                <StackPanel Orientation="Horizontal" Margin="{StaticResource AppStackGapTop}">
+                    <RadioButton Style="{StaticResource AppWorkspaceTabButton}"
+                                 GroupName="AccessView" Content="Players"
+                                 IsChecked="{Binding ShowsPlayersList, Mode=TwoWay}"
+                                 AutomationProperties.Name="Show the player list"/>
+                    <RadioButton Style="{StaticResource AppWorkspaceTabButton}"
+                                 GroupName="AccessView" Content="Banned"
+                                 IsChecked="{Binding ShowsBannedList, Mode=TwoWay}"
+                                 AutomationProperties.Name="Show banned players"/>
+                    <TextBlock VerticalAlignment="Center" Style="{StaticResource AppMutedText}"
+                               Margin="{StaticResource AppInlineGapLeadingLarge}"
+                               Text="{Binding BannedCountText}"
+                               Visibility="{Binding HasBannedRows, Converter={StaticResource BoolVisibility}}"/>
+                </StackPanel>
+
+                <components:AppAlert Tone="Danger" Margin="{StaticResource AppStackGapTop}"
+                                     Title="Player access could not be read"
+                                     Message="{Binding AccessErrorMessage}"
+                                     Visibility="{Binding HasAccessError, Converter={StaticResource BoolVisibility}}"/>
+
+                <!-- ─── Players view ─── -->
+                <StackPanel Visibility="{Binding ShowsPlayersList, Converter={StaticResource BoolVisibility}}">
+
+                <!-- Empty, and truthful about why. Two lines, not a decorative island: this list is
+                     empty far more often than it is full, and a full-height illustration for the
+                     normal case pushed the add-player field off the first screen. -->
+                <StackPanel Margin="{StaticResource AppStackGapTop}"
+                            Visibility="{Binding HasPlayerRows, Converter={StaticResource FalseMeansVisible}}">
+                    <TextBlock Text="No players yet" Style="{StaticResource AppBodyStrongText}"/>
+                    <TextBlock Text="{Binding PlayerEmptyStateMessage}" TextWrapping="Wrap"
+                               Style="{StaticResource AppMutedText}"
+                               Margin="{StaticResource AppStackGapTiny}"/>
+                </StackPanel>
+
+                <!-- Header row. Full words, and the same shared columns as the rows below. -->
+                <Grid Margin="{StaticResource AppStackGapTop}"
+                      Visibility="{Binding HasPlayerRows, Converter={StaticResource BoolVisibility}}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto" SharedSizeGroup="AccessStatus"/>
+                        <ColumnDefinition Width="Auto" SharedSizeGroup="AccessWhitelist"/>
+                        <ColumnDefinition Width="Auto" SharedSizeGroup="AccessOperator"/>
+                        <ColumnDefinition Width="Auto" SharedSizeGroup="AccessActions"/>
+                    </Grid.ColumnDefinitions>
+                    <Grid.Style>
+                        <Style TargetType="Grid">
+                            <Style.Triggers>
+                                <!-- Compact recomposes to name and actions; the state moves into the row
+                                     itself rather than being squeezed into unreadable columns. -->
+                                <DataTrigger Binding="{Binding Path=(ds:AppLayout.Mode), RelativeSource={RelativeSource Self}}" Value="Compact">
+                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Grid.Style>
+                    <TextBlock Text="Player" Style="{StaticResource AppLabelText}"/>
+                    <TextBlock Grid.Column="1" Text="Status" Style="{StaticResource AppLabelText}"
+                               Margin="{StaticResource AppInlineGapLeadingLarge}"/>
+                    <TextBlock Grid.Column="2" Text="Whitelisted" Style="{StaticResource AppLabelText}"
+                               Margin="{StaticResource AppInlineGapLeadingLarge}"/>
+                    <TextBlock Grid.Column="3" Text="Operator" Style="{StaticResource AppLabelText}"
+                               Margin="{StaticResource AppInlineGapLeadingLarge}"/>
+                    <TextBlock Grid.Column="4" Text="Actions" Style="{StaticResource AppLabelText}"
+                               Margin="{StaticResource AppInlineGapLeadingLarge}"/>
+                </Grid>
+                <Border Style="{StaticResource AppDivider}"
+                        Visibility="{Binding HasPlayerRows, Converter={StaticResource BoolVisibility}}"/>
+
+                <!-- Rows. No inner scroll region: the page scroller owns scrolling, so a long list makes
+                     the page longer instead of trapping the wheel in a fixed-height box. -->
+                <ItemsControl ItemsSource="{Binding PlayerRows}"
+                              AutomationProperties.Name="Players known to this server">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <StackPanel>
+                                <Grid MinHeight="{StaticResource AppRowHeight}">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto" SharedSizeGroup="AccessStatus"/>
+                                        <ColumnDefinition Width="Auto" SharedSizeGroup="AccessWhitelist"/>
+                                        <ColumnDefinition Width="Auto" SharedSizeGroup="AccessOperator"/>
+                                        <ColumnDefinition Width="Auto" SharedSizeGroup="AccessActions"/>
+                                    </Grid.ColumnDefinitions>
+
+                                    <StackPanel VerticalAlignment="Center">
+                                        <TextBlock Text="{Binding Name}" Style="{StaticResource AppBodyStrongText}"
+                                                   ToolTip="{Binding Name}"/>
+                                        <!-- Compact shows the status here, where the column is gone. -->
+                                        <TextBlock Text="{Binding StatusText}">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock" BasedOn="{StaticResource AppMutedText}">
+                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding Path=(ds:AppLayout.Mode), RelativeSource={RelativeSource Self}}" Value="Compact">
+                                                            <Setter Property="Visibility" Value="Visible"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </StackPanel>
+
+                                    <components:AppStatusBadge Grid.Column="1" VerticalAlignment="Center"
+                                                               HorizontalAlignment="Left" IsSubtle="True"
+                                                               Margin="{StaticResource AppInlineGapLeadingLarge}"
+                                                               Text="{Binding StatusText}"
+                                                               Tone="{Binding StatusTone}">
+                                        <components:AppStatusBadge.Style>
+                                            <Style TargetType="components:AppStatusBadge" BasedOn="{StaticResource AppStatusBadge}">
+                                                <Setter Property="Focusable" Value="False"/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding Path=(ds:AppLayout.Mode), RelativeSource={RelativeSource Self}}" Value="Compact">
+                                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </components:AppStatusBadge.Style>
+                                    </components:AppStatusBadge>
+
+                                    <!-- Real switches, bound to authoritative state, disabled while the
+                                         server is answering and while it cannot answer at all. -->
+                                    <!-- Check boxes, not switches. A permission column reads as a
+                                         list of ticks at a glance; a column of tiny sliders has to
+                                         be decoded one at a time, and at this size the knob position
+                                         is the only difference between on and off. They remain real
+                                         commands: the tick follows the Agent's answer. -->
+                                    <CheckBox Grid.Column="2" VerticalAlignment="Center"
+                                              HorizontalAlignment="Center"
+                                              Margin="{StaticResource AppInlineGapLeadingLarge}"
+                                              IsChecked="{Binding Whitelisted, Mode=TwoWay}"
+                                              IsEnabled="{Binding IsInteractive}"
+                                              AutomationProperties.Name="Whitelisted"
+                                              AutomationProperties.HelpText="{Binding Name}"/>
+                                    <CheckBox Grid.Column="3" VerticalAlignment="Center"
+                                              HorizontalAlignment="Center"
+                                              Margin="{StaticResource AppInlineGapLeadingLarge}"
+                                              IsChecked="{Binding Operator, Mode=TwoWay}"
+                                              IsEnabled="{Binding IsInteractive}"
+                                              AutomationProperties.Name="Operator"
+                                              AutomationProperties.HelpText="{Binding Name}"/>
+
+                                    <!-- Everything else for this player, in one menu, showing only the
+                                         actions that are actually possible for them right now. -->
+                                    <Button Grid.Column="4" Style="{StaticResource AppIconButton}"
+                                            Width="{StaticResource AppIconButtonSize}"
+                                            Height="{StaticResource AppIconButtonSize}"
+                                            Margin="{StaticResource AppInlineGapLeadingLarge}"
+                                            VerticalAlignment="Center" HorizontalAlignment="Right"
+                                            Click="ShowPlayerMenu"
+                                            ToolTip="More actions"
+                                            AutomationProperties.Name="More actions for this player">
+                                        <ds:AppIcon Kind="More" Scale="Small"/>
+                                        <Button.ContextMenu>
+                                            <ContextMenu>
+                                                <MenuItem Header="Add to whitelist" Command="{Binding WhitelistCommand}"
+                                                          Visibility="{Binding CanAddToWhitelist, Converter={StaticResource BoolVisibility}}"/>
+                                                <MenuItem Header="Remove from whitelist" Command="{Binding UnwhitelistCommand}"
+                                                          Visibility="{Binding CanRemoveFromWhitelist, Converter={StaticResource BoolVisibility}}"/>
+                                                <MenuItem Header="Grant operator" Command="{Binding GrantOperatorCommand}"
+                                                          Visibility="{Binding CanGrantOperator, Converter={StaticResource BoolVisibility}}"/>
+                                                <MenuItem Header="Remove operator" Command="{Binding RemoveOperatorCommand}"
+                                                          Visibility="{Binding CanRemoveOperator, Converter={StaticResource BoolVisibility}}"/>
+                                                <Separator/>
+                                                <MenuItem Header="Kick" Command="{Binding KickCommand}"
+                                                          Visibility="{Binding CanKick, Converter={StaticResource BoolVisibility}}"/>
+                                                <MenuItem Header="Ban" Command="{Binding BanCommand}"
+                                                          Visibility="{Binding CanBan, Converter={StaticResource BoolVisibility}}"/>
+                                                <MenuItem Header="Pardon" Command="{Binding PardonCommand}"
+                                                          Visibility="{Binding CanPardon, Converter={StaticResource BoolVisibility}}"/>
+                                                <Separator/>
+                                                <MenuItem Header="Copy name" Command="{Binding CopyNameCommand}"/>
+                                                <MenuItem Header="Copy UUID" Command="{Binding CopyUuidCommand}"
+                                                          Visibility="{Binding HasUuid, Converter={StaticResource BoolVisibility}}"/>
+                                            </ContextMenu>
+                                        </Button.ContextMenu>
+                                    </Button>
+                                </Grid>
+
+                                <!-- What the server said, when it refused. -->
+                                <DockPanel Margin="{StaticResource AppStackGapSmall}"
+                                           Visibility="{Binding HasError, Converter={StaticResource BoolVisibility}}">
+                                    <Button DockPanel.Dock="Right" Style="{StaticResource AppLinkButton}"
+                                            Content="Dismiss" Command="{Binding DismissErrorCommand}"
+                                            AutomationProperties.Name="Dismiss this message"/>
+                                    <TextBlock Text="{Binding ErrorMessage}" TextWrapping="Wrap"
+                                               Style="{StaticResource AppMutedText}"
+                                               Foreground="{DynamicResource AppDangerText}"
+                                               AutomationProperties.LiveSetting="Assertive"/>
+                                </DockPanel>
+                                <Border Style="{StaticResource AppDivider}"/>
+                            </StackPanel>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+
+                <!-- Add by name, for a player who has never connected. -->
+                <DockPanel Margin="{StaticResource AppStackGapTop}">
+                    <Button DockPanel.Dock="Right" Content="Add to whitelist"
+                            Style="{StaticResource AppPrimaryButton}" ds:AppButton.Icon="PersonAdd"
+                            Margin="{StaticResource AppInlineGapLeading}" VerticalAlignment="Bottom"
+                            Command="{Binding AddWhitelistPlayerCommand}"
+                            AutomationProperties.Name="Add this player to the whitelist"/>
+                    <StackPanel>
+                        <TextBlock Text="Player name" Style="{StaticResource AppLabelText}"/>
+                        <TextBox Text="{Binding NewWhitelistPlayerName, UpdateSourceTrigger=PropertyChanged}"
+                                 ds:AppInput.Placeholder="Exact Minecraft name"
+                                 IsEnabled="{Binding CanModeratePlayers}"
+                                 AutomationProperties.Name="Player name to add to the whitelist"/>
+                    </StackPanel>
+                </DockPanel>
+
+                </StackPanel>
+
+                <!-- ─── Banned view ───
+                     Only what the server's ban files record. A field the file does not carry is named
+                     as not recorded rather than filled in, and no player is listed here who is not
+                     actually banned. Pardon removes the row only after the Agent confirms it. -->
+                <StackPanel Visibility="{Binding ShowsBannedList, Converter={StaticResource BoolVisibility}}">
+                    <StackPanel Margin="{StaticResource AppStackGapTop}"
+                                Visibility="{Binding HasBannedRows, Converter={StaticResource FalseMeansVisible}}">
+                        <TextBlock Text="Nobody is banned" Style="{StaticResource AppBodyStrongText}"/>
+                        <TextBlock Text="{Binding BannedEmptyStateMessage}" TextWrapping="Wrap"
+                                   Style="{StaticResource AppMutedText}"
+                                   Margin="{StaticResource AppStackGapTiny}"/>
+                    </StackPanel>
+
+                    <ItemsControl ItemsSource="{Binding BannedRows}"
+                                  Margin="{StaticResource AppStackGapTop}"
+                                  AutomationProperties.Name="Players banned from this server">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel>
+                                    <Grid MinHeight="{StaticResource AppRowHeight}">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding Name}" Style="{StaticResource AppBodyStrongText}"
+                                                       TextTrimming="CharacterEllipsis" ToolTip="{Binding Name}"/>
+                                            <TextBlock Text="{Binding BanReasonText}" TextWrapping="Wrap"
+                                                       Style="{StaticResource AppMutedText}"/>
+                                            <TextBlock Style="{StaticResource AppMutedText}">
+                                                <Run Text="{Binding BanCreatedText, Mode=OneWay}"/>
+                                                <Run Text=" · "/>
+                                                <Run Text="{Binding BanExpiryText, Mode=OneWay}"/>
+                                                <Run Text=" · "/>
+                                                <Run Text="{Binding BanSourceText, Mode=OneWay}"/>
+                                            </TextBlock>
+                                            <TextBlock Style="{StaticResource AppMutedText}"
+                                                       Text="{Binding UuidText}"
+                                                       Visibility="{Binding HasUuid, Converter={StaticResource BoolVisibility}}"/>
+                                        </StackPanel>
+                                        <Button Grid.Column="1" Content="Pardon" ds:AppButton.Icon="Checkmark"
+                                                VerticalAlignment="Center"
+                                                Margin="{StaticResource AppInlineGapLeadingLarge}"
+                                                Command="{Binding PardonCommand}"
+                                                AutomationProperties.Name="Remove this ban"/>
+                                    </Grid>
+
+                                    <DockPanel Margin="{StaticResource AppStackGapSmall}"
+                                               Visibility="{Binding HasError, Converter={StaticResource BoolVisibility}}">
+                                        <Button DockPanel.Dock="Right" Style="{StaticResource AppLinkButton}"
+                                                Content="Dismiss" Command="{Binding DismissErrorCommand}"
+                                                AutomationProperties.Name="Dismiss this message"/>
+                                        <TextBlock Text="{Binding ErrorMessage}" TextWrapping="Wrap"
+                                                   Style="{StaticResource AppMutedText}"
+                                                   Foreground="{DynamicResource AppDangerText}"
+                                                   AutomationProperties.LiveSetting="Assertive"/>
+                                    </DockPanel>
+                                    <Border Style="{StaticResource AppDivider}"/>
+                                </StackPanel>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </StackPanel>
+        </components:AppSectionCard>
+
+        <!-- ═══ Share ═══ -->
+        <TextBlock Text="SHARE" Style="{StaticResource AppEyebrowText}" Margin="{StaticResource AppNavSectionLabelInset}"/>
+        <components:AppSectionCard Icon="Link" Header="Share this server"
+                                   Description="Addresses only. None of these proves anyone can reach the server.">
+            <StackPanel>
+                <components:AppInfoRow Label="Local network" Value="{Binding ServerLanAddress}"/>
+                <components:AppInfoRow Label="Public access" Value="{Binding ServerPublicAddress}"/>
+                <components:AppInfoRow Label="Bedrock" Value="{Binding BedrockAddress}"/>
+                <WrapPanel Margin="{StaticResource AppStackGapTop}">
+                    <Button Content="Copy address" ds:AppButton.Icon="Copy"
+                            Margin="{StaticResource AppInlineGap}"
+                            Command="{Binding CopyTextCommand}" CommandParameter="{Binding ServerLanAddress}"
+                            AutomationProperties.Name="Copy the local network address"/>
+                    <Button Content="Copy instructions" ds:AppButton.Icon="Document"
+                            Margin="{StaticResource AppInlineGap}"
+                            Command="{Binding CopyShareInstructionsCommand}"
+                            AutomationProperties.Name="Copy joining instructions"/>
+                    <Button Content="Export guide" ds:AppButton.Icon="Export"
+                            Command="{Binding ExportShareGuideCommand}" CommandParameter="text"
+                            AutomationProperties.Name="Export a joining guide"/>
+                </WrapPanel>
+            </StackPanel>
+        </components:AppSectionCard>
+
+        <!-- Crossplay, only where the server genuinely has that layer. -->
+        <components:AppSectionCard Icon="People" Header="Crossplay"
+                                   Description="{Binding CrossplayStatus}"
+                                   Visibility="{Binding ShowsCrossplay, Converter={StaticResource BoolVisibility}}">
+            <WrapPanel>
+                <Button Content="Install crossplay" Style="{StaticResource AppPrimaryButton}"
+                        Margin="{StaticResource AppInlineGap}"
+                        Command="{Binding InstallCrossplayCommand}"
+                        AutomationProperties.Name="Install crossplay support"/>
+                <Button Content="Remove" Command="{Binding RemoveCrossplayCommand}"
+                        AutomationProperties.Name="Remove crossplay support"/>
+            </WrapPanel>
+        </components:AppSectionCard>
+
+        <!-- ═══ Networking ═══ -->
+    </StackPanel>
+</UserControl>

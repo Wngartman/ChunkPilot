@@ -1,0 +1,370 @@
+<!--
+    Navigation.
+
+    One rail, one row treatment, one selection indicator. The rail is a bound list, so destinations
+    are data with stable identifiers rather than hand-placed buttons - which is what allowed the
+    previous shell to accumulate seventeen wrapping tabs.
+
+    Selection is shown three ways at once: an accent edge, a raised surface and a filled glyph.
+    Never colour alone.
+
+    Compact mode narrows the rail to icons and hides group labels. The destinations themselves are
+    never removed, so no action becomes unreachable at a small window size; the tooltip carries the
+    label that the row can no longer show.
+-->
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:ds="clr-namespace:ChunkPilot.App.DesignSystem">
+
+    <Style x:Key="AppNavigationRail" TargetType="Border">
+        <Setter Property="Background" Value="{DynamicResource AppSurfaceSunken}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource AppStrokeSubtle}" />
+        <Setter Property="BorderThickness" Value="{StaticResource AppRightStrokeThickness}" />
+        <Setter Property="Width" Value="{StaticResource AppNavRailWidth}" />
+        <Style.Triggers>
+            <DataTrigger Binding="{Binding Path=(ds:AppLayout.Mode), RelativeSource={RelativeSource Self}}" Value="Compact">
+                <Setter Property="Width" Value="{StaticResource AppNavRailWidthCompact}" />
+            </DataTrigger>
+        </Style.Triggers>
+    </Style>
+
+
+    <Style x:Key="AppNavigationRow" TargetType="ListBoxItem">
+        <!--
+            The row is the element assistive technology reports, so it must carry the name itself.
+            Without this, WPF falls back to the bound item's ToString() and a screen reader reads
+            "NavigationItem { Page = Servers, Label = Servers, Description = ... }" instead of
+            "Servers". The tooltip on the template's content is not a substitute.
+        -->
+        <Setter Property="AutomationProperties.Name" Value="{Binding Label}" />
+        <Setter Property="AutomationProperties.HelpText" Value="{Binding Description}" />
+        <Setter Property="Background" Value="{DynamicResource AppSurfaceTransparent}" />
+        <Setter Property="Foreground" Value="{DynamicResource AppTextSecondary}" />
+        <Setter Property="Padding" Value="{StaticResource AppNavRowPadding}" />
+        <Setter Property="MinHeight" Value="{StaticResource AppNavRowHeight}" />
+        <Setter Property="Margin" Value="{StaticResource AppNavRowGap}" />
+        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ListBoxItem">
+                    <Border x:Name="FocusRing" Style="{StaticResource InternalFocusRing}"
+                            CornerRadius="{StaticResource AppCornerControl}">
+                        <Grid>
+                            <Border x:Name="Root" Background="{TemplateBinding Background}"
+                                    CornerRadius="{StaticResource AppCornerControl}"
+                                    Padding="{TemplateBinding Padding}"
+                                    SnapsToDevicePixels="True">
+                                <ContentPresenter VerticalAlignment="Center"
+                                                  HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" />
+                            </Border>
+                            <!-- Accent edge marking the current destination. Uses the indicator
+                                 tone, which clears 3:1 against the rail on its own; the filled
+                                 accent is reserved for surfaces that carry a label. -->
+                            <Border x:Name="Indicator"
+                                    Width="{StaticResource AppSelectionIndicatorWidth}"
+                                    Height="{StaticResource AppSelectionIndicatorHeight}"
+                                    HorizontalAlignment="Left" VerticalAlignment="Center"
+                                    Background="{DynamicResource AppAccentIndicator}"
+                                    CornerRadius="{StaticResource AppCornerPill}"
+                                    Visibility="Collapsed" />
+                        </Grid>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Root" Property="Background" Value="{DynamicResource AppSurfaceHover}" />
+                            <Setter Property="Foreground" Value="{DynamicResource AppTextPrimary}" />
+                        </Trigger>
+                        <!-- Selection: accent edge, surface, foreground AND weight. Four cues, none
+                             of which is colour on its own. -->
+                        <Trigger Property="IsSelected" Value="True">
+                            <Setter TargetName="Root" Property="Background" Value="{DynamicResource AppSurfaceSelected}" />
+                            <Setter TargetName="Indicator" Property="Visibility" Value="Visible" />
+                            <Setter Property="Foreground" Value="{DynamicResource AppTextPrimary}" />
+                            <Setter Property="FontWeight" Value="{StaticResource AppFontWeightStrong}" />
+                        </Trigger>
+                        <!--
+                            Focus is drawn only for a keyboard user. Clicking a row also gives it
+                            keyboard focus, so a plain IsKeyboardFocused trigger left a permanent
+                            purple outline around the selected destination - which read as a defect
+                            and made focus and selection indistinguishable.
+                        -->
+                        <MultiTrigger>
+                            <MultiTrigger.Conditions>
+                                <Condition Property="IsKeyboardFocused" Value="True" />
+                                <Condition Property="ds:AppInput.IsKeyboardMode" Value="True" />
+                            </MultiTrigger.Conditions>
+                            <Setter TargetName="FocusRing" Property="BorderBrush" Value="{DynamicResource AppFocusRing}" />
+                        </MultiTrigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter Property="Foreground" Value="{DynamicResource AppTextDisabled}" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style x:Key="AppNavigationRowLabel" TargetType="TextBlock" BasedOn="{StaticResource AppBodyText}">
+        <!-- The label follows the icon, so the gap has to be on its leading edge. -->
+        <Setter Property="Margin" Value="{StaticResource AppInlineGapLeadingLarge}" />
+        <Setter Property="TextWrapping" Value="NoWrap" />
+        <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+
+    <!--
+        Two row templates, not one template with a trigger.
+
+        Collapsing the label from inside the item template does not work: ds:AppLayout.Mode is an
+        inherited attached property, and neither a Self binding nor an ancestor binding evaluated
+        reliably for a TextBlock generated inside a virtualised, recycling ListBoxItem. The
+        observable failure was a 56px rail still rendering full-width labels, clipped to a single
+        character each. Swapping the whole ItemTemplate from a trigger on the ListBox - a static
+        element whose inherited value is never in doubt, as the rail Border's own width trigger
+        demonstrates - is deterministic and cheap, because the swap happens once per resize rather
+        than once per row.
+    -->
+    <DataTemplate x:Key="AppNavigationRowTemplate">
+        <Grid ToolTip="{Binding Description}">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <ds:AppIcon Kind="{Binding Icon}" Scale="Medium"
+                        Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ListBoxItem}}" />
+            <TextBlock Grid.Column="1" Style="{StaticResource AppNavigationRowLabel}"
+                       Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ListBoxItem}}"
+                       Text="{Binding Label}" />
+        </Grid>
+    </DataTemplate>
+
+    <!-- Icon-only row. The destination is never removed, so nothing becomes unreachable; the
+         label moves into the tooltip, and the row's accessible name is set by the container
+         style so assistive technology is unaffected by the swap. -->
+    <DataTemplate x:Key="AppNavigationRowTemplateCompact">
+        <Grid ToolTip="{Binding Label}" HorizontalAlignment="Center">
+            <ds:AppIcon Kind="{Binding Icon}" Scale="Medium"
+                        Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ListBoxItem}}" />
+        </Grid>
+    </DataTemplate>
+
+    <Style x:Key="AppNavigationList" TargetType="ListBox">
+        <Setter Property="Background" Value="{DynamicResource AppSurfaceTransparent}" />
+        <Setter Property="BorderThickness" Value="{StaticResource AppStrokeThicknessNone}" />
+        <Setter Property="Padding" Value="{StaticResource AppInset8}" />
+        <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled" />
+        <Setter Property="VirtualizingPanel.IsVirtualizing" Value="True" />
+        <Setter Property="VirtualizingPanel.VirtualizationMode" Value="Recycling" />
+        <Setter Property="KeyboardNavigation.DirectionalNavigation" Value="Cycle" />
+        <Setter Property="ItemContainerStyle" Value="{StaticResource AppNavigationRow}" />
+        <Setter Property="ItemTemplate" Value="{StaticResource AppNavigationRowTemplate}" />
+        <Style.Triggers>
+            <DataTrigger Binding="{Binding Path=(ds:AppLayout.Mode), RelativeSource={RelativeSource Self}}" Value="Compact">
+                <Setter Property="ItemTemplate" Value="{StaticResource AppNavigationRowTemplateCompact}" />
+            </DataTrigger>
+        </Style.Triggers>
+    </Style>
+
+    <!-- Group label above a set of destinations. Hidden when the rail is icon-only. -->
+    <Style x:Key="AppNavigationSectionLabel" TargetType="TextBlock" BasedOn="{StaticResource AppEyebrowText}">
+        <Setter Property="Margin" Value="{StaticResource AppNavSectionLabelInset}" />
+        <Style.Triggers>
+            <DataTrigger Binding="{Binding Path=(ds:AppLayout.Mode), RelativeSource={RelativeSource Self}}" Value="Compact">
+                <Setter Property="Visibility" Value="Collapsed" />
+            </DataTrigger>
+        </Style.Triggers>
+    </Style>
+
+    <!-- ============ Workspace tabs ============
+         The horizontal strip under the selected-server header. One shared template, so every tab
+         states selection the same way and the indicator geometry is defined once.
+
+         Selection is an accent underline, never an enclosing pill. The underline lives in its own
+         Grid row *inside* the tab's padding, which is what makes it exactly as wide as the icon and
+         label above it and therefore centred under them by construction. The previous version drew
+         it as a bottom-aligned Border with an asymmetric margin and a negative top offset, layered
+         over the content in a single-cell Grid: its width came from the whole padded cell rather
+         than from the content, so it sat visibly off-centre and a different width on every tab.
+
+         Keyboard focus is a ring around the tab and is deliberately not the selected treatment: a
+         user tabbing through the strip must be able to see where they are before they commit. -->
+    <Style x:Key="AppWorkspaceTabItem" TargetType="ListBoxItem">
+        <Setter Property="Background" Value="{DynamicResource AppSurfaceTransparent}" />
+        <Setter Property="Foreground" Value="{DynamicResource AppTextSecondary}" />
+        <Setter Property="Padding" Value="{StaticResource AppTabPadding}" />
+        <Setter Property="Margin" Value="{StaticResource AppInlineGap}" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ListBoxItem">
+                    <Border x:Name="FocusRing" Style="{StaticResource InternalFocusRing}"
+                            CornerRadius="{StaticResource AppCornerControl}">
+                        <Border x:Name="Root" Background="{TemplateBinding Background}"
+                                CornerRadius="{StaticResource AppCornerControl}"
+                                Padding="{TemplateBinding Padding}"
+                                RenderTransformOrigin="0.5,0.5"
+                                SnapsToDevicePixels="True">
+                            <Border.RenderTransform>
+                                <ScaleTransform ScaleX="1" ScaleY="1"/>
+                            </Border.RenderTransform>
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                <!-- Row 1 is reserved whether or not the tab is selected, so
+                                     selecting one never changes the height of the strip. -->
+                                <Border x:Name="Indicator" Grid.Row="1"
+                                        Height="{StaticResource AppSelectionUnderlineHeight}"
+                                        Margin="{StaticResource AppStackGapTiny}"
+                                        HorizontalAlignment="Stretch"
+                                        Background="{DynamicResource AppAccent}"
+                                        CornerRadius="{StaticResource AppCornerPill}"
+                                        SnapsToDevicePixels="True"
+                                        Visibility="Hidden" />
+                            </Grid>
+                        </Border>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <EventTrigger RoutedEvent="PreviewMouseLeftButtonDown">
+                            <BeginStoryboard>
+                                <Storyboard>
+                                    <DoubleAnimation Storyboard.TargetName="Root" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)" To="0.985" Duration="{StaticResource AppDurationPressIn}"/>
+                                    <DoubleAnimation Storyboard.TargetName="Root" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)" To="0.985" Duration="{StaticResource AppDurationPressIn}"/>
+                                </Storyboard>
+                            </BeginStoryboard>
+                        </EventTrigger>
+                        <EventTrigger RoutedEvent="PreviewMouseLeftButtonUp">
+                            <BeginStoryboard>
+                                <Storyboard>
+                                    <DoubleAnimation Storyboard.TargetName="Root" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)" To="1" Duration="{StaticResource AppDurationPressOut}"/>
+                                    <DoubleAnimation Storyboard.TargetName="Root" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)" To="1" Duration="{StaticResource AppDurationPressOut}"/>
+                                </Storyboard>
+                            </BeginStoryboard>
+                        </EventTrigger>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Root" Property="Background" Value="{DynamicResource AppSurfaceHover}" />
+                            <Setter Property="Foreground" Value="{DynamicResource AppTextPrimary}" />
+                        </Trigger>
+                        <!-- Selection: underline plus a weight and colour change. Never a container. -->
+                        <Trigger Property="IsSelected" Value="True">
+                            <Setter TargetName="Indicator" Property="Visibility" Value="Visible" />
+                            <Setter Property="Foreground" Value="{DynamicResource AppTextPrimary}" />
+                            <Setter Property="TextElement.FontWeight" Value="{StaticResource AppFontWeightStrong}" />
+                        </Trigger>
+                        <Trigger Property="IsKeyboardFocused" Value="True">
+                            <Setter TargetName="FocusRing" Property="BorderBrush" Value="{DynamicResource AppFocusRing}" />
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter Property="Foreground" Value="{DynamicResource AppTextDisabled}" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <DataTemplate x:Key="AppWorkspaceTabTemplate">
+        <StackPanel Orientation="Horizontal" ToolTip="{Binding Description}">
+            <ds:AppIcon Kind="{Binding Icon}" Scale="Small"
+                        Margin="{StaticResource AppInlineGap}"
+                        Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ListBoxItem}}" />
+            <TextBlock Text="{Binding Label}" VerticalAlignment="Center"
+                       Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ListBoxItem}}" />
+        </StackPanel>
+    </DataTemplate>
+
+    <!-- The same tab language for an in-page view switch bound to booleans rather than to a
+         selected item. Access uses it for Players and Banned, so the page does not introduce a
+         second selection idiom - and specifically not a capsule - for the same job. -->
+    <Style x:Key="AppWorkspaceTabButton" TargetType="RadioButton">
+        <Setter Property="Background" Value="{DynamicResource AppSurfaceTransparent}" />
+        <Setter Property="Foreground" Value="{DynamicResource AppTextSecondary}" />
+        <Setter Property="Padding" Value="{StaticResource AppTabPadding}" />
+        <Setter Property="Margin" Value="{StaticResource AppInlineGap}" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="RadioButton">
+                    <Border x:Name="FocusRing" Style="{StaticResource InternalFocusRing}"
+                            CornerRadius="{StaticResource AppCornerControl}">
+                        <Border x:Name="Root" Background="{TemplateBinding Background}"
+                                CornerRadius="{StaticResource AppCornerControl}"
+                                Padding="{TemplateBinding Padding}"
+                                RenderTransformOrigin="0.5,0.5"
+                                SnapsToDevicePixels="True">
+                            <Border.RenderTransform><ScaleTransform ScaleX="1" ScaleY="1"/></Border.RenderTransform>
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                  RecognizesAccessKey="True" />
+                                <Border x:Name="Indicator" Grid.Row="1"
+                                        Height="{StaticResource AppSelectionUnderlineHeight}"
+                                        Margin="{StaticResource AppStackGapTiny}"
+                                        HorizontalAlignment="Stretch"
+                                        Background="{DynamicResource AppAccent}"
+                                        CornerRadius="{StaticResource AppCornerPill}"
+                                        SnapsToDevicePixels="True"
+                                        Visibility="Hidden" />
+                            </Grid>
+                        </Border>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Trigger.EnterActions>
+                                <BeginStoryboard><Storyboard>
+                                    <DoubleAnimation Storyboard.TargetName="Root" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)" To="0.985" Duration="{StaticResource AppDurationPressIn}"/>
+                                    <DoubleAnimation Storyboard.TargetName="Root" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)" To="0.985" Duration="{StaticResource AppDurationPressIn}"/>
+                                </Storyboard></BeginStoryboard>
+                            </Trigger.EnterActions>
+                            <Trigger.ExitActions>
+                                <BeginStoryboard><Storyboard>
+                                    <DoubleAnimation Storyboard.TargetName="Root" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)" To="1" Duration="{StaticResource AppDurationPressOut}"/>
+                                    <DoubleAnimation Storyboard.TargetName="Root" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)" To="1" Duration="{StaticResource AppDurationPressOut}"/>
+                                </Storyboard></BeginStoryboard>
+                            </Trigger.ExitActions>
+                        </Trigger>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Root" Property="Background" Value="{DynamicResource AppSurfaceHover}" />
+                            <Setter Property="Foreground" Value="{DynamicResource AppTextPrimary}" />
+                        </Trigger>
+                        <Trigger Property="IsChecked" Value="True">
+                            <Setter TargetName="Indicator" Property="Visibility" Value="Visible" />
+                            <Setter Property="Foreground" Value="{DynamicResource AppTextPrimary}" />
+                            <Setter Property="FontWeight" Value="{StaticResource AppFontWeightStrong}" />
+                        </Trigger>
+                        <Trigger Property="IsKeyboardFocused" Value="True">
+                            <Setter TargetName="FocusRing" Property="BorderBrush" Value="{DynamicResource AppFocusRing}" />
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter Property="Foreground" Value="{DynamicResource AppTextDisabled}" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style x:Key="AppWorkspaceTabs" TargetType="ListBox">
+        <Setter Property="Background" Value="{DynamicResource AppSurfaceTransparent}" />
+        <Setter Property="BorderThickness" Value="{StaticResource AppStrokeThicknessNone}" />
+        <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled" />
+        <Setter Property="ItemContainerStyle" Value="{StaticResource AppWorkspaceTabItem}" />
+        <Setter Property="ItemTemplate" Value="{StaticResource AppWorkspaceTabTemplate}" />
+        <Setter Property="ItemsPanel">
+            <Setter.Value>
+                <ItemsPanelTemplate>
+                    <WrapPanel Orientation="Horizontal" />
+                </ItemsPanelTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+</ResourceDictionary>

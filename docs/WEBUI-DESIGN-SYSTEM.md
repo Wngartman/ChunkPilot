@@ -1,0 +1,9 @@
+# Forge Signal design system
+
+Forge Signal is the WebUI visual language: a near-black graphite canvas, violet-charcoal navigation, stepped neutral surfaces, cool-white text, and a restrained brand-violet signal for focus, selection, primary actions, chart lines, and the server hero. Semantic green, blue, amber, and red remain reserved for operational state. The established purple stacked-server/summit logo is the palette authority, but violet does not replace surface hierarchy or semantic meaning.
+
+Global CSS custom properties in `src/ChunkPilot.WebUi/src/design-system/tokens.css` own color, typography, spacing, radius, border, shadow, control, motion, focus, density, sidebar, and breakpoint values. Feature CSS composes those tokens and must not add page-local colors. Interface typography uses a locally bundled Inter Variable Latin subset with Segoe UI Variable/Segoe UI/system fallbacks; console and identifiers use the Windows monospace stack. Lucide is the sole functional icon family.
+
+Hierarchy comes first from alignment, spacing, one-pixel borders, dividers, rows, and tonal surface steps. Radii stay between 4 and 10 px. Cards are specific compositions rather than one universal rounded container. Motion is 80–220 ms, uses opacity or small transforms, and is removed by `prefers-reduced-motion`. Forced-colors retains focus, selection, and textual state.
+
+Reusable primitives cover buttons, icon buttons, inputs, search, status, metrics, sparklines, headings, empty/unavailable states, confirmation dialogs, shell navigation, server identity, settings rows, save bars, and a portal-based action menu. Radix Dropdown Menu supplies collision-aware placement, keyboard navigation, focus return, and outside-click behavior for the server action menu; other controls remain small semantic primitives rather than adopting a themed component framework.

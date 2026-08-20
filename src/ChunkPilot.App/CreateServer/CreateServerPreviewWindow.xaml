@@ -1,0 +1,762 @@
+<!--
+    Create Server v2 preview window. PREVIEW ONLY.
+
+    Reachable only by launching ChunkPilot with the create-server preview command-line switch. No
+    product control opens it, it holds no agent client, and every option it shows is invented sample
+    data compiled into the binary. Nothing here downloads, writes, installs or registers anything.
+
+    Composition follows docs/VISUAL-PAGE-SPECIFICATIONS-V2.md section 8: a step rail, a centre
+    content region, a details panel at Wide, and a stable action footer. Every value comes from the
+    shared token layer; this window invents no visual language of its own.
+-->
+<Window x:Class="ChunkPilot.App.CreateServer.CreateServerPreviewWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ds="clr-namespace:ChunkPilot.App.DesignSystem"
+        xmlns:components="clr-namespace:ChunkPilot.App.DesignSystem.Components"
+        xmlns:create="clr-namespace:ChunkPilot.App.CreateServer"
+        Title="Create a server (preview) - ChunkPilot"
+        Width="1120" Height="760" MinWidth="700" MinHeight="520"
+        WindowStartupLocation="CenterScreen"
+        ds:AppLayout.IsResponsive="True">
+
+    <Window.Resources>
+        <!-- Declared on the window so it resolves without the application's converter set. -->
+        <create:PreviewBooleanVisibilityConverter x:Key="PreviewBoolVisibility" />
+        <create:WizardStepVisibilityConverter x:Key="StepVisibility" />
+        <create:WizardStepMatchConverter x:Key="StepMatches" />
+        <create:CompatibilityToneConverter x:Key="CompatibilityTone" />
+        <create:CompatibilityIconConverter x:Key="CompatibilityIcon" />
+        <create:CompatibilityLabelConverter x:Key="CompatibilityLabel" />
+        <create:CompatibilityBadgeLabelConverter x:Key="CompatibilityBadge" />
+        <create:NonEmptyVisibilityConverter x:Key="NonEmptyVisibility" />
+        <create:AnyItemsVisibilityConverter x:Key="AnyItemsVisibility" />
+
+        <!-- One review line. Unknown values say so; a blank value would read as an answer. -->
+        <DataTemplate x:Key="ReviewRowTemplate">
+            <components:AppInfoRow Label="{Binding Label}" Value="{Binding Value}"
+                                   IsUnknown="{Binding IsUnknown}" UnknownText="{Binding UnknownText}" />
+        </DataTemplate>
+
+        <!-- A review sentence. Wraps, because a trimmed explanation is worse than none. -->
+        <DataTemplate x:Key="ReviewNoteTemplate">
+            <StackPanel Margin="{StaticResource AppStackGap}">
+                <TextBlock Style="{StaticResource AppLabelText}" Text="{Binding Label}" />
+                <TextBlock Style="{StaticResource AppBodyText}" Text="{Binding Text}" />
+            </StackPanel>
+        </DataTemplate>
+
+        <!-- One choice on the setup step: an option row plus its compatibility badge. The badge is
+             the only place the conclusion is written, so the row never says it twice. -->
+        <DataTemplate x:Key="OptionRowTemplate">
+            <components:AppServerRow ServerName="{Binding Title}" Subtitle="{Binding RowSubtitle}"
+                                     Tone="{Binding Evidence.Conclusion, Converter={StaticResource CompatibilityTone}}"
+                                     IsSelected="{Binding IsSelected, RelativeSource={RelativeSource AncestorType=ListBoxItem}, Mode=OneWay}">
+                <components:AppStatusBadge
+                    Text="{Binding Evidence.Conclusion, Converter={StaticResource CompatibilityBadge}}"
+                    Tone="{Binding Evidence.Conclusion, Converter={StaticResource CompatibilityTone}}"
+                    Icon="{Binding Evidence.Conclusion, Converter={StaticResource CompatibilityIcon}}" />
+            </components:AppServerRow>
+        </DataTemplate>
+
+        <!--
+            Display components are not tab stops.
+
+            WPF gives every Control a default Focusable of true, so a page built from composite
+            display components collects a dead tab stop for each one: a keyboard user tabs onto a
+            status badge, an alert and a card header before reaching the button they wanted. These
+            overrides are scoped to this window; nothing inside the components is affected, so the
+            disclosure toggle in a collapsible section and the editor inside the search box keep
+            their own focus.
+        -->
+        <Style TargetType="{x:Type components:AppPageHeader}" BasedOn="{StaticResource AppPageHeader}">
+            <Setter Property="Focusable" Value="False" />
+        </Style>
+        <Style TargetType="{x:Type components:AppStatusBadge}" BasedOn="{StaticResource AppStatusBadge}">
+            <Setter Property="Focusable" Value="False" />
+        </Style>
+        <Style TargetType="{x:Type components:AppAlert}" BasedOn="{StaticResource AppAlert}">
+            <Setter Property="Focusable" Value="False" />
+        </Style>
+        <Style TargetType="{x:Type components:AppSectionCard}" BasedOn="{StaticResource AppSectionCard}">
+            <Setter Property="Focusable" Value="False" />
+        </Style>
+        <Style TargetType="{x:Type components:AppEmptyState}" BasedOn="{StaticResource AppEmptyState}">
+            <Setter Property="Focusable" Value="False" />
+        </Style>
+        <Style TargetType="{x:Type components:AppInfoRow}" BasedOn="{StaticResource AppInfoRow}">
+            <Setter Property="Focusable" Value="False" />
+        </Style>
+        <Style TargetType="{x:Type components:AppServerRow}" BasedOn="{StaticResource AppServerRow}">
+            <Setter Property="Focusable" Value="False" />
+        </Style>
+        <Style TargetType="{x:Type components:AppSearchBox}" BasedOn="{StaticResource AppSearchBox}">
+            <Setter Property="Focusable" Value="False" />
+        </Style>
+
+        <Style x:Key="PreviewOptionContainer" TargetType="ListBoxItem" BasedOn="{StaticResource AppListRow}">
+            <Setter Property="Padding" Value="{StaticResource AppInsetNone}" />
+            <Setter Property="Margin" Value="{StaticResource AppStackGapSmall}" />
+            <Setter Property="AutomationProperties.Name" Value="{Binding AutomationName}" />
+        </Style>
+    </Window.Resources>
+
+    <Border Style="{StaticResource AppPageSurface}">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <!-- ═══ Identity ═══ -->
+            <components:AppPageHeader Grid.Row="0" Icon="Add"
+                                      Title="Create a server"
+                                      Description="Pick what you want to play. ChunkPilot works out the technical details.">
+                <components:AppPageHeader.StatusContent>
+                    <components:AppStatusBadge Tone="Warning" Icon="Lab" Text="Design preview - nothing is installed"
+                                               AutomationProperties.Name="Design preview. Nothing is installed." />
+                </components:AppPageHeader.StatusContent>
+            </components:AppPageHeader>
+
+            <!-- ═══ Compact step strip ═══ -->
+            <ItemsControl Grid.Row="1" ItemsSource="{Binding Steps}" Focusable="False"
+                          Margin="{StaticResource AppStackGap}"
+                          AutomationProperties.Name="Wizard steps">
+                <ItemsControl.Style>
+                    <Style TargetType="ItemsControl">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding Path=(ds:AppLayout.Mode), RelativeSource={RelativeSource Self}}" Value="Compact">
+                                <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </ItemsControl.Style>
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <WrapPanel />
+                    </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Border Margin="{StaticResource AppInlineGapLarge}"
+                                AutomationProperties.Name="{Binding AutomationName}">
+                            <StackPanel Orientation="Horizontal">
+                                <ds:AppIcon x:Name="StripMark" Kind="ChevronRight" Scale="Small"
+                                            VerticalAlignment="Center"
+                                            Margin="{StaticResource AppInlineGap}"
+                                            Foreground="{DynamicResource AppTextMuted}" />
+                                <TextBlock x:Name="StripLabel" Style="{StaticResource AppMutedText}"
+                                           VerticalAlignment="Center" Text="{Binding Title}" />
+                            </StackPanel>
+                        </Border>
+                        <DataTemplate.Triggers>
+                            <DataTrigger Binding="{Binding IsComplete}" Value="True">
+                                <Setter TargetName="StripMark" Property="Kind" Value="Checkmark" />
+                            </DataTrigger>
+                            <DataTrigger Binding="{Binding IsCurrent}" Value="True">
+                                <Setter TargetName="StripMark" Property="Kind" Value="ChevronRight" />
+                                <Setter TargetName="StripMark" Property="Foreground" Value="{DynamicResource AppTextAccent}" />
+                                <Setter TargetName="StripLabel" Property="Style" Value="{StaticResource AppBodyStrongText}" />
+                            </DataTrigger>
+                        </DataTemplate.Triggers>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+
+            <!-- ═══ Body ═══ -->
+            <Grid Grid.Row="2">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+
+                <!-- Step rail. Hidden in Compact, where the strip above takes over. -->
+                <ItemsControl Grid.Column="0" ItemsSource="{Binding Steps}" Focusable="False"
+                              Width="{StaticResource AppNavRailWidth}"
+                              Margin="{StaticResource AppInlineGapLarge}"
+                              AutomationProperties.Name="Wizard steps">
+                    <ItemsControl.Style>
+                        <Style TargetType="ItemsControl">
+                            <Setter Property="Visibility" Value="Visible" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding Path=(ds:AppLayout.Mode), RelativeSource={RelativeSource Self}}" Value="Compact">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </ItemsControl.Style>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Border x:Name="RailRow" Padding="{StaticResource AppRowPadding}"
+                                    MinHeight="{StaticResource AppNavRowHeight}"
+                                    CornerRadius="{StaticResource AppCornerControl}"
+                                    BorderThickness="{StaticResource AppSelectionIndicatorThickness}"
+                                    BorderBrush="{DynamicResource AppSurfaceTransparent}"
+                                    Background="{DynamicResource AppSurfaceTransparent}"
+                                    AutomationProperties.Name="{Binding AutomationName}">
+                                <StackPanel Orientation="Horizontal">
+                                    <ds:AppIcon x:Name="RailMark" Kind="ChevronRight" Scale="Small"
+                                                VerticalAlignment="Center"
+                                                Margin="{StaticResource AppInlineGapLarge}"
+                                                Foreground="{DynamicResource AppTextMuted}" />
+                                    <TextBlock x:Name="RailLabel" Style="{StaticResource AppSecondaryText}"
+                                               VerticalAlignment="Center" TextWrapping="Wrap"
+                                               Text="{Binding Title}" />
+                                </StackPanel>
+                            </Border>
+                            <DataTemplate.Triggers>
+                                <DataTrigger Binding="{Binding IsComplete}" Value="True">
+                                    <Setter TargetName="RailMark" Property="Kind" Value="Checkmark" />
+                                    <Setter TargetName="RailMark" Property="Foreground" Value="{DynamicResource AppSuccessText}" />
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding IsCurrent}" Value="True">
+                                    <Setter TargetName="RailRow" Property="Background" Value="{DynamicResource AppAccentSubtle}" />
+                                    <Setter TargetName="RailRow" Property="BorderBrush" Value="{DynamicResource AppAccentIndicator}" />
+                                    <Setter TargetName="RailMark" Property="Foreground" Value="{DynamicResource AppTextAccent}" />
+                                    <Setter TargetName="RailLabel" Property="Style" Value="{StaticResource AppBodyStrongText}" />
+                                </DataTrigger>
+                            </DataTemplate.Triggers>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+
+                <!-- The single page scroller. Nothing inside may add another scroll region. -->
+                <ScrollViewer Grid.Column="1" Style="{StaticResource AppPageScrollViewer}">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <!-- ─── Main content column ─── -->
+                        <StackPanel Grid.Row="0" Grid.Column="0" MaxWidth="{StaticResource AppMeasureContent}">
+
+                            <!-- ······ Step 1: choose server type ······ -->
+                            <StackPanel Visibility="{Binding CurrentStep, Converter={StaticResource StepVisibility}, ConverterParameter=Intent}">
+                                <TextBlock Style="{StaticResource AppTitleText}" Text="What do you want to run?" />
+                                <TextBlock Style="{StaticResource AppSecondaryText}"
+                                           Margin="{StaticResource AppStackGap}"
+                                           Text="Pick the closest description. You are choosing what you want to play, not a provider, a JAR file or a Java version - ChunkPilot works those out." />
+
+                                <ListBox x:Name="IntentList" ItemsSource="{Binding Intents}"
+                                         SelectedItem="{Binding SelectedIntent}"
+                                         AutomationProperties.Name="Server type"
+                                         ScrollViewer.VerticalScrollBarVisibility="Disabled"
+                                         KeyboardNavigation.DirectionalNavigation="Cycle">
+                                    <ListBox.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <UniformGrid>
+                                                <UniformGrid.Style>
+                                                    <Style TargetType="UniformGrid">
+                                                        <Setter Property="Columns" Value="2" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding Path=(ds:AppLayout.Mode), RelativeSource={RelativeSource Self}}" Value="Compact">
+                                                                <Setter Property="Columns" Value="1" />
+                                                            </DataTrigger>
+                                                            <DataTrigger Binding="{Binding Path=(ds:AppLayout.Mode), RelativeSource={RelativeSource Self}}" Value="Wide">
+                                                                <Setter Property="Columns" Value="3" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </UniformGrid.Style>
+                                            </UniformGrid>
+                                        </ItemsPanelTemplate>
+                                    </ListBox.ItemsPanel>
+                                    <ListBox.ItemContainerStyle>
+                                        <Style TargetType="ListBoxItem" BasedOn="{StaticResource AppListRow}">
+                                            <Setter Property="Padding" Value="{StaticResource AppInsetNone}" />
+                                            <Setter Property="Margin" Value="{StaticResource AppInset4}" />
+                                            <Setter Property="VerticalContentAlignment" Value="Stretch" />
+                                            <Setter Property="AutomationProperties.Name" Value="{Binding AutomationName}" />
+                                        </Style>
+                                    </ListBox.ItemContainerStyle>
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border x:Name="IntentCard" Style="{StaticResource AppCard}"
+                                                    Padding="{StaticResource AppInsetNone}">
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="Auto" />
+                                                        <ColumnDefinition Width="*" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <Border x:Name="IntentEdge" Grid.Column="0"
+                                                            Width="{StaticResource AppSelectionIndicatorWidth}"
+                                                            Background="{DynamicResource AppSurfaceTransparent}" />
+                                                    <Grid Grid.Column="1" Margin="{StaticResource AppCardPadding}">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="Auto" />
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="Auto" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <ds:AppIcon Grid.Column="0" Kind="{Binding Icon}" Scale="Hero"
+                                                                    VerticalAlignment="Top"
+                                                                    Margin="{StaticResource AppInlineGapLarge}"
+                                                                    Foreground="{DynamicResource AppTextSecondary}" />
+                                                        <StackPanel Grid.Column="1">
+                                                            <TextBlock Style="{StaticResource AppSubtitleText}"
+                                                                       TextWrapping="Wrap" Text="{Binding Title}" />
+                                                            <TextBlock Style="{StaticResource AppSecondaryText}"
+                                                                       Margin="{StaticResource AppStackGapTiny}"
+                                                                       Text="{Binding Description}" />
+                                                        </StackPanel>
+                                                        <ds:AppIcon x:Name="IntentChosen" Grid.Column="2" Kind="Checkmark"
+                                                                    Scale="Medium" VerticalAlignment="Top"
+                                                                    Visibility="Collapsed"
+                                                                    Margin="{StaticResource AppInlineGapLeading}"
+                                                                    Foreground="{DynamicResource AppTextAccent}" />
+                                                    </Grid>
+                                                </Grid>
+                                            </Border>
+                                            <DataTemplate.Triggers>
+                                                <DataTrigger Binding="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType=ListBoxItem}}" Value="True">
+                                                    <Setter TargetName="IntentCard" Property="Background" Value="{DynamicResource AppSurfaceHover}" />
+                                                </DataTrigger>
+                                                <!-- Selection carries three cues besides colour: an accent
+                                                     edge, a tick, and a stronger boundary. -->
+                                                <DataTrigger Binding="{Binding IsSelected, RelativeSource={RelativeSource AncestorType=ListBoxItem}}" Value="True">
+                                                    <Setter TargetName="IntentCard" Property="Background" Value="{DynamicResource AppAccentSubtle}" />
+                                                    <Setter TargetName="IntentCard" Property="BorderBrush" Value="{DynamicResource AppAccentIndicator}" />
+                                                    <Setter TargetName="IntentEdge" Property="Background" Value="{DynamicResource AppAccentIndicator}" />
+                                                    <Setter TargetName="IntentChosen" Property="Visibility" Value="Visible" />
+                                                </DataTrigger>
+                                            </DataTemplate.Triggers>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+
+                                <components:AppAlert Tone="Info" Margin="{StaticResource AppStackGapTop}"
+                                                     Title="Adding a server you already have is somewhere else"
+                                                     Message="Importing an existing folder keeps its own window, because ChunkPilot reads it without changing anything and that promise should not be buried inside a creation flow." />
+                            </StackPanel>
+
+                            <!-- ······ Step 2: basic setup ······ -->
+                            <StackPanel Visibility="{Binding CurrentStep, Converter={StaticResource StepVisibility}, ConverterParameter=Setup}">
+                                <TextBlock Style="{StaticResource AppTitleText}" Text="Basic setup" />
+                                <TextBlock Style="{StaticResource AppSecondaryText}"
+                                           Margin="{StaticResource AppStackGap}"
+                                           Text="{Binding SetupDescription}" />
+
+                                <components:AppSectionCard Header="Name" Icon="Edit"
+                                                           Description="You will see this name in ChunkPilot and it becomes the server's folder name.">
+                                    <StackPanel>
+                                        <TextBlock Style="{StaticResource AppLabelText}" Text="Server name" />
+                                        <TextBox x:Name="ServerNameBox"
+                                                 Margin="{StaticResource AppStackGapTiny}"
+                                                 MaxWidth="{StaticResource AppMeasureForm}"
+                                                 HorizontalAlignment="Left"
+                                                 Text="{Binding ServerName, UpdateSourceTrigger=LostFocus}"
+                                                 ds:AppInput.Placeholder="For example: Sunday survival"
+                                                 AutomationProperties.Name="Server name" />
+                                        <ItemsControl ItemsSource="{Binding NameMessages}" Focusable="False"
+                                                      Margin="{StaticResource AppStackGapTop}"
+                                                      Visibility="{Binding HasNameMessages, Converter={StaticResource PreviewBoolVisibility}}"
+                                                      AutomationProperties.Name="Problems with this name"
+                                                      AutomationProperties.LiveSetting="Polite">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <StackPanel Orientation="Horizontal" Margin="{StaticResource AppStackGapSmall}">
+                                                        <ds:AppIcon Kind="Warning" Scale="Small" VerticalAlignment="Top"
+                                                                    Margin="{StaticResource AppInlineGap}"
+                                                                    Foreground="{DynamicResource AppWarningText}" />
+                                                        <TextBlock Style="{StaticResource AppSecondaryText}"
+                                                                   MaxWidth="{StaticResource AppMeasureForm}"
+                                                                   Text="{Binding}" />
+                                                    </StackPanel>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </StackPanel>
+                                </components:AppSectionCard>
+
+                                <!-- Plain-language framing, shown only where it applies. -->
+                                <components:AppAlert Tone="Info" Margin="{StaticResource AppStackGapTop}"
+                                                     Visibility="{Binding ShowsPluginExplanation, Converter={StaticResource PreviewBoolVisibility}}"
+                                                     Title="What plugin support means"
+                                                     Message="Plugins run on the server only. Your friends keep using an ordinary Minecraft client and install nothing. The Minecraft version and the server build go together, so changing one means changing the other." />
+
+                                <components:AppAlert Tone="Info" Margin="{StaticResource AppStackGapTop}"
+                                                     Visibility="{Binding ShowsModExplanation, Converter={StaticResource PreviewBoolVisibility}}"
+                                                     Title="What mod support means"
+                                                     Message="Mods change the game itself, so the server and every player must run the same loader and the same mods. A loader only exists for the Minecraft versions it was built for." />
+
+                                <components:AppAlert Tone="Info" Margin="{StaticResource AppStackGapTop}"
+                                                     Visibility="{Binding ShowsCrossplayExplanation, Converter={StaticResource PreviewBoolVisibility}}"
+                                                     Title="How Java and Bedrock differ"
+                                                     Message="This is a Java server that also accepts Bedrock players. Java and Bedrock use separate addresses and separate network protocols, so they are never one line to copy. Whether anyone outside your home network can reach the server is a separate networking step and is not decided here." />
+
+                                <!-- Option list: versions, builds or loaders for the chosen intent. -->
+                                <components:AppSectionCard Icon="Options"
+                                                           Header="{Binding OptionListLabel}"
+                                                           Margin="{StaticResource AppStackGapTop}"
+                                                           Description="Every choice shows how much ChunkPilot actually knows about it."
+                                                           Visibility="{Binding ShowsOptionList, Converter={StaticResource PreviewBoolVisibility}}">
+                                    <ListBox x:Name="OptionList" ItemsSource="{Binding Options}"
+                                             SelectedItem="{Binding SelectedOption}"
+                                             ItemTemplate="{StaticResource OptionRowTemplate}"
+                                             ItemContainerStyle="{StaticResource PreviewOptionContainer}"
+                                             ScrollViewer.VerticalScrollBarVisibility="Disabled"
+                                             AutomationProperties.Name="{Binding OptionListLabel}" />
+                                </components:AppSectionCard>
+
+                                <!-- Modpack browse: projects first, then that project's releases. -->
+                                <components:AppSectionCard Icon="Box" Header="Find a modpack"
+                                                           Margin="{StaticResource AppStackGapTop}"
+                                                           Description="These are invented example projects used to show the states you will meet, including the ones ChunkPilot refuses."
+                                                           Visibility="{Binding ShowsProjectBrowser, Converter={StaticResource PreviewBoolVisibility}}">
+                                    <StackPanel>
+                                        <components:AppSearchBox HorizontalAlignment="Left"
+                                                                 Margin="{StaticResource AppStackGap}"
+                                                                 Text="{Binding ProjectSearch, Mode=TwoWay}"
+                                                                 Placeholder="Search example modpacks"
+                                                                 AutomationProperties.Name="Search example modpacks" />
+                                        <ListBox ItemsSource="{Binding Projects}" SelectedItem="{Binding SelectedProject}"
+                                                 ScrollViewer.VerticalScrollBarVisibility="Disabled"
+                                                 AutomationProperties.Name="Example modpacks">
+                                            <ListBox.ItemContainerStyle>
+                                                <Style TargetType="ListBoxItem" BasedOn="{StaticResource AppListRow}">
+                                                    <Setter Property="Padding" Value="{StaticResource AppInsetNone}" />
+                                                    <Setter Property="Margin" Value="{StaticResource AppStackGapSmall}" />
+                                                    <Setter Property="AutomationProperties.Name" Value="{Binding AutomationName}" />
+                                                </Style>
+                                            </ListBox.ItemContainerStyle>
+                                            <ListBox.ItemTemplate>
+                                                <DataTemplate>
+                                                    <components:AppServerRow ServerName="{Binding Name}" Subtitle="{Binding RowSubtitle}"
+                                                                             Tone="{Binding HeadlineConclusion, Converter={StaticResource CompatibilityTone}}"
+                                                                             IsSelected="{Binding IsSelected, RelativeSource={RelativeSource AncestorType=ListBoxItem}, Mode=OneWay}">
+                                                        <components:AppStatusBadge
+                                                            Text="{Binding HeadlineConclusion, Converter={StaticResource CompatibilityBadge}}"
+                                                            Tone="{Binding HeadlineConclusion, Converter={StaticResource CompatibilityTone}}"
+                                                            Icon="{Binding HeadlineConclusion, Converter={StaticResource CompatibilityIcon}}" />
+                                                    </components:AppServerRow>
+                                                </DataTemplate>
+                                            </ListBox.ItemTemplate>
+                                        </ListBox>
+                                        <components:AppEmptyState Icon="Search" Title="No example modpack matches that"
+                                                                  Message="Clear the search to see every example project this preview ships with."
+                                                                  Visibility="{Binding HasNoProjectMatches, Converter={StaticResource PreviewBoolVisibility}}" />
+                                    </StackPanel>
+                                </components:AppSectionCard>
+
+                                <components:AppSectionCard Icon="History" Header="Choose a release"
+                                                           Margin="{StaticResource AppStackGapTop}"
+                                                           Description="A release is one exact version of the pack. Whether it can run as a server is decided per release."
+                                                           Visibility="{Binding ShowsProjectVersions, Converter={StaticResource PreviewBoolVisibility}}">
+                                    <ListBox ItemsSource="{Binding ProjectVersions}" SelectedItem="{Binding SelectedOption}"
+                                             ItemTemplate="{StaticResource OptionRowTemplate}"
+                                             ItemContainerStyle="{StaticResource PreviewOptionContainer}"
+                                             ScrollViewer.VerticalScrollBarVisibility="Disabled"
+                                             AutomationProperties.Name="Releases of the chosen modpack" />
+                                </components:AppSectionCard>
+
+                                <!-- Advanced: described, not yet built. No editor, no picker, no path. -->
+                                <components:AppSectionCard Icon="Options" Header="What expert setup will cover"
+                                                           Margin="{StaticResource AppStackGapTop}"
+                                                           Description="{Binding AdvancedNotYetBuilt}"
+                                                           Visibility="{Binding ShowsAdvancedSummary, Converter={StaticResource PreviewBoolVisibility}}">
+                                    <StackPanel>
+                                        <ItemsControl ItemsSource="{Binding AdvancedCategories}" Focusable="False">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <StackPanel Margin="{StaticResource AppStackGap}">
+                                                        <TextBlock Style="{StaticResource AppBodyStrongText}" Text="{Binding Title}" />
+                                                        <TextBlock Style="{StaticResource AppSecondaryText}"
+                                                                   MaxWidth="{StaticResource AppMeasureForm}"
+                                                                   HorizontalAlignment="Left"
+                                                                   Text="{Binding Description}" />
+                                                    </StackPanel>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                        <components:AppAlert Tone="Warning"
+                                                             Title="Custom choices reduce what ChunkPilot can check"
+                                                             Message="Once you replace something ChunkPilot resolved - the server files, the runtime or the launch command - it can no longer confirm the combination works, and it will say so rather than guess." />
+                                        <CheckBox x:Name="AdvancedAcknowledgeBox"
+                                                  Margin="{StaticResource AppStackGapTop}"
+                                                  IsChecked="{Binding AdvancedAcknowledged}"
+                                                  Content="I understand ChunkPilot cannot verify a setup I assemble myself."
+                                                  AutomationProperties.Name="I understand ChunkPilot cannot verify a setup I assemble myself." />
+                                    </StackPanel>
+                                </components:AppSectionCard>
+
+                                <!-- Findings, at the point of choice rather than deferred to Review. -->
+                                <components:AppAlert Tone="Danger" Margin="{StaticResource AppStackGapTop}"
+                                                     Title="This cannot continue yet"
+                                                     Visibility="{Binding HasBlockingMessages, Converter={StaticResource PreviewBoolVisibility}}"
+                                                     AutomationProperties.LiveSetting="Assertive">
+                                    <components:AppAlert.DetailContent>
+                                        <ItemsControl ItemsSource="{Binding BlockingMessages}" Focusable="False">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Style="{StaticResource AppSecondaryText}"
+                                                               MaxWidth="{StaticResource AppMeasureForm}"
+                                                               HorizontalAlignment="Left"
+                                                               Margin="{StaticResource AppStackGapSmall}"
+                                                               Text="{Binding}" />
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </components:AppAlert.DetailContent>
+                                </components:AppAlert>
+
+                                <components:AppAlert Tone="Warning" Margin="{StaticResource AppStackGapTop}"
+                                                     Title="Worth knowing before you continue"
+                                                     Visibility="{Binding HasWarningMessages, Converter={StaticResource PreviewBoolVisibility}}">
+                                    <components:AppAlert.DetailContent>
+                                        <ItemsControl ItemsSource="{Binding WarningMessages}" Focusable="False">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Style="{StaticResource AppSecondaryText}"
+                                                               MaxWidth="{StaticResource AppMeasureForm}"
+                                                               HorizontalAlignment="Left"
+                                                               Margin="{StaticResource AppStackGapSmall}"
+                                                               Text="{Binding}" />
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </components:AppAlert.DetailContent>
+                                </components:AppAlert>
+                            </StackPanel>
+
+                            <!-- ······ Step 3: review ······ -->
+                            <StackPanel MaxWidth="{StaticResource AppMeasureForm}" HorizontalAlignment="Center"
+                                        Visibility="{Binding CurrentStep, Converter={StaticResource StepVisibility}, ConverterParameter=Review}">
+                                <TextBlock Style="{StaticResource AppTitleText}" Text="Review" />
+                                <TextBlock Style="{StaticResource AppSecondaryText}"
+                                           Margin="{StaticResource AppStackGap}"
+                                           Text="Everything below is what you chose. Nothing has been downloaded, written or installed." />
+
+                                <ItemsControl ItemsSource="{Binding Review.Sections}" Focusable="False">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <components:AppSectionCard Header="{Binding Title}">
+                                                <StackPanel>
+                                                    <ItemsControl ItemsSource="{Binding Rows}" Focusable="False"
+                                                                  ItemTemplate="{StaticResource ReviewRowTemplate}" />
+                                                    <ItemsControl ItemsSource="{Binding Notes}" Focusable="False"
+                                                                  Margin="{StaticResource AppStackGapTop}"
+                                                                  ItemTemplate="{StaticResource ReviewNoteTemplate}"
+                                                                  Visibility="{Binding Notes, Converter={StaticResource AnyItemsVisibility}}" />
+                                                </StackPanel>
+                                            </components:AppSectionCard>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+
+                                <components:AppAlert Tone="Danger" Margin="{StaticResource AppStackGapTop}"
+                                                     Title="Blocking problems"
+                                                     Message="These have to be resolved before the preview can finish. Go back to change them."
+                                                     Visibility="{Binding Review.BlockingIssues, Converter={StaticResource AnyItemsVisibility}}">
+                                    <components:AppAlert.DetailContent>
+                                        <ItemsControl ItemsSource="{Binding Review.BlockingIssues}" Focusable="False">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Style="{StaticResource AppSecondaryText}"
+                                                               Margin="{StaticResource AppStackGapSmall}" Text="{Binding}" />
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </components:AppAlert.DetailContent>
+                                </components:AppAlert>
+
+                                <components:AppAlert Tone="Warning" Margin="{StaticResource AppStackGapTop}"
+                                                     Title="Warnings"
+                                                     Message="None of these stop you, and all of them are true."
+                                                     Visibility="{Binding Review.Warnings, Converter={StaticResource AnyItemsVisibility}}">
+                                    <components:AppAlert.DetailContent>
+                                        <ItemsControl ItemsSource="{Binding Review.Warnings}" Focusable="False">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Style="{StaticResource AppSecondaryText}"
+                                                               Margin="{StaticResource AppStackGapSmall}" Text="{Binding}" />
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </components:AppAlert.DetailContent>
+                                </components:AppAlert>
+
+                                <components:AppSectionCard Icon="Timer" Header="What creating this would still need"
+                                                           Margin="{StaticResource AppStackGapTop}"
+                                                           Description="None of this has happened. It is what a real creation run would have to do."
+                                                           Visibility="{Binding Review.UnresolvedRequirements, Converter={StaticResource AnyItemsVisibility}}">
+                                    <ItemsControl ItemsSource="{Binding Review.UnresolvedRequirements}" Focusable="False">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <StackPanel Orientation="Horizontal" Margin="{StaticResource AppStackGapSmall}">
+                                                    <ds:AppIcon Kind="ChevronRight" Scale="Small" VerticalAlignment="Top"
+                                                                Margin="{StaticResource AppInlineGap}"
+                                                                Foreground="{DynamicResource AppTextMuted}" />
+                                                    <TextBlock Style="{StaticResource AppSecondaryText}" Text="{Binding}" />
+                                                </StackPanel>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </components:AppSectionCard>
+
+                                <!-- Technical provenance, available but never dominating the page. -->
+                                <components:AppSectionCard Icon="Diagnostics" Header="Evidence and provenance"
+                                                           Margin="{StaticResource AppStackGapTop}"
+                                                           IsCollapsible="True" IsExpanded="False"
+                                                           Description="Where each conclusion came from, and what was never established."
+                                                           Visibility="{Binding Review.EvidenceRows, Converter={StaticResource AnyItemsVisibility}}">
+                                    <StackPanel>
+                                        <ItemsControl ItemsSource="{Binding Review.EvidenceRows}" Focusable="False"
+                                                      ItemTemplate="{StaticResource ReviewRowTemplate}" />
+                                        <ItemsControl ItemsSource="{Binding Review.EvidenceNotes}" Focusable="False"
+                                                      Margin="{StaticResource AppStackGapTop}"
+                                                      ItemTemplate="{StaticResource ReviewNoteTemplate}" />
+                                    </StackPanel>
+                                </components:AppSectionCard>
+
+                                <components:AppAlert Tone="Warning" Margin="{StaticResource AppStackGapTop}"
+                                                     Title="This is a preview"
+                                                     Message="{Binding Review.PreviewNotice}" />
+                            </StackPanel>
+
+                            <!-- ······ Step 4: preview complete ······ -->
+                            <StackPanel MaxWidth="{StaticResource AppMeasureForm}" HorizontalAlignment="Center"
+                                        Visibility="{Binding CurrentStep, Converter={StaticResource StepVisibility}, ConverterParameter=Completion}">
+                                <components:AppEmptyState Icon="Lab" Title="Preview complete"
+                                                          Message="You reached the end of the new Create Server experience. No server was installed and none was registered." />
+                                <components:AppAlert Tone="Warning" Margin="{StaticResource AppStackGapTop}"
+                                                     Title="Nothing was created"
+                                                     Message="{Binding Review.PreviewNotice}" />
+                                <components:AppSectionCard Icon="Note" Header="What you walked through"
+                                                           Margin="{StaticResource AppStackGapTop}">
+                                    <ItemsControl ItemsSource="{Binding Review.Sections}" Focusable="False">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <ItemsControl ItemsSource="{Binding Rows}" Focusable="False"
+                                                              ItemTemplate="{StaticResource ReviewRowTemplate}" />
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </components:AppSectionCard>
+                            </StackPanel>
+                        </StackPanel>
+
+                        <!-- ─── Details panel. Beside the content at Wide, beneath it otherwise. ─── -->
+                        <StackPanel x:Name="DetailsPanel" MaxWidth="{StaticResource AppProseMaxWidth}"
+                                    AutomationProperties.Name="Details">
+                            <StackPanel.Style>
+                                <Style TargetType="StackPanel">
+                                    <Setter Property="Grid.Row" Value="1" />
+                                    <Setter Property="Grid.Column" Value="0" />
+                                    <Setter Property="Margin" Value="{StaticResource AppStackGapTop}" />
+                                    <Setter Property="HorizontalAlignment" Value="Left" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding Path=(ds:AppLayout.Mode), RelativeSource={RelativeSource Self}}" Value="Wide">
+                                            <Setter Property="Grid.Row" Value="0" />
+                                            <Setter Property="Grid.Column" Value="1" />
+                                            <Setter Property="Margin" Value="{StaticResource AppInlineGapLeadingLarge}" />
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding CurrentStep, Converter={StaticResource StepMatches}, ConverterParameter=Review}" Value="True">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding CurrentStep, Converter={StaticResource StepMatches}, ConverterParameter=Completion}" Value="True">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </StackPanel.Style>
+
+                            <!-- Shown before anything is chosen, so the panel is never an empty box. -->
+                            <components:AppSectionCard Icon="Question" Header="Not sure which to pick?"
+                                                       Visibility="{Binding HasSelectedIntent, Converter={StaticResource PreviewBoolVisibility}, ConverterParameter=invert}">
+                                <StackPanel>
+                                    <TextBlock Style="{StaticResource AppSecondaryText}"
+                                               Text="Choose by what you want to play. If your friends will use an ordinary Minecraft client and install nothing, pick Just Minecraft or Server with plugins. If everyone is happy to install the same thing, mods and modpacks open up." />
+                                    <TextBlock Style="{StaticResource AppMutedText}"
+                                               Margin="{StaticResource AppStackGapTop}"
+                                               Text="Whatever you choose here can be changed later by creating another server. Nothing is decided permanently on this step." />
+                                </StackPanel>
+                            </components:AppSectionCard>
+
+                            <components:AppSectionCard Icon="Info" Header="{Binding SelectedIntent.Title}"
+                                                       Visibility="{Binding HasSelectedIntent, Converter={StaticResource PreviewBoolVisibility}}">
+                                <StackPanel>
+                                    <TextBlock Style="{StaticResource AppSecondaryText}" Text="{Binding SelectedIntent.HelpText}" />
+                                    <TextBlock Style="{StaticResource AppMutedText}"
+                                               Margin="{StaticResource AppStackGapTop}"
+                                               Text="{Binding SelectedIntent.PreviewAvailability}" />
+                                </StackPanel>
+                            </components:AppSectionCard>
+
+                            <components:AppSectionCard Icon="ShieldChecked" Header="Will it work"
+                                                       Margin="{StaticResource AppStackGapTop}"
+                                                       Visibility="{Binding Context.OptionTitle, Converter={StaticResource NonEmptyVisibility}}">
+                                <StackPanel>
+                                    <components:AppStatusBadge HorizontalAlignment="Left"
+                                                               Text="{Binding Context.Compatibility.Conclusion, Converter={StaticResource CompatibilityLabel}}"
+                                                               Tone="{Binding Context.Compatibility.Conclusion, Converter={StaticResource CompatibilityTone}}"
+                                                               Icon="{Binding Context.Compatibility.Conclusion, Converter={StaticResource CompatibilityIcon}}" />
+                                    <TextBlock Style="{StaticResource AppSecondaryText}"
+                                               Margin="{StaticResource AppStackGapTop}"
+                                               Text="{Binding Context.OptionSummary}" />
+                                    <TextBlock Style="{StaticResource AppLabelText}"
+                                               Margin="{StaticResource AppStackGapTop}" Text="Players need" />
+                                    <TextBlock Style="{StaticResource AppBodyText}"
+                                               Text="{Binding Context.ClientRequirementText}" />
+                                    <TextBlock Style="{StaticResource AppMutedText}"
+                                               Margin="{StaticResource AppStackGapTop}"
+                                               Text="{Binding Context.ProvenanceDetail}" />
+                                </StackPanel>
+                            </components:AppSectionCard>
+                        </StackPanel>
+                    </Grid>
+                </ScrollViewer>
+            </Grid>
+
+            <!-- ═══ Action footer. Never scrolls, never moves. ═══ -->
+            <StackPanel Grid.Row="3">
+                <Border Style="{StaticResource AppDivider}" />
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Grid.Column="0" VerticalAlignment="Center"
+                                Margin="{StaticResource AppInlineGapLarge}">
+                        <TextBlock Style="{StaticResource AppBodyStrongText}" Text="{Binding StepPosition}"
+                                   AutomationProperties.Name="{Binding StepAutomationName}" />
+                        <TextBlock x:Name="FooterNotice" Style="{StaticResource AppMutedText}"
+                                   Text="Design preview. Nothing is downloaded, written or installed." />
+                    </StackPanel>
+                    <WrapPanel Grid.Column="1" HorizontalAlignment="Right" VerticalAlignment="Center">
+                        <Button Content="Back" Command="{Binding BackCommand}"
+                                ds:AppButton.Icon="ChevronLeft"
+                                Margin="{StaticResource AppInlineGap}"
+                                AutomationProperties.Name="Back to the previous step"
+                                Visibility="{Binding ShowsBack, Converter={StaticResource PreviewBoolVisibility}}" />
+                        <Button Content="Cancel" Command="{Binding CancelCommand}"
+                                Margin="{StaticResource AppInlineGap}"
+                                AutomationProperties.Name="Cancel and close the preview"
+                                Visibility="{Binding ShowsCancel, Converter={StaticResource PreviewBoolVisibility}}" />
+                        <Button x:Name="NextButton" Content="Next" Command="{Binding NextCommand}"
+                                Style="{StaticResource AppPrimaryButton}"
+                                ds:AppButton.Icon="ChevronRight"
+                                AutomationProperties.Name="Next step"
+                                Visibility="{Binding ShowsNext, Converter={StaticResource PreviewBoolVisibility}}" />
+                        <Button x:Name="FinishButton" Content="Finish preview" Command="{Binding FinishPreviewCommand}"
+                                Style="{StaticResource AppPrimaryButton}"
+                                ds:AppButton.Icon="Checkmark"
+                                AutomationProperties.Name="Finish the preview. This creates nothing."
+                                Visibility="{Binding ShowsFinish, Converter={StaticResource PreviewBoolVisibility}}" />
+                        <Button x:Name="CloseButton" Content="Close preview" Command="{Binding ClosePreviewCommand}"
+                                Style="{StaticResource AppPrimaryButton}"
+                                ds:AppButton.Icon="Dismiss"
+                                AutomationProperties.Name="Close the preview"
+                                Visibility="{Binding ShowsClose, Converter={StaticResource PreviewBoolVisibility}}" />
+                    </WrapPanel>
+                </Grid>
+            </StackPanel>
+        </Grid>
+    </Border>
+</Window>

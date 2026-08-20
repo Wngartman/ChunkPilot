@@ -1,0 +1,33 @@
+<!--
+    Reduced-motion overlay.
+
+    Merged over the theme by AppTheme when the user has turned Windows animation effects off, or
+    when CHUNKPILOT_UI_REDUCED_MOTION is set. Every duration collapses to zero and every travel
+    distance to nothing.
+
+    An honest caveat: a Storyboard's Duration inside a ControlTemplate is resolved at parse time, so
+    WPF cannot re-read it from a swapped dictionary. That is precisely why Reduced Motion is enforced
+    twice - AppMotion.IsEnabled stops the storyboards from ever starting, and this dictionary covers
+    every other consumer of the duration and offset tokens.
+
+    Every key declared in Tokens/MotionTokens.xaml must appear here; DesignSystemContractTests
+    enforces the coverage so a newly added duration cannot escape the preference.
+-->
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:sys="clr-namespace:System;assembly=mscorlib">
+
+    <Duration x:Key="AppDurationInstant">0:0:0</Duration>
+    <Duration x:Key="AppDurationPressIn">0:0:0</Duration>
+    <Duration x:Key="AppDurationPressOut">0:0:0</Duration>
+    <Duration x:Key="AppDurationFast">0:0:0</Duration>
+    <Duration x:Key="AppDurationStandard">0:0:0</Duration>
+    <Duration x:Key="AppDurationSlow">0:0:0</Duration>
+    <Duration x:Key="AppDurationBusyCycle">0:0:0</Duration>
+
+    <CubicEase x:Key="AppEaseStandard" EasingMode="EaseOut" />
+    <CubicEase x:Key="AppEaseExit" EasingMode="EaseIn" />
+
+    <sys:Double x:Key="AppMotionOffsetSmall">0</sys:Double>
+    <sys:Double x:Key="AppMotionOffset">0</sys:Double>
+</ResourceDictionary>

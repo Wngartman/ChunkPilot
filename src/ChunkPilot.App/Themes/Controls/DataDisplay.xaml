@@ -1,0 +1,582 @@
+﻿<!--
+    Data display: status badges, server rows, info rows, lists, tables, progress and busy states.
+
+    Tone handling is explicit. Every tone-bearing template lists all six tones as triggers rather
+    than resolving a brush in code, so the token used for "warning" is visible in the file a reviewer
+    is reading, and a missing tone fails visibly instead of silently rendering as healthy.
+
+    Progress never lies. A determinate bar is only used when the total is known; the indeterminate
+    state pulses a full-width muted track and always sits next to text that says what is happening.
+    Under Reduced Motion the pulse stops and the text alone carries the state.
+-->
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:ds="clr-namespace:ChunkPilot.App.DesignSystem"
+                    xmlns:components="clr-namespace:ChunkPilot.App.DesignSystem.Components">
+
+    <!-- ============ Status badge ============ -->
+    <Style x:Key="AppStatusBadge" TargetType="{x:Type components:AppStatusBadge}">
+        <Setter Property="VerticalAlignment" Value="Center" />
+        <Setter Property="Foreground" Value="{DynamicResource AppTextPrimary}" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="{x:Type components:AppStatusBadge}">
+                    <Border x:Name="Root" Background="{DynamicResource AppNeutralSubtle}"
+                            BorderBrush="{DynamicResource AppStrokeSubtle}"
+                            BorderThickness="{StaticResource AppStrokeThickness}"
+                            CornerRadius="{StaticResource AppCornerPill}"
+                            Padding="{StaticResource AppBadgePadding}"
+                            SnapsToDevicePixels="True">
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <Ellipse x:Name="Dot"
+                                     Width="{StaticResource AppStatusDotSize}"
+                                     Height="{StaticResource AppStatusDotSize}"
+                                     Fill="{DynamicResource AppNeutral}"
+                                     VerticalAlignment="Center"
+                                     Margin="{StaticResource AppInlineGap}" />
+                            <ds:AppIcon x:Name="Mark" Scale="Small" Visibility="Collapsed"
+                                        Margin="{StaticResource AppInlineGap}"
+                                        Foreground="{DynamicResource AppNeutralText}"
+                                        Kind="{Binding Icon, RelativeSource={RelativeSource TemplatedParent}, TargetNullValue=Question}" />
+                            <!-- Text is mandatory: the tone is a hint, never the message. -->
+                            <TextBlock x:Name="Label" Style="{StaticResource AppCaptionText}"
+                                       VerticalAlignment="Center"
+                                       Foreground="{DynamicResource AppNeutralText}"
+                                       Text="{TemplateBinding Text}" />
+                        </StackPanel>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="Tone" Value="Info">
+                            <Setter TargetName="Root" Property="Background" Value="{DynamicResource AppInfoSubtle}" />
+                            <Setter TargetName="Dot" Property="Fill" Value="{DynamicResource AppInfo}" />
+                            <Setter TargetName="Mark" Property="Foreground" Value="{DynamicResource AppInfoText}" />
+                            <Setter TargetName="Label" Property="Foreground" Value="{DynamicResource AppInfoText}" />
+                        </Trigger>
+                        <Trigger Property="Tone" Value="Success">
+                            <Setter TargetName="Root" Property="Background" Value="{DynamicResource AppSuccessSubtle}" />
+                            <Setter TargetName="Dot" Property="Fill" Value="{DynamicResource AppSuccess}" />
+                            <Setter TargetName="Mark" Property="Foreground" Value="{DynamicResource AppSuccessText}" />
+                            <Setter TargetName="Label" Property="Foreground" Value="{DynamicResource AppSuccessText}" />
+                        </Trigger>
+                        <Trigger Property="Tone" Value="Warning">
+                            <Setter TargetName="Root" Property="Background" Value="{DynamicResource AppWarningSubtle}" />
+                            <Setter TargetName="Dot" Property="Fill" Value="{DynamicResource AppWarning}" />
+                            <Setter TargetName="Mark" Property="Foreground" Value="{DynamicResource AppWarningText}" />
+                            <Setter TargetName="Label" Property="Foreground" Value="{DynamicResource AppWarningText}" />
+                        </Trigger>
+                        <Trigger Property="Tone" Value="Danger">
+                            <Setter TargetName="Root" Property="Background" Value="{DynamicResource AppDangerSubtle}" />
+                            <Setter TargetName="Dot" Property="Fill" Value="{DynamicResource AppDanger}" />
+                            <Setter TargetName="Mark" Property="Foreground" Value="{DynamicResource AppDangerText}" />
+                            <Setter TargetName="Label" Property="Foreground" Value="{DynamicResource AppDangerText}" />
+                        </Trigger>
+                        <Trigger Property="Tone" Value="Accent">
+                            <Setter TargetName="Root" Property="Background" Value="{DynamicResource AppAccentSubtle}" />
+                            <Setter TargetName="Dot" Property="Fill" Value="{DynamicResource AppAccent}" />
+                            <Setter TargetName="Mark" Property="Foreground" Value="{DynamicResource AppTextAccent}" />
+                            <Setter TargetName="Label" Property="Foreground" Value="{DynamicResource AppTextAccent}" />
+                        </Trigger>
+                        <Trigger Property="IsSubtle" Value="True">
+                            <Setter TargetName="Root" Property="Background" Value="{DynamicResource AppSurfaceTransparent}" />
+                            <Setter TargetName="Root" Property="BorderBrush" Value="{DynamicResource AppSurfaceTransparent}" />
+                            <Setter TargetName="Root" Property="Padding" Value="{StaticResource AppInsetNone}" />
+                        </Trigger>
+                        <!-- A glyph replaces the dot when a symbol carries more meaning. -->
+                        <Trigger Property="Icon" Value="{x:Null}">
+                            <Setter TargetName="Mark" Property="Visibility" Value="Collapsed" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+    <Style TargetType="{x:Type components:AppStatusBadge}" BasedOn="{StaticResource AppStatusBadge}" />
+
+    <!-- ============ Server row ============ -->
+    <Style x:Key="AppServerRow" TargetType="{x:Type components:AppServerRow}">
+        <Setter Property="MinHeight" Value="{StaticResource AppRowHeightLarge}" />
+        <Setter Property="Padding" Value="{StaticResource AppRowPadding}" />
+        <Setter Property="Foreground" Value="{DynamicResource AppTextPrimary}" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="{x:Type components:AppServerRow}">
+                    <Grid>
+                        <Border x:Name="Root" Background="{DynamicResource AppSurfaceTransparent}"
+                                CornerRadius="{StaticResource AppCornerControl}"
+                                Padding="{TemplateBinding Padding}"
+                                SnapsToDevicePixels="True">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <Image x:Name="ServerIcon" Grid.Column="0"
+                                       Width="{StaticResource AppControlHeight}"
+                                       Height="{StaticResource AppControlHeight}"
+                                       Source="{TemplateBinding IconSource}"
+                                       Stretch="Uniform"
+                                       Margin="{StaticResource AppInlineGapLarge}"
+                                       RenderOptions.BitmapScalingMode="NearestNeighbor" />
+                                <Ellipse x:Name="Dot"
+                                         Grid.Column="1"
+                                         Width="{StaticResource AppStatusDotSize}"
+                                         Height="{StaticResource AppStatusDotSize}"
+                                         Fill="{DynamicResource AppNeutral}"
+                                         VerticalAlignment="Center"
+                                         Margin="{StaticResource AppInlineGapLarge}" />
+                                <StackPanel Grid.Column="2" VerticalAlignment="Center">
+                                    <TextBlock Style="{StaticResource AppBodyStrongText}"
+                                               Text="{TemplateBinding ServerName}" />
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock x:Name="Subtitle" Style="{StaticResource AppMutedText}"
+                                                   TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"
+                                                   Text="{TemplateBinding Subtitle}" />
+                                        <TextBlock x:Name="Separator" Style="{StaticResource AppMutedText}"
+                                                   Text=" · " />
+                                        <!-- State is written out next to the dot's colour. -->
+                                        <TextBlock x:Name="State" Style="{StaticResource AppMutedText}"
+                                                   Foreground="{DynamicResource AppNeutralText}"
+                                                   Text="{TemplateBinding StateText}" />
+                                    </StackPanel>
+                                </StackPanel>
+                                <ContentPresenter Grid.Column="3" Content="{TemplateBinding TrailingContent}"
+                                                  VerticalAlignment="Center"
+                                                  Margin="{StaticResource AppInlineGapLarge}" />
+                            </Grid>
+                        </Border>
+                        <Border x:Name="Indicator"
+                                Width="{StaticResource AppSelectionIndicatorWidth}"
+                                Height="{StaticResource AppSelectionIndicatorHeight}"
+                                HorizontalAlignment="Left" VerticalAlignment="Center"
+                                Background="{DynamicResource AppAccent}"
+                                CornerRadius="{StaticResource AppCornerPill}"
+                                Visibility="Collapsed" />
+                    </Grid>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="Tone" Value="Info">
+                            <Setter TargetName="Dot" Property="Fill" Value="{DynamicResource AppInfo}" />
+                            <Setter TargetName="State" Property="Foreground" Value="{DynamicResource AppInfoText}" />
+                        </Trigger>
+                        <Trigger Property="Tone" Value="Success">
+                            <Setter TargetName="Dot" Property="Fill" Value="{DynamicResource AppSuccess}" />
+                            <Setter TargetName="State" Property="Foreground" Value="{DynamicResource AppSuccessText}" />
+                        </Trigger>
+                        <Trigger Property="Tone" Value="Warning">
+                            <Setter TargetName="Dot" Property="Fill" Value="{DynamicResource AppWarning}" />
+                            <Setter TargetName="State" Property="Foreground" Value="{DynamicResource AppWarningText}" />
+                        </Trigger>
+                        <Trigger Property="Tone" Value="Danger">
+                            <Setter TargetName="Dot" Property="Fill" Value="{DynamicResource AppDanger}" />
+                            <Setter TargetName="State" Property="Foreground" Value="{DynamicResource AppDangerText}" />
+                        </Trigger>
+                        <Trigger Property="Tone" Value="Accent">
+                            <Setter TargetName="Dot" Property="Fill" Value="{DynamicResource AppAccent}" />
+                            <Setter TargetName="State" Property="Foreground" Value="{DynamicResource AppTextAccent}" />
+                        </Trigger>
+                        <Trigger Property="StateText" Value="">
+                            <Setter TargetName="State" Property="Visibility" Value="Collapsed" />
+                            <Setter TargetName="Separator" Property="Visibility" Value="Collapsed" />
+                        </Trigger>
+                        <Trigger Property="Subtitle" Value="">
+                            <Setter TargetName="Subtitle" Property="Visibility" Value="Collapsed" />
+                            <Setter TargetName="Separator" Property="Visibility" Value="Collapsed" />
+                        </Trigger>
+                        <Trigger Property="IconSource" Value="{x:Null}">
+                            <Setter TargetName="ServerIcon" Property="Visibility" Value="Collapsed" />
+                        </Trigger>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Root" Property="Background" Value="{DynamicResource AppSurfaceHover}" />
+                        </Trigger>
+                        <Trigger Property="IsSelected" Value="True">
+                            <Setter TargetName="Root" Property="Background" Value="{DynamicResource AppSurfaceSelected}" />
+                            <Setter TargetName="Indicator" Property="Visibility" Value="Visible" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+    <Style TargetType="{x:Type components:AppServerRow}" BasedOn="{StaticResource AppServerRow}" />
+
+    <!-- ============ Info row ============ -->
+    <Style x:Key="AppInfoRow" TargetType="{x:Type components:AppInfoRow}">
+        <Setter Property="Margin" Value="{StaticResource AppStackGapSmall}" />
+        <Setter Property="Foreground" Value="{DynamicResource AppTextPrimary}" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="{x:Type components:AppInfoRow}">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" MinWidth="{StaticResource AppInfoRowLabelWidth}" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Style="{StaticResource AppLabelText}" Margin="{StaticResource AppInsetNone}"
+                                   VerticalAlignment="Center"
+                                   Text="{TemplateBinding Label}" />
+                        <TextBlock x:Name="Value" Grid.Column="1" Style="{StaticResource AppBodyText}"
+                                   VerticalAlignment="Center" TextWrapping="NoWrap"
+                                   TextTrimming="CharacterEllipsis"
+                                   ToolTip="{TemplateBinding Value}"
+                                   Text="{TemplateBinding Value}" />
+                        <!-- Unknown is stated, never rendered as an empty gap. -->
+                        <TextBlock x:Name="Unknown" Grid.Column="1" Style="{StaticResource AppMutedText}"
+                                   VerticalAlignment="Center" Visibility="Collapsed"
+                                   Text="{TemplateBinding UnknownText}" />
+                        <ContentPresenter Grid.Column="2" Content="{TemplateBinding ActionContent}"
+                                          VerticalAlignment="Center"
+                                          Margin="{StaticResource AppInlineGap}" />
+                    </Grid>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsUnknown" Value="True">
+                            <Setter TargetName="Value" Property="Visibility" Value="Collapsed" />
+                            <Setter TargetName="Unknown" Property="Visibility" Value="Visible" />
+                        </Trigger>
+                        <Trigger Property="IsMonospaced" Value="True">
+                            <Setter TargetName="Value" Property="FontFamily" Value="{StaticResource AppFontFamilyMono}" />
+                            <Setter TargetName="Value" Property="FontSize" Value="{StaticResource AppFontSizeSmall}" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+    <Style TargetType="{x:Type components:AppInfoRow}" BasedOn="{StaticResource AppInfoRow}" />
+
+    <!-- ============ Lists ============ -->
+    <Style x:Key="AppList" TargetType="ListBox">
+        <Setter Property="Background" Value="{DynamicResource AppSurfaceTransparent}" />
+        <Setter Property="BorderThickness" Value="{StaticResource AppStrokeThicknessNone}" />
+        <Setter Property="Foreground" Value="{DynamicResource AppTextPrimary}" />
+        <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled" />
+        <Setter Property="ScrollViewer.CanContentScroll" Value="True" />
+        <Setter Property="VirtualizingPanel.IsVirtualizing" Value="True" />
+        <Setter Property="VirtualizingPanel.VirtualizationMode" Value="Recycling" />
+    </Style>
+    <Style TargetType="ListBox" BasedOn="{StaticResource AppList}" />
+
+    <Style x:Key="AppListRow" TargetType="ListBoxItem">
+        <Setter Property="Background" Value="{DynamicResource AppSurfaceTransparent}" />
+        <Setter Property="Foreground" Value="{DynamicResource AppTextPrimary}" />
+        <Setter Property="Padding" Value="{StaticResource AppRowPadding}" />
+        <Setter Property="MinHeight" Value="{StaticResource AppRowHeight}" />
+        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ListBoxItem">
+                    <Border x:Name="FocusRing" Style="{StaticResource InternalFocusRing}"
+                            CornerRadius="{StaticResource AppCornerControl}">
+                        <Border x:Name="Root" Background="{TemplateBinding Background}"
+                                CornerRadius="{StaticResource AppCornerControl}"
+                                Padding="{TemplateBinding Padding}"
+                                SnapsToDevicePixels="True">
+                            <ContentPresenter VerticalAlignment="Center" />
+                        </Border>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Root" Property="Background" Value="{DynamicResource AppSurfaceHover}" />
+                        </Trigger>
+                        <Trigger Property="IsSelected" Value="True">
+                            <Setter TargetName="Root" Property="Background" Value="{DynamicResource AppSurfaceSelected}" />
+                        </Trigger>
+                        <!--
+                            Focus and selection must stay distinguishable. Clicking a row focuses it,
+                            so a ring bound to IsKeyboardFocused alone draws a purple outline around
+                            whatever was last clicked and makes focus look like a second selection.
+                            This is the same pairing AppNavigationRow already uses.
+                        -->
+                        <MultiTrigger>
+                            <MultiTrigger.Conditions>
+                                <Condition Property="IsKeyboardFocused" Value="True" />
+                                <Condition Property="ds:AppInput.IsKeyboardMode" Value="True" />
+                            </MultiTrigger.Conditions>
+                            <Setter TargetName="FocusRing" Property="BorderBrush" Value="{DynamicResource AppFocusRing}" />
+                        </MultiTrigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter Property="Foreground" Value="{DynamicResource AppTextDisabled}" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+    <Style TargetType="ListBoxItem" BasedOn="{StaticResource AppListRow}" />
+
+    <!-- Bounded, virtualised, monospaced output. Follow behaviour belongs to the console view model. -->
+    <Style x:Key="AppConsoleSurface" TargetType="ListBox" BasedOn="{StaticResource AppList}">
+        <Setter Property="Background" Value="{DynamicResource AppSurfaceSunken}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource AppStrokeSubtle}" />
+        <Setter Property="BorderThickness" Value="{StaticResource AppStrokeThickness}" />
+        <Setter Property="Padding" Value="{StaticResource AppInset8}" />
+        <Setter Property="FontFamily" Value="{StaticResource AppFontFamilyMono}" />
+        <Setter Property="FontSize" Value="{StaticResource AppFontSizeSmall}" />
+    </Style>
+
+    <!-- ============ Tables ============ -->
+    <Style x:Key="AppTableHeaderCell" TargetType="DataGridColumnHeader">
+        <Setter Property="Background" Value="{DynamicResource AppSurfaceRaised}" />
+        <Setter Property="Foreground" Value="{DynamicResource AppTextSecondary}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource AppStrokeSubtle}" />
+        <Setter Property="BorderThickness" Value="{StaticResource AppBottomStrokeThickness}" />
+        <Setter Property="Padding" Value="{StaticResource AppRowPadding}" />
+        <Setter Property="FontSize" Value="{StaticResource AppFontSizeSmall}" />
+        <Setter Property="FontWeight" Value="{StaticResource AppFontWeightStrong}" />
+        <Setter Property="HorizontalContentAlignment" Value="Left" />
+    </Style>
+    <Style TargetType="DataGridColumnHeader" BasedOn="{StaticResource AppTableHeaderCell}" />
+
+    <Style x:Key="AppTableCell" TargetType="DataGridCell">
+        <Setter Property="Background" Value="{DynamicResource AppSurfaceTransparent}" />
+        <Setter Property="Foreground" Value="{DynamicResource AppTextPrimary}" />
+        <Setter Property="BorderThickness" Value="{StaticResource AppStrokeThicknessNone}" />
+        <Setter Property="Padding" Value="{StaticResource AppRowPadding}" />
+        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="DataGridCell">
+                    <Border Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}">
+                        <ContentPresenter VerticalAlignment="Center" />
+                    </Border>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+        <Style.Triggers>
+            <Trigger Property="IsSelected" Value="True">
+                <Setter Property="Background" Value="{DynamicResource AppSurfaceTransparent}" />
+                <Setter Property="Foreground" Value="{DynamicResource AppTextPrimary}" />
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+    <Style TargetType="DataGridCell" BasedOn="{StaticResource AppTableCell}" />
+
+    <Style x:Key="AppTableRow" TargetType="DataGridRow">
+        <Setter Property="Background" Value="{DynamicResource AppSurfaceTransparent}" />
+        <Setter Property="Foreground" Value="{DynamicResource AppTextPrimary}" />
+        <Setter Property="MinHeight" Value="{StaticResource AppRowHeight}" />
+        <Style.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Background" Value="{DynamicResource AppSurfaceHover}" />
+            </Trigger>
+            <Trigger Property="IsSelected" Value="True">
+                <Setter Property="Background" Value="{DynamicResource AppSurfaceSelected}" />
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+    <Style TargetType="DataGridRow" BasedOn="{StaticResource AppTableRow}" />
+
+    <!-- Rows are separated by a single horizontal hairline. No zebra striping, no vertical rules. -->
+    <Style x:Key="AppTable" TargetType="DataGrid">
+        <Setter Property="Background" Value="{DynamicResource AppSurfaceTransparent}" />
+        <Setter Property="Foreground" Value="{DynamicResource AppTextPrimary}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource AppStrokeSubtle}" />
+        <Setter Property="BorderThickness" Value="{StaticResource AppStrokeThickness}" />
+        <Setter Property="RowBackground" Value="{DynamicResource AppSurfaceTransparent}" />
+        <Setter Property="AlternatingRowBackground" Value="{DynamicResource AppSurfaceTransparent}" />
+        <Setter Property="GridLinesVisibility" Value="Horizontal" />
+        <Setter Property="HorizontalGridLinesBrush" Value="{DynamicResource AppStrokeSubtle}" />
+        <Setter Property="HeadersVisibility" Value="Column" />
+        <Setter Property="IsReadOnly" Value="True" />
+        <Setter Property="AutoGenerateColumns" Value="False" />
+        <Setter Property="CanUserResizeRows" Value="False" />
+        <Setter Property="SelectionUnit" Value="FullRow" />
+        <Setter Property="EnableRowVirtualization" Value="True" />
+        <Setter Property="EnableColumnVirtualization" Value="True" />
+        <Setter Property="RowHeaderWidth" Value="0" />
+        <!--
+            Primary content never scrolls horizontally, so the table may not offer a horizontal
+            scrollbar. DataGrid owns this property itself; the ScrollViewer attached form is ignored.
+            Column widths still have to fit: prefer proportional widths, because mixing star with
+            auto lets the measured total exceed the arranged width and clips the trailing columns.
+        -->
+        <Setter Property="HorizontalScrollBarVisibility" Value="Disabled" />
+    </Style>
+    <Style TargetType="DataGrid" BasedOn="{StaticResource AppTable}" />
+
+    <!-- ============ Progress ============ -->
+    <Style x:Key="AppProgressBar" TargetType="ProgressBar">
+        <Setter Property="Height" Value="{StaticResource AppProgressHeight}" />
+        <Setter Property="Background" Value="{DynamicResource AppSurfacePressed}" />
+        <Setter Property="Foreground" Value="{DynamicResource AppAccent}" />
+        <Setter Property="BorderThickness" Value="{StaticResource AppStrokeThicknessNone}" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ProgressBar">
+                    <Border Background="{TemplateBinding Background}"
+                            CornerRadius="{StaticResource AppCornerPill}"
+                            ClipToBounds="True"
+                            SnapsToDevicePixels="True">
+                        <Grid x:Name="PART_Track">
+                            <Border x:Name="PART_Indicator" HorizontalAlignment="Left"
+                                    Background="{TemplateBinding Foreground}"
+                                    CornerRadius="{StaticResource AppCornerPill}" />
+                            <!-- Indeterminate: amount unknown, so the whole track is muted and
+                                 pulses. It is never shown as a partially filled determinate bar. -->
+                            <Border x:Name="Unknown" Visibility="Collapsed"
+                                    Background="{DynamicResource AppAccentMuted}"
+                                    CornerRadius="{StaticResource AppCornerPill}"
+                                    Opacity="0.6" />
+                        </Grid>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsIndeterminate" Value="True">
+                            <Setter TargetName="PART_Indicator" Property="Visibility" Value="Collapsed" />
+                            <Setter TargetName="Unknown" Property="Visibility" Value="Visible" />
+                        </Trigger>
+                        <MultiDataTrigger>
+                            <MultiDataTrigger.Conditions>
+                                <Condition Binding="{Binding IsIndeterminate, RelativeSource={RelativeSource TemplatedParent}}" Value="True" />
+                                <Condition Binding="{Binding Path=(ds:AppMotion.IsEnabled), RelativeSource={RelativeSource TemplatedParent}}" Value="True" />
+                            </MultiDataTrigger.Conditions>
+                            <MultiDataTrigger.EnterActions>
+                                <BeginStoryboard Name="PulseStoryboard">
+                                    <Storyboard RepeatBehavior="Forever" AutoReverse="True">
+                                        <DoubleAnimation Storyboard.TargetName="Unknown"
+                                                         Storyboard.TargetProperty="Opacity"
+                                                         From="0.35" To="0.85"
+                                                         Duration="{StaticResource AppDurationBusyCycle}" />
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </MultiDataTrigger.EnterActions>
+                            <MultiDataTrigger.ExitActions>
+                                <StopStoryboard BeginStoryboardName="PulseStoryboard" />
+                            </MultiDataTrigger.ExitActions>
+                        </MultiDataTrigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+    <Style TargetType="ProgressBar" BasedOn="{StaticResource AppProgressBar}" />
+
+    <!-- ============ Busy indicator ============ -->
+    <Style x:Key="AppBusyIndicator" TargetType="{x:Type components:AppBusyIndicator}">
+        <Setter Property="Width" Value="{StaticResource AppBusyIndicatorSize}" />
+        <Setter Property="Height" Value="{StaticResource AppBusyIndicatorSize}" />
+        <Setter Property="Foreground" Value="{DynamicResource AppTextAccent}" />
+        <Setter Property="IsTabStop" Value="False" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="{x:Type components:AppBusyIndicator}">
+                    <Grid x:Name="Root">
+                        <!-- An arc, not a spinner sprite: it reads as "working" even when static. -->
+                        <Ellipse Stroke="{DynamicResource AppStrokeStrong}" StrokeThickness="2" />
+                        <Ellipse x:Name="Arc" Stroke="{TemplateBinding Foreground}" StrokeThickness="2"
+                                 StrokeDashArray="3 9" StrokeDashCap="Round"
+                                 RenderTransformOrigin="0.5,0.5">
+                            <Ellipse.RenderTransform>
+                                <RotateTransform x:Name="ArcRotation" Angle="0" />
+                            </Ellipse.RenderTransform>
+                        </Ellipse>
+                    </Grid>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsActive" Value="False">
+                            <Setter TargetName="Root" Property="Visibility" Value="Collapsed" />
+                        </Trigger>
+                        <MultiDataTrigger>
+                            <MultiDataTrigger.Conditions>
+                                <Condition Binding="{Binding IsActive, RelativeSource={RelativeSource TemplatedParent}}" Value="True" />
+                                <Condition Binding="{Binding Path=(ds:AppMotion.IsEnabled), RelativeSource={RelativeSource TemplatedParent}}" Value="True" />
+                            </MultiDataTrigger.Conditions>
+                            <MultiDataTrigger.EnterActions>
+                                <BeginStoryboard Name="SpinStoryboard">
+                                    <Storyboard RepeatBehavior="Forever">
+                                        <DoubleAnimation Storyboard.TargetName="ArcRotation"
+                                                         Storyboard.TargetProperty="Angle"
+                                                         From="0" To="360"
+                                                         Duration="{StaticResource AppDurationBusyCycle}" />
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </MultiDataTrigger.EnterActions>
+                            <MultiDataTrigger.ExitActions>
+                                <StopStoryboard BeginStoryboardName="SpinStoryboard" />
+                            </MultiDataTrigger.ExitActions>
+                        </MultiDataTrigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+    <Style TargetType="{x:Type components:AppBusyIndicator}" BasedOn="{StaticResource AppBusyIndicator}" />
+
+    <!-- ============ Progress panel ============ -->
+    <Style x:Key="AppProgressPanel" TargetType="{x:Type components:AppProgressPanel}">
+        <Setter Property="Margin" Value="{StaticResource AppStackGap}" />
+        <Setter Property="Foreground" Value="{DynamicResource AppTextPrimary}" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="{x:Type components:AppProgressPanel}">
+                    <Border Background="{DynamicResource AppSurfaceRaised}"
+                            BorderBrush="{DynamicResource AppStroke}"
+                            BorderThickness="{StaticResource AppStrokeThickness}"
+                            CornerRadius="{StaticResource AppCornerCard}"
+                            Padding="{StaticResource AppCardPadding}"
+                            SnapsToDevicePixels="True">
+                        <StackPanel>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <components:AppBusyIndicator x:Name="Busy" VerticalAlignment="Center"
+                                                             Margin="{StaticResource AppInlineGapLarge}" />
+                                <StackPanel Grid.Column="1">
+                                    <TextBlock Style="{StaticResource AppBodyStrongText}"
+                                               Text="{TemplateBinding Title}" />
+                                    <TextBlock x:Name="Status" Style="{StaticResource AppMutedText}"
+                                               Text="{TemplateBinding StatusText}" />
+                                </StackPanel>
+                                <Button x:Name="Cancel" Grid.Column="2"
+                                        Style="{StaticResource AppSubtleButton}"
+                                        Content="Cancel"
+                                        VerticalAlignment="Center"
+                                        Command="{Binding CancelCommand, RelativeSource={RelativeSource TemplatedParent}}" />
+                            </Grid>
+                            <ProgressBar x:Name="Track" Margin="{StaticResource AppStackGapTop}"
+                                         Value="{Binding Progress, RelativeSource={RelativeSource TemplatedParent}}"
+                                         IsIndeterminate="{Binding IsIndeterminate, RelativeSource={RelativeSource TemplatedParent}}"
+                                         Minimum="0" Maximum="100" />
+                            <!-- Operation identity and recovery context stay visible. -->
+                            <TextBlock x:Name="Detail" Style="{StaticResource AppMonoText}"
+                                       Foreground="{DynamicResource AppTextMuted}"
+                                       Margin="{StaticResource AppStackGapTiny}"
+                                       Text="{TemplateBinding DetailText}" />
+                        </StackPanel>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="CancelCommand" Value="{x:Null}">
+                            <Setter TargetName="Cancel" Property="Visibility" Value="Collapsed" />
+                        </Trigger>
+                        <Trigger Property="DetailText" Value="">
+                            <Setter TargetName="Detail" Property="Visibility" Value="Collapsed" />
+                        </Trigger>
+                        <Trigger Property="Tone" Value="Success">
+                            <Setter TargetName="Track" Property="Foreground" Value="{DynamicResource AppSuccess}" />
+                            <Setter TargetName="Status" Property="Foreground" Value="{DynamicResource AppSuccessText}" />
+                            <Setter TargetName="Busy" Property="IsActive" Value="False" />
+                        </Trigger>
+                        <Trigger Property="Tone" Value="Warning">
+                            <Setter TargetName="Track" Property="Foreground" Value="{DynamicResource AppWarning}" />
+                            <Setter TargetName="Status" Property="Foreground" Value="{DynamicResource AppWarningText}" />
+                            <Setter TargetName="Busy" Property="IsActive" Value="False" />
+                        </Trigger>
+                        <Trigger Property="Tone" Value="Danger">
+                            <Setter TargetName="Track" Property="Foreground" Value="{DynamicResource AppDanger}" />
+                            <Setter TargetName="Status" Property="Foreground" Value="{DynamicResource AppDangerText}" />
+                            <Setter TargetName="Busy" Property="IsActive" Value="False" />
+                        </Trigger>
+                        <Trigger Property="Tone" Value="Neutral">
+                            <Setter TargetName="Track" Property="Foreground" Value="{DynamicResource AppNeutral}" />
+                            <Setter TargetName="Busy" Property="IsActive" Value="False" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+    <Style TargetType="{x:Type components:AppProgressPanel}" BasedOn="{StaticResource AppProgressPanel}" />
+</ResourceDictionary>

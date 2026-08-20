@@ -1,0 +1,1625 @@
+{
+  "schemaVersion": 1,
+  "entries": [
+    {
+      "platform": 0,
+      "minecraftVersion": "26.2",
+      "loaderVersion": "0.19.3",
+      "installerVersion": "1.1.2",
+      "artifactSha256": "301f83aac36b23f2bc64cc58560edf98533cfaa30e53af002ba950c75f4100b4",
+      "javaMajor": 25,
+      "validatedAt": "2026-08-20T06:54:34.9081474+00:00",
+      "recommended": true
+    },
+    {
+      "platform": 0,
+      "minecraftVersion": "26.1.2",
+      "loaderVersion": "0.19.3",
+      "installerVersion": "1.1.2",
+      "artifactSha256": "806bf3ebf16da041f4636ced00a3bd628f47e1a13baf1b31da4f4a78c7dd0fa1",
+      "javaMajor": 25,
+      "validatedAt": "2026-08-20T06:55:49.361716+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 0,
+      "minecraftVersion": "26.1.1",
+      "loaderVersion": "0.19.3",
+      "installerVersion": "1.1.2",
+      "artifactSha256": "abe1421a3bf543c79b0ad1745151f267182b85ad011c66545027e98cd4fe4800",
+      "javaMajor": 25,
+      "validatedAt": "2026-08-20T06:56:01.5275004+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 0,
+      "minecraftVersion": "26.1",
+      "loaderVersion": "0.19.3",
+      "installerVersion": "1.1.2",
+      "artifactSha256": "c2fcff86b3c4e73524d8c45afcb69b94c16548895eaa40ac8e596e5087027717",
+      "javaMajor": 25,
+      "validatedAt": "2026-08-20T06:56:13.4710629+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 0,
+      "minecraftVersion": "1.21.11",
+      "loaderVersion": "0.19.3",
+      "installerVersion": "1.1.2",
+      "artifactSha256": "b855772f5a5d591262260e8ed3c218419366d74c3acfc38409f4a376f167051b",
+      "javaMajor": 21,
+      "validatedAt": "2026-08-20T06:56:36.0785786+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 0,
+      "minecraftVersion": "1.21.10",
+      "loaderVersion": "0.19.3",
+      "installerVersion": "1.1.2",
+      "artifactSha256": "d41220c8e3920eb074d808a584363c2a67cb2c8087790cee16d6b7ed941484a2",
+      "javaMajor": 21,
+      "validatedAt": "2026-08-20T06:56:52.7198718+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 0,
+      "minecraftVersion": "1.21.9",
+      "loaderVersion": "0.19.3",
+      "installerVersion": "1.1.2",
+      "artifactSha256": "fc5863d13c23e36ad7992c28bd32ac9df8c5330397bf6ae2d82f33161bf3951b",
+      "javaMajor": 21,
+      "validatedAt": "2026-08-20T06:57:11.2310149+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 0,
+      "minecraftVersion": "1.21.8",
+      "loaderVersion": "0.19.3",
+      "installerVersion": "1.1.2",
+      "artifactSha256": "ac0817b04f9737a0d61e03d2428660f53f7dc07f78c7aafdf35f441091c2fe04",
+      "javaMajor": 21,
+      "validatedAt": "2026-08-20T06:57:30.2226173+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 0,
+      "minecraftVersion": "1.21.7",
+      "loaderVersion": "0.19.3",
+      "installerVersion": "1.1.2",
+      "artifactSha256": "783b0ce67a712db778ded2fdf4072afc0c3210f7cfa1032b8fc8270ddbe2e3f1",
+      "javaMajor": 21,
+      "validatedAt": "2026-08-20T06:57:48.9189884+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 0,
+      "minecraftVersion": "1.21.6",
+      "loaderVersion": "0.19.3",
+      "installerVersion": "1.1.2",
+      "artifactSha256": "1c0b80746ad66879974220cc77bb039f5a24e9a33ed3f9ce8ba43a594ba2892b",
+      "javaMajor": 21,
+      "validatedAt": "2026-08-20T06:58:07.7672274+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 0,
+      "minecraftVersion": "1.21.5",
+      "loaderVersion": "0.19.3",
+      "installerVersion": "1.1.2",
+      "artifactSha256": "d74165b278baa03a082b6446fdabe463a7e5becf9433648e07b2cbe81d22443c",
+      "javaMajor": 21,
+      "validatedAt": "2026-08-20T06:58:26.3410112+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 0,
+      "minecraftVersion": "1.21.4",
+      "loaderVersion": "0.19.3",
+      "installerVersion": "1.1.2",
+      "artifactSha256": "57432d25041fab9dad8f3b9ec79b3388e32cd54da157a7bb433c1f2e9b5285f1",
+      "javaMajor": 21,
+      "validatedAt": "2026-08-20T06:58:44.0501696+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 0,
+      "minecraftVersion": "1.21.3",
+      "loaderVersion": "0.19.3",
+      "installerVersion": "1.1.2",
+      "artifactSha256": "d55319735927547a297e485be07381efad71fee66241f61d9330a8ec15927b86",
+      "javaMajor": 21,
+      "validatedAt": "2026-08-20T06:59:03.6694367+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 0,
+      "minecraftVersion": "1.21.2",
+      "loaderVersion": "0.19.3",
+      "installerVersion": "1.1.2",
+      "artifactSha256": "a9c5acf3e34430acf7c0b7e3d387063bccd2cc7429a59200978ffca807e5fad1",
+      "javaMajor": 21,
+      "validatedAt": "2026-08-20T06:59:23.1255503+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 0,
+      "minecraftVersion": "1.21.1",
+      "loaderVersion": "0.19.3",
+      "installerVersion": "1.1.2",
+      "artifactSha256": "768f4a1688405ce75bc2a23cdf0c4d616625e297616d335178acf9b75d4f6e5e",
+      "javaMajor": 21,
+      "validatedAt": "2026-08-20T06:59:41.2679511+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 0,
+      "minecraftVersion": "1.21",
+      "loaderVersion": "0.19.3",
+      "installerVersion": "1.1.2",
+      "artifactSha256": "c4bb6cb424d2c11857e4457e78fbe0c7c101d64be5a68cc34a176a44f0abd4ef",
+      "javaMajor": 21,
+      "validatedAt": "2026-08-20T06:59:59.2517521+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 0,
+      "minecraftVersion": "1.20.6",
+      "loaderVersion": "0.19.3",
+      "installerVersion": "1.1.2",
+      "artifactSha256": "d3e8157233d1fd5a703c639dd192ea30cf83916b012e4dc9ab0d7c7c35ec9670",
+      "javaMajor": 21,
+      "validatedAt": "2026-08-20T07:00:17.2430164+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 0,
+      "minecraftVersion": "1.20.5",
+      "loaderVersion": "0.19.3",
+      "installerVersion": "1.1.2",
+      "artifactSha256": "1dbe4abedf351f8b10054032ad9ac77d58165fd06691f66bdbc8aa8c90a2dbde",
+      "javaMajor": 21,
+      "validatedAt": "2026-08-20T07:00:35.7643398+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 0,
+      "minecraftVersion": "1.20.4",
+      "loaderVersion": "0.19.3",
+      "installerVersion": "1.1.2",
+      "artifactSha256": "6ab0141a5a9e9aa3ee82f208c039cbdccdb8efc612ff594474498396ab0cee03",
+      "javaMajor": 17,
+      "validatedAt": "2026-08-20T07:01:06.504031+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 0,
+      "minecraftVersion": "1.20.3",
+      "loaderVersion": "0.19.3",
+      "installerVersion": "1.1.2",
+      "artifactSha256": "16a5f3bbd76dbf709f5af7c3b76b8103d3f2e5b33b07d57c3e783fe604ae3502",
+      "javaMajor": 17,
+      "validatedAt": "2026-08-20T07:01:32.756528+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 0,
+      "minecraftVersion": "1.20.2",
+      "loaderVersion": "0.19.3",
+      "installerVersion": "1.1.2",
+      "artifactSha256": "4fa38a11f328678ade4659fb1a1643ac63d8f2736898e3fcd30896c417d06e8a",
+      "javaMajor": 17,
+      "validatedAt": "2026-08-20T07:01:57.3595383+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 0,
+      "minecraftVersion": "1.20.1",
+      "loaderVersion": "0.19.3",
+      "installerVersion": "1.1.2",
+      "artifactSha256": "0e4e87619d281f2f31d54a208a2ee5e68395cb3f332450ff2b8f7514249997d2",
+      "javaMajor": 17,
+      "validatedAt": "2026-08-20T07:02:23.5786166+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 0,
+      "minecraftVersion": "1.20",
+      "loaderVersion": "0.19.3",
+      "installerVersion": "1.1.2",
+      "artifactSha256": "f309c853c743114ab389edd437c8d5181d0097e58ddd8df35a8d7d560d3f88cf",
+      "javaMajor": 17,
+      "validatedAt": "2026-08-20T07:02:49.2937802+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 0,
+      "minecraftVersion": "1.19.4",
+      "loaderVersion": "0.19.3",
+      "installerVersion": "1.1.2",
+      "artifactSha256": "95c7792d342f3e1c8b9d4e19b61bf5d0cae3c768a6814abcc355196c17cca08b",
+      "javaMajor": 17,
+      "validatedAt": "2026-08-20T07:03:15.7967889+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 0,
+      "minecraftVersion": "1.19.3",
+      "loaderVersion": "0.19.3",
+      "installerVersion": "1.1.2",
+      "artifactSha256": "e4333da017043266a82acab94dd44b9bc9834ee63560a3e5ed43b797625f48b7",
+      "javaMajor": 17,
+      "validatedAt": "2026-08-20T07:03:45.6612914+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 0,
+      "minecraftVersion": "1.19.2",
+      "loaderVersion": "0.19.3",
+      "installerVersion": "1.1.2",
+      "artifactSha256": "7dce9704a1b7ebb09645efc39f0f34f00073d74d46de0c78e134ddce07eee102",
+      "javaMajor": 17,
+      "validatedAt": "2026-08-20T07:04:15.770311+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 0,
+      "minecraftVersion": "1.19.1",
+      "loaderVersion": "0.19.3",
+      "installerVersion": "1.1.2",
+      "artifactSha256": "499a0ab07dec5380032f43405916b3b3ac0decd2bbf952a0c8b5693e0f97ecfe",
+      "javaMajor": 17,
+      "validatedAt": "2026-08-20T07:04:49.0628524+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 0,
+      "minecraftVersion": "1.19",
+      "loaderVersion": "0.19.3",
+      "installerVersion": "1.1.2",
+      "artifactSha256": "cd0933af4f205c592315943806fb8967cef2c6244a7192b53234949c13426db7",
+      "javaMajor": 17,
+      "validatedAt": "2026-08-20T07:05:20.2608536+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 0,
+      "minecraftVersion": "1.18.2",
+      "loaderVersion": "0.19.3",
+      "installerVersion": "1.1.2",
+      "artifactSha256": "60c829441564c6a120eeb15a6868de2c7cce2cc8816885b118696317b5ef817d",
+      "javaMajor": 17,
+      "validatedAt": "2026-08-20T07:05:51.2139642+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 0,
+      "minecraftVersion": "1.18.1",
+      "loaderVersion": "0.19.3",
+      "installerVersion": "1.1.2",
+      "artifactSha256": "f726ce9d361de54415726a4a17ff7fb6f8cb3c99533b26fde181e71f5c3b68e3",
+      "javaMajor": 17,
+      "validatedAt": "2026-08-20T07:06:19.8916096+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 0,
+      "minecraftVersion": "1.18",
+      "loaderVersion": "0.19.3",
+      "installerVersion": "1.1.2",
+      "artifactSha256": "0e8148d6ba987c601f4ed81cff57dcec8218763b79106484dd3a8ae42e5be81a",
+      "javaMajor": 17,
+      "validatedAt": "2026-08-20T07:06:47.8461087+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 0,
+      "minecraftVersion": "1.17.1",
+      "loaderVersion": "0.19.3",
+      "installerVersion": "1.1.2",
+      "artifactSha256": "822e4ae089809d7a1e03f4f86c7a4bfb0ffca4a5e99c613ab00c093e0e67bf92",
+      "javaMajor": 16,
+      "validatedAt": "2026-08-20T07:07:30.1206612+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 0,
+      "minecraftVersion": "1.17",
+      "loaderVersion": "0.19.3",
+      "installerVersion": "1.1.2",
+      "artifactSha256": "40fa89257b1343f70b25a9b6229a2964e6156fd9eaff3692556d007f452ad0a7",
+      "javaMajor": 16,
+      "validatedAt": "2026-08-20T07:07:56.3347519+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 0,
+      "minecraftVersion": "1.16.5",
+      "loaderVersion": "0.19.3",
+      "installerVersion": "1.1.2",
+      "artifactSha256": "ba80663e1f86df628e9522e3c343f09a325e66dc346419e6b12a353362f3a332",
+      "javaMajor": 8,
+      "validatedAt": "2026-08-20T07:08:19.7631941+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 0,
+      "minecraftVersion": "1.16.4",
+      "loaderVersion": "0.19.3",
+      "installerVersion": "1.1.2",
+      "artifactSha256": "f5fd436a9c3660d7ccae62bdb01eaed76ecf219d6622e39aaef5c10e38a0799c",
+      "javaMajor": 8,
+      "validatedAt": "2026-08-20T07:08:40.4128026+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 0,
+      "minecraftVersion": "1.16.3",
+      "loaderVersion": "0.19.3",
+      "installerVersion": "1.1.2",
+      "artifactSha256": "8232df782719a94815580de49335144191405e93e06b7c71f1aa60f5eb053469",
+      "javaMajor": 8,
+      "validatedAt": "2026-08-20T07:09:03.9052088+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 0,
+      "minecraftVersion": "1.16.2",
+      "loaderVersion": "0.19.3",
+      "installerVersion": "1.1.2",
+      "artifactSha256": "57215e7165eb97bb4a337ac25a0ea6f941a174e41aa2eb9f3321b8613c6391b8",
+      "javaMajor": 8,
+      "validatedAt": "2026-08-20T07:09:24.7871234+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 0,
+      "minecraftVersion": "1.16.1",
+      "loaderVersion": "0.19.3",
+      "installerVersion": "1.1.2",
+      "artifactSha256": "fcc70b50943a7f7e8b124969b446319763bf2d48c98e83119cfb6686617256fc",
+      "javaMajor": 8,
+      "validatedAt": "2026-08-20T07:09:45.3523327+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 0,
+      "minecraftVersion": "1.16",
+      "loaderVersion": "0.19.3",
+      "installerVersion": "1.1.2",
+      "artifactSha256": "b39fecaf8dc34ea8d19dced964efc7efa370f7ec9c4aa4825170223c5839d240",
+      "javaMajor": 8,
+      "validatedAt": "2026-08-20T07:10:04.2455291+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 0,
+      "minecraftVersion": "1.15.2",
+      "loaderVersion": "0.19.3",
+      "installerVersion": "1.1.2",
+      "artifactSha256": "ab6afa46d6d8c31e1ebb9391a6a4176f4882bf463bc0418e73e0de11220c0f40",
+      "javaMajor": 8,
+      "validatedAt": "2026-08-20T07:10:25.7862611+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 0,
+      "minecraftVersion": "1.15.1",
+      "loaderVersion": "0.19.3",
+      "installerVersion": "1.1.2",
+      "artifactSha256": "691a19180671f00ada22b83b3e797ca84ddd1280d05adf324443b4c057ec9f11",
+      "javaMajor": 8,
+      "validatedAt": "2026-08-20T07:10:46.8062301+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 0,
+      "minecraftVersion": "1.15",
+      "loaderVersion": "0.19.3",
+      "installerVersion": "1.1.2",
+      "artifactSha256": "e61278957827a7e25a44b1f7fb695b3069cc12c62275738b86bc2b7309bede00",
+      "javaMajor": 8,
+      "validatedAt": "2026-08-20T07:11:09.2841018+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 0,
+      "minecraftVersion": "1.14.4",
+      "loaderVersion": "0.19.3",
+      "installerVersion": "1.1.2",
+      "artifactSha256": "4ffcff3456a8b273d031234bd3fa33d7194dc50603f6ff04f72573ffe4822aad",
+      "javaMajor": 8,
+      "validatedAt": "2026-08-20T07:11:29.2044711+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 0,
+      "minecraftVersion": "1.14.3",
+      "loaderVersion": "0.19.3",
+      "installerVersion": "1.1.2",
+      "artifactSha256": "c722605b47792ac8fafdbc5c16634eab0adcaa9967cbc5bcd413326b16d38867",
+      "javaMajor": 8,
+      "validatedAt": "2026-08-20T07:11:53.0636207+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 0,
+      "minecraftVersion": "1.14.2",
+      "loaderVersion": "0.19.3",
+      "installerVersion": "1.1.2",
+      "artifactSha256": "929dce6da6f30a0a0dfbbb32740e53e336121f079ba6b3da86c739c778c7d271",
+      "javaMajor": 8,
+      "validatedAt": "2026-08-20T07:12:16.758957+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 0,
+      "minecraftVersion": "1.14.1",
+      "loaderVersion": "0.19.3",
+      "installerVersion": "1.1.2",
+      "artifactSha256": "36bfd42fef14d297662f563bdb8cc385038dae563c4bc07222e469fc7f66582b",
+      "javaMajor": 8,
+      "validatedAt": "2026-08-20T07:12:42.1948803+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 0,
+      "minecraftVersion": "1.14",
+      "loaderVersion": "0.19.3",
+      "installerVersion": "1.1.2",
+      "artifactSha256": "c3af2e6b81bd759c42c17938e95889260abde881e1473541e5a53a102fd921e6",
+      "javaMajor": 8,
+      "validatedAt": "2026-08-20T07:13:12.5471367+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 1,
+      "minecraftVersion": "26.2",
+      "loaderVersion": "26.2.0.61",
+      "installerVersion": "26.2.0.61",
+      "artifactSha256": "c9f7ea8c7334b65d77218b0ed6d0091854d10017bb4ab9605038a5daa6133250",
+      "javaMajor": 25,
+      "validatedAt": "2026-08-20T07:14:45.3414836+00:00",
+      "recommended": true
+    },
+    {
+      "platform": 1,
+      "minecraftVersion": "26.1.2",
+      "loaderVersion": "26.1.2.97",
+      "installerVersion": "26.1.2.97",
+      "artifactSha256": "b0eed21c5917e1cefb88cb962788ea1197d3568cff2d83dd351059736ee163c9",
+      "javaMajor": 25,
+      "validatedAt": "2026-08-20T07:15:21.6676941+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 1,
+      "minecraftVersion": "1.21.11",
+      "loaderVersion": "21.11.45",
+      "installerVersion": "21.11.45",
+      "artifactSha256": "e54350cc68d7dec6cb0523a0597a6a2fa664c1acd878b456af4564ee126da00a",
+      "javaMajor": 21,
+      "validatedAt": "2026-08-20T07:16:20.6521587+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 1,
+      "minecraftVersion": "1.21.10",
+      "loaderVersion": "21.10.64",
+      "installerVersion": "21.10.64",
+      "artifactSha256": "6adb1f063358b22b050834323a4f68df47c93d082bc49a8a0a97aec22b789427",
+      "javaMajor": 21,
+      "validatedAt": "2026-08-20T07:17:00.8203511+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 1,
+      "minecraftVersion": "1.21.8",
+      "loaderVersion": "21.8.54",
+      "installerVersion": "21.8.54",
+      "artifactSha256": "8771de3b3df9d5382103245dcdcf6cd6ebe84a8c3b26a2b21d43153613ff191b",
+      "javaMajor": 21,
+      "validatedAt": "2026-08-20T07:17:55.2720373+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 1,
+      "minecraftVersion": "1.21.5",
+      "loaderVersion": "21.5.98",
+      "installerVersion": "21.5.98",
+      "artifactSha256": "da85958099ea79b6f69561c3e3ee1420032e541aa33cef8639416ccf512ec42b",
+      "javaMajor": 21,
+      "validatedAt": "2026-08-20T07:19:11.7073324+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 1,
+      "minecraftVersion": "1.21.4",
+      "loaderVersion": "21.4.157",
+      "installerVersion": "21.4.157",
+      "artifactSha256": "a17bacb5d6ef902da2f64a8e98a461a57e2564392d9dac46687cdbe543a59a76",
+      "javaMajor": 21,
+      "validatedAt": "2026-08-20T07:20:04.9065634+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 1,
+      "minecraftVersion": "1.21.3",
+      "loaderVersion": "21.3.97",
+      "installerVersion": "21.3.97",
+      "artifactSha256": "86bac20916c03344848ee42f18e4beaa99c113f358d90f9e4731abeea5fad6eb",
+      "javaMajor": 21,
+      "validatedAt": "2026-08-20T07:20:58.7416615+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 1,
+      "minecraftVersion": "1.21.1",
+      "loaderVersion": "21.1.248",
+      "installerVersion": "21.1.248",
+      "artifactSha256": "68eeab77059ba53df1812f1afa5bf530ab2566a3cdcd5f924aa6e71be42e410c",
+      "javaMajor": 21,
+      "validatedAt": "2026-08-20T07:21:50.5072972+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 1,
+      "minecraftVersion": "1.21.0",
+      "loaderVersion": "21.0.167",
+      "installerVersion": "21.0.167",
+      "artifactSha256": "41f27bce9874fdb51040eb76ca89830c49e0dd0be4261a9dabbab3cd7c9f1687",
+      "javaMajor": 21,
+      "validatedAt": "2026-08-20T07:22:45.5858121+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 1,
+      "minecraftVersion": "1.20.6",
+      "loaderVersion": "20.6.139",
+      "installerVersion": "20.6.139",
+      "artifactSha256": "c0e94d21f90dff9b3ae2df5b893874a95b12450d241f8d9e39870fa30a15af8b",
+      "javaMajor": 21,
+      "validatedAt": "2026-08-20T07:23:40.6212256+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 1,
+      "minecraftVersion": "1.20.4",
+      "loaderVersion": "20.4.251",
+      "installerVersion": "20.4.251",
+      "artifactSha256": "ba50598a03d733d7483fdcefd49e3acf4667210fd84ca9531f90cba68897fe44",
+      "javaMajor": 17,
+      "validatedAt": "2026-08-20T07:24:53.3714341+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 1,
+      "minecraftVersion": "1.20.2",
+      "loaderVersion": "20.2.93",
+      "installerVersion": "20.2.93",
+      "artifactSha256": "f2badd12f9e5d0cef4d2c9143d1ae2e008345fa7438e89cee629c13e33de00c7",
+      "javaMajor": 17,
+      "validatedAt": "2026-08-20T07:26:02.533413+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 2,
+      "minecraftVersion": "26.2",
+      "loaderVersion": "0.30.0",
+      "installerVersion": "0.15.1",
+      "artifactSha256": "0a229138caa1b87fd8f5622038410696f98bb85871a279640e7002404c4d0dc2",
+      "javaMajor": 25,
+      "validatedAt": "2026-08-20T08:15:06.1088218+00:00",
+      "recommended": true
+    },
+    {
+      "platform": 2,
+      "minecraftVersion": "26.1.2",
+      "loaderVersion": "0.30.0",
+      "installerVersion": "0.15.1",
+      "artifactSha256": "0a229138caa1b87fd8f5622038410696f98bb85871a279640e7002404c4d0dc2",
+      "javaMajor": 25,
+      "validatedAt": "2026-08-20T08:15:24.7828134+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 2,
+      "minecraftVersion": "26.1.1",
+      "loaderVersion": "0.30.0",
+      "installerVersion": "0.15.1",
+      "artifactSha256": "0a229138caa1b87fd8f5622038410696f98bb85871a279640e7002404c4d0dc2",
+      "javaMajor": 25,
+      "validatedAt": "2026-08-20T08:15:42.1497703+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 2,
+      "minecraftVersion": "26.1",
+      "loaderVersion": "0.30.0",
+      "installerVersion": "0.15.1",
+      "artifactSha256": "0a229138caa1b87fd8f5622038410696f98bb85871a279640e7002404c4d0dc2",
+      "javaMajor": 25,
+      "validatedAt": "2026-08-20T08:15:58.3586626+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 2,
+      "minecraftVersion": "1.21.11",
+      "loaderVersion": "0.30.0",
+      "installerVersion": "0.15.1",
+      "artifactSha256": "0a229138caa1b87fd8f5622038410696f98bb85871a279640e7002404c4d0dc2",
+      "javaMajor": 21,
+      "validatedAt": "2026-08-20T08:16:19.0266329+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 2,
+      "minecraftVersion": "1.21.10",
+      "loaderVersion": "0.30.0",
+      "installerVersion": "0.15.1",
+      "artifactSha256": "0a229138caa1b87fd8f5622038410696f98bb85871a279640e7002404c4d0dc2",
+      "javaMajor": 21,
+      "validatedAt": "2026-08-20T08:16:39.4505769+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 2,
+      "minecraftVersion": "1.21.9",
+      "loaderVersion": "0.30.0",
+      "installerVersion": "0.15.1",
+      "artifactSha256": "0a229138caa1b87fd8f5622038410696f98bb85871a279640e7002404c4d0dc2",
+      "javaMajor": 21,
+      "validatedAt": "2026-08-20T08:17:00.2937068+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 2,
+      "minecraftVersion": "1.21.8",
+      "loaderVersion": "0.30.0",
+      "installerVersion": "0.15.1",
+      "artifactSha256": "0a229138caa1b87fd8f5622038410696f98bb85871a279640e7002404c4d0dc2",
+      "javaMajor": 21,
+      "validatedAt": "2026-08-20T08:17:23.6070541+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 2,
+      "minecraftVersion": "1.21.7",
+      "loaderVersion": "0.30.0",
+      "installerVersion": "0.15.1",
+      "artifactSha256": "0a229138caa1b87fd8f5622038410696f98bb85871a279640e7002404c4d0dc2",
+      "javaMajor": 21,
+      "validatedAt": "2026-08-20T08:17:45.8272957+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 2,
+      "minecraftVersion": "1.21.6",
+      "loaderVersion": "0.30.0",
+      "installerVersion": "0.15.1",
+      "artifactSha256": "0a229138caa1b87fd8f5622038410696f98bb85871a279640e7002404c4d0dc2",
+      "javaMajor": 21,
+      "validatedAt": "2026-08-20T08:18:08.4142307+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 2,
+      "minecraftVersion": "1.21.5",
+      "loaderVersion": "0.30.0",
+      "installerVersion": "0.15.1",
+      "artifactSha256": "0a229138caa1b87fd8f5622038410696f98bb85871a279640e7002404c4d0dc2",
+      "javaMajor": 21,
+      "validatedAt": "2026-08-20T08:18:32.0044872+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 2,
+      "minecraftVersion": "1.21.4",
+      "loaderVersion": "0.30.0",
+      "installerVersion": "0.15.1",
+      "artifactSha256": "0a229138caa1b87fd8f5622038410696f98bb85871a279640e7002404c4d0dc2",
+      "javaMajor": 21,
+      "validatedAt": "2026-08-20T08:18:54.7500546+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 2,
+      "minecraftVersion": "1.21.3",
+      "loaderVersion": "0.30.0",
+      "installerVersion": "0.15.1",
+      "artifactSha256": "0a229138caa1b87fd8f5622038410696f98bb85871a279640e7002404c4d0dc2",
+      "javaMajor": 21,
+      "validatedAt": "2026-08-20T08:19:18.204909+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 2,
+      "minecraftVersion": "1.21.2",
+      "loaderVersion": "0.30.0",
+      "installerVersion": "0.15.1",
+      "artifactSha256": "0a229138caa1b87fd8f5622038410696f98bb85871a279640e7002404c4d0dc2",
+      "javaMajor": 21,
+      "validatedAt": "2026-08-20T08:19:40.9101061+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 2,
+      "minecraftVersion": "1.21.1",
+      "loaderVersion": "0.30.0",
+      "installerVersion": "0.15.1",
+      "artifactSha256": "0a229138caa1b87fd8f5622038410696f98bb85871a279640e7002404c4d0dc2",
+      "javaMajor": 21,
+      "validatedAt": "2026-08-20T08:20:02.8240402+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 2,
+      "minecraftVersion": "1.21",
+      "loaderVersion": "0.30.0",
+      "installerVersion": "0.15.1",
+      "artifactSha256": "0a229138caa1b87fd8f5622038410696f98bb85871a279640e7002404c4d0dc2",
+      "javaMajor": 21,
+      "validatedAt": "2026-08-20T08:20:25.7862882+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 2,
+      "minecraftVersion": "1.20.6",
+      "loaderVersion": "0.30.0",
+      "installerVersion": "0.15.1",
+      "artifactSha256": "0a229138caa1b87fd8f5622038410696f98bb85871a279640e7002404c4d0dc2",
+      "javaMajor": 21,
+      "validatedAt": "2026-08-20T08:20:47.2772688+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 2,
+      "minecraftVersion": "1.20.5",
+      "loaderVersion": "0.30.0",
+      "installerVersion": "0.15.1",
+      "artifactSha256": "0a229138caa1b87fd8f5622038410696f98bb85871a279640e7002404c4d0dc2",
+      "javaMajor": 21,
+      "validatedAt": "2026-08-20T08:21:09.1375999+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 2,
+      "minecraftVersion": "1.20.4",
+      "loaderVersion": "0.30.0",
+      "installerVersion": "0.15.1",
+      "artifactSha256": "0a229138caa1b87fd8f5622038410696f98bb85871a279640e7002404c4d0dc2",
+      "javaMajor": 17,
+      "validatedAt": "2026-08-20T08:21:38.763451+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 2,
+      "minecraftVersion": "1.20.3",
+      "loaderVersion": "0.30.0",
+      "installerVersion": "0.15.1",
+      "artifactSha256": "0a229138caa1b87fd8f5622038410696f98bb85871a279640e7002404c4d0dc2",
+      "javaMajor": 17,
+      "validatedAt": "2026-08-20T08:22:08.428429+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 2,
+      "minecraftVersion": "1.20.2",
+      "loaderVersion": "0.30.0",
+      "installerVersion": "0.15.1",
+      "artifactSha256": "0a229138caa1b87fd8f5622038410696f98bb85871a279640e7002404c4d0dc2",
+      "javaMajor": 17,
+      "validatedAt": "2026-08-20T08:22:37.0609978+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 2,
+      "minecraftVersion": "1.20.1",
+      "loaderVersion": "0.30.0",
+      "installerVersion": "0.15.1",
+      "artifactSha256": "0a229138caa1b87fd8f5622038410696f98bb85871a279640e7002404c4d0dc2",
+      "javaMajor": 17,
+      "validatedAt": "2026-08-20T08:23:05.4710634+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 2,
+      "minecraftVersion": "1.20",
+      "loaderVersion": "0.30.0",
+      "installerVersion": "0.15.1",
+      "artifactSha256": "0a229138caa1b87fd8f5622038410696f98bb85871a279640e7002404c4d0dc2",
+      "javaMajor": 17,
+      "validatedAt": "2026-08-20T08:23:35.6233944+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 2,
+      "minecraftVersion": "1.19.4",
+      "loaderVersion": "0.30.0",
+      "installerVersion": "0.15.1",
+      "artifactSha256": "0a229138caa1b87fd8f5622038410696f98bb85871a279640e7002404c4d0dc2",
+      "javaMajor": 17,
+      "validatedAt": "2026-08-20T08:24:04.2427742+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 2,
+      "minecraftVersion": "1.19.3",
+      "loaderVersion": "0.30.0",
+      "installerVersion": "0.15.1",
+      "artifactSha256": "0a229138caa1b87fd8f5622038410696f98bb85871a279640e7002404c4d0dc2",
+      "javaMajor": 17,
+      "validatedAt": "2026-08-20T08:24:34.3369576+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 2,
+      "minecraftVersion": "1.19.2",
+      "loaderVersion": "0.30.0",
+      "installerVersion": "0.15.1",
+      "artifactSha256": "0a229138caa1b87fd8f5622038410696f98bb85871a279640e7002404c4d0dc2",
+      "javaMajor": 17,
+      "validatedAt": "2026-08-20T08:25:09.2647287+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 2,
+      "minecraftVersion": "1.19.1",
+      "loaderVersion": "0.30.0",
+      "installerVersion": "0.15.1",
+      "artifactSha256": "0a229138caa1b87fd8f5622038410696f98bb85871a279640e7002404c4d0dc2",
+      "javaMajor": 17,
+      "validatedAt": "2026-08-20T08:25:42.5360251+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 2,
+      "minecraftVersion": "1.19",
+      "loaderVersion": "0.30.0",
+      "installerVersion": "0.15.1",
+      "artifactSha256": "0a229138caa1b87fd8f5622038410696f98bb85871a279640e7002404c4d0dc2",
+      "javaMajor": 17,
+      "validatedAt": "2026-08-20T08:26:17.4411199+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 2,
+      "minecraftVersion": "1.18.2",
+      "loaderVersion": "0.30.0",
+      "installerVersion": "0.15.1",
+      "artifactSha256": "0a229138caa1b87fd8f5622038410696f98bb85871a279640e7002404c4d0dc2",
+      "javaMajor": 17,
+      "validatedAt": "2026-08-20T08:26:51.1584119+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 2,
+      "minecraftVersion": "1.18.1",
+      "loaderVersion": "0.30.0",
+      "installerVersion": "0.15.1",
+      "artifactSha256": "0a229138caa1b87fd8f5622038410696f98bb85871a279640e7002404c4d0dc2",
+      "javaMajor": 17,
+      "validatedAt": "2026-08-20T08:27:22.4292732+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 2,
+      "minecraftVersion": "1.18",
+      "loaderVersion": "0.30.0",
+      "installerVersion": "0.15.1",
+      "artifactSha256": "0a229138caa1b87fd8f5622038410696f98bb85871a279640e7002404c4d0dc2",
+      "javaMajor": 17,
+      "validatedAt": "2026-08-20T08:27:52.8927829+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 2,
+      "minecraftVersion": "1.17.1",
+      "loaderVersion": "0.30.0",
+      "installerVersion": "0.15.1",
+      "artifactSha256": "0a229138caa1b87fd8f5622038410696f98bb85871a279640e7002404c4d0dc2",
+      "javaMajor": 16,
+      "validatedAt": "2026-08-20T08:44:47.8338363+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 2,
+      "minecraftVersion": "1.17",
+      "loaderVersion": "0.30.0",
+      "installerVersion": "0.15.1",
+      "artifactSha256": "0a229138caa1b87fd8f5622038410696f98bb85871a279640e7002404c4d0dc2",
+      "javaMajor": 16,
+      "validatedAt": "2026-08-20T08:45:35.3254085+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 2,
+      "minecraftVersion": "1.16.5",
+      "loaderVersion": "0.30.0",
+      "installerVersion": "0.15.1",
+      "artifactSha256": "0a229138caa1b87fd8f5622038410696f98bb85871a279640e7002404c4d0dc2",
+      "javaMajor": 8,
+      "validatedAt": "2026-08-20T08:46:04.2913548+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 2,
+      "minecraftVersion": "1.16.4",
+      "loaderVersion": "0.30.0",
+      "installerVersion": "0.15.1",
+      "artifactSha256": "0a229138caa1b87fd8f5622038410696f98bb85871a279640e7002404c4d0dc2",
+      "javaMajor": 8,
+      "validatedAt": "2026-08-20T08:46:33.064051+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 2,
+      "minecraftVersion": "1.16.3",
+      "loaderVersion": "0.30.0",
+      "installerVersion": "0.15.1",
+      "artifactSha256": "0a229138caa1b87fd8f5622038410696f98bb85871a279640e7002404c4d0dc2",
+      "javaMajor": 8,
+      "validatedAt": "2026-08-20T08:47:02.9721683+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 2,
+      "minecraftVersion": "1.16.2",
+      "loaderVersion": "0.30.0",
+      "installerVersion": "0.15.1",
+      "artifactSha256": "0a229138caa1b87fd8f5622038410696f98bb85871a279640e7002404c4d0dc2",
+      "javaMajor": 8,
+      "validatedAt": "2026-08-20T08:47:32.6663982+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 2,
+      "minecraftVersion": "1.16.1",
+      "loaderVersion": "0.30.0",
+      "installerVersion": "0.15.1",
+      "artifactSha256": "0a229138caa1b87fd8f5622038410696f98bb85871a279640e7002404c4d0dc2",
+      "javaMajor": 8,
+      "validatedAt": "2026-08-20T08:48:01.5392797+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 2,
+      "minecraftVersion": "1.16",
+      "loaderVersion": "0.30.0",
+      "installerVersion": "0.15.1",
+      "artifactSha256": "0a229138caa1b87fd8f5622038410696f98bb85871a279640e7002404c4d0dc2",
+      "javaMajor": 8,
+      "validatedAt": "2026-08-20T08:48:30.6519555+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 2,
+      "minecraftVersion": "1.15.2",
+      "loaderVersion": "0.30.0",
+      "installerVersion": "0.15.1",
+      "artifactSha256": "0a229138caa1b87fd8f5622038410696f98bb85871a279640e7002404c4d0dc2",
+      "javaMajor": 8,
+      "validatedAt": "2026-08-20T08:48:59.0782469+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 2,
+      "minecraftVersion": "1.15.1",
+      "loaderVersion": "0.30.0",
+      "installerVersion": "0.15.1",
+      "artifactSha256": "0a229138caa1b87fd8f5622038410696f98bb85871a279640e7002404c4d0dc2",
+      "javaMajor": 8,
+      "validatedAt": "2026-08-20T08:49:27.6933842+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 2,
+      "minecraftVersion": "1.15",
+      "loaderVersion": "0.30.0",
+      "installerVersion": "0.15.1",
+      "artifactSha256": "0a229138caa1b87fd8f5622038410696f98bb85871a279640e7002404c4d0dc2",
+      "javaMajor": 8,
+      "validatedAt": "2026-08-20T08:49:56.256446+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 2,
+      "minecraftVersion": "1.14.4",
+      "loaderVersion": "0.30.0",
+      "installerVersion": "0.15.1",
+      "artifactSha256": "0a229138caa1b87fd8f5622038410696f98bb85871a279640e7002404c4d0dc2",
+      "javaMajor": 8,
+      "validatedAt": "2026-08-20T08:50:26.513177+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 3,
+      "minecraftVersion": "26.2",
+      "loaderVersion": "65.1.0",
+      "installerVersion": "26.2-65.1.0",
+      "artifactSha256": "d23291591ee03408e39549d5509772f6c46280fef51044e1a706dd3da455dd74",
+      "javaMajor": 25,
+      "validatedAt": "2026-08-20T07:27:20.4806873+00:00",
+      "recommended": true
+    },
+    {
+      "platform": 3,
+      "minecraftVersion": "26.1.2",
+      "loaderVersion": "64.1.0",
+      "installerVersion": "26.1.2-64.1.0",
+      "artifactSha256": "40529038be85fcc5077decfc7c0f563d15c36f26c6480af76e38a14d3dd4ac2e",
+      "javaMajor": 25,
+      "validatedAt": "2026-08-20T07:27:46.8100033+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 3,
+      "minecraftVersion": "26.1.1",
+      "loaderVersion": "63.0.2",
+      "installerVersion": "26.1.1-63.0.2",
+      "artifactSha256": "e45a722454f83c1251dca0f88518a0a8370fac95c1628ff1171519978ee6dabf",
+      "javaMajor": 25,
+      "validatedAt": "2026-08-20T07:28:12.9371011+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 3,
+      "minecraftVersion": "26.1",
+      "loaderVersion": "62.0.9",
+      "installerVersion": "26.1-62.0.9",
+      "artifactSha256": "b18b0fd7a28d2b20a6f623c0bc904a811d7def110b3aa81676e533c3b66c05af",
+      "javaMajor": 25,
+      "validatedAt": "2026-08-20T07:28:41.1245655+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 3,
+      "minecraftVersion": "1.21.11",
+      "loaderVersion": "61.2.0",
+      "installerVersion": "1.21.11-61.2.0",
+      "artifactSha256": "5f993a6fb5ae96e1bafc4db43346b8411757254503674403eafead9af1f3f90f",
+      "javaMajor": 21,
+      "validatedAt": "2026-08-20T07:29:18.2761746+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 3,
+      "minecraftVersion": "1.21.10",
+      "loaderVersion": "60.1.0",
+      "installerVersion": "1.21.10-60.1.0",
+      "artifactSha256": "2216d1025bd2c884fa8584232babb1249278e4194e673b452ae0f0e51e3c08d2",
+      "javaMajor": 21,
+      "validatedAt": "2026-08-20T07:29:55.5336108+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 3,
+      "minecraftVersion": "1.21.8",
+      "loaderVersion": "58.1.0",
+      "installerVersion": "1.21.8-58.1.0",
+      "artifactSha256": "8de87a2184ba58bdeec31bc0b58db0107df0fc8d4e4704516c5551f7662c51c7",
+      "javaMajor": 21,
+      "validatedAt": "2026-08-20T07:34:49.1735306+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 3,
+      "minecraftVersion": "1.21.7",
+      "loaderVersion": "57.0.3",
+      "installerVersion": "1.21.7-57.0.3",
+      "artifactSha256": "1ec5c4ed8a5d5fdaab187bf21ccc28c516e1e5982480b169e73c09fece87f8f0",
+      "javaMajor": 21,
+      "validatedAt": "2026-08-20T07:35:27.7176958+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 3,
+      "minecraftVersion": "1.21.6",
+      "loaderVersion": "56.0.9",
+      "installerVersion": "1.21.6-56.0.9",
+      "artifactSha256": "1d79255c2d19773ade4cf6d6830eb058a8d5001dc88d23b4b4e1d94b148c5775",
+      "javaMajor": 21,
+      "validatedAt": "2026-08-20T07:36:06.8895665+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 3,
+      "minecraftVersion": "1.21.5",
+      "loaderVersion": "55.1.0",
+      "installerVersion": "1.21.5-55.1.0",
+      "artifactSha256": "f1cb346b7c5dd32f6c978b33f710ab100b7744e2b1cc54c74a34f4c8ec3c4098",
+      "javaMajor": 21,
+      "validatedAt": "2026-08-20T07:36:48.2756956+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 3,
+      "minecraftVersion": "1.21.4",
+      "loaderVersion": "54.1.14",
+      "installerVersion": "1.21.4-54.1.14",
+      "artifactSha256": "960355f0ed2f8f869c051c011cec9c269ab42a05a347bb93dc548174417c8f0f",
+      "javaMajor": 21,
+      "validatedAt": "2026-08-20T07:37:34.9738036+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 3,
+      "minecraftVersion": "1.21.3",
+      "loaderVersion": "53.1.0",
+      "installerVersion": "1.21.3-53.1.0",
+      "artifactSha256": "71897904b3c7d6cc64e025498f4eff203d9be9067b449c45b8f3d3b2d71f0f76",
+      "javaMajor": 21,
+      "validatedAt": "2026-08-20T07:38:16.4294483+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 3,
+      "minecraftVersion": "1.21.1",
+      "loaderVersion": "52.1.0",
+      "installerVersion": "1.21.1-52.1.0",
+      "artifactSha256": "f1b620f2879ad6a5bbe15daba4d8f81eab9f5e08004967604960b98996bdebc4",
+      "javaMajor": 21,
+      "validatedAt": "2026-08-20T07:38:57.5204503+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 3,
+      "minecraftVersion": "1.21",
+      "loaderVersion": "51.0.33",
+      "installerVersion": "1.21-51.0.33",
+      "artifactSha256": "e59cbc05af015b2e6c083703a60f931b88e931f14cc9c97c401d4f72fc14e1ec",
+      "javaMajor": 21,
+      "validatedAt": "2026-08-20T07:39:36.1191613+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 3,
+      "minecraftVersion": "1.20.6",
+      "loaderVersion": "50.2.0",
+      "installerVersion": "1.20.6-50.2.0",
+      "artifactSha256": "8789098b077f5486449311a11dc05e977feb9430913cb15f30b21a2d8aa213ea",
+      "javaMajor": 21,
+      "validatedAt": "2026-08-20T07:40:15.9517999+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 3,
+      "minecraftVersion": "1.20.4",
+      "loaderVersion": "49.2.0",
+      "installerVersion": "1.20.4-49.2.0",
+      "artifactSha256": "3a0fc9007762da3dc01e4bad13f88b480a53ac4dd306f342064d2b92e7497fb3",
+      "javaMajor": 17,
+      "validatedAt": "2026-08-20T07:41:01.8397923+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 3,
+      "minecraftVersion": "1.20.2",
+      "loaderVersion": "48.1.0",
+      "installerVersion": "1.20.2-48.1.0",
+      "artifactSha256": "10c3f124c8c6b9c2550e0003ebf014c8d24f8ef6b4b9d76fd4619cdc6013eef6",
+      "javaMajor": 17,
+      "validatedAt": "2026-08-20T07:42:08.278254+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 3,
+      "minecraftVersion": "1.20.1",
+      "loaderVersion": "47.4.10",
+      "installerVersion": "1.20.1-47.4.10",
+      "artifactSha256": "1912760b4cb6b803d8a826de603c9076b1da71ec2765e9a1f8c1ca78f65278e3",
+      "javaMajor": 17,
+      "validatedAt": "2026-08-20T07:42:53.3300611+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 3,
+      "minecraftVersion": "1.20",
+      "loaderVersion": "46.0.14",
+      "installerVersion": "1.20-46.0.14",
+      "artifactSha256": "9357a3ebdc113e39a535d47c5300dbcca943261a12ddda4861949e1e88d785d6",
+      "javaMajor": 17,
+      "validatedAt": "2026-08-20T07:43:37.0451668+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 3,
+      "minecraftVersion": "1.19.4",
+      "loaderVersion": "45.4.0",
+      "installerVersion": "1.19.4-45.4.0",
+      "artifactSha256": "6643bb8c21f409cc528ff656daf60c206d304cc77bf529bbbab4b336004dfc53",
+      "javaMajor": 17,
+      "validatedAt": "2026-08-20T07:44:25.6098588+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 3,
+      "minecraftVersion": "1.19.3",
+      "loaderVersion": "44.1.0",
+      "installerVersion": "1.19.3-44.1.0",
+      "artifactSha256": "35062a5da811c728fc1a634b9f1fac0d36fe48a60526e007e633387cd7bc41a4",
+      "javaMajor": 17,
+      "validatedAt": "2026-08-20T07:45:12.7898991+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 3,
+      "minecraftVersion": "1.19.2",
+      "loaderVersion": "43.5.0",
+      "installerVersion": "1.19.2-43.5.0",
+      "artifactSha256": "4869e60456321e99eb5120ae39171c382c27a05858cdfd4b90ff123e3750e681",
+      "javaMajor": 17,
+      "validatedAt": "2026-08-20T07:46:04.5652012+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 3,
+      "minecraftVersion": "1.19.1",
+      "loaderVersion": "42.0.9",
+      "installerVersion": "1.19.1-42.0.9",
+      "artifactSha256": "0ad719a832b71c3cf1381f1413a28fb99c6a61109fd17d131c443bb2634cfc87",
+      "javaMajor": 17,
+      "validatedAt": "2026-08-20T07:46:55.4961258+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 3,
+      "minecraftVersion": "1.19",
+      "loaderVersion": "41.1.0",
+      "installerVersion": "1.19-41.1.0",
+      "artifactSha256": "4251a8c7f44278ab9756adc98097dc9d9f5900c83908da08ebe6484a31dbaa2a",
+      "javaMajor": 17,
+      "validatedAt": "2026-08-20T07:47:47.7896959+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 3,
+      "minecraftVersion": "1.18.2",
+      "loaderVersion": "40.3.0",
+      "installerVersion": "1.18.2-40.3.0",
+      "artifactSha256": "9434c29790504dcd11ce97cb30dd8891b4b18848982357bc1b5abfa79fb95103",
+      "javaMajor": 17,
+      "validatedAt": "2026-08-20T07:48:35.955729+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 3,
+      "minecraftVersion": "1.18.1",
+      "loaderVersion": "39.1.0",
+      "installerVersion": "1.18.1-39.1.0",
+      "artifactSha256": "e88d55e4e50c3f5e3245b58fff638624434a0299e339bc8975883eacd49c04ec",
+      "javaMajor": 17,
+      "validatedAt": "2026-08-20T07:49:26.3162251+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 3,
+      "minecraftVersion": "1.18",
+      "loaderVersion": "38.0.17",
+      "installerVersion": "1.18-38.0.17",
+      "artifactSha256": "4b6d2a049b167f9e2ef095b45b5a78537e5884f9fcc051bfaabd2b0aa35165d2",
+      "javaMajor": 17,
+      "validatedAt": "2026-08-20T07:50:13.8120892+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 3,
+      "minecraftVersion": "1.17.1",
+      "loaderVersion": "37.1.1",
+      "installerVersion": "1.17.1-37.1.1",
+      "artifactSha256": "31f2319b1b9ca491aaccc020887240f8524a4ff2a8e0f8b795e17e889cbc043b",
+      "javaMajor": 16,
+      "validatedAt": "2026-08-20T07:51:00.174196+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 3,
+      "minecraftVersion": "1.16.5",
+      "loaderVersion": "36.2.34",
+      "installerVersion": "1.16.5-36.2.34",
+      "artifactSha256": "53b73dbbcc486f38726e76ce923b13381044984c83c762847c7193340f97130f",
+      "javaMajor": 8,
+      "validatedAt": "2026-08-20T07:51:48.5434586+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 3,
+      "minecraftVersion": "1.16.4",
+      "loaderVersion": "35.1.4",
+      "installerVersion": "1.16.4-35.1.4",
+      "artifactSha256": "3594824465c1b45dd4f29ad60bf48b669ddfb9839c042a91274a146cd59c6bbd",
+      "javaMajor": 8,
+      "validatedAt": "2026-08-20T07:52:25.4703924+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 3,
+      "minecraftVersion": "1.16.3",
+      "loaderVersion": "34.1.0",
+      "installerVersion": "1.16.3-34.1.0",
+      "artifactSha256": "b7b263a525e220892aa4e58e0f3dcc5f02cf9919630716f867e5cf2bf045026a",
+      "javaMajor": 8,
+      "validatedAt": "2026-08-20T07:53:01.9358385+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 3,
+      "minecraftVersion": "1.16.2",
+      "loaderVersion": "33.0.61",
+      "installerVersion": "1.16.2-33.0.61",
+      "artifactSha256": "961fb78089c638a8a70f178bb6e51880bf5d4c027830c03da27031d1e0ad72b1",
+      "javaMajor": 8,
+      "validatedAt": "2026-08-20T07:53:38.0915693+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 3,
+      "minecraftVersion": "1.16.1",
+      "loaderVersion": "32.0.108",
+      "installerVersion": "1.16.1-32.0.108",
+      "artifactSha256": "2b458ceff2f7d32edff05dfba6d636ecfade6554e1c6b78c7a2e44ac3e001bb5",
+      "javaMajor": 8,
+      "validatedAt": "2026-08-20T07:54:13.028305+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 3,
+      "minecraftVersion": "1.15.2",
+      "loaderVersion": "31.2.57",
+      "installerVersion": "1.15.2-31.2.57",
+      "artifactSha256": "84fd49a743978421b26f62ac78222289fe892a46f996cf11cb5e05b7441a7773",
+      "javaMajor": 8,
+      "validatedAt": "2026-08-20T07:54:52.5017428+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 3,
+      "minecraftVersion": "1.15.1",
+      "loaderVersion": "30.0.51",
+      "installerVersion": "1.15.1-30.0.51",
+      "artifactSha256": "6e7032a7f5d7bd95dfe1e6540b11e53512f39356d318f402a583f796bf221564",
+      "javaMajor": 8,
+      "validatedAt": "2026-08-20T07:55:27.5115925+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 3,
+      "minecraftVersion": "1.15",
+      "loaderVersion": "29.0.4",
+      "installerVersion": "1.15-29.0.4",
+      "artifactSha256": "29b21b71b0db46e3dafe6f79a1e7698db27da49ef00e4c1779aabc529fd57096",
+      "javaMajor": 8,
+      "validatedAt": "2026-08-20T07:56:01.5415146+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 3,
+      "minecraftVersion": "1.14.4",
+      "loaderVersion": "28.2.26",
+      "installerVersion": "1.14.4-28.2.26",
+      "artifactSha256": "e68a0e2d589b2954c5d109a04b80747ac8c061acabe074db1607f9c2fd7d2ce1",
+      "javaMajor": 8,
+      "validatedAt": "2026-08-20T07:56:37.413849+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 3,
+      "minecraftVersion": "1.14.3",
+      "loaderVersion": "27.0.60",
+      "installerVersion": "1.14.3-27.0.60",
+      "artifactSha256": "5724ae9ab8985395fdc02b2ec1caf6a10e3e13e735a90afffb759429a9b96dd4",
+      "javaMajor": 8,
+      "validatedAt": "2026-08-20T07:57:14.9549063+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 3,
+      "minecraftVersion": "1.14.2",
+      "loaderVersion": "26.0.63",
+      "installerVersion": "1.14.2-26.0.63",
+      "artifactSha256": "2fb915b59b903cc324a47e1dd02e14aa5cbb7c8b7dd5b23ee8af5f1b85b4b76c",
+      "javaMajor": 8,
+      "validatedAt": "2026-08-20T07:57:55.0276087+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 3,
+      "minecraftVersion": "1.13.2",
+      "loaderVersion": "25.0.223",
+      "installerVersion": "1.13.2-25.0.223",
+      "artifactSha256": "d46cb326e7dc32695084090c8169bb57f32f1c23b801ddb35a336f252e381191",
+      "javaMajor": 8,
+      "validatedAt": "2026-08-20T07:58:30.112456+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 3,
+      "minecraftVersion": "1.12.2",
+      "loaderVersion": "14.23.5.2859",
+      "installerVersion": "1.12.2-14.23.5.2859",
+      "artifactSha256": "dbba1cd1bf34a4b82148bac50a6150f63ffcb2d5dc7d88a0508c27fdcff15b76",
+      "javaMajor": 8,
+      "validatedAt": "2026-08-20T07:58:49.0746311+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 3,
+      "minecraftVersion": "1.12.1",
+      "loaderVersion": "14.22.1.2478",
+      "installerVersion": "1.12.1-14.22.1.2478",
+      "artifactSha256": "818e78998ffec7b5f24303a4ba65ddad5e6100b68a8e009bd68687b7b57c97cd",
+      "javaMajor": 8,
+      "validatedAt": "2026-08-20T07:59:06.8773557+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 3,
+      "minecraftVersion": "1.12",
+      "loaderVersion": "14.21.1.2387",
+      "installerVersion": "1.12-14.21.1.2387",
+      "artifactSha256": "3373d6b2429d142b24948688a16f02d34919e9151235b6438b121170616acb4e",
+      "javaMajor": 8,
+      "validatedAt": "2026-08-20T07:59:25.6783786+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 3,
+      "minecraftVersion": "1.11.2",
+      "loaderVersion": "13.20.1.2588",
+      "installerVersion": "1.11.2-13.20.1.2588",
+      "artifactSha256": "00aea3ddf1e78bbb4d5d05e8c22fb3e849de09b47d828e57dad373a16bb8a26f",
+      "javaMajor": 8,
+      "validatedAt": "2026-08-20T07:59:43.3212744+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 3,
+      "minecraftVersion": "1.11",
+      "loaderVersion": "13.19.1.2189",
+      "installerVersion": "1.11-13.19.1.2189",
+      "artifactSha256": "bede60ca9ec93f26f44527c3e3726d7971d9c873740ad81d50730cd3b9e926d8",
+      "javaMajor": 8,
+      "validatedAt": "2026-08-20T07:59:59.0294676+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 3,
+      "minecraftVersion": "1.10.2",
+      "loaderVersion": "12.18.3.2511",
+      "installerVersion": "1.10.2-12.18.3.2511",
+      "artifactSha256": "664393c5a924b8f06cfb953903abcf9fe5e99ecbe6af8c7ea217339c766e519c",
+      "javaMajor": 8,
+      "validatedAt": "2026-08-20T08:00:14.715228+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 3,
+      "minecraftVersion": "1.10",
+      "loaderVersion": "12.18.0.2000-1.10.0",
+      "installerVersion": "1.10-12.18.0.2000-1.10.0",
+      "artifactSha256": "6563f42ce6e443d3e3893150dcf40e35a7e283f351bd68c42cb8f750d417319d",
+      "javaMajor": 8,
+      "validatedAt": "2026-08-20T08:00:30.2766536+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 3,
+      "minecraftVersion": "1.9.4",
+      "loaderVersion": "12.17.0.2317",
+      "installerVersion": "1.9.4-12.17.0.2317-1.9.4",
+      "artifactSha256": "0fb57ea9d031fbfa0f9be463b2a5b40761654ed792f2de6f52a23305e433de48",
+      "javaMajor": 8,
+      "validatedAt": "2026-08-20T08:00:47.0426439+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 3,
+      "minecraftVersion": "1.9",
+      "loaderVersion": "12.16.1.1887",
+      "installerVersion": "1.9-12.16.1.1887",
+      "artifactSha256": "e38939d161de16d38fcfc8618b6ee4cfb3ec6ef97dc66f3b8270479aded87493",
+      "javaMajor": 8,
+      "validatedAt": "2026-08-20T08:01:03.1493066+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 3,
+      "minecraftVersion": "1.8.9",
+      "loaderVersion": "11.15.1.2318",
+      "installerVersion": "1.8.9-11.15.1.2318-1.8.9",
+      "artifactSha256": "f9fdf4945ca02d73ec6cc46300942f4e199e4add068877d517157b3677563656",
+      "javaMajor": 8,
+      "validatedAt": "2026-08-20T08:01:19.2887038+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 3,
+      "minecraftVersion": "1.8.8",
+      "loaderVersion": "11.15.0.1655",
+      "installerVersion": "1.8.8-11.15.0.1655",
+      "artifactSha256": "78f8f9084586cff2d6a3ba6d7cae5aba8de8f959c40ef910cb36242a514f9f9e",
+      "javaMajor": 8,
+      "validatedAt": "2026-08-20T08:01:35.7699301+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 3,
+      "minecraftVersion": "1.8",
+      "loaderVersion": "11.14.4.1563",
+      "installerVersion": "1.8-11.14.4.1563",
+      "artifactSha256": "d9fc5ecf85ab40f8a2a14f3a728aab216fccc7234dc388e71bb16c1c9f5b68b9",
+      "javaMajor": 8,
+      "validatedAt": "2026-08-20T08:01:52.4966184+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 3,
+      "minecraftVersion": "1.7.10",
+      "loaderVersion": "10.13.4.1614",
+      "installerVersion": "1.7.10-10.13.4.1614-1.7.10",
+      "artifactSha256": "a5d60757d8b305939233a942d5097fa78816d116ef9082c03066fe669e010c7f",
+      "javaMajor": 8,
+      "validatedAt": "2026-08-20T08:02:07.7165241+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 3,
+      "minecraftVersion": "1.7.2",
+      "loaderVersion": "10.12.2.1161-mc172",
+      "installerVersion": "1.7.2-10.12.2.1161-mc172",
+      "artifactSha256": "af97beb8868bcd6d93926dfde3f80dbc5c496480bc55cc49886de9fc9d297acd",
+      "javaMajor": 8,
+      "validatedAt": "2026-08-20T08:02:23.3371097+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 3,
+      "minecraftVersion": "1.6.4",
+      "loaderVersion": "9.11.1.1345",
+      "installerVersion": "1.6.4-9.11.1.1345",
+      "artifactSha256": "01a1845146ad7e5b00e4ff5e6d4d378577634c3dc6ca7e574ce42aabf6025dc0",
+      "javaMajor": 8,
+      "validatedAt": "2026-08-20T08:11:58.1434657+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 3,
+      "minecraftVersion": "1.6.3",
+      "loaderVersion": "9.11.0.878",
+      "installerVersion": "1.6.3-9.11.0.878",
+      "artifactSha256": "060005fe357891e8097e9a0a793fe5b01e167c1eb2a042ad84f93bfff55c80b5",
+      "javaMajor": 8,
+      "validatedAt": "2026-08-20T08:12:38.2576864+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 3,
+      "minecraftVersion": "1.6.2",
+      "loaderVersion": "9.10.1.871",
+      "installerVersion": "1.6.2-9.10.1.871",
+      "artifactSha256": "5c8e0456395d42b9981b00e8d0bc46f8be38c58062b7525fd721e31e4bc10349",
+      "javaMajor": 8,
+      "validatedAt": "2026-08-20T08:13:18.2055114+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 3,
+      "minecraftVersion": "1.6.1",
+      "loaderVersion": "8.9.0.775",
+      "installerVersion": "1.6.1-8.9.0.775",
+      "artifactSha256": "0c7651a2e9b2cce313411a52c5bd7717d758582d1846f9f235317ce87e4db30d",
+      "javaMajor": 8,
+      "validatedAt": "2026-08-20T08:13:57.9985128+00:00",
+      "recommended": false
+    },
+    {
+      "platform": 3,
+      "minecraftVersion": "1.5.2",
+      "loaderVersion": "7.8.1.738",
+      "installerVersion": "1.5.2-7.8.1.738",
+      "artifactSha256": "b9bb39fa659fcf4f80acfbceca4e327d7750dd502ee5c00520da8a26d8783e84",
+      "javaMajor": 8,
+      "validatedAt": "2026-08-20T08:14:36.0776875+00:00",
+      "recommended": false
+    }
+  ]
+}

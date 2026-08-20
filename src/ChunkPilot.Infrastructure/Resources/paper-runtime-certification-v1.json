@@ -1,0 +1,284 @@
+{
+  "schemaVersion": 1,
+  "entries": [
+    {
+      "minecraftVersion": "26.2",
+      "buildId": 112,
+      "artifactSha256": "bd3a58cf96874e5ea6643f5f6fe9b4f5bf9e34b795fa078c2f0ee8b98b2f907e",
+      "artifactSize": 61859678,
+      "javaMajor": 25,
+      "validatedAt": "2026-08-18T03:52:21.1902012+00:00",
+      "recommended": true
+    },
+    {
+      "minecraftVersion": "26.1.2",
+      "buildId": 74,
+      "artifactSha256": "1d70b1dab9cf4a6de615209a536f3a45a2186240253c428213ce2188ab95e5f7",
+      "artifactSize": 52893229,
+      "javaMajor": 25,
+      "validatedAt": "2026-08-18T03:52:36.0304385+00:00",
+      "recommended": false
+    },
+    {
+      "minecraftVersion": "1.21.11",
+      "buildId": 132,
+      "artifactSha256": "5ffef465eeeb5f2a3c23a24419d97c51afd7dbb4923ff42df9a3f58bba1ccfba",
+      "artifactSize": 54846016,
+      "javaMajor": 21,
+      "validatedAt": "2026-08-18T03:52:58.138146+00:00",
+      "recommended": false
+    },
+    {
+      "minecraftVersion": "1.21.10",
+      "buildId": 130,
+      "artifactSha256": "158703f75a26f842ea656b3dc6d75bf3d1ec176b97a2c36384d0b80b3871af53",
+      "artifactSize": 54475623,
+      "javaMajor": 21,
+      "validatedAt": "2026-08-18T03:53:16.6327597+00:00",
+      "recommended": false
+    },
+    {
+      "minecraftVersion": "1.21.8",
+      "buildId": 60,
+      "artifactSha256": "8de7c52c3b02403503d16fac58003f1efef7dd7a0256786843927fa92ee57f1e",
+      "artifactSize": 52811717,
+      "javaMajor": 21,
+      "validatedAt": "2026-08-18T03:53:36.9419679+00:00",
+      "recommended": false
+    },
+    {
+      "minecraftVersion": "1.21.7",
+      "buildId": 32,
+      "artifactSha256": "83838188699cb2837e55b890fb1a1d39ad0710285ed633fbf9fc14e9f47ce078",
+      "artifactSize": 52771702,
+      "javaMajor": 21,
+      "validatedAt": "2026-08-18T03:53:57.0317524+00:00",
+      "recommended": false
+    },
+    {
+      "minecraftVersion": "1.21.6",
+      "buildId": 48,
+      "artifactSha256": "35e2dfa66b3491b9d2f0bb033679fa5aca1e1fdf097e7a06a80ce8afeda5c214",
+      "artifactSize": 52639704,
+      "javaMajor": 21,
+      "validatedAt": "2026-08-18T03:54:17.3136203+00:00",
+      "recommended": false
+    },
+    {
+      "minecraftVersion": "1.21.4",
+      "buildId": 232,
+      "artifactSha256": "5ee4f542f628a14c644410b08c94ea42e772ef4d29fe92973636b6813d4eaffc",
+      "artifactSize": 51437498,
+      "javaMajor": 21,
+      "validatedAt": "2026-08-18T03:54:37.9421705+00:00",
+      "recommended": false
+    },
+    {
+      "minecraftVersion": "1.21.3",
+      "buildId": 83,
+      "artifactSha256": "87e973e1d338e869e7fdbc4b8fadc1579d7bb0246a0e0cf6e5700ace6c8bc17e",
+      "artifactSize": 50931273,
+      "javaMajor": 21,
+      "validatedAt": "2026-08-18T03:54:58.222446+00:00",
+      "recommended": false
+    },
+    {
+      "minecraftVersion": "1.21.1",
+      "buildId": 133,
+      "artifactSha256": "39bd8c00b9e18de91dcabd3cc3dcfa5328685a53b7187a2f63280c22e2d287b9",
+      "artifactSize": 49394394,
+      "javaMajor": 21,
+      "validatedAt": "2026-08-18T03:55:17.6863662+00:00",
+      "recommended": false
+    },
+    {
+      "minecraftVersion": "1.21",
+      "buildId": 130,
+      "artifactSha256": "ab9bb1afc3cea6978a0c03ce8448aa654fe8a9c4dddf341e7cbda1b0edaa73f5",
+      "artifactSize": 49049109,
+      "javaMajor": 21,
+      "validatedAt": "2026-08-18T03:55:37.1767675+00:00",
+      "recommended": false
+    },
+    {
+      "minecraftVersion": "1.20.6",
+      "buildId": 151,
+      "artifactSha256": "4b011f5adb5f6c72007686a223174fce82f31aeb4b34faf4652abc840b47e640",
+      "artifactSize": 45826876,
+      "javaMajor": 21,
+      "validatedAt": "2026-08-18T03:55:56.5470676+00:00",
+      "recommended": false
+    },
+    {
+      "minecraftVersion": "1.20.4",
+      "buildId": 499,
+      "artifactSha256": "cabed3ae77cf55deba7c7d8722bc9cfd5e991201c211665f9265616d9fe5c77b",
+      "artifactSize": 42781488,
+      "javaMajor": 17,
+      "validatedAt": "2026-08-18T03:56:18.455908+00:00",
+      "recommended": false
+    },
+    {
+      "minecraftVersion": "1.20.2",
+      "buildId": 318,
+      "artifactSha256": "ba340a835ac40b8563aa7eda1cd6479a11a7623409c89a2c35cd9d7490ed17a7",
+      "artifactSize": 41741453,
+      "javaMajor": 17,
+      "validatedAt": "2026-08-18T03:56:36.3464249+00:00",
+      "recommended": false
+    },
+    {
+      "minecraftVersion": "1.20.1",
+      "buildId": 196,
+      "artifactSha256": "234a9b32098100c6fc116664d64e36ccdb58b5b649af0f80bcccb08b0255eaea",
+      "artifactSize": 43230582,
+      "javaMajor": 17,
+      "validatedAt": "2026-08-18T03:56:53.9435594+00:00",
+      "recommended": false
+    },
+    {
+      "minecraftVersion": "1.20",
+      "buildId": 17,
+      "artifactSha256": "1e4ccfc0599f491ee6fee4455d3722332ac5d78584fccd55cbb3b51e11504505",
+      "artifactSize": 43328884,
+      "javaMajor": 17,
+      "validatedAt": "2026-08-18T03:57:11.3460494+00:00",
+      "recommended": false
+    },
+    {
+      "minecraftVersion": "1.19.4",
+      "buildId": 550,
+      "artifactSha256": "e587d78cba3e99ef8c4bc24cf20cc3bdbbe89e33b0b572070446af4eb6be5ccf",
+      "artifactSize": 42666406,
+      "javaMajor": 17,
+      "validatedAt": "2026-08-18T03:57:28.4844074+00:00",
+      "recommended": false
+    },
+    {
+      "minecraftVersion": "1.19.3",
+      "buildId": 448,
+      "artifactSha256": "3007f2c638d5f04ed32b6adaa33053fe3634ccfa74345c83d3ea4982d38db5dc",
+      "artifactSize": 39127595,
+      "javaMajor": 17,
+      "validatedAt": "2026-08-18T03:57:46.6028756+00:00",
+      "recommended": false
+    },
+    {
+      "minecraftVersion": "1.19.2",
+      "buildId": 307,
+      "artifactSha256": "2eb5c7459ec94bcdc597ed711d549a3ab4b0fda13e412a0792a1a069b5903864",
+      "artifactSize": 38319498,
+      "javaMajor": 17,
+      "validatedAt": "2026-08-18T03:58:07.7963752+00:00",
+      "recommended": false
+    },
+    {
+      "minecraftVersion": "1.19.1",
+      "buildId": 111,
+      "artifactSha256": "5afe23a1fade92c547124fa874bc7d908fa676f49f09879fa876224b62e9d51b",
+      "artifactSize": 38038416,
+      "javaMajor": 17,
+      "validatedAt": "2026-08-18T03:58:29.9848+00:00",
+      "recommended": false
+    },
+    {
+      "minecraftVersion": "1.19",
+      "buildId": 81,
+      "artifactSha256": "0d39cacc51a77b2b071e1ce862fcbf0b4a4bd668cc7e8b313598d84fa09fabac",
+      "artifactSize": 38158691,
+      "javaMajor": 17,
+      "validatedAt": "2026-08-18T03:58:52.20649+00:00",
+      "recommended": false
+    },
+    {
+      "minecraftVersion": "1.18.2",
+      "buildId": 388,
+      "artifactSha256": "0578f18f4d632b494b468ec56b3b414b5b56fea087ee7d39cf6dcdf4c9d01f05",
+      "artifactSize": 34829667,
+      "javaMajor": 17,
+      "validatedAt": "2026-08-18T03:59:09.9042047+00:00",
+      "recommended": false
+    },
+    {
+      "minecraftVersion": "1.18.1",
+      "buildId": 216,
+      "artifactSha256": "a94917a4472c2cbc9907a15c666bbb784f95ecd7b53c77bc08fe71103e5487f5",
+      "artifactSize": 34617939,
+      "javaMajor": 17,
+      "validatedAt": "2026-08-18T03:59:25.4401673+00:00",
+      "recommended": false
+    },
+    {
+      "minecraftVersion": "1.17.1",
+      "buildId": 411,
+      "artifactSha256": "6cc1ee2f94253ce10b5374ed85fffc735a97d8f1b64db293683dfa24dd3cc05f",
+      "artifactSize": 61886260,
+      "javaMajor": 16,
+      "validatedAt": "2026-08-18T03:59:55.4692394+00:00",
+      "recommended": false
+    },
+    {
+      "minecraftVersion": "1.17",
+      "buildId": 79,
+      "artifactSha256": "760a93b94a58d619bd647d71af84688617d0444d22b716500bc6b343858dc871",
+      "artifactSize": 60391784,
+      "javaMajor": 16,
+      "validatedAt": "2026-08-18T04:00:13.3953797+00:00",
+      "recommended": false
+    },
+    {
+      "minecraftVersion": "1.16.5",
+      "buildId": 794,
+      "artifactSha256": "e67da4851d08cde378ab2b89be58849238c303351ed2482181a99c2c2b489276",
+      "artifactSize": 53944842,
+      "javaMajor": 8,
+      "validatedAt": "2026-08-18T04:00:29.7824901+00:00",
+      "recommended": false
+    },
+    {
+      "minecraftVersion": "1.16.4",
+      "buildId": 416,
+      "artifactSha256": "963268ed564ac7d2ec076463e921ffa09570235f587bbd1a4d91a23ca4264b66",
+      "artifactSize": 46987530,
+      "javaMajor": 8,
+      "validatedAt": "2026-08-18T04:00:42.9395437+00:00",
+      "recommended": false
+    },
+    {
+      "minecraftVersion": "1.16.3",
+      "buildId": 253,
+      "artifactSha256": "940303ee5f5bcc08377e388ea1c1daa109c1ac8c4d189dc67de1106853f2fc23",
+      "artifactSize": 46856246,
+      "javaMajor": 8,
+      "validatedAt": "2026-08-18T04:00:58.5117571+00:00",
+      "recommended": false
+    },
+    {
+      "minecraftVersion": "1.16.2",
+      "buildId": 189,
+      "artifactSha256": "e5e10517daaa9bd6d54a8a0d22d866e31da7c1b47cb9e425ffaac236fde75ec9",
+      "artifactSize": 46848237,
+      "javaMajor": 8,
+      "validatedAt": "2026-08-18T04:01:15.7257235+00:00",
+      "recommended": false
+    },
+    {
+      "minecraftVersion": "1.16.1",
+      "buildId": 138,
+      "artifactSha256": "929559ba1dfc6de2904e17289fb3d1ac95f0ab48c7540cf5b8c2f055fea9d59c",
+      "artifactSize": 46983807,
+      "javaMajor": 8,
+      "validatedAt": "2026-08-18T04:01:35.0150374+00:00",
+      "recommended": false
+    },
+    {
+      "minecraftVersion": "1.15.2",
+      "buildId": 393,
+      "artifactSha256": "bd2dd6f2cc489cf9e2bb800cb4fb6d63e9d293945d3ac10b09dd9c6098fa9f34",
+      "artifactSize": 45026753,
+      "javaMajor": 8,
+      "validatedAt": "2026-08-18T04:01:48.9603389+00:00",
+      "recommended": false
+    }
+  ]
+}

@@ -1,0 +1,49 @@
+<!--
+    The AppIcon template - the only place FluentIcons appears in XAML.
+-->
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:ds="clr-namespace:ChunkPilot.App.DesignSystem"
+                    xmlns:fluent="clr-namespace:FluentIcons.Wpf;assembly=FluentIcons.Wpf">
+
+    <Style x:Key="AppIcon" TargetType="{x:Type ds:AppIcon}">
+        <Setter Property="Focusable" Value="False" />
+        <Setter Property="IsTabStop" Value="False" />
+        <Setter Property="IsHitTestVisible" Value="False" />
+        <Setter Property="Foreground" Value="{DynamicResource AppTextSecondary}" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+        <Setter Property="HorizontalAlignment" Value="Center" />
+        <!-- Icons are decorative; AppIcon removes itself from the automation tree in code. -->
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="{x:Type ds:AppIcon}">
+                    <!--
+                        Two separate things have to agree. IconSize chooses which purpose-drawn
+                        glyph the package uses; FontSize is what actually sizes the element. Setting
+                        only the first rendered every icon in the application at the package default
+                        of 20 dip, whatever step the view asked for.
+                    -->
+                    <fluent:FluentIcon x:Name="Glyph"
+                        Icon="{Binding Kind, RelativeSource={RelativeSource TemplatedParent}, Converter={StaticResource InternalIconGlyphConverter}}"
+                        IconSize="{Binding Scale, RelativeSource={RelativeSource TemplatedParent}, Converter={StaticResource InternalIconSizeConverter}}"
+                        IconVariant="{Binding Variant, RelativeSource={RelativeSource TemplatedParent}, Converter={StaticResource InternalIconVariantConverter}}"
+                        FontSize="{StaticResource AppIconSizeMedium}"
+                        Foreground="{TemplateBinding Foreground}"
+                        FlowDirection="{TemplateBinding FlowDirection}" />
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="Scale" Value="Small">
+                            <Setter TargetName="Glyph" Property="FontSize" Value="{StaticResource AppIconSizeSmall}" />
+                        </Trigger>
+                        <Trigger Property="Scale" Value="Large">
+                            <Setter TargetName="Glyph" Property="FontSize" Value="{StaticResource AppIconSizeLarge}" />
+                        </Trigger>
+                        <Trigger Property="Scale" Value="Hero">
+                            <Setter TargetName="Glyph" Property="FontSize" Value="{StaticResource AppIconSizeEmptyState}" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+    <Style TargetType="{x:Type ds:AppIcon}" BasedOn="{StaticResource AppIcon}" />
+</ResourceDictionary>

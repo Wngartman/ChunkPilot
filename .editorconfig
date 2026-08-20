@@ -1,0 +1,19 @@
+root = true
+
+[*.cs]
+# The following analyzer rules conflict with intentional framework and test patterns:
+# WPF/host-owned disposal, xUnit sentence names, DI instance services, and low-rate logs.
+dotnet_diagnostic.CA1001.severity = none
+dotnet_diagnostic.CA1014.severity = none
+dotnet_diagnostic.CA1707.severity = none
+dotnet_diagnostic.CA1711.severity = none
+dotnet_diagnostic.CA1822.severity = none
+dotnet_diagnostic.CA1848.severity = none
+dotnet_diagnostic.CA1859.severity = none
+
+# Locale is intentionally used for UI-facing values; timestamp filenames are numeric-only.
+dotnet_diagnostic.CA1305.severity = none
+dotnet_diagnostic.CA1307.severity = none
+
+# Options are created only in infrequent backup/diagnostic operations.
+dotnet_diagnostic.CA1869.severity = none

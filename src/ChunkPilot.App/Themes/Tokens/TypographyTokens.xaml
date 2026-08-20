@@ -1,0 +1,62 @@
+<!--
+    Typography tokens. Native Windows type only - no bundled fonts, no display faces.
+
+    Families fall back left to right so Windows 10 (Segoe UI) and Windows 11
+    (Segoe UI Variable) both render correctly. Pages never set FontFamily or FontSize
+    directly; they use the text styles in Themes/Controls/Text.xaml.
+
+    ============================ WEIGHTS: READ THIS FIRST ============================
+
+    Windows ships NO Medium (500) face for any Segoe UI family. Probing
+    Typeface.TryGetGlyphTypeface on Windows 11 returns, for every Segoe UI family:
+
+        Light 300 | Semilight 350 | Regular 400 | SemiBold 600 | Bold 700 | Black 900
+
+    A request for Medium therefore resolves UP to SemiBold - silently, with no error and
+    no fallback warning. The previous ramp declared a Medium token and spent it on button
+    text, field labels and segmented-control text, so all three rendered at exactly the
+    same weight as a section title. What looked like a three-weight hierarchy was a
+    two-weight hierarchy in which most of the interface was SemiBold, and that uniform
+    heaviness is a large part of why the type read as blocky and dated.
+
+    Only weights that genuinely exist are declared here. Do not add Medium back. If a role
+    needs to sit between Regular and SemiBold, it does not - use Regular and let colour,
+    size or spacing carry the difference.
+-->
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:sys="clr-namespace:System;assembly=mscorlib">
+
+    <FontFamily x:Key="AppFontFamily">Segoe UI Variable Text, Segoe UI</FontFamily>
+    <FontFamily x:Key="AppFontFamilyDisplay">Segoe UI Variable Display, Segoe UI</FontFamily>
+    <FontFamily x:Key="AppFontFamilySmall">Segoe UI Variable Small, Segoe UI</FontFamily>
+    <FontFamily x:Key="AppFontFamilyMono">Cascadia Mono, Consolas, Courier New</FontFamily>
+
+    <!-- Size ramp. Steps are deliberately few so hierarchy stays readable. -->
+    <sys:Double x:Key="AppFontSizeCaption">12</sys:Double>
+    <sys:Double x:Key="AppFontSizeSmall">13</sys:Double>
+    <sys:Double x:Key="AppFontSizeBody">14</sys:Double>
+    <sys:Double x:Key="AppFontSizeSubtitle">16</sys:Double>
+    <sys:Double x:Key="AppFontSizeTitle">19</sys:Double>
+    <sys:Double x:Key="AppFontSizeTitleLarge">24</sys:Double>
+    <sys:Double x:Key="AppFontSizeDisplay">30</sys:Double>
+    <!-- A single measured figure in a summary tile. Paired with Display optical sizing. -->
+    <sys:Double x:Key="AppFontSizeNumeric">20</sys:Double>
+
+    <!-- Line heights pair with the size ramp; used with LineStackingStrategy=BlockLineHeight. -->
+    <sys:Double x:Key="AppLineHeightCaption">17</sys:Double>
+    <sys:Double x:Key="AppLineHeightSmall">18</sys:Double>
+    <sys:Double x:Key="AppLineHeightBody">20</sys:Double>
+    <sys:Double x:Key="AppLineHeightSubtitle">22</sys:Double>
+    <sys:Double x:Key="AppLineHeightTitle">26</sys:Double>
+    <sys:Double x:Key="AppLineHeightTitleLarge">30</sys:Double>
+    <sys:Double x:Key="AppLineHeightDisplay">38</sys:Double>
+    <sys:Double x:Key="AppLineHeightNumeric">24</sys:Double>
+
+    <!-- Verified-present weights only. Semilight is reserved for large display type, where a
+         lighter face reads as refinement; it is never used for anything a user must read at
+         body size. Strong is the single emphasis weight. -->
+    <FontWeight x:Key="AppFontWeightRegular">Normal</FontWeight>
+    <FontWeight x:Key="AppFontWeightSemilight">350</FontWeight>
+    <FontWeight x:Key="AppFontWeightStrong">SemiBold</FontWeight>
+</ResourceDictionary>

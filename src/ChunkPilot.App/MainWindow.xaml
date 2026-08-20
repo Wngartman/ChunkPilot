@@ -1,0 +1,829 @@
+<Window x:Class="ChunkPilot.App.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:ChunkPilot.App"
+        xmlns:ds="clr-namespace:ChunkPilot.App.DesignSystem"
+        xmlns:components="clr-namespace:ChunkPilot.App.DesignSystem.Components"
+        xmlns:nav="clr-namespace:ChunkPilot.App.Navigation"
+        Title="ChunkPilot" Width="1440" Height="900" MinWidth="800" MinHeight="600"
+        WindowStartupLocation="CenterScreen"
+        Style="{StaticResource AppWindow}"
+        ds:AppLayout.IsResponsive="True">
+
+    <Window.Resources>
+        <local:ServerIconRootConverter x:Key="ServerIconRoot" />
+    </Window.Resources>
+
+    <Grid x:Name="RootGrid" Background="{DynamicResource AppBackground}">
+
+        <!-- ═══════ APPLICATION SHELL ═══════ -->
+        <Grid x:Name="ShellGrid">
+            <Grid.ColumnDefinitions>
+                <!-- Auto, not a hardcoded width: this column always exactly matches the rail
+                     Border's own Width, which the AppNavigationRail style already drives via
+                     ds:AppLayout.Mode (232 Standard/Wide, 56 Compact). A second, independent
+                     resize mechanism here would fight that style and reintroduce the exact
+                     label-clipping defect the style trigger was built to fix. -->
+                <ColumnDefinition x:Name="NavRailColumn" Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- ─── Navigation Rail ─── -->
+            <Border Grid.Column="0" Style="{StaticResource AppNavigationRail}">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+
+                    <!-- Brand header -->
+                    <StackPanel Orientation="Horizontal" Margin="14,14,14,10">
+                        <Image Source="/Assets/ChunkPilot-64.png" Width="32" Height="32"
+                               RenderOptions.BitmapScalingMode="HighQuality"
+                               AutomationProperties.Name="ChunkPilot"/>
+                        <!-- Hidden in Compact the same way a nav row label is: a DataTrigger on
+                             the inherited ds:AppLayout.Mode, not a separate code-behind check. -->
+                        <StackPanel x:Name="NavBrandText" VerticalAlignment="Center" Margin="10,0,0,0">
+                            <StackPanel.Style>
+                                <Style TargetType="StackPanel">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding Path=(ds:AppLayout.Mode), RelativeSource={RelativeSource Self}}" Value="Compact">
+                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </StackPanel.Style>
+                            <TextBlock Text="ChunkPilot" Style="{StaticResource AppSubtitleText}"
+                                       Foreground="{DynamicResource AppTextPrimary}"/>
+                        </StackPanel>
+                    </StackPanel>
+
+                    <!-- Global navigation -->
+                    <!-- ItemTemplate and ItemContainerStyle come from AppNavigationList. Setting
+                         them locally would beat the style's Compact trigger and the rail could no
+                         longer collapse to icons. -->
+                    <ListBox Grid.Row="1" Style="{StaticResource AppNavigationList}"
+                             ItemsSource="{Binding Navigation.GlobalItems}"
+                             SelectedItem="{Binding SelectedGlobalNavItem, Mode=TwoWay}"
+                             SelectionChanged="GlobalNav_SelectionChanged"/>
+
+                    <!--
+                        Active server: a single glanceable row, not a second copy of the server
+                        library. Browsing and lifecycle actions live on the Servers page; this row
+                        only answers "what's open right now" and lets the user jump back to it.
+                    -->
+                    <StackPanel Grid.Row="2" Margin="10,10,10,0"
+                                Visibility="{Binding SelectedServer, Converter={StaticResource NullVisibility}}">
+                        <TextBlock Style="{StaticResource AppNavigationSectionLabel}" Text="Active server"/>
+                        <Button Style="{StaticResource AppSubtleButton}"
+                                HorizontalContentAlignment="Stretch"
+                                Padding="10,8"
+                                Command="{Binding SelectServerCommand}"
+                                CommandParameter="{Binding SelectedServer}"
+                                AutomationProperties.Name="{Binding ActiveServerSummary}"
+                                ToolTip="{Binding ActiveServerSummary}">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <Grid Width="24" Height="24" Margin="0,0,10,0">
+                                    <ds:AppIcon Kind="Server" Scale="Medium"
+                                                Foreground="{DynamicResource AppTextSecondary}" />
+                                    <Image Source="{Binding ServerIconImage}" Stretch="Uniform"
+                                           RenderOptions.BitmapScalingMode="NearestNeighbor"/>
+                                    <Ellipse Width="8" Height="8"
+                                             Fill="{Binding SelectedServer.State, Converter={StaticResource StateBrush}}"
+                                             Stroke="{DynamicResource AppSurfaceRaised}" StrokeThickness="1"
+                                             HorizontalAlignment="Right" VerticalAlignment="Bottom" />
+                                </Grid>
+                                <StackPanel Grid.Column="1">
+                                    <StackPanel.Style>
+                                        <Style TargetType="StackPanel">
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding Path=(ds:AppLayout.Mode), RelativeSource={RelativeSource Self}}" Value="Compact">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </StackPanel.Style>
+                                    <TextBlock Text="{Binding SelectedServer.Definition.Name}"
+                                               Style="{StaticResource AppBodyStrongText}"
+                                               Foreground="{DynamicResource AppTextPrimary}"/>
+                                    <TextBlock Text="{Binding SelectedServer.State, Converter={StaticResource StateText}}"
+                                               Style="{StaticResource AppCaptionText}"/>
+                                </StackPanel>
+                            </Grid>
+                        </Button>
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <!-- ─── Main Content Area ─── -->
+            <Grid Grid.Column="1">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <!-- Title bar with server nav (visible when server is selected) -->
+                <Border Grid.Row="0" Background="{DynamicResource AppSurfaceSunken}"
+                        BorderBrush="{DynamicResource AppStrokeSubtle}"
+                        BorderThickness="0,0,0,1"
+                        Visibility="{Binding IsServerPage, Converter={StaticResource BoolVisibility}}">
+                    <Grid Margin="{StaticResource AppWorkspaceHeaderPadding}">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+
+                        <!--
+                            Identity on the left, lifecycle actions on the right, tabs beneath.
+
+                            One flat line of name, capsule, version and four buttons gave the whole
+                            header a single visual weight, and the user's eye had nothing to land on
+                            first. The name is now the strongest text on the page and everything
+                            factual about the server sits under it in one quiet metadata line:
+
+                                Butt
+                                ● Running · Vanilla · 26.2
+
+                            The state is a semantic dot plus a word, not a coloured capsule. Colour
+                            alone never carries it, and a decorative pill around two words was the
+                            ornament this pass removes.
+
+                            The actions column is Auto-width and the identity column is Star, so a
+                            long server name trims instead of pushing the buttons off the header.
+                            The actions themselves sit in a WrapPanel measured by that Auto column,
+                            so they wrap onto a second line on a genuinely narrow window rather than
+                            being clipped.
+                        -->
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+
+                            <Grid VerticalAlignment="Center" Margin="{StaticResource AppInlineGapLarge}">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                <Border Width="44" Height="44" CornerRadius="10"
+                                        Background="{DynamicResource AppAccentSubtle}"
+                                        BorderBrush="{DynamicResource AppAccentMuted}" BorderThickness="1"
+                                        Margin="0,0,12,0">
+                                    <Grid>
+                                        <ds:AppIcon Kind="Server" Foreground="{DynamicResource AppAccent}"
+                                                    HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                        <Image Source="{Binding ServerIconImage}" Stretch="Uniform"
+                                               RenderOptions.BitmapScalingMode="NearestNeighbor"/>
+                                    </Grid>
+                                </Border>
+                                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                <TextBlock Text="{Binding SelectedServer.Definition.Name}"
+                                           Style="{StaticResource AppTitleLargeText}"
+                                           TextTrimming="CharacterEllipsis"
+                                           ToolTip="{Binding SelectedServer.Definition.Name}"
+                                           AutomationProperties.Name="{Binding SelectedServer.Definition.Name}"/>
+                                <StackPanel Orientation="Horizontal" Margin="{StaticResource AppStackGapTiny}">
+                                    <Ellipse Width="{StaticResource AppStatusDotSize}"
+                                             Height="{StaticResource AppStatusDotSize}"
+                                             Fill="{Binding SelectedServer.State, Converter={StaticResource StateBrush}}"
+                                             VerticalAlignment="Center"
+                                             Margin="{StaticResource AppInlineGap}"/>
+                                    <TextBlock Style="{StaticResource AppSecondaryText}"
+                                               VerticalAlignment="Center"
+                                               TextTrimming="CharacterEllipsis"
+                                               AutomationProperties.LiveSetting="Polite">
+                                        <Run Text="{Binding SelectedServer.State, Converter={StaticResource StateText}, Mode=OneWay}"/>
+                                        <Run Text=" · "/>
+                                        <Run Text="{Binding SelectedServer.Definition.Ecosystem, Mode=OneWay}"/>
+                                        <Run Text=" · "/>
+                                        <Run Text="{Binding SelectedServer.Definition.MinecraftVersion, Mode=OneWay}"/>
+                                    </TextBlock>
+                                </StackPanel>
+                                </StackPanel>
+                            </Grid>
+
+                            <WrapPanel Grid.Column="1" VerticalAlignment="Center"
+                                       HorizontalAlignment="Right"
+                                       AutomationProperties.Name="Server lifecycle actions">
+                                <Button Content="Rename" ds:AppButton.Icon="Edit"
+                                        Command="{Binding RenameServerCommand}"
+                                        Margin="{StaticResource AppInlineGap}"
+                                        ToolTip="Change only this server's ChunkPilot display name"/>
+                                <Button Content="Start" ds:AppButton.Icon="Play"
+                                        Style="{StaticResource AppPrimaryButton}"
+                                        Command="{Binding StartServerCommand}"
+                                        CommandParameter="{Binding SelectedServer}"
+                                        Visibility="{Binding SelectedServer.State, Converter={StaticResource StateToStartVisibility}}"
+                                        Margin="{StaticResource AppInlineGap}"/>
+                                <Button Content="Save" ds:AppButton.Icon="Save"
+                                        Style="{StaticResource AppSecondaryButton}"
+                                        Command="{Binding SaveServerCommand}"
+                                        CommandParameter="{Binding SelectedServer}"
+                                        Visibility="{Binding SelectedServer.State, Converter={StaticResource StateToStopVisibility}}"
+                                        ToolTip="Save the world now"
+                                        Margin="{StaticResource AppInlineGap}"/>
+                                <Button Content="Restart" ds:AppButton.Icon="ArrowRestart"
+                                        Style="{StaticResource AppSecondaryButton}"
+                                        Command="{Binding RestartServerCommand}"
+                                        CommandParameter="{Binding SelectedServer}"
+                                        Visibility="{Binding SelectedServer.State, Converter={StaticResource StateToStopVisibility}}"
+                                        Margin="{StaticResource AppInlineGap}"/>
+                                <Button Content="Stop" ds:AppButton.Icon="Stop"
+                                        Style="{StaticResource AppDangerButton}"
+                                        Command="{Binding StopServerCommand}"
+                                        CommandParameter="{Binding SelectedServer}"
+                                        Visibility="{Binding SelectedServer.State, Converter={StaticResource StateToStopVisibility}}"/>
+                            </WrapPanel>
+                        </Grid>
+
+                        <!-- Server destination tabs (semantic, max 6). Container style, item
+                             template and indicator geometry all come from AppWorkspaceTabs, so
+                             there is one definition of what a selected tab looks like. -->
+                        <ListBox Grid.Row="1" x:Name="ServerNavBar"
+                                 Style="{StaticResource AppWorkspaceTabs}"
+                                 Margin="{StaticResource AppStackGapTop}"
+                                 ItemsSource="{Binding Navigation.ServerItems}"
+                                 SelectedItem="{Binding SelectedServerNavItem, Mode=TwoWay}"
+                                 SelectionChanged="ServerNav_SelectionChanged"
+                                 AutomationProperties.Name="Server workspace sections"/>
+                    </Grid>
+                </Border>
+
+                <!--
+                    Operation failures, in the application's own language.
+
+                    This is where a failed backup, save or lifecycle action reports itself. It used to be
+                    a default Windows message box: a white dialog in a dark application, blocking the
+                    whole window, showing a raw exception with no indication of which server it was
+                    about. A banner carries the same detail, names the server, and leaves the page
+                    readable while it is on screen. It stays until dismissed or superseded, because a
+                    failure that vanishes on its own is a failure nobody read.
+                -->
+                <components:AppAlert Grid.Row="1" Margin="{StaticResource AppPagePaddingCompact}"
+                                     Tone="{Binding OperationNoticeAppTone}"
+                                     Title="{Binding OperationNoticeTitle}"
+                                     Message="{Binding OperationNoticeDetail}"
+                                     Visibility="{Binding HasOperationNotice, Converter={StaticResource BoolVisibility}}"
+                                     DismissCommand="{Binding DismissOperationNoticeCommand}"
+                                     AutomationProperties.LiveSetting="Assertive"/>
+
+                <!-- Page content host (single scrollbar) -->
+                <ScrollViewer Grid.Row="2" x:Name="PageScroller"
+                              Style="{StaticResource AppPageScrollViewer}">
+                    <!--
+                        A ScrollViewer measures its content with infinite height, so a Star row
+                        or a centered empty state inside it never gets real space to fill or
+                        center within - it just hugs its own natural size at the top, leaving a
+                        void below. Binding MinHeight to the ScrollViewer's own ActualHeight
+                        forces the content to be at least a full viewport tall; a Grid's Star
+                        rows redistribute against that enforced size at Arrange time, so a page
+                        with less content than the viewport fills it (and an AppEmptyState
+                        centers in the real window, not in an auto-sized sliver), while a page
+                        with more content simply scrolls as before.
+                    -->
+                    <Grid MinHeight="{Binding ActualHeight, RelativeSource={RelativeSource AncestorType=ScrollViewer}}">
+                    <Grid Margin="{StaticResource AppPagePadding}">
+
+                        <!-- ═══ GLOBAL PAGES ═══ -->
+
+                        <!-- Dashboard -->
+                        <Grid Visibility="{Binding IsDashboardPage, Converter={StaticResource BoolVisibility}}">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                            </Grid.RowDefinitions>
+
+                            <!-- One page header for both states. The primary action moves rather
+                                 than duplicates: "Open Servers" only when there is a library worth
+                                 opening, otherwise Create/Add live in the empty state below. -->
+                            <components:AppPageHeader Grid.Row="0" Title="Dashboard"
+                                Description="{Binding DashboardSummary}">
+                                <components:AppPageHeader.StatusContent>
+                                    <components:AppStatusBadge
+                                        Text="{Binding Servers.Count, StringFormat={}{0} servers}"
+                                        Tone="Neutral" IsSubtle="True"
+                                        Visibility="{Binding HasServers, Converter={StaticResource BoolVisibility}}"/>
+                                </components:AppPageHeader.StatusContent>
+                                <components:AppPageHeader.PrimaryContent>
+                                    <Button Style="{StaticResource AppSubtleButton}" Content="Open Servers"
+                                        ds:AppButton.Icon="Server"
+                                        Command="{Binding NavigateCommand}" CommandParameter="Servers"
+                                        Visibility="{Binding HasServers, Converter={StaticResource BoolVisibility}}"/>
+                                </components:AppPageHeader.PrimaryContent>
+                            </components:AppPageHeader>
+
+                            <!-- Empty state: a full-height composition, not a text island. -->
+                            <StackPanel Grid.Row="1" VerticalAlignment="Center" HorizontalAlignment="Center"
+                                        Visibility="{Binding HasServers, Converter={StaticResource FalseMeansVisible}}">
+                                <components:AppEmptyState
+                                    Icon="Server"
+                                    Title="Set up your first server"
+                                    Message="ChunkPilot installs, runs and protects Minecraft servers on this PC, with managed Java and reversible changes.">
+                                    <StackPanel Orientation="Horizontal">
+                                        <Button Style="{StaticResource AppPrimaryButton}" Content="Create server"
+                                                ds:AppButton.Icon="Add" Command="{Binding CreateVanillaServerCommand}" Margin="0,0,8,0"/>
+                                        <Button Content="Add existing server"
+                                                ds:AppButton.Icon="FolderOpen" Command="{Binding AddServerCommand}"/>
+                                    </StackPanel>
+                                </components:AppEmptyState>
+
+                                <!-- Restrained, truthful capability strip. No feature claimed here
+                                     is aspirational; each maps to a rule already enforced elsewhere
+                                     in the app. -->
+                                <ItemsControl Margin="{StaticResource AppStackGapLarge}" HorizontalAlignment="Center"
+                                              Focusable="False">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <WrapPanel HorizontalAlignment="Center" MaxWidth="720"/>
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <components:AppSectionCard Icon="Hardware" Width="220" Margin="6"
+                                        Header="Java is handled"
+                                        Description="ChunkPilot downloads and manages the right Java runtime. It never changes your system Java."/>
+                                    <components:AppSectionCard Icon="ShieldChecked" Width="220" Margin="6"
+                                        Header="Changes are reversible"
+                                        Description="Updates are staged and verified, with a recovery point kept first."/>
+                                    <components:AppSectionCard Icon="FolderOpen" Width="220" Margin="6"
+                                        Header="Your worlds stay yours"
+                                        Description="Existing folders are used in place unless you choose otherwise."/>
+                                </ItemsControl>
+                            </StackPanel>
+
+                            <!-- Populated state: capped and centred so cards don't stretch
+                                 edge-to-edge on a wide monitor. -->
+                            <StackPanel Grid.Row="1" MaxWidth="{StaticResource AppMeasureContent}"
+                                        VerticalAlignment="Top"
+                                        Visibility="{Binding HasServers, Converter={StaticResource BoolVisibility}}">
+                                <!-- Attention items (only when problems exist) -->
+                                <components:AppAlert Tone="Danger"
+                                    Title="Server needs attention"
+                                    Message="A server has crashed or stopped responding. Open it to investigate."
+                                    Visibility="{Binding ProblemCount, Converter={StaticResource PositiveIntVisibility}}"/>
+
+                                <!-- Server rows: the same identity treatment as the Servers library -->
+                                <Border Style="{StaticResource AppCard}" Padding="8" Margin="0,8,0,0">
+                                    <ItemsControl ItemsSource="{Binding FilteredServers}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Button Style="{StaticResource AppSubtleButton}"
+                                                        HorizontalContentAlignment="Stretch"
+                                                        Padding="0" Margin="0,0,0,2"
+                                                        Command="{Binding DataContext.SelectServerCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                        CommandParameter="{Binding}"
+                                                        AutomationProperties.Name="{Binding Definition.Name}"
+                                                        ToolTip="{Binding Definition.RootPath}">
+                                                    <components:AppServerRow
+                                                        ServerName="{Binding Definition.Name}"
+                                                        IconSource="{Binding Definition.RootPath, Converter={StaticResource ServerIconRoot}}"
+                                                        Subtitle="{Binding Definition.Ecosystem, StringFormat={}{0}}"
+                                                        StateText="{Binding State, Converter={StaticResource StateText}}"
+                                                        Tone="{Binding State, Converter={StaticResource StateTone}}">
+                                                        <components:AppServerRow.TrailingContent>
+                                                            <StackPanel Orientation="Horizontal">
+                                                                <TextBlock VerticalAlignment="Center" Margin="0,0,12,0"
+                                                                    Style="{StaticResource AppMutedText}"
+                                                                    Visibility="{Binding OnlinePlayers, Converter={StaticResource NullVisibility}}">
+                                                                    <Run Text="{Binding OnlinePlayers, Mode=OneWay}"/>
+                                                                    <Run Text=" players"/>
+                                                                </TextBlock>
+                                                                <Button Content="Start" ds:AppButton.Icon="Play"
+                                                                    Command="{Binding DataContext.StartServerCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                                    CommandParameter="{Binding}"
+                                                                    Style="{StaticResource AppPrimaryButton}"
+                                                                    Visibility="{Binding State, Converter={StaticResource StateToStartVisibility}}"/>
+                                                            </StackPanel>
+                                                        </components:AppServerRow.TrailingContent>
+                                                    </components:AppServerRow>
+                                                </Button>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </Border>
+
+                                <!-- Recent activity (compact) -->
+                                <TextBlock Text="Recent activity" Style="{StaticResource AppEyebrowText}" Margin="0,20,0,6"
+                                           Visibility="{Binding Activity.Count, Converter={StaticResource PositiveIntVisibility}}"/>
+                                <Border Style="{StaticResource AppCard}" Padding="4,2"
+                                        Visibility="{Binding Activity.Count, Converter={StaticResource PositiveIntVisibility}}">
+                                    <ItemsControl ItemsSource="{Binding Activity}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Grid Margin="8,6">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="120"/>
+                                                        <ColumnDefinition Width="160"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock Text="{Binding Timestamp, StringFormat={}{0:h:mm tt}}"
+                                                               Style="{StaticResource AppMutedText}"/>
+                                                    <TextBlock Grid.Column="1" Text="{Binding ServerName}"
+                                                               Style="{StaticResource AppMutedText}"
+                                                               TextTrimming="CharacterEllipsis"/>
+                                                    <TextBlock Grid.Column="2" Text="{Binding Action}"
+                                                               Style="{StaticResource AppSecondaryText}"/>
+                                                </Grid>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </Border>
+                            </StackPanel>
+                        </Grid>
+
+                        <!-- Servers library -->
+                        <Grid Visibility="{Binding IsServersPage, Converter={StaticResource BoolVisibility}}">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                            </Grid.RowDefinitions>
+
+                            <!-- Page header. Create/Add live here once a library exists; the true
+                                 empty state below owns them instead so the two are never shown
+                                 side by side. -->
+                            <components:AppPageHeader Grid.Row="0" Title="Servers"
+                                Description="Manage and launch your configured Minecraft servers">
+                                <components:AppPageHeader.StatusContent>
+                                    <components:AppStatusBadge
+                                        Text="{Binding Servers.Count, StringFormat={}{0} servers}"
+                                        Tone="Neutral" IsSubtle="True"
+                                        Visibility="{Binding HasServers, Converter={StaticResource BoolVisibility}}"/>
+                                </components:AppPageHeader.StatusContent>
+                                <components:AppPageHeader.SecondaryContent>
+                                    <Button Content="Add existing" ds:AppButton.Icon="FolderOpen"
+                                        Command="{Binding AddServerCommand}"
+                                        ToolTip="Reference an existing server folder"
+                                        Visibility="{Binding HasServers, Converter={StaticResource BoolVisibility}}"/>
+                                </components:AppPageHeader.SecondaryContent>
+                                <components:AppPageHeader.PrimaryContent>
+                                    <Button Style="{StaticResource AppPrimaryButton}" Content="Create server"
+                                        ds:AppButton.Icon="Add" Command="{Binding CreateVanillaServerCommand}"
+                                        ToolTip="Beginner choices with managed Java"
+                                        Visibility="{Binding HasServers, Converter={StaticResource BoolVisibility}}"/>
+                                </components:AppPageHeader.PrimaryContent>
+                            </components:AppPageHeader>
+
+                            <!-- Search, filter and sort: one toolbar, wraps at narrow widths.
+                                 Hidden with no servers - there is nothing yet to search. -->
+                            <Border Grid.Row="1" Style="{StaticResource AppCard}" Padding="10" Margin="0,4,0,0"
+                                    Visibility="{Binding HasServers, Converter={StaticResource BoolVisibility}}">
+                                <WrapPanel Orientation="Horizontal">
+                                    <components:AppSearchBox
+                                        Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
+                                        Placeholder="Search servers by name, folder, or software"
+                                        Width="320"
+                                        Margin="0,0,8,4"/>
+
+                                    <ComboBox
+                                        ItemsSource="{Binding LibraryStateFilterOptions}"
+                                        SelectedItem="{Binding LibraryStateFilter}"
+                                        Margin="0,0,8,4"
+                                        Width="140"
+                                        Style="{StaticResource AppComboBox}"/>
+
+                                    <Button
+                                        Content="{Binding LibrarySortButtonText}"
+                                        ds:AppButton.Icon="Sort"
+                                        Command="{Binding ToggleLibrarySortCommand}"
+                                        Style="{StaticResource AppSubtleButton}"
+                                        Margin="0,0,0,4"
+                                        Width="130"/>
+                                </WrapPanel>
+                            </Border>
+
+                            <!-- Server library. Uncapped: a virtualizable list benefits from the
+                                 full window width rather than a centred measure band. -->
+                            <Border Grid.Row="2" Style="{StaticResource AppCard}" Padding="8" Margin="0,8,0,0"
+                                    VerticalAlignment="Top"
+                                    Visibility="{Binding HasServers, Converter={StaticResource BoolVisibility}}">
+                                <ItemsControl ItemsSource="{Binding LibraryServers}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Button Style="{StaticResource AppSubtleButton}"
+                                                HorizontalContentAlignment="Stretch"
+                                                Padding="0"
+                                                Margin="0,0,0,2"
+                                                Command="{Binding DataContext.SelectServerCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                CommandParameter="{Binding}"
+                                                AutomationProperties.Name="{Binding Definition.Name}"
+                                                ToolTip="{Binding Definition.RootPath}">
+                                                <components:AppServerRow
+                                                    ServerName="{Binding Definition.Name}"
+                                                    IconSource="{Binding Definition.RootPath, Converter={StaticResource ServerIconRoot}}"
+                                                    Subtitle="{Binding Definition.Ecosystem, StringFormat={}{0}}"
+                                                    StateText="{Binding State, Converter={StaticResource StateText}}"
+                                                    Tone="{Binding State, Converter={StaticResource StateTone}}">
+                                                    <components:AppServerRow.IsSelected>
+                                                        <MultiBinding Converter="{StaticResource ServerEquals}">
+                                                            <Binding Path="DataContext.SelectedServer" RelativeSource="{RelativeSource AncestorType=Window}"/>
+                                                            <Binding Path="."/>
+                                                        </MultiBinding>
+                                                    </components:AppServerRow.IsSelected>
+                                                    <components:AppServerRow.TrailingContent>
+                                                        <StackPanel Orientation="Horizontal">
+                                                            <Button Content="Start" ds:AppButton.Icon="Play"
+                                                                Command="{Binding DataContext.StartServerCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                                CommandParameter="{Binding}"
+                                                                Visibility="{Binding State, Converter={StaticResource StateToStartVisibility}}"
+                                                                Style="{StaticResource AppPrimaryButton}"
+                                                                Margin="0,0,4,0"/>
+                                                            <Button Content="Stop" ds:AppButton.Icon="Stop"
+                                                                Command="{Binding DataContext.StopServerCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                                CommandParameter="{Binding}"
+                                                                Visibility="{Binding State, Converter={StaticResource StateToStopVisibility}}"
+                                                                Style="{StaticResource AppDangerButton}"/>
+                                                        </StackPanel>
+                                                    </components:AppServerRow.TrailingContent>
+                                                </components:AppServerRow>
+                                            </Button>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </Border>
+
+                            <!-- No servers: a full-height composition, not a text island. -->
+                            <StackPanel Grid.Row="2" VerticalAlignment="Center" HorizontalAlignment="Center"
+                                        Visibility="{Binding HasServers, Converter={StaticResource FalseMeansVisible}}">
+                                <components:AppEmptyState
+                                    Icon="Server"
+                                    Title="No servers yet"
+                                    Message="Create a new Minecraft server with managed Java, or add an existing server folder.">
+                                    <StackPanel Orientation="Horizontal">
+                                        <Button Style="{StaticResource AppPrimaryButton}" Content="Create server"
+                                            ds:AppButton.Icon="Add" Command="{Binding CreateVanillaServerCommand}" Margin="0,0,8,0"/>
+                                        <Button Content="Add existing server"
+                                            ds:AppButton.Icon="FolderOpen" Command="{Binding AddServerCommand}"/>
+                                    </StackPanel>
+                                </components:AppEmptyState>
+                            </StackPanel>
+
+                            <!-- No search results -->
+                            <StackPanel Grid.Row="2" VerticalAlignment="Center" HorizontalAlignment="Center"
+                                        Visibility="{Binding NoSearchResults, Converter={StaticResource BoolVisibility}}">
+                                <components:AppEmptyState
+                                    Icon="Search"
+                                    Title="No servers match your search"
+                                    Message="Try a different search term or clear your filters.">
+                                    <StackPanel Orientation="Horizontal">
+                                        <Button Content="Clear filters"
+                                            ds:AppButton.Icon="Dismiss"
+                                            Command="{Binding ClearLibraryFiltersCommand}"/>
+                                    </StackPanel>
+                                </components:AppEmptyState>
+                            </StackPanel>
+                        </Grid>
+
+                        <!-- Automation page (schedules + update center + recipes) -->
+                        <Grid Visibility="{Binding IsAutomationPage, Converter={StaticResource BoolVisibility}}">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                            </Grid.RowDefinitions>
+
+                            <components:AppPageHeader Grid.Row="0" Title="Automation"
+                                Description="Schedules, update center, and no-code recipes"/>
+
+                            <!-- Empty: no bare administrative table. Schedules are created from
+                                 the server they apply to, so the real next step is opening one. -->
+                            <StackPanel Grid.Row="1" VerticalAlignment="Center" HorizontalAlignment="Center"
+                                        Visibility="{Binding Schedules.Count, Converter={StaticResource ZeroIntVisibility}}">
+                                <components:AppEmptyState
+                                    Icon="Calendar"
+                                    Title="Nothing runs automatically yet"
+                                    Message="Open a server to schedule a backup, a restart, or an update check. Schedules belong to the server they act on.">
+                                    <Button Content="Open Servers" ds:AppButton.Icon="Server"
+                                        Command="{Binding NavigateCommand}" CommandParameter="Servers"/>
+                                </components:AppEmptyState>
+
+                                <!-- Restrained, plainly-labelled examples - never rendered as if
+                                     configured, never persisted. -->
+                                <TextBlock Text="What you can schedule" Style="{StaticResource AppEyebrowText}"
+                                           HorizontalAlignment="Center" Margin="{StaticResource AppStackGapLarge}"/>
+                                <ItemsControl HorizontalAlignment="Center" Focusable="False">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <WrapPanel HorizontalAlignment="Center" MaxWidth="720"/>
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <components:AppSectionCard Icon="ArrowRestart" Width="220" Margin="6"
+                                        Header="Restart schedules"
+                                        Description="Restart a server at a set time, with a countdown warning first."/>
+                                    <components:AppSectionCard Icon="Backup" Width="220" Margin="6"
+                                        Header="Backup schedules"
+                                        Description="Back up a world on an interval or at a daily time."/>
+                                    <components:AppSectionCard Icon="Refresh" Width="220" Margin="6"
+                                        Header="Update checks"
+                                        Description="Check for a new server build on a schedule, staged for review."/>
+                                </ItemsControl>
+                            </StackPanel>
+
+                            <!-- Populated: responsive rows, not a rigid table that overflows a
+                                 narrow window. -->
+                            <Border Grid.Row="1" Style="{StaticResource AppCard}" Padding="8" VerticalAlignment="Top"
+                                    Visibility="{Binding Schedules.Count, Converter={StaticResource PositiveIntVisibility}}">
+                                <ItemsControl ItemsSource="{Binding Schedules}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border Padding="{StaticResource AppRowPadding}"
+                                                    BorderThickness="{StaticResource AppBottomStrokeThickness}"
+                                                    BorderBrush="{DynamicResource AppStrokeSubtle}">
+                                                <WrapPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                                    <StackPanel Margin="0,0,20,0" MinWidth="180">
+                                                        <TextBlock Style="{StaticResource AppBodyStrongText}" Text="{Binding Name}"/>
+                                                        <TextBlock Style="{StaticResource AppMutedText}">
+                                                            <Run Text="{Binding Action, Mode=OneWay}"/>
+                                                            <Run Text=" · "/>
+                                                            <Run Text="{Binding Kind, Mode=OneWay}"/>
+                                                        </TextBlock>
+                                                    </StackPanel>
+                                                    <StackPanel Margin="0,0,20,0" MinWidth="160">
+                                                        <TextBlock Style="{StaticResource AppLabelText}" Text="Next run"/>
+                                                        <TextBlock Style="{StaticResource AppSecondaryText}"
+                                                                   Text="{Binding NextRunAt, StringFormat=g, TargetNullValue=Not scheduled}"/>
+                                                    </StackPanel>
+                                                    <components:AppStatusBadge Text="Enabled" Tone="Success" IsSubtle="True"
+                                                        Visibility="{Binding Enabled, Converter={StaticResource BoolVisibility}}"/>
+                                                    <components:AppStatusBadge Text="Disabled" Tone="Neutral" IsSubtle="True"
+                                                        Visibility="{Binding Enabled, Converter={StaticResource InverseBoolVisibility}}"/>
+                                                </WrapPanel>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </Border>
+                        </Grid>
+
+                        <!-- Activity page -->
+                        <Grid Visibility="{Binding IsActivityPage, Converter={StaticResource BoolVisibility}}">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                            </Grid.RowDefinitions>
+
+                            <components:AppPageHeader Grid.Row="0" Title="Activity"
+                                Description="Lifecycle, backup, and scheduled operations recorded by the agent"/>
+
+                            <!-- Empty: intentional, not a bare table with zero rows. -->
+                            <StackPanel Grid.Row="1" VerticalAlignment="Center" HorizontalAlignment="Center"
+                                        Visibility="{Binding Activity.Count, Converter={StaticResource ZeroIntVisibility}}">
+                                <components:AppEmptyState
+                                    Icon="History"
+                                    Title="No activity yet"
+                                    Message="Operations you run will be recorded here."/>
+                            </StackPanel>
+
+                            <!-- Populated: responsive rows. Error detail is progressive - it only
+                                 occupies space when there is one to read. -->
+                            <Border Grid.Row="1" Style="{StaticResource AppCard}" Padding="8" VerticalAlignment="Top"
+                                    Visibility="{Binding Activity.Count, Converter={StaticResource PositiveIntVisibility}}">
+                                <ItemsControl ItemsSource="{Binding Activity}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border Padding="{StaticResource AppRowPadding}"
+                                                    BorderThickness="{StaticResource AppBottomStrokeThickness}"
+                                                    BorderBrush="{DynamicResource AppStrokeSubtle}">
+                                                <StackPanel>
+                                                    <WrapPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                                        <TextBlock Style="{StaticResource AppMutedText}" MinWidth="130"
+                                                                   Margin="0,0,20,0"
+                                                                   Text="{Binding Timestamp, StringFormat=g}"/>
+                                                        <TextBlock Style="{StaticResource AppBodyStrongText}" MinWidth="150"
+                                                                   Margin="0,0,20,0"
+                                                                   Text="{Binding ServerName}"/>
+                                                        <TextBlock Style="{StaticResource AppSecondaryText}" MinWidth="180"
+                                                                   Margin="0,0,20,0"
+                                                                   Text="{Binding Action, Converter={StaticResource ActivityAction}}"/>
+                                                        <components:AppStatusBadge
+                                                            Text="{Binding Result}" IsSubtle="True"
+                                                            Tone="{Binding Result, Converter={StaticResource ActivityResultTone}}"
+                                                            Margin="0,0,20,0"/>
+                                                        <TextBlock Style="{StaticResource AppMutedText}"
+                                                                   Text="{Binding DurationMilliseconds, StringFormat={}{0} ms}"/>
+                                                    </WrapPanel>
+                                                    <!-- Error defaults to "" (never null), so this
+                                                         needs an exact-match trigger rather than
+                                                         the null-checking visibility converter. -->
+                                                    <TextBlock Foreground="{DynamicResource AppDangerText}"
+                                                               TextWrapping="Wrap" Margin="0,4,0,0"
+                                                               Text="{Binding Error}">
+                                                        <TextBlock.Style>
+                                                            <Style TargetType="TextBlock" BasedOn="{StaticResource AppMutedText}">
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding Error}" Value="">
+                                                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                                                    </DataTrigger>
+                                                                    <DataTrigger Binding="{Binding Error}" Value="{x:Null}">
+                                                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                                <Setter Property="Visibility" Value="Visible"/>
+                                                            </Style>
+                                                        </TextBlock.Style>
+                                                    </TextBlock>
+                                                    <Button Content="Show likely fix" ds:AppButton.Icon="Diagnostics"
+                                                            Command="{Binding DataContext.OpenTroubleshootingGuideCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                            CommandParameter="{Binding}"
+                                                            HorizontalAlignment="Left"
+                                                            Margin="{StaticResource AppStackGapTop}"
+                                                            Visibility="{Binding Converter={StaticResource TroubleshootingMatchVisibility}}"
+                                                            AutomationProperties.Name="Show ranked troubleshooting steps for this activity error" />
+                                                </StackPanel>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </Border>
+                        </Grid>
+
+                        <!-- Settings page: a single-column form, capped and centred rather than
+                             left-aligned in the leftover width of a wide window. -->
+                        <Grid Visibility="{Binding IsSettingsPage, Converter={StaticResource BoolVisibility}}">
+                            <StackPanel MaxWidth="{StaticResource AppMeasureForm}" HorizontalAlignment="Stretch">
+                                <components:AppPageHeader Title="Settings"
+                                    Description="Local-first preferences. No telemetry is sent."/>
+
+                                <components:AppSectionCard Icon="Settings" Header="General"
+                                    Description="How ChunkPilot behaves when it starts and when the window closes.">
+                                    <StackPanel>
+                                        <CheckBox Content="Minimize to system tray" IsChecked="{Binding MinimizeToTray}" Margin="0,5"/>
+                                        <CheckBox Content="Start minimized" IsChecked="{Binding StartMinimized}" Margin="0,5"/>
+                                        <CheckBox Content="Start ChunkPilot with Windows" IsChecked="{Binding StartWithWindows}" Margin="0,5"/>
+                                    </StackPanel>
+                                </components:AppSectionCard>
+
+                                <components:AppSectionCard Icon="HeartPulse" Header="Appearance and accessibility"
+                                    Description="Visual comfort preferences applied across the app.">
+                                    <StackPanel>
+                                        <CheckBox Content="Reduced motion" IsChecked="{Binding ReducedMotion}" Margin="0,5"/>
+                                    </StackPanel>
+                                </components:AppSectionCard>
+
+                                <components:AppSectionCard Icon="Backup" Header="Backups"
+                                    Description="Where new backups are written by default.">
+                                    <StackPanel>
+                                        <TextBlock Text="Default backup directory override" Style="{StaticResource AppLabelText}"/>
+                                        <TextBox Text="{Binding DefaultBackupDirectory}"
+                                                 ds:AppInput.Placeholder="Example: D:\Minecraft Backups"
+                                                 AutomationProperties.Name="Default backup directory override"
+                                                 AutomationProperties.HelpText="For example, D:\Minecraft Backups"/>
+                                    </StackPanel>
+                                </components:AppSectionCard>
+
+                                <components:AppSectionCard Icon="ShieldChecked" Header="Hosting lifecycle"
+                                    Description="Close ChunkPilot to stop hosting safely. Minimize it to keep hosting.">
+                                    <TextBlock Style="{StaticResource AppBodyText}"
+                                               Text="If the ChunkPilot window process ends unexpectedly, the Agent revokes public access, safely stops managed servers, and exits."/>
+                                </components:AppSectionCard>
+
+                                <Button Style="{StaticResource AppPrimaryButton}" Content="Save settings"
+                                        Command="{Binding SaveSettingsCommand}" HorizontalAlignment="Left"
+                                        Margin="{StaticResource AppStackGapTop}"/>
+                            </StackPanel>
+                        </Grid>
+
+                        <!-- ═══ SERVER WORKSPACE PAGES ═══ -->
+                        <Grid Visibility="{Binding IsServerPage, Converter={StaticResource BoolVisibility}}">
+                            <!-- Server page content is hosted in a ContentPresenter controlled by code-behind
+                                 that swaps based on Navigation.CurrentServerDestination -->
+                            <ContentControl x:Name="ServerPageHost" />
+                        </Grid>
+
+                    </Grid>
+                    </Grid>
+                </ScrollViewer>
+
+                <!-- Toast host (top-right overlay) -->
+                <ItemsControl Grid.Row="2" x:Name="ToastHost" VerticalAlignment="Top" HorizontalAlignment="Right"
+                              Margin="0,12,20,0" IsHitTestVisible="False"/>
+
+                <!--
+                    Quiet confirmation line. Every operation already produces a sentence; until now
+                    nothing displayed it, so a successful save or backup was indistinguishable from one
+                    that did nothing. Failures get the banner above, not this.
+                -->
+                <Border Grid.Row="3" Background="{DynamicResource AppSurfaceSunken}"
+                        BorderBrush="{DynamicResource AppStrokeSubtle}"
+                        BorderThickness="{StaticResource AppTopStrokeThickness}"
+                        Padding="{StaticResource AppRowPadding}">
+                    <TextBlock Text="{Binding StatusMessage}" Style="{StaticResource AppMutedText}"
+                               TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"
+                               ToolTip="{Binding StatusMessage}"
+                               AutomationProperties.LiveSetting="Polite"
+                               AutomationProperties.Name="Last operation"/>
+                </Border>
+            </Grid>
+        </Grid>
+
+        <!-- Agent connectivity banner (only shown when action is affected) -->
+        <Border x:Name="ConnectivityBanner" VerticalAlignment="Top" HorizontalAlignment="Stretch"
+                Background="{DynamicResource AppWarningSubtle}" Visibility="Collapsed"
+                Padding="12,6" Panel.ZIndex="50">
+            <TextBlock x:Name="ConnectivityText" Text="Reconnecting to the ChunkPilot service…"
+                       HorizontalAlignment="Center" Foreground="{DynamicResource AppTextPrimary}" FontSize="{StaticResource AppFontSizeSmall}"/>
+        </Border>
+    </Grid>
+</Window>

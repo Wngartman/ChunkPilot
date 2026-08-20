@@ -1,0 +1,179 @@
+name: Publish prerelease
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing annotated prerelease tag to build and publish
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-test:
+    name: Build and test exact tag
+    runs-on: windows-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Validate tag input
+        shell: pwsh
+        run: |
+          if ('${{ inputs.tag }}' -notmatch '^v1\.3\.0-alpha\.[1-9][0-9]*$') {
+            throw 'Release input must be a ChunkPilot 1.3.0 alpha tag.'
+          }
+
+      - name: Check out exact tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
+
+      - name: Prove annotated tag identity
+        shell: pwsh
+        run: |
+          $tag = '${{ inputs.tag }}'
+          $kind = (git cat-file -t "refs/tags/$tag").Trim()
+          if ($kind -ne 'tag') { throw "$tag is not an annotated tag." }
+          $tagCommit = (git rev-list -n 1 $tag).Trim()
+          $head = (git rev-parse HEAD).Trim()
+          if ($tagCommit -ne $head) { throw "Checked-out HEAD $head is not tag target $tagCommit." }
+          "RELEASE_COMMIT=$head" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.x
+          cache: npm
+          cache-dependency-path: src/ChunkPilot.WebUi/package-lock.json
+
+      - name: Install verified repository-local Inno Setup
+        shell: pwsh
+        run: ./scripts/install-inno-setup.ps1
+
+      - name: Build, test, publish, and compile installer
+        shell: pwsh
+        run: ./scripts/publish.ps1 -BuildInstaller -ReleaseTag '${{ inputs.tag }}'
+
+      - name: Test packaged Agent
+        shell: pwsh
+        run: ./scripts/smoke-portable.ps1 -PortableRoot ./artifacts/portable-test
+
+      - name: Test packaged default UI close
+        shell: pwsh
+        run: ./scripts/test-packaged-ui-close.ps1 -PortableRoot ./artifacts/portable-test
+
+      - name: Test packaged WebUI preview close
+        shell: pwsh
+        run: ./scripts/test-packaged-ui-close.ps1 -PortableRoot ./artifacts/portable-test -WebUiPreview
+
+      - name: Assemble checksums, SBOM, notices, and release notes
+        shell: pwsh
+        run: ./scripts/package-release.ps1 -ReleaseTag '${{ inputs.tag }}'
+
+      - name: Test portable ZIP from a clean extraction
+        shell: pwsh
+        run: ./scripts/test-portable-package.ps1 -PortableZip "./artifacts/release/${{ inputs.tag }}/ChunkPilot-Portable-${{ inputs.tag }}-win-x64.zip"
+
+      - name: Test clean install, reinstall, uninstall, and data preservation
+        shell: pwsh
+        run: ./scripts/test-installer.ps1 -InstallerPath "./artifacts/release/${{ inputs.tag }}/ChunkPilot-Setup-${{ inputs.tag }}.exe"
+
+      - name: Audit exact publication tree
+        shell: pwsh
+        run: ./scripts/audit-publication.ps1
+
+      - name: Verify clean source tree and whitespace
+        shell: pwsh
+        run: |
+          git diff --check
+          if ($LASTEXITCODE -ne 0) { throw 'git diff --check failed.' }
+          if (git status --porcelain) { throw 'Release build changed tracked source files.' }
+
+      - name: Upload verified release payload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: chunkpilot-${{ inputs.tag }}
+          path: artifacts/release/${{ inputs.tag }}/*
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    name: Publish immutable GitHub prerelease
+    needs: build-and-test
+    runs-on: windows-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download verified release payload
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: chunkpilot-${{ inputs.tag }}
+          path: release
+
+      - name: Refuse to replace an existing release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view '${{ inputs.tag }}' --repo '${{ github.repository }}' *> $null
+          if ($LASTEXITCODE -eq 0) { throw 'This tag already has a GitHub release; immutable assets will not be replaced.' }
+
+      - name: Publish prerelease
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = '${{ inputs.tag }}'
+          $assets = @(
+            "release/ChunkPilot-Setup-$tag.exe",
+            "release/ChunkPilot-Portable-$tag-win-x64.zip",
+            'release/SHA256SUMS.txt',
+            'release/ChunkPilot-SBOM.spdx.json',
+            'release/THIRD-PARTY-NOTICES.txt',
+            'release/RELEASE_NOTES.md'
+          )
+          foreach ($asset in $assets) { if (-not (Test-Path -LiteralPath $asset)) { throw "Missing verified asset: $asset" } }
+          gh release create $tag @assets --repo '${{ github.repository }}' --verify-tag --prerelease `
+            --title 'ChunkPilot 1.3.0 Alpha Snapshot' --notes-file release/RELEASE_NOTES.md
+          if ($LASTEXITCODE -ne 0) { throw 'GitHub prerelease publication failed.' }
+
+      - name: Redownload and verify public assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = '${{ inputs.tag }}'
+          $release = gh api "repos/${{ github.repository }}/releases/tags/$tag" | ConvertFrom-Json
+          if (-not $release.prerelease -or $release.draft) { throw 'Published release state is not a visible prerelease.' }
+          $expected = @(
+            "ChunkPilot-Setup-$tag.exe", "ChunkPilot-Portable-$tag-win-x64.zip", 'SHA256SUMS.txt',
+            'ChunkPilot-SBOM.spdx.json', 'THIRD-PARTY-NOTICES.txt', 'RELEASE_NOTES.md'
+          )
+          $actual = @($release.assets | ForEach-Object name)
+          if (@($expected | Where-Object { $_ -notin $actual }).Count -ne 0) { throw 'One or more release assets are missing.' }
+          New-Item -ItemType Directory -Path downloaded | Out-Null
+          gh release download $tag --repo '${{ github.repository }}' --dir downloaded
+          $sumLines = Get-Content downloaded/SHA256SUMS.txt
+          foreach ($line in $sumLines) {
+            if ($line -notmatch '^([0-9a-f]{64})  (.+)$') { throw "Invalid SHA256SUMS line: $line" }
+            $path = Join-Path downloaded $matches[2]
+            if (-not (Test-Path -LiteralPath $path)) { throw "Checksum target was not downloaded: $($matches[2])" }
+            $hash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($hash -ne $matches[1]) { throw "Redownloaded asset hash mismatch: $($matches[2])" }
+          }
+          "RELEASE_URL=$($release.html_url)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "Verified public prerelease: $($release.html_url)"

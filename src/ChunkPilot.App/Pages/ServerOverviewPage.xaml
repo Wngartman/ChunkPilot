@@ -1,0 +1,694 @@
+<!-- Operational home for one server. Reuses shared cards, controls and player row commands so the
+     page stays adjustable through the design system instead of accumulating one-off chrome. -->
+<UserControl x:Class="ChunkPilot.App.ServerOverviewPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:ChunkPilot.App"
+             xmlns:ds="clr-namespace:ChunkPilot.App.DesignSystem"
+             xmlns:components="clr-namespace:ChunkPilot.App.DesignSystem.Components">
+    <StackPanel DataContext="{Binding DataContext, RelativeSource={RelativeSource AncestorType=Window}}"
+                MaxWidth="{StaticResource AppMeasureContent}" HorizontalAlignment="Stretch">
+
+        <components:AppAlert Tone="{Binding TroubleshootingTone}" Title="{Binding TroubleshootingCalloutTitle}"
+                             Message="{Binding TroubleshootingCalloutSummary}"
+                             Visibility="{Binding ShowsTroubleshootingEntry, Converter={StaticResource BoolVisibility}}"
+                             AutomationProperties.LiveSetting="Polite">
+            <components:AppAlert.DetailContent>
+                <StackPanel>
+                    <TextBlock Style="{StaticResource AppMonoText}" Text="{Binding TroubleshootingEvidence}"
+                               TextWrapping="Wrap"
+                               Visibility="{Binding HasTroubleshootingGuide, Converter={StaticResource BoolVisibility}}" />
+                    <Button Content="{Binding TroubleshootingActionText}" ds:AppButton.Icon="Diagnostics"
+                            Command="{Binding OpenTroubleshootingGuideCommand}" HorizontalAlignment="Left"
+                            Margin="{StaticResource AppStackGapTop}" />
+                </StackPanel>
+            </components:AppAlert.DetailContent>
+        </components:AppAlert>
+
+        <!-- The first screenful answers the four facts owners check most often. -->
+        <components:AppSectionCard Icon="HeartPulse" Header="At a glance"
+                                   Description="Live status and the capacity this server is configured to use.">
+            <StackPanel>
+                <Border Width="{StaticResource AppServerIconPreviewSize}"
+                        Height="{StaticResource AppServerIconPreviewSize}"
+                        HorizontalAlignment="Left" Margin="{StaticResource AppStackGap}"
+                        Background="{DynamicResource AppSurfaceSunken}"
+                        BorderBrush="{DynamicResource AppStrokeSubtle}"
+                        BorderThickness="{StaticResource AppStrokeThickness}"
+                        Visibility="{Binding HasServerIcon, Converter={StaticResource BoolVisibility}}">
+                    <Image Source="{Binding ServerIconImage}" Stretch="Uniform"
+                           RenderOptions.BitmapScalingMode="NearestNeighbor"
+                           AutomationProperties.Name="Current server icon"/>
+                </Border>
+                <UniformGrid x:Name="SummaryGrid">
+                    <UniformGrid.Style>
+                        <Style TargetType="UniformGrid">
+                            <Setter Property="Columns" Value="4" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding Path=(ds:AppLayout.Mode), RelativeSource={RelativeSource Self}}" Value="Compact">
+                                    <Setter Property="Columns" Value="2" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </UniformGrid.Style>
+                    <Border Style="{StaticResource AppAccentSurface}" Padding="{StaticResource AppInset12}"
+                            Margin="{StaticResource AppInlineGapLarge}">
+                        <StackPanel>
+                            <TextBlock Text="STATUS" Style="{StaticResource AppEyebrowText}" />
+                            <TextBlock Text="{Binding SelectedServer.State}" Style="{StaticResource AppTitleText}" />
+                            <TextBlock Text="server lifecycle state" Style="{StaticResource AppMutedText}" />
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource AppSunkenSurface}" Padding="{StaticResource AppInset12}"
+                            Margin="{StaticResource AppInlineGapLarge}">
+                        <StackPanel>
+                            <TextBlock Text="PLAYERS" Style="{StaticResource AppEyebrowText}" />
+                            <TextBlock Style="{StaticResource AppTitleText}">
+                                <Run Text="{Binding SelectedServer.OnlinePlayers, TargetNullValue=—}"/><Run Text=" / "/>
+                                <Run Text="{Binding SelectedServer.MaxPlayers, TargetNullValue=—}"/>
+                            </TextBlock>
+                            <TextBlock Text="online / slots" Style="{StaticResource AppMutedText}" />
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource AppSunkenSurface}" Padding="{StaticResource AppInset12}"
+                            Margin="{StaticResource AppInlineGapLarge}">
+                        <StackPanel>
+                            <TextBlock Text="MEMORY NOW" Style="{StaticResource AppEyebrowText}" />
+                            <TextBlock Text="{Binding CurrentMemoryText}" Style="{StaticResource AppTitleText}" />
+                            <TextBlock Text="actual process use" Style="{StaticResource AppMutedText}" />
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource AppSunkenSurface}" Padding="{StaticResource AppInset12}">
+                        <StackPanel>
+                            <TextBlock Text="MAXIMUM RAM" Style="{StaticResource AppEyebrowText}" />
+                            <TextBlock Text="{Binding MaximumRamText}" Style="{StaticResource AppTitleText}" />
+                            <TextBlock Text="Java memory limit" Style="{StaticResource AppMutedText}" />
+                        </StackPanel>
+                    </Border>
+                </UniformGrid>
+                <TextBlock Text="{Binding StoppedSummaryText}" Style="{StaticResource AppSecondaryText}"
+                           TextWrapping="Wrap" Margin="{StaticResource AppStackGapTop}"
+                           Visibility="{Binding ShowsStoppedSummary, Converter={StaticResource BoolVisibility}}" />
+            </StackPanel>
+        </components:AppSectionCard>
+
+        <!-- Trends only exist when the service has real samples. -->
+        <UniformGrid Visibility="{Binding ShowsPerformanceCharts, Converter={StaticResource BoolVisibility}}">
+            <UniformGrid.Style>
+                <Style TargetType="UniformGrid">
+                    <Setter Property="Columns" Value="2" />
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding Path=(ds:AppLayout.Mode), RelativeSource={RelativeSource Self}}" Value="Compact">
+                            <Setter Property="Columns" Value="1" />
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </UniformGrid.Style>
+            <components:AppSectionCard Header="CPU performance" Icon="Chart" Margin="{StaticResource AppInlineGapLarge}">
+                <StackPanel>
+                    <UniformGrid Columns="3">
+                        <StackPanel><TextBlock Style="{StaticResource AppEyebrowText}" Text="Current"/><TextBlock Style="{StaticResource AppTitleText}" Text="{Binding CurrentText, ElementName=CpuChart, Mode=OneWay}"/></StackPanel>
+                        <StackPanel><TextBlock Style="{StaticResource AppEyebrowText}" Text="Average"/><TextBlock Style="{StaticResource AppBodyStrongText}" Text="{Binding AverageText, ElementName=CpuChart, Mode=OneWay}"/></StackPanel>
+                        <StackPanel><TextBlock Style="{StaticResource AppEyebrowText}" Text="Peak"/><TextBlock Style="{StaticResource AppBodyStrongText}" Text="{Binding PeakText, ElementName=CpuChart, Mode=OneWay}"/></StackPanel>
+                    </UniformGrid>
+                    <local:SparklineControl x:Name="CpuChart" Samples="{Binding SelectedServer.RecentStatistics}"
+                                            Metric="Cpu" Height="{StaticResource AppPerformanceChartHeight}"
+                                            Margin="{StaticResource AppStackGapTop}"/>
+                    <TextBlock Style="{StaticResource AppMutedText}" Margin="{StaticResource AppStackGapTiny}">
+                        <Run Text="{Binding WindowText, ElementName=CpuChart, Mode=OneWay}"/><Run Text=" · "/><Run Text="{Binding ScaleText, ElementName=CpuChart, Mode=OneWay}"/>
+                    </TextBlock>
+                </StackPanel>
+            </components:AppSectionCard>
+            <components:AppSectionCard Header="Memory performance" Icon="Chart">
+                <StackPanel>
+                    <UniformGrid Columns="4">
+                        <StackPanel><TextBlock Style="{StaticResource AppEyebrowText}" Text="Current"/><TextBlock Style="{StaticResource AppTitleText}" Text="{Binding CurrentText, ElementName=MemoryChart, Mode=OneWay}"/></StackPanel>
+                        <StackPanel><TextBlock Style="{StaticResource AppEyebrowText}" Text="Average"/><TextBlock Style="{StaticResource AppBodyStrongText}" Text="{Binding AverageText, ElementName=MemoryChart, Mode=OneWay}"/></StackPanel>
+                        <StackPanel><TextBlock Style="{StaticResource AppEyebrowText}" Text="Peak"/><TextBlock Style="{StaticResource AppBodyStrongText}" Text="{Binding PeakText, ElementName=MemoryChart, Mode=OneWay}"/></StackPanel>
+                        <StackPanel><TextBlock Style="{StaticResource AppEyebrowText}" Text="Limit"/><TextBlock Style="{StaticResource AppBodyStrongText}" Text="{Binding MaximumRamText}"/></StackPanel>
+                    </UniformGrid>
+                    <local:SparklineControl x:Name="MemoryChart" Samples="{Binding SelectedServer.RecentStatistics}"
+                                            Metric="Ram" MemoryLimitMb="{Binding SelectedServer.Definition.MaximumRamMb}"
+                                            Height="{StaticResource AppPerformanceChartHeight}" Margin="{StaticResource AppStackGapTop}"/>
+                    <TextBlock Style="{StaticResource AppMutedText}" Margin="{StaticResource AppStackGapTiny}">
+                        <Run Text="{Binding WindowText, ElementName=MemoryChart, Mode=OneWay}"/><Run Text=" · "/><Run Text="{Binding ScaleText, ElementName=MemoryChart, Mode=OneWay}"/>
+                    </TextBlock>
+                </StackPanel>
+            </components:AppSectionCard>
+        </UniformGrid>
+
+        <!-- Each address is its own scan-friendly object; the local test makes client-list delays diagnosable. -->
+        <components:AppSectionCard Icon="Network" Header="Connect"
+                                   Description="Use the address that matches where the player is connecting from.">
+            <StackPanel>
+                <Border Style="{StaticResource AppAccentSurface}" Padding="{StaticResource AppInset12}"
+                        Margin="{StaticResource AppStackGap}">
+                    <Grid>
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                        <StackPanel>
+                            <TextBlock Text="Connectivity" Style="{StaticResource AppLabelText}"/>
+                            <TextBlock Text="{Binding NetworkChoiceSummary}" Style="{StaticResource AppSecondaryText}"
+                                       TextWrapping="Wrap" Margin="{StaticResource AppStackGapTiny}"/>
+                        </StackPanel>
+                        <Button Grid.Column="1" Content="Manage connectivity" ds:AppButton.Icon="Network"
+                                Command="{Binding OpenAccessCommand}" VerticalAlignment="Center"
+                                Margin="{StaticResource AppInlineGapLeadingLarge}"
+                                AutomationProperties.Name="Manage connectivity on the Access page"/>
+                    </Grid>
+                </Border>
+                <UniformGrid x:Name="AddressGrid">
+                    <UniformGrid.Style>
+                        <Style TargetType="UniformGrid">
+                            <Setter Property="Columns" Value="3"/>
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding Path=(ds:AppLayout.Mode), RelativeSource={RelativeSource Self}}" Value="Compact">
+                                    <Setter Property="Columns" Value="1"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </UniformGrid.Style>
+                    <Border Style="{StaticResource AppSunkenSurface}" Padding="{StaticResource AppInset12}" Margin="{StaticResource AppInlineGapLarge}">
+                        <StackPanel>
+                            <TextBlock Text="This device" Style="{StaticResource AppEyebrowText}"/>
+                            <TextBlock Text="{Binding ServerLocalAddress}" Style="{StaticResource AppMonoText}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" ToolTip="{Binding ServerLocalAddress}"/>
+                            <Button Content="Copy" ds:AppButton.Icon="Copy" Style="{StaticResource AppLinkButton}" HorizontalAlignment="Left"
+                                    Command="{Binding CopyTextCommand}" CommandParameter="{Binding ServerLocalAddress}"/>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource AppAccentSurface}" Padding="{StaticResource AppInset12}" Margin="{StaticResource AppInlineGapLarge}">
+                        <StackPanel>
+                            <TextBlock Text="Local network" Style="{StaticResource AppEyebrowText}"/>
+                            <TextBlock Text="{Binding ServerLanAddress}" Style="{StaticResource AppMonoText}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" ToolTip="{Binding ServerLanAddress}"/>
+                            <Button Content="Copy" ds:AppButton.Icon="Copy" Style="{StaticResource AppLinkButton}" HorizontalAlignment="Left"
+                                    Command="{Binding CopyTextCommand}" CommandParameter="{Binding ServerLanAddress}"/>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource AppSunkenSurface}" Padding="{StaticResource AppInset12}">
+                        <StackPanel>
+                            <TextBlock Text="Public access" Style="{StaticResource AppEyebrowText}"/>
+                            <TextBlock Text="{Binding ServerPublicAddress}" Style="{StaticResource AppMonoText}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" ToolTip="{Binding ServerPublicAddress}"/>
+                            <!-- The caveat stands until there is genuine outside evidence, and stops
+                                 the moment there is. It never appears beside a verified endpoint. -->
+                            <TextBlock Text="Reachability not verified" Style="{StaticResource AppMutedText}"
+                                       Visibility="{Binding ShowsPublicAccessNotVerifiedCaveat, Converter={StaticResource BoolVisibility}}"/>
+                            <Button Content="Copy" ds:AppButton.Icon="Copy" Style="{StaticResource AppLinkButton}" HorizontalAlignment="Left"
+                                    Command="{Binding CopyTextCommand}" CommandParameter="{Binding ServerPublicAddress}"
+                                    Visibility="{Binding HasConfiguredPublicAddress, Converter={StaticResource BoolVisibility}}"/>
+                            <!-- Only an external check that succeeded for this exact endpoint may put
+                                 an address here, and it is always shown with the time it answered. -->
+                            <StackPanel Visibility="{Binding PublicAccessVerified, Converter={StaticResource BoolVisibility}}">
+                                <TextBlock Text="{Binding PublicAccessVerifiedEndpoint}" Style="{StaticResource AppMonoText}"
+                                           FontWeight="SemiBold" TextTrimming="CharacterEllipsis"
+                                           ToolTip="{Binding PublicAccessVerifiedEndpoint}"
+                                           AutomationProperties.Name="Verified public address"/>
+                                <TextBlock Text="{Binding PublicAccessVerifiedCaption}" Style="{StaticResource AppMutedText}"/>
+                                <Button Content="Copy verified" ds:AppButton.Icon="Copy" Style="{StaticResource AppLinkButton}"
+                                        HorizontalAlignment="Left"
+                                        Command="{Binding CopyVerifiedPublicEndpointCommand}"
+                                        AutomationProperties.Name="Copy the verified public address"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+                </UniformGrid>
+                <WrapPanel Margin="{StaticResource AppStackGapTop}">
+                    <Button Content="Test local connection" ds:AppButton.Icon="Diagnostics"
+                            Command="{Binding RunLocalConnectionTestCommand}" Margin="{StaticResource AppInlineGap}"/>
+                    <TextBlock Text="{Binding ConnectionTest.Interpretation}" Style="{StaticResource AppSecondaryText}"
+                               VerticalAlignment="Center" TextWrapping="Wrap"/>
+                </WrapPanel>
+
+                <!-- Direct internet. Off until the owner chooses it and separately confirms the exposure;
+                     the whole block only appears once Direct internet is the selected method. -->
+                <Border x:Name="DirectInternetSection" Style="{StaticResource AppSunkenSurface}"
+                        Padding="{StaticResource AppInset12}" Margin="{StaticResource AppStackGapTop}"
+                        AutomationProperties.Name="Direct internet"
+                        Visibility="{Binding IsDirectInternetSelected, Converter={StaticResource BoolVisibility}}">
+                    <StackPanel>
+                        <DockPanel>
+                            <components:AppStatusBadge DockPanel.Dock="Right"
+                                                       Text="{Binding DirectInternetBadge}"
+                                                       Tone="{Binding DirectInternetTone}"
+                                                       Icon="{Binding DirectInternetIcon}"
+                                                       VerticalAlignment="Top"/>
+                            <StackPanel>
+                                <TextBlock Text="Direct internet" Style="{StaticResource AppEyebrowText}"/>
+                                <TextBlock Text="{Binding DirectInternetTitle}"
+                                           Style="{StaticResource AppBodyStrongText}"
+                                           AutomationProperties.LiveSetting="Polite"/>
+                                <TextBlock Text="{Binding DirectInternetSummary}"
+                                           Style="{StaticResource AppSecondaryText}" TextWrapping="Wrap"
+                                           Margin="{StaticResource AppStackGapTiny}"/>
+                            </StackPanel>
+                        </DockPanel>
+
+                        <!-- The one deliberate approval. Inline rather than modal, so it can be read,
+                             dismissed and re-opened without a dialog chain. -->
+                        <components:AppAlert Tone="Warning" Title="Open this port on your router?"
+                                             Margin="{StaticResource AppStackGapTop}"
+                                             Visibility="{Binding ShowsDirectInternetConsent, Converter={StaticResource BoolVisibility}}">
+                            <components:AppAlert.DetailContent>
+                                <ItemsControl ItemsSource="{Binding DirectInternetConsentPoints}"
+                                              AutomationProperties.Name="What happens when you continue">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Text="{Binding}" Style="{StaticResource AppSecondaryText}"
+                                                       TextWrapping="Wrap" Margin="{StaticResource AppStackGapTiny}"/>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </components:AppAlert.DetailContent>
+                            <WrapPanel>
+                                <Button Content="Open the port" Style="{StaticResource AppPrimaryButton}"
+                                        ds:AppButton.Icon="Network" Margin="{StaticResource AppInlineGap}"
+                                        Command="{Binding ConfirmDirectInternetCommand}"
+                                        AutomationProperties.Name="Confirm opening this port on the router"/>
+                                <Button Content="Not now" Style="{StaticResource AppSubtleButton}"
+                                        Command="{Binding CancelDirectInternetConsentCommand}"/>
+                            </WrapPanel>
+                        </components:AppAlert>
+
+                        <components:AppAlert Tone="Warning" Title="Another network layer detected"
+                                             Message="{Binding UpstreamNetworkNotice}"
+                                             Margin="{StaticResource AppStackGapTop}"
+                                             Visibility="{Binding ShowsUpstreamNetworkNotice, Converter={StaticResource BoolVisibility}}"/>
+
+                        <!-- What the router itself claims, labelled as exactly that. -->
+                        <components:AppInfoRow Label="{Binding RouterReportedAddressLabel}"
+                                               Value="{Binding RouterReportedEndpoint}" IsMonospaced="True"
+                                               Margin="{StaticResource AppStackGapTop}"
+                                               Visibility="{Binding ShowsRouterReportedAddress, Converter={StaticResource BoolVisibility}}">
+                            <Button Content="Copy" ds:AppButton.Icon="Copy" Style="{StaticResource AppLinkButton}"
+                                    Command="{Binding CopyRouterReportedAddressCommand}"
+                                    AutomationProperties.Name="Copy the router-reported address"/>
+                        </components:AppInfoRow>
+                        <TextBlock Text="{Binding RouterReportedAddressCaveat}" Style="{StaticResource AppMutedText}"
+                                   TextWrapping="Wrap"
+                                   Visibility="{Binding ShowsRouterReportedAddress, Converter={StaticResource BoolVisibility}}"/>
+
+                        <WrapPanel Margin="{StaticResource AppStackGapTop}">
+                            <Button Content="{Binding DirectInternetPrimaryActionText}"
+                                    Style="{StaticResource AppPrimaryButton}" ds:AppButton.Icon="Network"
+                                    Margin="{StaticResource AppInlineGap}"
+                                    Command="{Binding CheckDirectInternetCommand}"
+                                    Visibility="{Binding ShowsDirectInternetPrimaryAction, Converter={StaticResource BoolVisibility}}"/>
+                            <Button Content="Try again" Style="{StaticResource AppPrimaryButton}"
+                                    ds:AppButton.Icon="Refresh" Margin="{StaticResource AppInlineGap}"
+                                    Command="{Binding RetryDirectInternetCleanupCommand}"
+                                    AutomationProperties.Name="Try closing the router port again"
+                                    Visibility="{Binding ShowsDirectInternetRetry, Converter={StaticResource BoolVisibility}}"/>
+                            <Button Content="Turn off" Style="{StaticResource AppSubtleButton}"
+                                    ds:AppButton.Icon="Dismiss" Margin="{StaticResource AppInlineGap}"
+                                    Command="{Binding TurnOffDirectInternetCommand}"
+                                    AutomationProperties.Name="Turn off Direct internet and close the router port"
+                                    Visibility="{Binding ShowsDirectInternetTurnOff, Converter={StaticResource BoolVisibility}}"/>
+                            <Button Content="Cancel" Style="{StaticResource AppSubtleButton}"
+                                    Command="{Binding CancelDirectInternetOperationCommand}"
+                                    AutomationProperties.Name="Cancel the router operation"
+                                    Visibility="{Binding ShowsDirectInternetCancel, Converter={StaticResource BoolVisibility}}"/>
+                        </WrapPanel>
+
+                        <!-- Progressive disclosure. Protocol wording exists only below this line. -->
+                        <Button Content="{Binding DirectInternetTechnicalDetailsToggleText}"
+                                Style="{StaticResource AppLinkButton}" ds:AppButton.Icon="Diagnostics"
+                                HorizontalAlignment="Left" Margin="{StaticResource AppStackGapTop}"
+                                Command="{Binding ToggleDirectInternetTechnicalDetailsCommand}"
+                                AutomationProperties.Name="Show or hide technical details for Direct internet"/>
+                        <StackPanel Visibility="{Binding ShowsDirectInternetTechnicalDetails, Converter={StaticResource BoolVisibility}}">
+                            <components:AppInfoRow Label="Mechanism" Value="{Binding DirectInternetMechanismLabel}"/>
+                            <components:AppInfoRow Label="Transport" Value="{Binding DirectInternetTransportLabel}"/>
+                            <components:AppInfoRow Label="Gateway" Value="{Binding DirectInternetGateway}" IsMonospaced="True"/>
+                            <components:AppInfoRow Label="Internal endpoint" Value="{Binding DirectInternetInternalEndpoint}" IsMonospaced="True"/>
+                            <components:AppInfoRow Label="External port" Value="{Binding DirectInternetExternalPortLabel}" IsMonospaced="True"/>
+                            <components:AppInfoRow Label="Lease" Value="{Binding DirectInternetLeaseLabel}"/>
+                            <components:AppInfoRow Label="Last checked" Value="{Binding DirectInternetLastCheckedLabel}"/>
+                            <components:AppInfoRow Label="Address classification" Value="{Binding DirectInternetAddressClassLabel}"/>
+                            <TextBlock Text="{Binding DirectInternetTechnicalDetail}" Style="{StaticResource AppMonoText}"
+                                       TextWrapping="Wrap" Margin="{StaticResource AppStackGapTop}"/>
+                            <Button Content="Copy technical details" ds:AppButton.Icon="Copy"
+                                    Style="{StaticResource AppLinkButton}" HorizontalAlignment="Left"
+                                    Command="{Binding CopyDirectInternetTechnicalDetailsCommand}"/>
+                        </StackPanel>
+
+                        <!-- Windows Firewall is independent of the router mapping above: a durable,
+                             exact application permission rather than a runtime router exposure. -->
+                        <StackPanel x:Name="WindowsFirewallSection">
+                        <Border Style="{StaticResource AppDivider}" Margin="0,16,0,12"/>
+                        <DockPanel>
+                            <components:AppStatusBadge DockPanel.Dock="Right"
+                                                       Text="{Binding FirewallBadge}"
+                                                       Tone="{Binding FirewallTone}"
+                                                       Icon="ShieldChecked"
+                                                       VerticalAlignment="Top"/>
+                            <StackPanel>
+                                <TextBlock Text="Windows Firewall" Style="{StaticResource AppEyebrowText}"/>
+                                <TextBlock Text="{Binding FirewallTitle}" Style="{StaticResource AppBodyStrongText}"
+                                           AutomationProperties.LiveSetting="Polite"/>
+                                <TextBlock Text="{Binding FirewallSummary}" Style="{StaticResource AppSecondaryText}"
+                                           TextWrapping="Wrap" Margin="{StaticResource AppStackGapTiny}"/>
+                            </StackPanel>
+                        </DockPanel>
+
+                        <components:AppAlert Tone="Warning" Title="{Binding FirewallConsentTitle}"
+                                             Message="{Binding FirewallConsentMessage}"
+                                             Margin="{StaticResource AppStackGapTop}"
+                                             Visibility="{Binding ShowsFirewallConsent, Converter={StaticResource BoolVisibility}}">
+                            <WrapPanel>
+                                <Button Content="Continue to Windows approval" Style="{StaticResource AppPrimaryButton}"
+                                        ds:AppButton.Icon="Shield" Margin="{StaticResource AppInlineGap}"
+                                        Command="{Binding ConfirmFirewallAccessCommand}"/>
+                                <Button Content="Not now" Style="{StaticResource AppSubtleButton}"
+                                        Command="{Binding CancelFirewallConsentCommand}"/>
+                            </WrapPanel>
+                        </components:AppAlert>
+
+                        <TextBlock Text="{Binding FirewallCombinedStatus}" Style="{StaticResource AppMutedText}"
+                                   TextWrapping="Wrap" Margin="{StaticResource AppStackGapTop}"/>
+                        <WrapPanel Margin="{StaticResource AppStackGapTop}">
+                            <Button Content="{Binding FirewallPrimaryActionText}" Style="{StaticResource AppPrimaryButton}"
+                                    ds:AppButton.Icon="Diagnostics" Margin="{StaticResource AppInlineGap}"
+                                    Command="{Binding ExecuteFirewallPrimaryActionCommand}"
+                                    Visibility="{Binding ShowsFirewallPrimaryAction, Converter={StaticResource BoolVisibility}}"/>
+                            <Button Content="{Binding FirewallSecondaryActionText}" Style="{StaticResource AppSubtleButton}"
+                                    ds:AppButton.Icon="Refresh" Margin="{StaticResource AppInlineGap}"
+                                    Command="{Binding ExecuteFirewallSecondaryActionCommand}"
+                                    Visibility="{Binding ShowsFirewallSecondaryAction, Converter={StaticResource BoolVisibility}}"/>
+                            <Button Content="Remove firewall access" Style="{StaticResource AppDangerSubtleButton}"
+                                    ds:AppButton.Icon="Remove" Margin="{StaticResource AppInlineGap}"
+                                    Command="{Binding RemoveFirewallAccessCommand}"
+                                    Visibility="{Binding ShowsFirewallRemoveAction, Converter={StaticResource BoolVisibility}}"/>
+                            <Button Content="Cancel" Style="{StaticResource AppSubtleButton}"
+                                    Command="{Binding CancelFirewallOperationCommand}"
+                                    Visibility="{Binding ShowsFirewallCancelAction, Converter={StaticResource BoolVisibility}}"/>
+                        </WrapPanel>
+                        <Button Content="{Binding FirewallTechnicalDetailsToggleText}"
+                                Style="{StaticResource AppLinkButton}" ds:AppButton.Icon="Diagnostics"
+                                HorizontalAlignment="Left" Margin="{StaticResource AppStackGapTop}"
+                                Command="{Binding ToggleFirewallTechnicalDetailsCommand}"
+                                Visibility="{Binding ShowsFirewallTechnicalDetailsToggle, Converter={StaticResource BoolVisibility}}"/>
+                        <StackPanel Visibility="{Binding ShowsFirewallTechnicalDetails, Converter={StaticResource BoolVisibility}}">
+                            <TextBlock Text="Server" Style="{StaticResource AppEyebrowText}" Margin="{StaticResource AppStackGapTop}"/>
+                            <components:AppInfoRow Label="Port" Value="{Binding FirewallPortDisplay}" IsMonospaced="True"/>
+                            <components:AppInfoRow Label="Java executable" Value="{Binding FirewallJavaDisplay}" IsMonospaced="True"/>
+                            <TextBlock Text="Network" Style="{StaticResource AppEyebrowText}" Margin="{StaticResource AppStackGapTop}"/>
+                            <components:AppInfoRow Label="Adapter" Value="{Binding FirewallNetworkDisplay}"/>
+                            <components:AppInfoRow Label="Interface index" Value="{Binding FirewallInterfaceIndexDisplay}" IsMonospaced="True"/>
+                            <components:AppInfoRow Label="Local address" Value="{Binding FirewallAccess.LocalAddress}" IsMonospaced="True"/>
+                            <components:AppInfoRow Label="Gateway" Value="{Binding FirewallAccess.GatewayAddress}" IsMonospaced="True"/>
+                            <components:AppInfoRow Label="Windows profile" Value="{Binding FirewallProfileDisplay}"/>
+                            <TextBlock Text="Firewall" Style="{StaticResource AppEyebrowText}" Margin="{StaticResource AppStackGapTop}"/>
+                            <components:AppInfoRow Label="Diagnostic reason" Value="{Binding FirewallDiagnostic.Reason}" IsMonospaced="True"/>
+                            <components:AppInfoRow Label="Platform" Value="{Binding FirewallAccess.FirewallPlatformStatus}"/>
+                            <components:AppInfoRow Label="Profile firewall" Value="{Binding FirewallEnabledDisplay}"/>
+                            <components:AppInfoRow Label="Local policy" Value="{Binding FirewallAccess.ModifyState}"/>
+                            <components:AppInfoRow Label="Block all inbound" Value="{Binding FirewallAccess.BlockAllInboundForProfile}"/>
+                            <components:AppInfoRow Label="Rule owner" Value="{Binding FirewallAccess.Owner}"/>
+                            <components:AppInfoRow Label="Owned rule" Value="{Binding FirewallAccess.RuleName}" IsMonospaced="True"/>
+                            <components:AppInfoRow Label="Existing allow" Value="{Binding FirewallAccess.ExistingRuleName}" IsMonospaced="True"/>
+                            <components:AppInfoRow Label="Existing coverage" Value="{Binding FirewallAccess.ExistingRuleCoverage}"/>
+                            <components:AppInfoRow Label="Other allow" Value="{Binding FirewallAccess.OtherAllowRuleName}" IsMonospaced="True"/>
+                            <components:AppInfoRow Label="Other allow coverage" Value="{Binding FirewallAccess.OtherAllowRuleCoverage}"/>
+                            <components:AppInfoRow Label="Blocking rule" Value="{Binding FirewallAccess.BlockingRuleName}" IsMonospaced="True"/>
+                            <components:AppInfoRow Label="Blocking coverage" Value="{Binding FirewallAccess.BlockingRuleCoverage}"/>
+                            <components:AppInfoRow Label="Last checked" Value="{Binding FirewallLastCheckedDisplay}"/>
+                            <TextBlock Text="Operation result" Style="{StaticResource AppEyebrowText}" Margin="{StaticResource AppStackGapTop}"/>
+                            <TextBlock Text="{Binding FirewallTechnicalDetail}" Style="{StaticResource AppMonoText}"
+                                       TextWrapping="Wrap" Margin="{StaticResource AppStackGapTop}"/>
+                            <Expander Header="Advanced evidence" Margin="{StaticResource AppStackGapTop}">
+                                <StackPanel>
+                                    <TextBlock Text="{Binding FirewallAccess.TargetDetail}" Style="{StaticResource AppMonoText}" TextWrapping="Wrap"/>
+                                    <TextBlock Text="{Binding FirewallAccess.NetworkListDetail}" Style="{StaticResource AppMonoText}" TextWrapping="Wrap" Margin="{StaticResource AppStackGapTiny}"/>
+                                    <TextBlock Text="{Binding FirewallAccess.FirewallPolicyDetail}" Style="{StaticResource AppMonoText}" TextWrapping="Wrap" Margin="{StaticResource AppStackGapTiny}"/>
+                                </StackPanel>
+                            </Expander>
+                            <Button Content="Copy technical details" ds:AppButton.Icon="Copy"
+                                    Style="{StaticResource AppLinkButton}" HorizontalAlignment="Left"
+                                    Margin="{StaticResource AppStackGapTop}"
+                                    Command="{Binding CopyFirewallTechnicalDetailsCommand}"/>
+                        </StackPanel>
+                        </StackPanel>
+
+                        <!-- External access. The third layer, and the only one whose evidence comes
+                             from outside this network. Nothing here runs without a deliberate press. -->
+                        <StackPanel x:Name="ExternalReachabilitySection"
+                                    AutomationProperties.Name="External access">
+                            <Border Style="{StaticResource AppDivider}" Margin="0,16,0,12"/>
+                            <DockPanel>
+                                <components:AppStatusBadge DockPanel.Dock="Right"
+                                                           Text="{Binding ExternalReachabilityBadge}"
+                                                           Tone="{Binding ExternalReachabilityTone}"
+                                                           Icon="{Binding ExternalReachabilityIcon}"
+                                                           VerticalAlignment="Top"/>
+                                <StackPanel>
+                                    <TextBlock Text="External access" Style="{StaticResource AppEyebrowText}"/>
+                                    <TextBlock Text="{Binding ExternalReachabilityTitle}"
+                                               Style="{StaticResource AppBodyStrongText}"
+                                               AutomationProperties.LiveSetting="Polite"/>
+                                    <TextBlock Text="{Binding ExternalReachabilitySummary}"
+                                               Style="{StaticResource AppSecondaryText}" TextWrapping="Wrap"
+                                               Margin="{StaticResource AppStackGapTiny}"/>
+                                </StackPanel>
+                            </DockPanel>
+
+                            <!-- The verified endpoint and the exact time it answered. Point-in-time
+                                 evidence is always shown with its timestamp. -->
+                            <StackPanel Margin="{StaticResource AppStackGapTop}"
+                                        Visibility="{Binding ShowsExternalReachabilityVerifiedDetail, Converter={StaticResource BoolVisibility}}">
+                                <components:AppInfoRow Label="Verified endpoint"
+                                                       Value="{Binding PublicAccessVerifiedEndpoint}"
+                                                       IsMonospaced="True"/>
+                                <TextBlock Text="{Binding ExternalReachabilityVerifiedAt}"
+                                           Style="{StaticResource AppMutedText}" TextWrapping="Wrap"/>
+                            </StackPanel>
+
+                            <components:AppInfoRow Label="Addresses"
+                                                   Value="{Binding ExternalReachabilityAddressComparison}"
+                                                   IsMonospaced="True"
+                                                   Margin="{StaticResource AppStackGapTop}"
+                                                   Visibility="{Binding ShowsExternalReachabilityAddressComparison, Converter={StaticResource BoolVisibility}}"/>
+
+                            <components:AppAlert Tone="Warning" Title="Another network layer detected"
+                                                 Message="{Binding ExternalReachabilityUpstreamAssessment}"
+                                                 Margin="{StaticResource AppStackGapTop}"
+                                                 Visibility="{Binding ShowsExternalReachabilityUpstreamAssessment, Converter={StaticResource BoolVisibility}}"/>
+
+                            <!-- The compact first-use explanation, beside the button rather than in
+                                 front of it. -->
+                            <TextBlock Text="{Binding ExternalReachabilityFirstUseNotice}"
+                                       Style="{StaticResource AppMutedText}" TextWrapping="Wrap"
+                                       Margin="{StaticResource AppStackGapTop}"
+                                       AutomationProperties.Name="What the outside check sends"
+                                       Visibility="{Binding ShowsExternalReachabilityFirstUseNotice, Converter={StaticResource BoolVisibility}}"/>
+
+                            <WrapPanel Margin="{StaticResource AppStackGapTop}">
+                                <Button Content="{Binding ExternalReachabilityActionText}"
+                                        Style="{StaticResource AppPrimaryButton}" ds:AppButton.Icon="Globe"
+                                        Margin="{StaticResource AppInlineGap}"
+                                        Command="{Binding CheckExternalReachabilityCommand}"
+                                        IsEnabled="{Binding IsExternalReachabilityCheckEnabled}"
+                                        AutomationProperties.Name="Check this server from outside your network"
+                                        Visibility="{Binding ShowsExternalReachabilityCheckAction, Converter={StaticResource BoolVisibility}}"/>
+                                <Button Content="Cancel" Style="{StaticResource AppSubtleButton}"
+                                        Margin="{StaticResource AppInlineGap}"
+                                        Command="{Binding CancelExternalReachabilityCommand}"
+                                        AutomationProperties.Name="Cancel the external check"
+                                        Visibility="{Binding ShowsExternalReachabilityCancel, Converter={StaticResource BoolVisibility}}"/>
+                            </WrapPanel>
+
+                            <Expander Header="External check details" Margin="{StaticResource AppStackGapTop}">
+                                <StackPanel>
+                                    <components:AppInfoRow Label="Router-reported address"
+                                                           Value="{Binding ExternalReachabilityRouterAddress}" IsMonospaced="True"/>
+                                    <components:AppInfoRow Label="Externally observed address"
+                                                           Value="{Binding ExternalReachabilityObservedAddress}" IsMonospaced="True"/>
+                                    <components:AppInfoRow Label="Port" Value="{Binding ExternalReachabilityPortLabel}" IsMonospaced="True"/>
+                                    <components:AppInfoRow Label="Connect time" Value="{Binding ExternalReachabilityConnectTimeLabel}"/>
+                                    <components:AppInfoRow Label="Checked at" Value="{Binding ExternalReachabilityCheckedAtLabel}"/>
+                                    <components:AppInfoRow Label="Prerequisite" Value="{Binding ExternalReachability.Blocker}"/>
+                                    <components:AppInfoRow Label="Checked endpoint" Value="{Binding ExternalReachabilityEndpointLabel}" IsMonospaced="True"/>
+                                    <TextBlock Text="{Binding ExternalReachabilityTechnicalDetail}"
+                                               Style="{StaticResource AppMonoText}" TextWrapping="Wrap"
+                                               Margin="{StaticResource AppStackGapTop}"/>
+                                    <Button Content="Copy external check details" ds:AppButton.Icon="Copy"
+                                            Style="{StaticResource AppLinkButton}" HorizontalAlignment="Left"
+                                            Margin="{StaticResource AppStackGapTop}"
+                                            Command="{Binding CopyExternalReachabilityTechnicalDetailsCommand}"/>
+                                </StackPanel>
+                            </Expander>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </components:AppSectionCard>
+
+        <!-- Same live rows and commands as Access: no duplicated moderation state. -->
+        <components:AppSectionCard Icon="People" Header="Online players"
+                                   Description="Quick actions for players connected right now."
+                                   Visibility="{Binding ShowsJavaGameplay, Converter={StaticResource BoolVisibility}}">
+            <components:AppSectionCard.HeaderContent>
+                <Button Content="Open full access" ds:AppButton.Icon="People" Style="{StaticResource AppLinkButton}"
+                        Command="{Binding OpenAccessCommand}"/>
+            </components:AppSectionCard.HeaderContent>
+            <StackPanel>
+                <Grid Margin="{StaticResource AppStackGapSmall}"
+                      Visibility="{Binding HasOnlinePlayerRows, Converter={StaticResource BoolVisibility}}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBox Text="{Binding OnlinePlayerSearchText, UpdateSourceTrigger=PropertyChanged}"
+                             ds:AppInput.Placeholder="Search online players"
+                             AutomationProperties.Name="Search online players"/>
+                    <Button Grid.Column="1" Content="Select visible" Style="{StaticResource AppSubtleButton}"
+                            Margin="{StaticResource AppInlineGapLeadingLarge}"
+                            Command="{Binding SelectAllVisibleOnlinePlayersCommand}"/>
+                    <Button Grid.Column="2" Content="Clear" Style="{StaticResource AppSubtleButton}"
+                            Margin="{StaticResource AppInlineGapLeading}"
+                            Command="{Binding ClearOnlinePlayerSelectionCommand}"/>
+                </Grid>
+                <Border Background="{DynamicResource AppAccentSubtle}" CornerRadius="{StaticResource AppCornerControl}"
+                        Padding="{StaticResource AppInset8}" Margin="{StaticResource AppStackGapSmall}"
+                        Visibility="{Binding HasSelectedOnlinePlayers, Converter={StaticResource BoolVisibility}}">
+                    <DockPanel>
+                        <TextBlock DockPanel.Dock="Left" Text="{Binding SelectedOnlinePlayerText}"
+                                   Style="{StaticResource AppBodyStrongText}" VerticalAlignment="Center"
+                                   Margin="{StaticResource AppInlineGapLarge}"/>
+                        <WrapPanel HorizontalAlignment="Right">
+                            <Button Content="OP" Command="{Binding GrantOperatorToSelectedCommand}" Margin="{StaticResource AppInlineGap}"/>
+                            <Button Content="Deop" Command="{Binding RemoveOperatorFromSelectedCommand}" Margin="{StaticResource AppInlineGap}"/>
+                            <Button Content="Whitelist" Command="{Binding WhitelistSelectedCommand}" Margin="{StaticResource AppInlineGap}"/>
+                            <Button Content="Remove whitelist" Command="{Binding RemoveWhitelistFromSelectedCommand}" Margin="{StaticResource AppInlineGap}"/>
+                            <Button Content="Kick" Command="{Binding KickSelectedCommand}" Margin="{StaticResource AppInlineGap}"/>
+                            <Button Content="Ban" Style="{StaticResource AppDangerSubtleButton}" Command="{Binding BanSelectedCommand}"/>
+                        </WrapPanel>
+                    </DockPanel>
+                </Border>
+                <components:AppEmptyState Icon="People" Title="Nobody is online"
+                                          Message="Connected players appear here automatically."
+                                          Visibility="{Binding HasOnlinePlayerRows, Converter={StaticResource FalseMeansVisible}}"/>
+                <components:AppEmptyState Icon="Search" Title="No matching player"
+                                          Message="Try a shorter name or clear the search."
+                                          Visibility="{Binding ShowsOnlinePlayerSearchEmpty, Converter={StaticResource BoolVisibility}}"/>
+                <ListBox ItemsSource="{Binding FilteredOnlinePlayerRows}"
+                         Background="{DynamicResource AppSurfaceTransparent}" BorderThickness="0"
+                         MaxHeight="430" ScrollViewer.VerticalScrollBarVisibility="Auto"
+                         VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
+                         Visibility="{Binding HasFilteredOnlinePlayerRows, Converter={StaticResource BoolVisibility}}">
+                    <ListBox.ItemContainerStyle>
+                        <Style TargetType="ListBoxItem">
+                            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+                            <Setter Property="Background" Value="{DynamicResource AppSurfaceTransparent}"/>
+                            <Setter Property="Template">
+                                <Setter.Value>
+                                    <ControlTemplate TargetType="ListBoxItem">
+                                        <Border Background="{TemplateBinding Background}" CornerRadius="{StaticResource AppCornerControl}">
+                                            <ContentPresenter/>
+                                        </Border>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter Property="Background" Value="{DynamicResource AppSurfaceHover}"/>
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </Setter.Value>
+                            </Setter>
+                        </Style>
+                    </ListBox.ItemContainerStyle>
+                    <ListBox.ItemTemplate>
+                        <DataTemplate>
+                            <Grid MinHeight="{Binding DataContext.OnlinePlayerRowHeight, RelativeSource={RelativeSource AncestorType=Window}}"
+                                  Margin="{StaticResource AppNavRowGap}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}" Content="{x:Null}"
+                                          VerticalAlignment="Center" Margin="{StaticResource AppInlineGapLarge}"
+                                          AutomationProperties.Name="{Binding Name, StringFormat=Select {0}}"/>
+                                <Button x:Name="PlayerMenuButton" Grid.Column="1" Grid.ColumnSpan="2"
+                                        Style="{StaticResource AppSubtleButton}" HorizontalContentAlignment="Left"
+                                        Click="PlayerMenuButton_Click" Padding="{StaticResource AppInset4}">
+                                    <Button.ContextMenu>
+                                        <ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
+                                            <MenuItem Header="Grant operator" Command="{Binding GrantOperatorCommand}"/>
+                                            <MenuItem Header="Remove operator" Command="{Binding RemoveOperatorCommand}"/>
+                                            <Separator/>
+                                            <MenuItem Header="Add to whitelist" Command="{Binding WhitelistCommand}"/>
+                                            <MenuItem Header="Remove from whitelist" Command="{Binding UnwhitelistCommand}"/>
+                                            <Separator/>
+                                            <MenuItem Header="Kick" Command="{Binding KickCommand}"/>
+                                            <MenuItem Header="Ban immediately" Command="{Binding BanCommand}"/>
+                                        </ContextMenu>
+                                    </Button.ContextMenu>
+                                    <StackPanel Orientation="Horizontal">
+                                        <Border Width="{Binding DataContext.OnlinePlayerHeadSize, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                Height="{Binding DataContext.OnlinePlayerHeadSize, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                CornerRadius="{StaticResource AppCornerControl}"
+                                                Background="{DynamicResource AppAccentSubtle}">
+                                            <components:AppPlayerHead Uuid="{Binding Uuid}"
+                                                AutomationProperties.Name="{Binding Name, StringFormat={}{0} player skin}"/>
+                                        </Border>
+                                        <StackPanel Margin="{StaticResource AppInlineGapLeadingLarge}" VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding Name}" FontWeight="SemiBold"
+                                                       FontSize="{Binding DataContext.OnlinePlayerNameFontSize, RelativeSource={RelativeSource AncestorType=Window}}"/>
+                                            <TextBlock Style="{StaticResource AppMutedText}">
+                                                <Run Text="Online"/><Run Text=" · "/>
+                                                <Run Text="{Binding Operator, StringFormat=OP: {0}}"/>
+                                                <Run Text=" · "/><Run Text="{Binding Whitelisted, StringFormat=Whitelist: {0}}"/>
+                                            </TextBlock>
+                                        </StackPanel>
+                                    </StackPanel>
+                                </Button>
+                                <ds:AppIcon Grid.Column="3" Kind="More" Scale="Small" VerticalAlignment="Center"
+                                            IsHitTestVisible="False"/>
+                            </Grid>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+            </StackPanel>
+        </components:AppSectionCard>
+
+        <components:AppSectionCard Icon="People" Header="Bedrock"
+                                   Visibility="{Binding ShowsCrossplay, Converter={StaticResource BoolVisibility}}">
+            <components:AppInfoRow Label="Address (UDP)" Value="{Binding BedrockAddress}"/>
+        </components:AppSectionCard>
+
+        <components:AppSectionCard Icon="Shield" Header="Protection">
+            <StackPanel>
+                <components:AppInfoRow Label="Last backup" Value="{Binding SelectedServer.LastBackupAt, StringFormat={}{0:M/d h:mm tt}}"
+                                       IsUnknown="{Binding SelectedServer.LastBackupAt, Converter={StaticResource IsNull}}" UnknownText="None yet">
+                    <components:AppInfoRow.ActionContent>
+                        <Button Content="Set up protection" ds:AppButton.Icon="Shield" Style="{StaticResource AppLinkButton}"
+                                Command="{Binding OpenProtectionCommand}"
+                                Visibility="{Binding SelectedServer.LastBackupAt, Converter={StaticResource NullVisibility}, ConverterParameter=invert}"/>
+                    </components:AppInfoRow.ActionContent>
+                </components:AppInfoRow>
+                <components:AppInfoRow Label="Last save" Value="{Binding SelectedServer.LastSaveAt, StringFormat={}{0:M/d h:mm tt}}"
+                                       IsUnknown="{Binding SelectedServer.LastSaveAt, Converter={StaticResource IsNull}}" UnknownText="None recorded"/>
+            </StackPanel>
+        </components:AppSectionCard>
+
+        <components:AppSectionCard Icon="Refresh" Header="Updates" IsCollapsible="True" IsExpanded="False"
+                                   Description="{Binding UpdateStatusText}"
+                                   Visibility="{Binding CurrentUpdateSource, Converter={StaticResource NullVisibility}}">
+            <StackPanel>
+                <TextBlock Style="{StaticResource AppSecondaryText}" TextWrapping="Wrap" Text="{Binding UpdateStatusDetail}"/>
+                <Button Content="Check for updates" Command="{Binding CheckForUpdatesCommand}" ds:AppButton.Icon="Refresh"
+                        HorizontalAlignment="Left" Margin="{StaticResource AppStackGapTop}"/>
+            </StackPanel>
+        </components:AppSectionCard>
+
+        <components:AppSectionCard Icon="Folder" Header="Files">
+            <DockPanel>
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Button Content="Open server folder" ds:AppButton.Icon="FolderOpen" Command="{Binding OpenServerFolderCommand}" Margin="{StaticResource AppInlineGap}"/>
+                    <Button Content="Logs" ds:AppButton.Icon="Document" Command="{Binding OpenLogsFolderCommand}"/>
+                </StackPanel>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="Location" Style="{StaticResource AppEyebrowText}"/>
+                    <TextBlock Text="{Binding SelectedServer.Definition.RootPath}" Style="{StaticResource AppMonoText}"
+                               TextTrimming="CharacterEllipsis" ToolTip="{Binding SelectedServer.Definition.RootPath}"/>
+                    <TextBlock Style="{StaticResource AppMutedText}"><Run Text="Port "/><Run Text="{Binding SelectedServer.Definition.Port}"/></TextBlock>
+                </StackPanel>
+            </DockPanel>
+        </components:AppSectionCard>
+    </StackPanel>
+</UserControl>

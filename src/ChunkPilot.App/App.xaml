@@ -1,0 +1,66 @@
+<Application x:Class="ChunkPilot.App.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:ChunkPilot.App">
+    <Application.Resources>
+        <ResourceDictionary>
+            <!--
+                THE design system. This list is the single place dictionaries are loaded, and it is
+                mirrored by AppTheme.ThemeDictionaries so tests and the Design Gallery load exactly
+                the same set in the same order. DesignSystemContractTests fails if the two drift.
+
+                The list is deliberately FLAT. StaticResource and Style BasedOn are resolved against
+                dictionaries merged earlier into the same collection; wrapping these files in a
+                parent dictionary adds a level of nesting that breaks those lookups once WPF defers
+                a value (an Effect loses its shadow colour, a style loses its BasedOn). Do not group
+                them behind an aggregate dictionary.
+
+                Order is dependency order: values, then shared internals, then type, then components,
+                then the temporary compatibility aliases.
+            -->
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="Themes/Tokens/Palette.xaml" />
+                <ResourceDictionary Source="Themes/Tokens/ColorTokens.xaml" />
+                <ResourceDictionary Source="Themes/Tokens/TypographyTokens.xaml" />
+                <ResourceDictionary Source="Themes/Tokens/MetricTokens.xaml" />
+                <ResourceDictionary Source="Themes/Tokens/ElevationTokens.xaml" />
+                <ResourceDictionary Source="Themes/Tokens/MotionTokens.xaml" />
+                <ResourceDictionary Source="Themes/Controls/Internal.xaml" />
+                <ResourceDictionary Source="Themes/Controls/Text.xaml" />
+                <ResourceDictionary Source="Themes/Controls/Icons.xaml" />
+                <ResourceDictionary Source="Themes/Controls/Buttons.xaml" />
+                <ResourceDictionary Source="Themes/Controls/Inputs.xaml" />
+                <ResourceDictionary Source="Themes/Controls/Selection.xaml" />
+                <ResourceDictionary Source="Themes/Controls/Navigation.xaml" />
+                <ResourceDictionary Source="Themes/Controls/Surfaces.xaml" />
+                <ResourceDictionary Source="Themes/Controls/DataDisplay.xaml" />
+                <ResourceDictionary Source="Themes/Controls/Feedback.xaml" />
+                <ResourceDictionary Source="Themes/Controls/Overlays.xaml" />
+                <ResourceDictionary Source="Themes/Controls/ScrollBars.xaml" />
+                <ResourceDictionary Source="Themes/Compatibility/LegacyAliases.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+
+            <!-- Application-level value converters. Presentation-only, no design values. -->
+            <local:BooleanToVisibilityConverter x:Key="BoolVisibility" />
+            <local:InverseBooleanToVisibilityConverter x:Key="InverseBoolVisibility" />
+            <local:InverseBoolToVisibilityConverter x:Key="FalseMeansVisible" />
+            <local:PositiveIntToVisibilityConverter x:Key="PositiveIntVisibility" />
+            <local:ZeroIntToVisibilityConverter x:Key="ZeroIntVisibility" />
+            <local:NullToVisibilityConverter x:Key="NullVisibility" />
+            <local:IsNullConverter x:Key="IsNull" />
+            <local:FileEditorStateVisibilityConverter x:Key="EditorStateVisibility" />
+            <local:NonEmptyStringToVisibilityConverter x:Key="NonEmptyVisibility" />
+            <local:BytesConverter x:Key="Bytes" />
+            <local:StateBrushConverter x:Key="StateBrush" />
+            <local:ServerStateTextConverter x:Key="StateText" />
+            <local:ServerStateToneConverter x:Key="StateTone" />
+            <local:EcosystemSectionNameConverter x:Key="EcosystemSectionName" />
+            <local:ActivityActionConverter x:Key="ActivityAction" />
+            <local:ActivityResultToneConverter x:Key="ActivityResultTone" />
+            <local:TroubleshootingMatchVisibilityConverter x:Key="TroubleshootingMatchVisibility" />
+            <local:StateToStartVisibilityConverter x:Key="StateToStartVisibility" />
+            <local:StateToStopVisibilityConverter x:Key="StateToStopVisibility" />
+            <local:ServerEqualsConverter x:Key="ServerEquals" />
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>

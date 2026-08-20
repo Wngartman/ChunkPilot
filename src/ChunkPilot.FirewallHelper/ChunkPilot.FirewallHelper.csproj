@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <AssemblyName>ChunkPilot.FirewallHelper</AssemblyName>
+    <ApplicationIcon>..\..\assets\ChunkPilot.ico</ApplicationIcon>
+    <!-- Windows shows this on the elevation prompt, so it has to say what is being elevated. -->
+    <AssemblyTitle>ChunkPilot Firewall Helper</AssemblyTitle>
+    <Description>Applies one ChunkPilot-owned Windows Firewall rule.</Description>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Core only, deliberately. The elevated process must not carry the persistence, provider,
+         process-control or filesystem surface the rest of ChunkPilot has. -->
+    <ProjectReference Include="..\ChunkPilot.Core\ChunkPilot.Core.csproj" />
+  </ItemGroup>
+</Project>

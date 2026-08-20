@@ -1,0 +1,12 @@
+{
+  "branch": "feature/chunkpilot-complete-ui-overhaul",
+  "baseCommit": "ff95d6280a1175ca27058000975ec18dac2c2184",
+  "recoveryCommit": "fc7937fce4315746db42050fb12d5fe60e3a3bf9",
+  "version": "1.3.0",
+  "schema": 4,
+  "phase": "release-validation-complete-with-limitations",
+  "completed": ["repository-recovery", "clean-base-selection", "baseline-restore", "baseline-release-build", "design-contract", "fluent-icons", "semantic-tokens", "shared-components", "motion-foundation", "accessibility-foundation", "semantic-navigation", "responsive-sidebar", "workspace-header", "footer-removal", "server-semantic-destinations", "legacy-tab-migration", "overview-action-cleanup", "dashboard-composition", "guided-create-entry", "read-only-import-entry", "console-polish", "management-surface-styling", "global-page-hierarchy", "staged-update-surface", "focused-ui-tests", "destination-release-build", "full-unit-tests", "backup-integration-tests", "loader-java-integration-tests", "version-update-integration-tests", "framework-dependent-publish", "self-contained-win-x64-publish", "installer-compile", "packaged-wm-close-smoke", "installer-sha256", "installer-checksum-sidecar", "final-release-commit", "clean-final-state"],
+  "pending": ["managed-server-integration-group", "aggregate-integration-run", "wm-close-source-app-integration-test", "isolated-installer-upgrade", "deterministic-multi-size-visual-rendering"],
+  "excludedPaths": ["alternate worktrees", "real user server folders"],
+  "visualEvidence": "none-accepted"
+}

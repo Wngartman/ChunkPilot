@@ -1,0 +1,19 @@
+{
+  "name": "chunkpilot-reachability-probe",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Optional stateless Cloudflare Worker that attempts one bounded TCP connection back to the address a ChunkPilot request arrived from.",
+  "license": "SEE LICENSE IN ../../THIRD-PARTY-NOTICES.md",
+  "scripts": {
+    "test": "node --test \"test/*.test.ts\"",
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.test.json",
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250801.0",
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0"
+  }
+}

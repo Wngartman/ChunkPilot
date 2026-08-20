@@ -1,0 +1,90 @@
+<Window x:Class="ChunkPilot.App.ServerIconCropWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:ChunkPilot.App"
+        xmlns:ds="clr-namespace:ChunkPilot.App.DesignSystem"
+        xmlns:components="clr-namespace:ChunkPilot.App.DesignSystem.Components"
+        Title="Crop server icon" Style="{StaticResource AppDialogWindow}"
+        Width="{StaticResource AppServerIconCropDialogWidth}"
+        Height="{StaticResource AppServerIconCropDialogHeight}"
+        MinWidth="{StaticResource AppDialogWidth}" MinHeight="{StaticResource AppDialogWidth}"
+        SizeToContent="Manual" ResizeMode="CanResize"
+        WindowStartupLocation="CenterOwner">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <Border Style="{StaticResource AppDialogHeader}">
+            <StackPanel>
+                <TextBlock Text="Crop server icon" Style="{StaticResource AppTitleLargeText}"/>
+                <TextBlock Text="Drag the square to frame the icon, then zoom for a closer crop. The preview is the exact 64 x 64 result."
+                           Style="{StaticResource AppSecondaryText}" TextWrapping="Wrap"
+                           Margin="{StaticResource AppStackGap}"/>
+            </StackPanel>
+        </Border>
+
+        <Border Grid.Row="1" Style="{StaticResource AppDialogBody}">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <Border Background="{DynamicResource AppSurfaceSunken}"
+                        BorderBrush="{DynamicResource AppStrokeStrong}"
+                        BorderThickness="{StaticResource AppStrokeThickness}"
+                        CornerRadius="{StaticResource AppCornerCard}"
+                        Padding="{StaticResource AppInset8}">
+                    <local:ServerIconCropControl x:Name="CropSurface"
+                                                 MaxWidth="{StaticResource AppServerIconCropViewport}"
+                                                 MaxHeight="{StaticResource AppServerIconCropViewport}"
+                                                 HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                 AutomationProperties.Name="Server icon crop area"
+                                                 AutomationProperties.HelpText="Drag to pan. Use the mouse wheel, zoom slider, plus or minus keys to zoom, arrow keys to pan, and Home to fit."/>
+                </Border>
+
+                <StackPanel Grid.Column="1" Width="{StaticResource AppSearchWidth}"
+                            Margin="{StaticResource AppInlineGapLeadingLarge}">
+                    <TextBlock Text="64 x 64 preview" Style="{StaticResource AppLabelText}"/>
+                    <Border Width="{StaticResource AppServerIconPreviewSize}"
+                            Height="{StaticResource AppServerIconPreviewSize}"
+                            Margin="{StaticResource AppStackGap}"
+                            Background="{DynamicResource AppSurfaceSunken}"
+                            BorderBrush="{DynamicResource AppAccentMuted}"
+                            BorderThickness="{StaticResource AppStrokeThickness}">
+                        <Image x:Name="PreviewImage" Stretch="Fill"
+                               RenderOptions.BitmapScalingMode="NearestNeighbor"
+                               AutomationProperties.Name="Final server icon preview"/>
+                    </Border>
+
+                    <TextBlock Text="Zoom" Style="{StaticResource AppLabelText}"
+                               Margin="{StaticResource AppStackGapTop}"/>
+                    <Slider Minimum="1" Maximum="12" SmallChange="0.25" LargeChange="1"
+                            Value="{Binding Zoom, ElementName=CropSurface, Mode=TwoWay}"
+                            AutomationProperties.Name="Crop zoom"/>
+                    <WrapPanel Margin="{StaticResource AppStackGapTop}">
+                        <Button Content="Fit" ds:AppButton.Icon="Restore"
+                                Click="Fit_Click" Margin="{StaticResource AppInlineGap}"/>
+                        <Button Content="Reset" ds:AppButton.Icon="Undo"
+                                Click="Reset_Click" Margin="{StaticResource AppInlineGap}"/>
+                    </WrapPanel>
+                    <Button Content="Choose another image..." ds:AppButton.Icon="Open"
+                            HorizontalAlignment="Left" Margin="{StaticResource AppStackGapTop}"
+                            Click="ChooseAnother_Click"/>
+                    <components:AppAlert x:Name="ImageError" Tone="Danger" Title="Image could not be opened"
+                                         Margin="{StaticResource AppStackGapTop}" Visibility="Collapsed"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <Border Grid.Row="2" Style="{StaticResource AppDialogFooter}">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button Content="Cancel" IsCancel="True" Margin="{StaticResource AppInlineGap}"/>
+                <Button x:Name="ApplyButton" Content="Apply icon" Style="{StaticResource AppPrimaryButton}"
+                        ds:AppButton.Icon="Checkmark" IsDefault="True" Click="Accept_Click"/>
+            </StackPanel>
+        </Border>
+    </Grid>
+</Window>

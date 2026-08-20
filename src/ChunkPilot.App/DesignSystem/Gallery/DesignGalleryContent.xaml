@@ -1,0 +1,847 @@
+<!--
+    Design Gallery content. DEVELOPMENT ONLY.
+
+    Every component in docs/UI-COMPONENT-CATALOG.md appears here with its states. This is where a
+    change to the design system is reviewed before it reaches a product page, and where a new
+    component must be shown before any page is allowed to use it.
+
+    All data comes from GalleryPreviewData: invented, hard-coded, no agent, no filesystem.
+
+    This file composes shared components. It defines no colours, no type, no radii, no templates.
+-->
+<UserControl x:Class="ChunkPilot.App.DesignSystem.Gallery.DesignGalleryContent"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ds="clr-namespace:ChunkPilot.App.DesignSystem"
+             xmlns:components="clr-namespace:ChunkPilot.App.DesignSystem.Components"
+             xmlns:gallery="clr-namespace:ChunkPilot.App.DesignSystem.Gallery">
+    <Border Style="{StaticResource AppPageSurface}">
+        <StackPanel MaxWidth="{StaticResource AppContentMaxWidth}" HorizontalAlignment="Left">
+
+            <components:AppPageHeader Title="ChunkPilot design system"
+                                      Icon="Sparkle"
+                                      Description="Shared tokens and components. Search this gallery before building anything new.">
+                <components:AppPageHeader.StatusContent>
+                    <components:AppStatusBadge Text="Development only" Tone="Accent" Icon="Lab" />
+                </components:AppPageHeader.StatusContent>
+                <components:AppPageHeader.SecondaryContent>
+                    <Button Content="Component catalog" ds:AppButton.Icon="Document" IsEnabled="False"
+                            ToolTip="Documented in docs/UI-COMPONENT-CATALOG.md" />
+                </components:AppPageHeader.SecondaryContent>
+                <Button Style="{StaticResource AppPrimaryButton}" Content="Primary action"
+                        ds:AppButton.Icon="Play" />
+            </components:AppPageHeader>
+
+            <!-- ================= FOUNDATIONS ================= -->
+            <TextBlock Style="{StaticResource AppEyebrowText}" Text="FOUNDATIONS"
+                       Margin="{StaticResource AppStackGapSmall}" />
+
+            <components:AppSectionCard Header="Colour tokens"
+                                       Icon="Sparkle"
+                                       Description="Neutral surfaces carry the interface. Purple marks brand, selection and focus. Status hues are reserved for confirmed state.">
+                <StackPanel>
+                    <TextBlock Style="{StaticResource AppLabelText}" Text="Surfaces" />
+                    <WrapPanel Margin="{StaticResource AppStackGapSmall}">
+                        <StackPanel Orientation="Horizontal" Margin="{StaticResource AppInlineGapLarge}">
+                            <Border Width="{StaticResource AppIconSizeLarge}" Height="{StaticResource AppIconSizeLarge}"
+                                    CornerRadius="{StaticResource AppCornerSmall}"
+                                    BorderBrush="{DynamicResource AppStroke}" BorderThickness="{StaticResource AppStrokeThickness}"
+                                    Background="{DynamicResource AppSurfaceCanvas}" />
+                            <TextBlock Style="{StaticResource AppMonoText}" Text="AppSurfaceCanvas"
+                                       VerticalAlignment="Center" Margin="{StaticResource AppInlineGapLeading}" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="{StaticResource AppInlineGapLarge}">
+                            <Border Width="{StaticResource AppIconSizeLarge}" Height="{StaticResource AppIconSizeLarge}"
+                                    CornerRadius="{StaticResource AppCornerSmall}"
+                                    BorderBrush="{DynamicResource AppStroke}" BorderThickness="{StaticResource AppStrokeThickness}"
+                                    Background="{DynamicResource AppSurfaceSunken}" />
+                            <TextBlock Style="{StaticResource AppMonoText}" Text="AppSurfaceSunken"
+                                       VerticalAlignment="Center" Margin="{StaticResource AppInlineGapLeading}" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="{StaticResource AppInlineGapLarge}">
+                            <Border Width="{StaticResource AppIconSizeLarge}" Height="{StaticResource AppIconSizeLarge}"
+                                    CornerRadius="{StaticResource AppCornerSmall}"
+                                    BorderBrush="{DynamicResource AppStroke}" BorderThickness="{StaticResource AppStrokeThickness}"
+                                    Background="{DynamicResource AppSurface}" />
+                            <TextBlock Style="{StaticResource AppMonoText}" Text="AppSurface"
+                                       VerticalAlignment="Center" Margin="{StaticResource AppInlineGapLeading}" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="{StaticResource AppInlineGapLarge}">
+                            <Border Width="{StaticResource AppIconSizeLarge}" Height="{StaticResource AppIconSizeLarge}"
+                                    CornerRadius="{StaticResource AppCornerSmall}"
+                                    BorderBrush="{DynamicResource AppStroke}" BorderThickness="{StaticResource AppStrokeThickness}"
+                                    Background="{DynamicResource AppSurfaceRaised}" />
+                            <TextBlock Style="{StaticResource AppMonoText}" Text="AppSurfaceRaised"
+                                       VerticalAlignment="Center" Margin="{StaticResource AppInlineGapLeading}" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="{StaticResource AppInlineGapLarge}">
+                            <Border Width="{StaticResource AppIconSizeLarge}" Height="{StaticResource AppIconSizeLarge}"
+                                    CornerRadius="{StaticResource AppCornerSmall}"
+                                    BorderBrush="{DynamicResource AppStroke}" BorderThickness="{StaticResource AppStrokeThickness}"
+                                    Background="{DynamicResource AppSurfaceOverlay}" />
+                            <TextBlock Style="{StaticResource AppMonoText}" Text="AppSurfaceOverlay"
+                                       VerticalAlignment="Center" Margin="{StaticResource AppInlineGapLeading}" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="{StaticResource AppInlineGapLarge}">
+                            <Border Width="{StaticResource AppIconSizeLarge}" Height="{StaticResource AppIconSizeLarge}"
+                                    CornerRadius="{StaticResource AppCornerSmall}"
+                                    BorderBrush="{DynamicResource AppStroke}" BorderThickness="{StaticResource AppStrokeThickness}"
+                                    Background="{DynamicResource AppSurfaceSelected}" />
+                            <TextBlock Style="{StaticResource AppMonoText}" Text="AppSurfaceSelected"
+                                       VerticalAlignment="Center" Margin="{StaticResource AppInlineGapLeading}" />
+                        </StackPanel>
+                    </WrapPanel>
+
+                    <TextBlock Style="{StaticResource AppLabelText}" Text="Accent and focus"
+                               Margin="{StaticResource AppStackGapTop}" />
+                    <WrapPanel Margin="{StaticResource AppStackGapSmall}">
+                        <StackPanel Orientation="Horizontal" Margin="{StaticResource AppInlineGapLarge}">
+                            <Border Width="{StaticResource AppIconSizeLarge}" Height="{StaticResource AppIconSizeLarge}"
+                                    CornerRadius="{StaticResource AppCornerSmall}"
+                                    Background="{DynamicResource AppAccent}" />
+                            <TextBlock Style="{StaticResource AppMonoText}" Text="AppAccent"
+                                       VerticalAlignment="Center" Margin="{StaticResource AppInlineGapLeading}" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="{StaticResource AppInlineGapLarge}">
+                            <Border Width="{StaticResource AppIconSizeLarge}" Height="{StaticResource AppIconSizeLarge}"
+                                    CornerRadius="{StaticResource AppCornerSmall}"
+                                    Background="{DynamicResource AppAccentSubtle}" />
+                            <TextBlock Style="{StaticResource AppMonoText}" Text="AppAccentSubtle"
+                                       VerticalAlignment="Center" Margin="{StaticResource AppInlineGapLeading}" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="{StaticResource AppInlineGapLarge}">
+                            <Border Width="{StaticResource AppIconSizeLarge}" Height="{StaticResource AppIconSizeLarge}"
+                                    CornerRadius="{StaticResource AppCornerSmall}"
+                                    Background="{DynamicResource AppFocusRing}" />
+                            <TextBlock Style="{StaticResource AppMonoText}" Text="AppFocusRing"
+                                       VerticalAlignment="Center" Margin="{StaticResource AppInlineGapLeading}" />
+                        </StackPanel>
+                    </WrapPanel>
+
+                    <TextBlock Style="{StaticResource AppLabelText}" Text="Status"
+                               Margin="{StaticResource AppStackGapTop}" />
+                    <WrapPanel Margin="{StaticResource AppStackGapSmall}">
+                        <StackPanel Orientation="Horizontal" Margin="{StaticResource AppInlineGapLarge}">
+                            <Border Width="{StaticResource AppIconSizeLarge}" Height="{StaticResource AppIconSizeLarge}"
+                                    CornerRadius="{StaticResource AppCornerSmall}"
+                                    Background="{DynamicResource AppSuccess}" />
+                            <TextBlock Style="{StaticResource AppMonoText}" Text="AppSuccess"
+                                       VerticalAlignment="Center" Margin="{StaticResource AppInlineGapLeading}" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="{StaticResource AppInlineGapLarge}">
+                            <Border Width="{StaticResource AppIconSizeLarge}" Height="{StaticResource AppIconSizeLarge}"
+                                    CornerRadius="{StaticResource AppCornerSmall}"
+                                    Background="{DynamicResource AppWarning}" />
+                            <TextBlock Style="{StaticResource AppMonoText}" Text="AppWarning"
+                                       VerticalAlignment="Center" Margin="{StaticResource AppInlineGapLeading}" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="{StaticResource AppInlineGapLarge}">
+                            <Border Width="{StaticResource AppIconSizeLarge}" Height="{StaticResource AppIconSizeLarge}"
+                                    CornerRadius="{StaticResource AppCornerSmall}"
+                                    Background="{DynamicResource AppDanger}" />
+                            <TextBlock Style="{StaticResource AppMonoText}" Text="AppDanger"
+                                       VerticalAlignment="Center" Margin="{StaticResource AppInlineGapLeading}" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="{StaticResource AppInlineGapLarge}">
+                            <Border Width="{StaticResource AppIconSizeLarge}" Height="{StaticResource AppIconSizeLarge}"
+                                    CornerRadius="{StaticResource AppCornerSmall}"
+                                    Background="{DynamicResource AppInfo}" />
+                            <TextBlock Style="{StaticResource AppMonoText}" Text="AppInfo"
+                                       VerticalAlignment="Center" Margin="{StaticResource AppInlineGapLeading}" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="{StaticResource AppInlineGapLarge}">
+                            <Border Width="{StaticResource AppIconSizeLarge}" Height="{StaticResource AppIconSizeLarge}"
+                                    CornerRadius="{StaticResource AppCornerSmall}"
+                                    Background="{DynamicResource AppNeutral}" />
+                            <TextBlock Style="{StaticResource AppMonoText}" Text="AppNeutral"
+                                       VerticalAlignment="Center" Margin="{StaticResource AppInlineGapLeading}" />
+                        </StackPanel>
+                    </WrapPanel>
+                </StackPanel>
+            </components:AppSectionCard>
+
+            <components:AppSectionCard Header="Type ramp"
+                                       Icon="Document"
+                                       Description="Native Windows type only. Windows ships no Medium 500 face, so the ramp uses Regular, Semilight for display, and SemiBold for emphasis.">
+                <StackPanel>
+                    <TextBlock Style="{StaticResource AppDisplayText}" Text="Display 30 Regular · a single defining value" />
+                    <TextBlock Style="{StaticResource AppNumericText}" Text="Numeric 20 SemiBold · 1.4 GiB" />
+                    <TextBlock Style="{StaticResource AppTitleLargeText}" Text="Title large 24 SemiBold · page title" />
+                    <TextBlock Style="{StaticResource AppTitleText}" Text="Title 19 SemiBold · major section" />
+                    <TextBlock Style="{StaticResource AppSubtitleText}" Text="Subtitle 16 SemiBold · group heading" />
+                    <TextBlock Style="{StaticResource AppBodyText}" Text="Body 14 Regular · the default for everything else." />
+                    <TextBlock Style="{StaticResource AppBodyStrongText}" Text="Body strong 14 SemiBold · a row's primary value" />
+                    <TextBlock Style="{StaticResource AppSecondaryText}" Text="Secondary 14 Regular · supporting explanation" />
+                    <TextBlock Style="{StaticResource AppMutedText}" Text="Muted 13 Regular · metadata and detail" />
+                    <TextBlock Style="{StaticResource AppCaptionText}" Text="Caption 12 Regular · badges and dense labels" />
+                    <TextBlock Style="{StaticResource AppLabelText}" Text="Label 13 Regular · field label" />
+                    <TextBlock Style="{StaticResource AppEyebrowText}" Text="EYEBROW 12 SEMIBOLD · GROUP OF SECTIONS" />
+                    <TextBlock Style="{StaticResource AppMonoText}" Text="Mono 13 · D:\Servers\Sample\world · sha256:0f3c…" />
+                </StackPanel>
+            </components:AppSectionCard>
+
+            <components:AppSectionCard Header="Spacing, radii and elevation"
+                                       Icon="Options"
+                                       Description="A 4px rhythm. Radii step from control to card to surface. Shadows are reserved for layers that genuinely float.">
+                <StackPanel>
+                    <TextBlock Style="{StaticResource AppLabelText}" Text="Radii" />
+                    <WrapPanel Margin="{StaticResource AppStackGapSmall}">
+                        <Border Background="{DynamicResource AppSurfaceRaised}" Padding="{StaticResource AppInset12}"
+                                CornerRadius="{StaticResource AppCornerSmall}" Margin="{StaticResource AppInlineGap}">
+                            <TextBlock Style="{StaticResource AppMonoText}" Text="Small 4" />
+                        </Border>
+                        <Border Background="{DynamicResource AppSurfaceRaised}" Padding="{StaticResource AppInset12}"
+                                CornerRadius="{StaticResource AppCornerControl}" Margin="{StaticResource AppInlineGap}">
+                            <TextBlock Style="{StaticResource AppMonoText}" Text="Control 6" />
+                        </Border>
+                        <Border Background="{DynamicResource AppSurfaceRaised}" Padding="{StaticResource AppInset12}"
+                                CornerRadius="{StaticResource AppCornerCard}" Margin="{StaticResource AppInlineGap}">
+                            <TextBlock Style="{StaticResource AppMonoText}" Text="Card 8" />
+                        </Border>
+                        <Border Background="{DynamicResource AppSurfaceRaised}" Padding="{StaticResource AppInset12}"
+                                CornerRadius="{StaticResource AppCornerSurface}" Margin="{StaticResource AppInlineGap}">
+                            <TextBlock Style="{StaticResource AppMonoText}" Text="Surface 12" />
+                        </Border>
+                        <Border Background="{DynamicResource AppSurfaceRaised}" Padding="{StaticResource AppInset12}"
+                                CornerRadius="{StaticResource AppCornerPill}" Margin="{StaticResource AppInlineGap}">
+                            <TextBlock Style="{StaticResource AppMonoText}" Text="Pill" />
+                        </Border>
+                    </WrapPanel>
+
+                    <TextBlock Style="{StaticResource AppLabelText}" Text="Elevation"
+                               Margin="{StaticResource AppStackGapTop}" />
+                    <WrapPanel Margin="{StaticResource AppStackGapSmall}">
+                        <Border Style="{StaticResource AppCard}" Margin="{StaticResource AppInlineGapLarge}">
+                            <TextBlock Style="{StaticResource AppMonoText}" Text="Flat · surface value only" />
+                        </Border>
+                        <Border Style="{StaticResource AppCard}" Background="{DynamicResource AppSurfaceWell}"
+                                Margin="{StaticResource AppInlineGapLarge}">
+                            <TextBlock Style="{StaticResource AppMonoText}" Text="Well · console and data" />
+                        </Border>
+                        <Border Style="{StaticResource AppCard}" Background="{DynamicResource AppSurfaceOverlay}"
+                                Effect="{StaticResource AppElevationOverlay}" Margin="{StaticResource AppInlineGapLarge}">
+                            <TextBlock Style="{StaticResource AppMonoText}" Text="AppElevationOverlay" />
+                        </Border>
+                        <Border Style="{StaticResource AppCard}" Background="{DynamicResource AppSurfaceOverlay}"
+                                Effect="{StaticResource AppElevationDialog}" Margin="{StaticResource AppInlineGapLarge}">
+                            <TextBlock Style="{StaticResource AppMonoText}" Text="AppElevationDialog" />
+                        </Border>
+                    </WrapPanel>
+                </StackPanel>
+            </components:AppSectionCard>
+
+            <!-- ================= ACTIONS ================= -->
+            <TextBlock Style="{StaticResource AppEyebrowText}" Text="ACTIONS"
+                       Margin="{StaticResource AppStackGapSmall}" />
+
+            <components:AppSectionCard Header="Buttons"
+                                       Icon="Play"
+                                       Description="Hover, pressed and focus are interactive: point at a button, and press Tab to move focus through the row.">
+                <StackPanel>
+                    <TextBlock Style="{StaticResource AppLabelText}" Text="Variants" />
+                    <WrapPanel Margin="{StaticResource AppStackGapSmall}">
+                        <Button Style="{StaticResource AppPrimaryButton}" Content="Start server"
+                                ds:AppButton.Icon="Play" Margin="{StaticResource AppInlineGap}" />
+                        <Button Content="Open folder" ds:AppButton.Icon="FolderOpen"
+                                Margin="{StaticResource AppInlineGap}" />
+                        <Button Style="{StaticResource AppSubtleButton}" Content="More options"
+                                ds:AppButton.Icon="More" Margin="{StaticResource AppInlineGap}" />
+                        <Button Style="{StaticResource AppDangerButton}" Content="Delete backup"
+                                ds:AppButton.Icon="Delete" Margin="{StaticResource AppInlineGap}" />
+                        <Button Style="{StaticResource AppDangerSubtleButton}" Content="Remove"
+                                ds:AppButton.Icon="Remove" Margin="{StaticResource AppInlineGap}" />
+                        <Button Style="{StaticResource AppLinkButton}" Content="What changed?"
+                                Margin="{StaticResource AppInlineGap}" />
+                    </WrapPanel>
+
+                    <TextBlock Style="{StaticResource AppLabelText}" Text="Disabled"
+                               Margin="{StaticResource AppStackGapTop}" />
+                    <WrapPanel Margin="{StaticResource AppStackGapSmall}">
+                        <Button Style="{StaticResource AppPrimaryButton}" Content="Start server"
+                                ds:AppButton.Icon="Play" IsEnabled="False" Margin="{StaticResource AppInlineGap}" />
+                        <Button Content="Open folder" ds:AppButton.Icon="FolderOpen" IsEnabled="False"
+                                Margin="{StaticResource AppInlineGap}" />
+                        <Button Style="{StaticResource AppDangerButton}" Content="Delete backup"
+                                ds:AppButton.Icon="Delete" IsEnabled="False" Margin="{StaticResource AppInlineGap}" />
+                    </WrapPanel>
+
+                    <TextBlock Style="{StaticResource AppLabelText}" Text="Icon buttons · tooltip and accessible name required"
+                               Margin="{StaticResource AppStackGapTop}" />
+                    <WrapPanel Margin="{StaticResource AppStackGapSmall}">
+                        <Button Style="{StaticResource AppIconButton}" ToolTip="Copy address"
+                                AutomationProperties.Name="Copy address" Margin="{StaticResource AppInlineGap}">
+                            <ds:AppIcon Kind="Copy" Scale="Small" />
+                        </Button>
+                        <Button Style="{StaticResource AppIconButton}" ToolTip="Refresh"
+                                AutomationProperties.Name="Refresh" Margin="{StaticResource AppInlineGap}">
+                            <ds:AppIcon Kind="Refresh" Scale="Small" />
+                        </Button>
+                        <Button Style="{StaticResource AppIconButtonDanger}" ToolTip="Remove add-on"
+                                AutomationProperties.Name="Remove add-on" Margin="{StaticResource AppInlineGap}">
+                            <ds:AppIcon Kind="Delete" Scale="Small" />
+                        </Button>
+                        <Button Style="{StaticResource AppIconButton}" ToolTip="Not available"
+                                AutomationProperties.Name="Not available" IsEnabled="False"
+                                Margin="{StaticResource AppInlineGap}">
+                            <ds:AppIcon Kind="Settings" Scale="Small" />
+                        </Button>
+                    </WrapPanel>
+
+                    <TextBlock Style="{StaticResource AppLabelText}" Text="Icon scales · Small 16, Medium 20, Large 24, Hero 32"
+                               Margin="{StaticResource AppStackGapTop}" />
+                    <WrapPanel Margin="{StaticResource AppStackGapSmall}">
+                        <ds:AppIcon Kind="Server" Scale="Small" Margin="{StaticResource AppInlineGapLarge}" />
+                        <ds:AppIcon Kind="Server" Scale="Medium" Margin="{StaticResource AppInlineGapLarge}" />
+                        <ds:AppIcon Kind="Server" Scale="Large" Margin="{StaticResource AppInlineGapLarge}" />
+                        <ds:AppIcon Kind="Server" Scale="Hero" Margin="{StaticResource AppInlineGapLarge}" />
+                        <ds:AppIcon Kind="Server" Scale="Large" Variant="Filled"
+                                    Foreground="{DynamicResource AppTextAccent}"
+                                    Margin="{StaticResource AppInlineGapLarge}" />
+                    </WrapPanel>
+                </StackPanel>
+            </components:AppSectionCard>
+
+            <!-- ================= INPUT ================= -->
+            <TextBlock Style="{StaticResource AppEyebrowText}" Text="INPUT"
+                       Margin="{StaticResource AppStackGapSmall}" />
+
+            <components:AppSectionCard Header="Text and numeric entry"
+                                       Icon="Edit"
+                                       Description="Focus shows a ring and an accent edge. A placeholder is a hint, never a substitute for a label.">
+                <StackPanel>
+                    <TextBlock Style="{StaticResource AppLabelText}" Text="Server name" />
+                    <TextBox Text="Sample Survival" Margin="{StaticResource AppStackGapSmall}" />
+                    <TextBlock Style="{StaticResource AppLabelText}" Text="Message of the day" />
+                    <TextBox ds:AppInput.Placeholder="Shown in the Minecraft server list"
+                             Margin="{StaticResource AppStackGapSmall}" />
+                    <TextBlock Style="{StaticResource AppLabelText}" Text="Detected folder · read only" />
+                    <TextBox Style="{StaticResource AppMonoTextBox}" IsReadOnly="True"
+                             Text="D:\Servers\Sample Survival" Margin="{StaticResource AppStackGapSmall}" />
+                    <TextBlock Style="{StaticResource AppLabelText}" Text="Unavailable while the server is running" />
+                    <TextBox Text="25565" IsEnabled="False" Margin="{StaticResource AppStackGapSmall}" />
+                    <TextBlock Style="{StaticResource AppLabelText}" Text="Launch arguments" />
+                    <TextBox Style="{StaticResource AppMultilineTextBox}"
+                             Text="-Xms2G -Xmx4G -XX:+UseG1GC" Margin="{StaticResource AppStackGapSmall}" />
+                    <TextBlock Style="{StaticResource AppLabelText}" Text="Secret" />
+                    <PasswordBox Password="not-a-real-key" Margin="{StaticResource AppStackGapSmall}" />
+
+                    <WrapPanel Margin="{StaticResource AppStackGapTop}">
+                        <StackPanel Margin="{StaticResource AppInlineGapLarge}">
+                            <TextBlock Style="{StaticResource AppLabelText}" Text="Server port" />
+                            <components:AppNumberBox Value="25565" Minimum="1" Maximum="65535" Width="140" />
+                        </StackPanel>
+                        <StackPanel Margin="{StaticResource AppInlineGapLarge}">
+                            <TextBlock Style="{StaticResource AppLabelText}" Text="Disabled stepper" />
+                            <components:AppNumberBox Value="19132" Minimum="1" Maximum="65535" Width="140"
+                                                     IsEnabled="False" />
+                        </StackPanel>
+                        <StackPanel Margin="{StaticResource AppInlineGapLarge}">
+                            <TextBlock Style="{StaticResource AppLabelText}" Text="Search" />
+                            <components:AppSearchBox Placeholder="Search servers" />
+                        </StackPanel>
+                        <StackPanel Margin="{StaticResource AppInlineGapLarge}">
+                            <TextBlock Style="{StaticResource AppLabelText}" Text="Search with text" />
+                            <components:AppSearchBox Text="survival" />
+                        </StackPanel>
+                    </WrapPanel>
+
+                    <TextBlock Style="{StaticResource AppLabelText}" Text="Maximum memory"
+                               Margin="{StaticResource AppStackGapTop}" />
+                    <Slider Minimum="1024" Maximum="16384" Value="4096" Width="{StaticResource AppSearchWidth}"
+                            HorizontalAlignment="Left" />
+                </StackPanel>
+            </components:AppSectionCard>
+
+            <components:AppSectionCard Header="Selection"
+                                       Icon="Checkmark"
+                                       Description="Switches apply immediately. Check boxes belong to a form that is confirmed. Neither uses colour alone.">
+                <StackPanel>
+                    <WrapPanel>
+                        <StackPanel Margin="{StaticResource AppInlineGapLarge}">
+                            <TextBlock Style="{StaticResource AppLabelText}" Text="Check boxes" />
+                            <CheckBox Content="Create a recovery point first" IsChecked="True"
+                                      Margin="{StaticResource AppStackGapSmall}" />
+                            <CheckBox Content="I agree to the Minecraft EULA"
+                                      Margin="{StaticResource AppStackGapSmall}" />
+                            <CheckBox Content="Mixed selection" IsThreeState="True" IsChecked="{x:Null}"
+                                      Margin="{StaticResource AppStackGapSmall}" />
+                            <CheckBox Content="Unavailable for this server" IsEnabled="False"
+                                      Margin="{StaticResource AppStackGapSmall}" />
+                        </StackPanel>
+                        <StackPanel Margin="{StaticResource AppInlineGapLarge}">
+                            <TextBlock Style="{StaticResource AppLabelText}" Text="Switches" />
+                            <CheckBox Style="{StaticResource AppToggleSwitch}" Content="Automatic backups"
+                                      IsChecked="True" Margin="{StaticResource AppStackGapSmall}" />
+                            <CheckBox Style="{StaticResource AppToggleSwitch}" Content="Restart after crash"
+                                      Margin="{StaticResource AppStackGapSmall}" />
+                            <CheckBox Style="{StaticResource AppToggleSwitch}" Content="Requires a running agent"
+                                      IsEnabled="False" Margin="{StaticResource AppStackGapSmall}" />
+                        </StackPanel>
+                        <StackPanel Margin="{StaticResource AppInlineGapLarge}">
+                            <TextBlock Style="{StaticResource AppLabelText}" Text="Radio buttons" />
+                            <RadioButton Content="Reference the folder in place" IsChecked="True"
+                                         GroupName="GalleryImport" Margin="{StaticResource AppStackGapSmall}" />
+                            <RadioButton Content="Copy into a managed folder"
+                                         GroupName="GalleryImport" Margin="{StaticResource AppStackGapSmall}" />
+                            <RadioButton Content="Not possible on this drive" IsEnabled="False"
+                                         GroupName="GalleryImport" Margin="{StaticResource AppStackGapSmall}" />
+                        </StackPanel>
+                    </WrapPanel>
+
+                    <TextBlock Style="{StaticResource AppLabelText}" Text="Combo box · the chosen item is ticked, not just tinted"
+                               Margin="{StaticResource AppStackGapTop}" />
+                    <WrapPanel Margin="{StaticResource AppStackGapSmall}">
+                        <ComboBox ItemsSource="{Binding Source={x:Static gallery:GalleryPreviewData.Versions}}"
+                                  SelectedIndex="0" Width="{StaticResource AppSearchWidth}"
+                                  Margin="{StaticResource AppInlineGapLarge}" />
+                        <ComboBox ItemsSource="{Binding Source={x:Static gallery:GalleryPreviewData.Versions}}"
+                                  SelectedIndex="1" Width="{StaticResource AppSearchWidth}" IsEnabled="False" />
+                    </WrapPanel>
+
+                    <TextBlock Style="{StaticResource AppLabelText}" Text="Segmented control · the approved alternative to a TabControl"
+                               Margin="{StaticResource AppStackGapTop}" />
+                    <ItemsControl Style="{StaticResource AppSegmentedControl}" Margin="{StaticResource AppStackGapSmall}">
+                        <RadioButton Style="{StaticResource AppSegmentedItem}" Content="Overview"
+                                     GroupName="GalleryView" IsChecked="True" />
+                        <RadioButton Style="{StaticResource AppSegmentedItem}" Content="Console"
+                                     GroupName="GalleryView" />
+                        <RadioButton Style="{StaticResource AppSegmentedItem}" Content="Files"
+                                     GroupName="GalleryView" />
+                        <RadioButton Style="{StaticResource AppSegmentedItem}" Content="Unavailable"
+                                     GroupName="GalleryView" IsEnabled="False" />
+                    </ItemsControl>
+                </StackPanel>
+            </components:AppSectionCard>
+
+            <!-- ================= NAVIGATION AND STRUCTURE ================= -->
+            <TextBlock Style="{StaticResource AppEyebrowText}" Text="NAVIGATION AND STRUCTURE"
+                       Margin="{StaticResource AppStackGapSmall}" />
+
+            <components:AppSectionCard Header="Navigation rail"
+                                       Icon="NavigationPanel"
+                                       Description="Selection is an accent edge plus a raised surface. The compact rail keeps every destination and moves the label into the tooltip.">
+                <WrapPanel>
+                    <StackPanel Margin="{StaticResource AppInlineGapLarge}">
+                        <TextBlock Style="{StaticResource AppLabelText}" Text="Standard" />
+                        <!-- No fixed height: the preview must show every destination, not clip the last one. -->
+                        <Border Style="{StaticResource AppNavigationRail}">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource AppNavigationSectionLabel}" Text="WORKSPACE" />
+                                <ListBox Style="{StaticResource AppNavigationList}"
+                                         ItemContainerStyle="{StaticResource AppNavigationRow}"
+                                         ItemTemplate="{StaticResource AppNavigationRowTemplate}"
+                                         ItemsSource="{Binding Source={x:Static gallery:GalleryPreviewData.Destinations}}"
+                                         SelectedIndex="0" />
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                    <StackPanel Margin="{StaticResource AppInlineGapLarge}"
+                                ds:AppLayout.Mode="Compact">
+                        <TextBlock Style="{StaticResource AppLabelText}" Text="Compact" />
+                        <Border Style="{StaticResource AppNavigationRail}">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource AppNavigationSectionLabel}" Text="WORKSPACE" />
+                                <!-- The compact row template is named explicitly here so the preview
+                                     is independent of the window width the gallery happens to be
+                                     rendered at. In the product, AppNavigationList swaps to it from
+                                     a Compact trigger. -->
+                                <ListBox Style="{StaticResource AppNavigationList}"
+                                         ItemContainerStyle="{StaticResource AppNavigationRow}"
+                                         ItemTemplate="{StaticResource AppNavigationRowTemplateCompact}"
+                                         ItemsSource="{Binding Source={x:Static gallery:GalleryPreviewData.Destinations}}"
+                                         SelectedIndex="2" />
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                    <StackPanel Margin="{StaticResource AppInlineGapLarge}">
+                        <TextBlock Style="{StaticResource AppLabelText}" Text="Workspace tabs" />
+                        <!-- The strip under the selected-server header. The selected tab is stated
+                             by an accent underline sized to its own content, never by a container:
+                             switch the selection and the underline moves and resizes with the
+                             label, and the strip does not change height. -->
+                        <ListBox Style="{StaticResource AppWorkspaceTabs}"
+                                 ItemContainerStyle="{StaticResource AppWorkspaceTabItem}"
+                                 Margin="{StaticResource AppStackGapSmall}"
+                                 ItemsSource="{Binding Source={x:Static gallery:GalleryPreviewData.Destinations}}"
+                                 SelectedIndex="1" />
+                        <!-- The same language for an in-page view switch bound to a boolean. -->
+                        <StackPanel Orientation="Horizontal" Margin="{StaticResource AppStackGapSmall}">
+                            <RadioButton Style="{StaticResource AppWorkspaceTabButton}"
+                                         GroupName="GalleryTabs" Content="Players" IsChecked="True" />
+                            <RadioButton Style="{StaticResource AppWorkspaceTabButton}"
+                                         GroupName="GalleryTabs" Content="Banned" />
+                        </StackPanel>
+                    </StackPanel>
+                    <StackPanel Margin="{StaticResource AppInlineGapLarge}">
+                        <TextBlock Style="{StaticResource AppLabelText}" Text="Surfaces" />
+                        <Border Style="{StaticResource AppCard}" Margin="{StaticResource AppStackGapSmall}">
+                            <TextBlock Style="{StaticResource AppMutedText}" Text="AppCard · grouped content" />
+                        </Border>
+                        <Border Style="{StaticResource AppRaisedCard}" Margin="{StaticResource AppStackGapSmall}">
+                            <TextBlock Style="{StaticResource AppMutedText}" Text="AppRaisedCard · the one block that matters most" />
+                        </Border>
+                        <Border Style="{StaticResource AppSunkenSurface}" Padding="{StaticResource AppInset12}"
+                                Margin="{StaticResource AppStackGapSmall}">
+                            <TextBlock Style="{StaticResource AppMutedText}" Text="AppSunkenSurface · console and read-only payloads" />
+                        </Border>
+                        <Border Style="{StaticResource AppAccentSurface}" Margin="{StaticResource AppStackGapSmall}">
+                            <TextBlock Style="{StaticResource AppMutedText}" Text="AppAccentSurface · current server context" />
+                        </Border>
+                        <Border Style="{StaticResource AppDivider}" />
+                        <TextBlock Style="{StaticResource AppMutedText}" Text="AppDivider · above" />
+                    </StackPanel>
+                </WrapPanel>
+            </components:AppSectionCard>
+
+            <components:AppSectionCard Header="Progressive disclosure"
+                                       Icon="Options"
+                                       Description="Advanced controls stay available but collapsed. A collapsed section may never hide a state needed to act safely."
+                                       IsCollapsible="True"
+                                       IsExpanded="False">
+                <StackPanel>
+                    <components:AppInfoRow Label="Java runtime" Value="Managed Temurin 21.0.5" IsMonospaced="True" />
+                    <components:AppInfoRow Label="Launch profile" Value="Reviewed background launch" />
+                </StackPanel>
+            </components:AppSectionCard>
+
+            <!-- ================= STATE ================= -->
+            <TextBlock Style="{StaticResource AppEyebrowText}" Text="STATE"
+                       Margin="{StaticResource AppStackGapSmall}" />
+
+            <components:AppSectionCard Header="Status badges"
+                                       Icon="HeartPulse"
+                                       Description="Neutral is the default so an unset badge reads as unknown rather than healthy. The text is always required.">
+                <StackPanel>
+                    <!-- Player-head image primitive. With no UUID it intentionally renders empty so
+                         a containing view can keep its local fallback icon. -->
+                    <components:AppPlayerHead Width="32" Height="32" HorizontalAlignment="Left"
+                                              AutomationProperties.Name="Player head fallback sample" />
+                    <WrapPanel>
+                        <components:AppStatusBadge Text="Running" Tone="Success" Margin="{StaticResource AppInlineGap}" />
+                        <components:AppStatusBadge Text="Starting" Tone="Warning" Margin="{StaticResource AppInlineGap}" />
+                        <components:AppStatusBadge Text="Crashed" Tone="Danger" Margin="{StaticResource AppInlineGap}" />
+                        <components:AppStatusBadge Text="Update staged" Tone="Info" Margin="{StaticResource AppInlineGap}" />
+                        <components:AppStatusBadge Text="Stopped" Tone="Neutral" Margin="{StaticResource AppInlineGap}" />
+                        <components:AppStatusBadge Text="Current server" Tone="Accent" Margin="{StaticResource AppInlineGap}" />
+                    </WrapPanel>
+                    <WrapPanel Margin="{StaticResource AppStackGapTop}">
+                        <components:AppStatusBadge Text="Verified" Tone="Success" Icon="Success"
+                                                   Margin="{StaticResource AppInlineGap}" />
+                        <components:AppStatusBadge Text="Reachability unknown" Tone="Neutral" Icon="Question"
+                                                   Margin="{StaticResource AppInlineGap}" />
+                        <components:AppStatusBadge Text="Recovery point required" Tone="Warning" Icon="Shield"
+                                                   Margin="{StaticResource AppInlineGap}" />
+                        <components:AppStatusBadge Text="Subtle · inside dense rows" Tone="Info" IsSubtle="True"
+                                                   Margin="{StaticResource AppInlineGap}" />
+                    </WrapPanel>
+                </StackPanel>
+            </components:AppSectionCard>
+
+            <components:AppSectionCard Header="Server rows"
+                                       Icon="Server"
+                                       Description="One row treatment everywhere a server is listed. Selection is an accent edge and a surface change.">
+                <ItemsControl ItemsSource="{Binding Source={x:Static gallery:GalleryPreviewData.Servers}}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <components:AppServerRow ServerName="{Binding ServerName}"
+                                                     Subtitle="{Binding Subtitle}"
+                                                     StateText="{Binding StateText}"
+                                                     Tone="{Binding Tone}">
+                                <TextBlock Style="{StaticResource AppMutedText}" Text="{Binding Detail}" />
+                            </components:AppServerRow>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </components:AppSectionCard>
+
+            <components:AppSectionCard Header="Selected server row"
+                                       Icon="Pin">
+                <components:AppServerRow ServerName="Sample Survival" Subtitle="Paper 1.21.4"
+                                         StateText="Running" Tone="Success" IsSelected="True">
+                    <components:AppStatusBadge Text="Current" Tone="Accent" />
+                </components:AppServerRow>
+            </components:AppSectionCard>
+
+            <components:AppSectionCard Header="Information rows"
+                                       Icon="Info"
+                                       Description="An unknown value says so. It is never rendered as an empty gap that looks like an answer.">
+                <StackPanel>
+                    <components:AppInfoRow Label="Address on this network" Value="192.168.1.24:25565"
+                                           IsMonospaced="True">
+                        <Button Style="{StaticResource AppIconButton}" ToolTip="Copy address"
+                                AutomationProperties.Name="Copy address">
+                            <ds:AppIcon Kind="Copy" Scale="Small" />
+                        </Button>
+                    </components:AppInfoRow>
+                    <components:AppInfoRow Label="Public reachability" IsUnknown="True"
+                                           UnknownText="Unknown · only a local check ran" />
+                    <components:AppInfoRow Label="Public address" IsUnknown="True" UnknownText="Not configured" />
+                    <components:AppInfoRow Label="Server software" Value="Paper 1.21.4 build 232" />
+                    <components:AppInfoRow Label="CurseForge key" IsUnknown="True" UnknownText="Stored · hidden" />
+                </StackPanel>
+            </components:AppSectionCard>
+
+            <components:AppSectionCard Header="Lists, tables and console"
+                                       Icon="Document"
+                                       Description="Rows separate with one hairline. An in-progress backup can never be presented as complete.">
+                <StackPanel>
+                    <TextBlock Style="{StaticResource AppLabelText}" Text="List rows · hover, selected, disabled" />
+                    <ListBox SelectedIndex="1" Margin="{StaticResource AppStackGapSmall}">
+                        <ListBoxItem Content="world" />
+                        <ListBoxItem Content="world_nether" />
+                        <ListBoxItem Content="world_the_end" />
+                        <ListBoxItem Content="Locked by another process" IsEnabled="False" />
+                    </ListBox>
+
+                    <TextBlock Style="{StaticResource AppLabelText}" Text="Table"
+                               Margin="{StaticResource AppStackGapTop}" />
+                    <DataGrid ItemsSource="{Binding Source={x:Static gallery:GalleryPreviewData.Backups}}"
+                              Margin="{StaticResource AppStackGapSmall}" MaxHeight="200">
+                        <!--
+                            Proportional widths only. Mixing a star column with auto columns lets the
+                            measured total exceed the arranged width, which clipped the trailing
+                            columns instead of narrowing the wide one.
+                        -->
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Created" Binding="{Binding Created}" Width="2*" />
+                            <DataGridTextColumn Header="Size" Binding="{Binding Size}" Width="*" />
+                            <DataGridTextColumn Header="Kind" Binding="{Binding Kind}" Width="*" />
+                            <DataGridTextColumn Header="State" Binding="{Binding Verified}" Width="*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+
+                    <TextBlock Style="{StaticResource AppLabelText}" Text="Console surface · bounded and virtualised"
+                               Margin="{StaticResource AppStackGapTop}" />
+                    <ListBox Style="{StaticResource AppConsoleSurface}" MaxHeight="140"
+                             ItemsSource="{Binding Source={x:Static gallery:GalleryPreviewData.ConsoleLines}}" />
+                </StackPanel>
+            </components:AppSectionCard>
+
+            <components:AppSectionCard Header="Progress and busy"
+                                       Icon="Timer"
+                                       Description="Determinate only when the total is known. The indeterminate track pulses and never pretends to be a percentage.">
+                <StackPanel>
+                    <TextBlock Style="{StaticResource AppLabelText}" Text="Determinate 64%" />
+                    <ProgressBar Value="64" Margin="{StaticResource AppStackGapSmall}" />
+                    <TextBlock Style="{StaticResource AppLabelText}" Text="Indeterminate · amount unknown" />
+                    <ProgressBar IsIndeterminate="True" Margin="{StaticResource AppStackGapSmall}" />
+                    <StackPanel Orientation="Horizontal" Margin="{StaticResource AppStackGapSmall}">
+                        <components:AppBusyIndicator Margin="{StaticResource AppInlineGapLarge}" />
+                        <TextBlock Style="{StaticResource AppSecondaryText}" VerticalAlignment="Center"
+                                   Text="AppBusyIndicator · static under Reduced Motion" />
+                    </StackPanel>
+
+                    <components:AppProgressPanel Title="Downloading Paper 1.21.4"
+                                                 StatusText="Verifying SHA-256 of the staged file"
+                                                 DetailText="operation 8f2c41 · staging D:\ChunkPilot\Staging\8f2c41"
+                                                 Progress="72" />
+                    <components:AppProgressPanel Title="Creating recovery point"
+                                                 StatusText="Working · total size not yet known"
+                                                 IsIndeterminate="True" />
+                    <components:AppProgressPanel Title="Backup complete"
+                                                 StatusText="Verified and finalised"
+                                                 DetailText="1.4 GiB · retained for 30 days"
+                                                 Progress="100" Tone="Success" />
+                    <components:AppProgressPanel Title="Update staged, not activated"
+                                                 StatusText="Current version is unchanged. Review before activating."
+                                                 Progress="100" Tone="Warning" />
+                    <components:AppProgressPanel Title="Restore failed"
+                                                 StatusText="The failed state was preserved. Nothing was overwritten."
+                                                 DetailText="operation 41ba09"
+                                                 Progress="38" Tone="Danger" />
+                </StackPanel>
+            </components:AppSectionCard>
+
+            <!-- ================= FEEDBACK ================= -->
+            <TextBlock Style="{StaticResource AppEyebrowText}" Text="FEEDBACK"
+                       Margin="{StaticResource AppStackGapSmall}" />
+
+            <components:AppSectionCard Header="Alerts"
+                                       Icon="Alert"
+                                       Description="Inline and non-modal. This replaces a default MessageBox on every product error path.">
+                <StackPanel>
+                    <components:AppAlert Tone="Info" Title="Update available"
+                                         Message="Paper 1.21.4 build 232 was published. Nothing has been downloaded yet." />
+                    <components:AppAlert Tone="Success" Title="Recovery point verified"
+                                         Message="A full snapshot completed and was checked before this change." />
+                    <components:AppAlert Tone="Warning" Title="Recovery point required"
+                                         Message="This change replaces server files. Create a verified recovery point first.">
+                        <StackPanel Orientation="Horizontal">
+                            <Button Style="{StaticResource AppPrimaryButton}" Content="Create recovery point"
+                                    ds:AppButton.Icon="Shield" Margin="{StaticResource AppInlineGap}" />
+                            <Button Content="Review what changes" ds:AppButton.Icon="Document"
+                                    Margin="{StaticResource AppInlineGap}" />
+                        </StackPanel>
+                    </components:AppAlert>
+                    <components:AppAlert Tone="Danger" Title="Could not reach the local agent"
+                                         Message="Managed servers are unaffected and keep running. ChunkPilot will reconnect automatically.">
+                        <components:AppAlert.DetailContent>
+                            <TextBlock Style="{StaticResource AppMonoText}"
+                                       Text="named pipe timeout after 5s · retry 3 of 5" />
+                        </components:AppAlert.DetailContent>
+                        <Button Content="Retry now" ds:AppButton.Icon="Refresh" />
+                    </components:AppAlert>
+                    <components:AppAlert Tone="Neutral" Title="Dismissible message"
+                                         Message="An alert only shows a dismiss control when dismissing is genuinely offered."
+                                         DismissCommand="{Binding NoOpCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" />
+                </StackPanel>
+            </components:AppSectionCard>
+
+            <components:AppSectionCard Header="Toasts"
+                                       Icon="Send"
+                                       Description="Owned by the shell, positioned on the overlay layer. A toast reports a finished outcome and never asks a question.">
+                <ItemsControl Style="{StaticResource AppToastHost}" HorizontalAlignment="Left"
+                              Margin="{StaticResource AppInsetNone}">
+                    <components:AppToast Tone="Success" Title="Backup complete"
+                                         Message="Sample Survival · 1.4 GiB · verified"
+                                         DismissCommand="{Binding NoOpCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" />
+                    <components:AppToast Tone="Warning" Title="Server stopped unexpectedly"
+                                         Message="Crash recovery is suppressed because the stop was manual."
+                                         DismissCommand="{Binding NoOpCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" />
+                    <components:AppToast Tone="Info" Title="Update staged"
+                                         Message="Current version is unchanged until you activate it."
+                                         DismissCommand="{Binding NoOpCommand, RelativeSource={RelativeSource AncestorType=UserControl}}">
+                        <Button Style="{StaticResource AppLinkButton}" Content="Review" />
+                    </components:AppToast>
+                </ItemsControl>
+            </components:AppSectionCard>
+
+            <components:AppSectionCard Header="Empty and loading"
+                                       Icon="Box"
+                                       Description="Three different truths: nothing yet, nothing matched, and still waiting. Never the same blank surface.">
+                <WrapPanel>
+                    <Border Style="{StaticResource AppSunkenSurface}" Width="320"
+                            Margin="{StaticResource AppInlineGapLarge}">
+                        <components:AppEmptyState Icon="Backup" Title="No backups yet"
+                                                  Message="Create one before an update or a world change so the operation is reversible.">
+                            <Button Style="{StaticResource AppPrimaryButton}" Content="Back up now"
+                                    ds:AppButton.Icon="Backup" />
+                        </components:AppEmptyState>
+                    </Border>
+                    <Border Style="{StaticResource AppSunkenSurface}" Width="320"
+                            Margin="{StaticResource AppInlineGapLarge}">
+                        <components:AppEmptyState Icon="Search" Title="No servers match this filter"
+                                                  Message="Clear the search to see all five servers again." />
+                    </Border>
+                    <Border Style="{StaticResource AppSunkenSurface}" Width="320"
+                            Margin="{StaticResource AppInlineGapLarge}">
+                        <components:AppLoadingState Title="Loading available versions…"
+                                                    Message="Reading official provider metadata." />
+                    </Border>
+                </WrapPanel>
+            </components:AppSectionCard>
+
+            <components:AppSectionCard Header="Dialog surface"
+                                       Icon="Shield"
+                                       Description="A destructive action states exactly what changes, names the recovery point, and puts cancel first.">
+                <!-- The scrim sizes to the dialog. A fixed height cut the footer buttons in half. -->
+                <Grid>
+                    <Border Style="{StaticResource AppScrim}" />
+                    <Border Style="{StaticResource AppDialogSurface}">
+                        <StackPanel>
+                            <TextBlock Style="{StaticResource AppTitleText}" Text="Delete 3 plugin files?" />
+                            <TextBlock Style="{StaticResource AppSecondaryText}"
+                                       Margin="{StaticResource AppStackGapTop}"
+                                       Text="Files move to the Recycle Bin. Worlds and backups are not touched." />
+                            <Border Style="{StaticResource AppSunkenSurface}" Padding="{StaticResource AppInset12}"
+                                    Margin="{StaticResource AppStackGapTop}">
+                                <StackPanel>
+                                    <TextBlock Style="{StaticResource AppMonoText}" Text="plugins\SamplePlugin-1.4.jar" />
+                                    <TextBlock Style="{StaticResource AppMonoText}" Text="plugins\SampleLib-2.0.jar" />
+                                    <TextBlock Style="{StaticResource AppMonoText}" Text="plugins\SampleMap-0.9.jar" />
+                                </StackPanel>
+                            </Border>
+                            <components:AppStatusBadge Text="Recovery point: today 3:12 PM · verified"
+                                                       Tone="Success" Icon="Shield"
+                                                       HorizontalAlignment="Left"
+                                                       Margin="{StaticResource AppStackGapTop}" />
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right"
+                                        Margin="{StaticResource AppStackGapTop}">
+                                <Button Content="Cancel" Margin="{StaticResource AppInlineGap}" />
+                                <Button Style="{StaticResource AppDangerButton}" Content="Move to Recycle Bin"
+                                        ds:AppButton.Icon="Delete" />
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+                </Grid>
+            </components:AppSectionCard>
+
+            <components:AppSectionCard Header="Dialog window composition"
+                                       Icon="Document"
+                                       Description="A separate dialog window keeps the native Windows frame and restyles only the inside: header, body, footer.">
+                <Border BorderBrush="{DynamicResource AppStroke}"
+                        BorderThickness="{StaticResource AppStrokeThickness}"
+                        CornerRadius="{StaticResource AppCornerCard}"
+                        MaxWidth="{StaticResource AppDialogWidth}"
+                        HorizontalAlignment="Left">
+                    <StackPanel>
+                        <Border Style="{StaticResource AppDialogHeader}">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource AppTitleText}" Text="Add an existing server" />
+                                <TextBlock Style="{StaticResource AppSecondaryText}"
+                                           Margin="{StaticResource AppStackGapTiny}"
+                                           Text="ChunkPilot reads the folder where it is. Nothing is moved or rewritten." />
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource AppDialogBody}">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource AppLabelText}" Text="Server folder" />
+                                <TextBox Style="{StaticResource AppMonoTextBox}" IsReadOnly="True"
+                                         Text="D:\Servers\Sample Survival" />
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource AppDialogFooter}">
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                <Button Content="Cancel" Margin="{StaticResource AppInlineGap}" />
+                                <Button Style="{StaticResource AppPrimaryButton}" Content="Add server"
+                                        ds:AppButton.Icon="Add" />
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </Border>
+            </components:AppSectionCard>
+
+            <components:AppSectionCard Header="Menus, tooltips and scrollbars"
+                                       Icon="More"
+                                       Description="Windows' light popups are replaced outright. Right-click the surface below, and hover the button for a tooltip.">
+                <StackPanel>
+                    <Border Style="{StaticResource AppSunkenSurface}" Padding="{StaticResource AppInset16}"
+                            Margin="{StaticResource AppStackGapSmall}">
+                        <Border.ContextMenu>
+                            <ContextMenu>
+                                <MenuItem Header="Open folder" InputGestureText="Ctrl+O" />
+                                <MenuItem Header="Copy address" InputGestureText="Ctrl+C" />
+                                <MenuItem Header="Follow latest output" IsCheckable="True" IsChecked="True" />
+                                <Separator />
+                                <MenuItem Header="Remove" IsEnabled="False" />
+                            </ContextMenu>
+                        </Border.ContextMenu>
+                        <TextBlock Style="{StaticResource AppSecondaryText}"
+                                   Text="Right-click here for the themed context menu." />
+                    </Border>
+                    <Button Content="Hover for a tooltip"
+                            ToolTip="A tooltip adds detail. It never carries something the user must know in order to act safely."
+                            HorizontalAlignment="Left" Margin="{StaticResource AppStackGapSmall}" />
+                    <TextBlock Style="{StaticResource AppLabelText}" Text="Scrollbar"
+                               Margin="{StaticResource AppStackGapTop}" />
+                    <Border Style="{StaticResource AppSunkenSurface}" Height="90">
+                        <ListBox Style="{StaticResource AppConsoleSurface}"
+                                 ItemsSource="{Binding Source={x:Static gallery:GalleryPreviewData.ConsoleLines}}" />
+                    </Border>
+                </StackPanel>
+            </components:AppSectionCard>
+
+            <components:AppSectionCard Header="Accessibility and motion"
+                                       Icon="Reveal"
+                                       Description="Use the toolbar above to preview high contrast and Reduced Motion without changing Windows settings.">
+                <StackPanel>
+                    <components:AppInfoRow Label="Focus" Value="Ring plus an accent edge; press Tab through this page" />
+                    <components:AppInfoRow Label="Colour" Value="Never the only carrier of state; text is mandatory" />
+                    <components:AppInfoRow Label="High contrast" Value="Token brushes swap to Windows system colours" />
+                    <components:AppInfoRow Label="Reduced Motion" Value="Durations collapse and storyboards never start" />
+                    <components:AppInfoRow Label="Text scaling" Value="No fixed control heights below the token minimums" />
+                </StackPanel>
+            </components:AppSectionCard>
+        </StackPanel>
+    </Border>
+</UserControl>

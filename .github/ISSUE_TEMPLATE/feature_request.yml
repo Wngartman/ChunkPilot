@@ -1,0 +1,24 @@
+name: Feature request
+description: Suggest a focused improvement to the local-first Windows server manager.
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+      description: Describe the current workflow and where it becomes difficult or unsafe.
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+      description: Describe what an ordinary Windows user should be able to accomplish.
+    validations:
+      required: true
+  - type: textarea
+    id: safety
+    attributes:
+      label: Data-safety or compatibility considerations
+      description: Note any world, backup, server-version, provider, firewall, or privacy constraints.

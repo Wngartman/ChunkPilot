@@ -1,0 +1,60 @@
+name: Bug report
+description: Report a reproducible ChunkPilot problem that does not contain sensitive data.
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not attach worlds, server logs with player/IP data, API keys, `secrets.dat`, or unredacted diagnostic bundles. Use SECURITY.md for sensitive reports.
+  - type: input
+    id: version
+    attributes:
+      label: ChunkPilot version
+      description: Find this in Settings > About or the executable properties.
+      placeholder: 1.3.0+commit
+    validations:
+      required: true
+  - type: dropdown
+    id: interface
+    attributes:
+      label: Interface
+      options:
+        - Default WPF interface
+        - WebUI Preview
+        - Installer or uninstall
+        - Portable package
+        - Agent only
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      placeholder: List the smallest safe sequence that reproduces the problem.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected result
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual result
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Windows and server details
+      description: Include Windows version, server type/version, and Java version. Redact names, paths, IPs, and secrets.
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Privacy check
+      options:
+        - label: I removed API keys, credentials, real player data, public/private IPs, and private filesystem paths.
+          required: true

@@ -1,0 +1,82 @@
+<Window x:Class="ChunkPilot.App.TroubleshootingWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ds="clr-namespace:ChunkPilot.App.DesignSystem"
+        xmlns:components="clr-namespace:ChunkPilot.App.DesignSystem.Components"
+        Title="Fix a server problem - ChunkPilot"
+        Style="{StaticResource AppDialogWindow}"
+        Width="640" Height="680" MinWidth="520" MinHeight="480"
+        SizeToContent="Manual" ResizeMode="CanResizeWithGrip"
+        WindowStartupLocation="CenterOwner">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <Border Style="{StaticResource AppDialogHeader}">
+            <StackPanel>
+                <StackPanel Orientation="Horizontal">
+                    <ds:AppIcon Kind="Diagnostics" Scale="Large"
+                                Margin="{StaticResource AppInlineGap}"
+                                Foreground="{DynamicResource AppTextAccent}" />
+                    <TextBlock Text="Troubleshoot this server" Style="{StaticResource AppTitleText}"
+                               VerticalAlignment="Center" />
+                </StackPanel>
+                <TextBlock Text="ChunkPilot matched the local error and console text against known Minecraft hosting failures. No log was uploaded."
+                           Style="{StaticResource AppSecondaryText}" TextWrapping="Wrap"
+                           Margin="{StaticResource AppStackGapTop}" />
+            </StackPanel>
+        </Border>
+
+        <ScrollViewer Grid.Row="1" Style="{StaticResource AppPageScrollViewer}">
+            <ItemsControl ItemsSource="{Binding Matches}" Margin="{StaticResource AppSurfacePadding}">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <components:AppSectionCard Icon="Diagnostics"
+                                                   Header="{Binding Title}"
+                                                   Description="{Binding Summary}">
+                            <StackPanel>
+                                <components:AppStatusBadge HorizontalAlignment="Left"
+                                                           Tone="Info" IsSubtle="True"
+                                                           Text="{Binding ConfidenceLabel}" />
+                                <TextBlock Style="{StaticResource AppEyebrowText}" Text="Matched evidence"
+                                           Margin="{StaticResource AppStackGapTop}" />
+                                <Border Style="{StaticResource AppCard}" Padding="{StaticResource AppInset12}"
+                                        Margin="{StaticResource AppStackGapSmall}">
+                                    <TextBlock Style="{StaticResource AppMonoText}" Text="{Binding Evidence}"
+                                               TextWrapping="Wrap" />
+                                </Border>
+                                <TextBlock Style="{StaticResource AppEyebrowText}" Text="Try these in order"
+                                           Margin="{StaticResource AppStackGapTop}" />
+                                <ItemsControl ItemsSource="{Binding Steps}" Margin="{StaticResource AppStackGapSmall}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid Margin="{StaticResource AppStackGapSmall}">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="*" />
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Text="•" Style="{StaticResource AppBodyStrongText}"
+                                                           Margin="{StaticResource AppInlineGap}" />
+                                                <TextBlock Grid.Column="1" Text="{Binding}"
+                                                           Style="{StaticResource AppBodyText}" TextWrapping="Wrap" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
+                        </components:AppSectionCard>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </ScrollViewer>
+
+        <Border Grid.Row="2" Style="{StaticResource AppDialogFooter}">
+            <Button Content="Close" IsDefault="True" IsCancel="True"
+                    HorizontalAlignment="Right" MinWidth="96"
+                    ds:AppButton.Icon="Dismiss" Click="Close_Click" />
+        </Border>
+    </Grid>
+</Window>

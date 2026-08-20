@@ -1,0 +1,523 @@
+<!--
+    Selection controls: check boxes, radio buttons, switches, combo boxes and segmented controls.
+
+    None of these animate. A toggle that slides is pleasant but the state must be readable the
+    instant it changes, and building it without motion means Reduced Motion needs no special case.
+
+    AppSegmentedControl exists so in-page view switching never reaches for a raw TabControl. Tabs
+    are how the previous interface ended up with seventeen wrapping headers and no visible hierarchy.
+-->
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:ds="clr-namespace:ChunkPilot.App.DesignSystem">
+
+    <!-- ============ Check box ============ -->
+    <Style x:Key="AppCheckBox" TargetType="CheckBox">
+        <Setter Property="Foreground" Value="{DynamicResource AppTextPrimary}" />
+        <Setter Property="Background" Value="{DynamicResource AppSurfaceSunken}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource AppStrokeStrong}" />
+        <Setter Property="MinHeight" Value="{StaticResource AppControlHeightCompact}" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+        <!-- Left, not Stretch. A check box given a wide cell used to stretch, and its focus ring
+             stretched with it: a 600px outline around a 16px box and its label. -->
+        <Setter Property="HorizontalAlignment" Value="Left" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="CheckBox">
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Left"
+                                Background="{DynamicResource AppSurfaceTransparent}">
+                            <!-- Focus strengthens the square itself. An extra rounded wrapper read as
+                                 an unrelated white circle, especially after a mouse click. -->
+                            <Border x:Name="Box"
+                                    Width="{StaticResource AppSelectionBoxSize}"
+                                    Height="{StaticResource AppSelectionBoxSize}"
+                                    Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="{StaticResource AppStrokeThickness}"
+                                    CornerRadius="{StaticResource AppCornerSmall}"
+                                    RenderTransformOrigin="0.5,0.5"
+                                    VerticalAlignment="Center"
+                                    SnapsToDevicePixels="True">
+                                <Border.RenderTransform><ScaleTransform ScaleX="1" ScaleY="1"/></Border.RenderTransform>
+                                <ds:AppIcon x:Name="Mark" Kind="Checkmark" Scale="Small"
+                                            Foreground="{DynamicResource AppTextOnAccent}"
+                                            Visibility="Collapsed" />
+                            </Border>
+                            <ContentPresenter Margin="{StaticResource AppInlineGapLeading}"
+                                              VerticalAlignment="Center"
+                                              RecognizesAccessKey="True" />
+                    </StackPanel>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsChecked" Value="True">
+                            <Setter TargetName="Box" Property="Background" Value="{DynamicResource AppAccent}" />
+                            <Setter TargetName="Box" Property="BorderBrush" Value="{DynamicResource AppAccent}" />
+                            <Setter TargetName="Mark" Property="Visibility" Value="Visible" />
+                        </Trigger>
+                        <Trigger Property="IsChecked" Value="{x:Null}">
+                            <Setter TargetName="Box" Property="Background" Value="{DynamicResource AppAccentMuted}" />
+                            <Setter TargetName="Box" Property="BorderBrush" Value="{DynamicResource AppAccentMuted}" />
+                            <Setter TargetName="Mark" Property="Kind" Value="Remove" />
+                            <Setter TargetName="Mark" Property="Visibility" Value="Visible" />
+                        </Trigger>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Box" Property="BorderBrush" Value="{DynamicResource AppAccentHover}" />
+                        </Trigger>
+                        <Trigger Property="IsKeyboardFocused" Value="True">
+                            <Setter TargetName="Box" Property="BorderBrush" Value="{DynamicResource AppFocusRing}" />
+                            <Setter TargetName="Box" Property="BorderThickness" Value="2" />
+                        </Trigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Trigger.EnterActions>
+                                <BeginStoryboard><Storyboard>
+                                    <DoubleAnimation Storyboard.TargetName="Box" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)" To="0.92" Duration="{StaticResource AppDurationPressIn}"/>
+                                    <DoubleAnimation Storyboard.TargetName="Box" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)" To="0.92" Duration="{StaticResource AppDurationPressIn}"/>
+                                </Storyboard></BeginStoryboard>
+                            </Trigger.EnterActions>
+                            <Trigger.ExitActions>
+                                <BeginStoryboard><Storyboard>
+                                    <DoubleAnimation Storyboard.TargetName="Box" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)" To="1" Duration="{StaticResource AppDurationPressOut}"/>
+                                    <DoubleAnimation Storyboard.TargetName="Box" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)" To="1" Duration="{StaticResource AppDurationPressOut}"/>
+                                </Storyboard></BeginStoryboard>
+                            </Trigger.ExitActions>
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter TargetName="Box" Property="Background" Value="{DynamicResource AppSurfaceDisabled}" />
+                            <Setter TargetName="Box" Property="BorderBrush" Value="{DynamicResource AppStrokeDisabled}" />
+                            <Setter Property="Foreground" Value="{DynamicResource AppTextDisabled}" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+    <Style TargetType="CheckBox" BasedOn="{StaticResource AppCheckBox}" />
+
+    <!-- ============ Switch ============
+         Use for an immediate on/off preference. Use a check box when the change is only applied
+         after the user confirms a form. -->
+    <!--
+        The focus ring wraps the switch, and only the switch.
+
+        It used to wrap the whole horizontal panel, and the panel stretched to whatever cell the check
+        box was given. In a card that is the full width of the page, a pill-radius ring around a
+        full-width panel draws as an enormous flattened ellipse with the label swallowed inside it -
+        which is exactly what the Access whitelist control looked like. A ring is a statement about
+        where the pointer and the keyboard act, so it belongs around the 36x20 track and nothing else.
+        The label sits outside it as an ordinary piece of text.
+
+        The template root aligns left rather than stretching, so a switch in a table column stays the
+        size of a switch however wide the column becomes.
+    -->
+    <Style x:Key="AppToggleSwitch" TargetType="CheckBox">
+        <Setter Property="Foreground" Value="{DynamicResource AppTextPrimary}" />
+        <Setter Property="MinHeight" Value="{StaticResource AppControlHeightCompact}" />
+        <Setter Property="HorizontalAlignment" Value="Left" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="CheckBox">
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Left"
+                                Background="{DynamicResource AppSurfaceTransparent}">
+                        <!-- Focus ring plus track measures 40x24: a pointer target that meets the
+                             minimum without the switch itself growing. -->
+                        <Border x:Name="FocusRing" Style="{StaticResource InternalFocusRing}"
+                                Background="{DynamicResource AppSurfaceTransparent}"
+                                CornerRadius="{StaticResource AppCornerPill}"
+                                HorizontalAlignment="Left" VerticalAlignment="Center">
+                            <Border x:Name="Track"
+                                    Width="{StaticResource AppSwitchWidth}"
+                                    Height="{StaticResource AppSwitchHeight}"
+                                    Background="{DynamicResource AppSurfacePressed}"
+                                    BorderBrush="{DynamicResource AppStrokeStrong}"
+                                    BorderThickness="{StaticResource AppStrokeThickness}"
+                                    CornerRadius="{StaticResource AppCornerPill}"
+                                    RenderTransformOrigin="0.5,0.5"
+                                    SnapsToDevicePixels="True">
+                                <Border.RenderTransform>
+                                    <ScaleTransform ScaleX="1" ScaleY="1"/>
+                                </Border.RenderTransform>
+                                <!-- On and off differ by knob position as well as by colour, so the
+                                     state survives a high-contrast theme and a colour-blind reader. -->
+                                <Border x:Name="Knob"
+                                         Width="{StaticResource AppSwitchKnobSize}"
+                                         Height="{StaticResource AppSwitchKnobSize}"
+                                         Background="{DynamicResource AppTextSecondary}"
+                                         CornerRadius="{StaticResource AppCornerPill}"
+                                         HorizontalAlignment="Left"
+                                         Margin="{StaticResource AppInset2}" />
+                            </Border>
+                        </Border>
+                        <ContentPresenter x:Name="Label"
+                                          Margin="{StaticResource AppInlineGapLeadingLarge}"
+                                          VerticalAlignment="Center"
+                                          RecognizesAccessKey="True" />
+                    </StackPanel>
+                    <ControlTemplate.Triggers>
+                        <!-- No content means no label and no gap beside the switch, which is what a
+                             table-row switch needs. -->
+                        <Trigger Property="Content" Value="{x:Null}">
+                            <Setter TargetName="Label" Property="Visibility" Value="Collapsed" />
+                        </Trigger>
+                        <Trigger Property="IsChecked" Value="True">
+                            <Setter TargetName="Track" Property="Background" Value="{DynamicResource AppAccent}" />
+                            <Setter TargetName="Track" Property="BorderBrush" Value="{DynamicResource AppAccent}" />
+                            <Setter TargetName="Knob" Property="Background" Value="{DynamicResource AppTextOnAccent}" />
+                            <Setter TargetName="Knob" Property="HorizontalAlignment" Value="Right" />
+                        </Trigger>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Track" Property="BorderBrush" Value="{DynamicResource AppAccentHover}" />
+                        </Trigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Setter TargetName="Track" Property="Background" Value="{DynamicResource AppSurfaceSelected}" />
+                            <Setter TargetName="Track" Property="BorderBrush" Value="{DynamicResource AppAccentHover}" />
+                            <Trigger.EnterActions>
+                                <BeginStoryboard>
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetName="Track"
+                                                         Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)"
+                                                         To="0.96" Duration="{StaticResource AppDurationPressIn}"/>
+                                        <DoubleAnimation Storyboard.TargetName="Track"
+                                                         Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)"
+                                                         To="0.96" Duration="{StaticResource AppDurationPressIn}"/>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </Trigger.EnterActions>
+                            <Trigger.ExitActions>
+                                <BeginStoryboard>
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetName="Track"
+                                                         Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)"
+                                                         To="1" Duration="{StaticResource AppDurationPressOut}"/>
+                                        <DoubleAnimation Storyboard.TargetName="Track"
+                                                         Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)"
+                                                         To="1" Duration="{StaticResource AppDurationPressOut}"/>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </Trigger.ExitActions>
+                        </Trigger>
+                        <Trigger Property="IsKeyboardFocused" Value="True">
+                            <Setter TargetName="FocusRing" Property="BorderBrush" Value="{DynamicResource AppFocusRing}" />
+                        </Trigger>
+                        <!-- Pending and unavailable read the same way: the track loses its accent and
+                             the knob stays where the server last said it was. -->
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter TargetName="Track" Property="Background" Value="{DynamicResource AppSurfaceDisabled}" />
+                            <Setter TargetName="Track" Property="BorderBrush" Value="{DynamicResource AppStrokeDisabled}" />
+                            <Setter TargetName="Knob" Property="Background" Value="{DynamicResource AppTextDisabled}" />
+                            <Setter Property="Foreground" Value="{DynamicResource AppTextDisabled}" />
+                            <Setter Property="Cursor" Value="Arrow" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- ============ Radio button ============ -->
+    <Style x:Key="AppRadioButton" TargetType="RadioButton">
+        <Setter Property="Foreground" Value="{DynamicResource AppTextPrimary}" />
+        <Setter Property="Background" Value="{DynamicResource AppSurfaceSunken}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource AppStrokeStrong}" />
+        <Setter Property="MinHeight" Value="{StaticResource AppControlHeightCompact}" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="RadioButton">
+                    <Border x:Name="FocusRing" Style="{StaticResource InternalFocusRing}"
+                            Background="{DynamicResource AppSurfaceTransparent}"
+                            CornerRadius="{StaticResource AppCornerPill}">
+                        <StackPanel Orientation="Horizontal">
+                            <Grid x:Name="Choice" Width="{StaticResource AppSelectionBoxSize}"
+                                  Height="{StaticResource AppSelectionBoxSize}"
+                                  RenderTransformOrigin="0.5,0.5"
+                                  VerticalAlignment="Center">
+                                <Grid.RenderTransform><ScaleTransform ScaleX="1" ScaleY="1"/></Grid.RenderTransform>
+                                <Ellipse x:Name="Ring"
+                                         Fill="{TemplateBinding Background}"
+                                         Stroke="{TemplateBinding BorderBrush}"
+                                         StrokeThickness="1" />
+                                <Ellipse x:Name="Dot"
+                                         Width="{StaticResource AppSelectionDotSize}"
+                                         Height="{StaticResource AppSelectionDotSize}"
+                                         Fill="{DynamicResource AppTextOnAccent}"
+                                         Visibility="Collapsed" />
+                            </Grid>
+                            <ContentPresenter Margin="{StaticResource AppInlineGapLeading}"
+                                              VerticalAlignment="Center"
+                                              RecognizesAccessKey="True" />
+                        </StackPanel>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsChecked" Value="True">
+                            <Setter TargetName="Ring" Property="Fill" Value="{DynamicResource AppAccent}" />
+                            <Setter TargetName="Ring" Property="Stroke" Value="{DynamicResource AppAccent}" />
+                            <Setter TargetName="Dot" Property="Visibility" Value="Visible" />
+                        </Trigger>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Ring" Property="Stroke" Value="{DynamicResource AppAccentHover}" />
+                        </Trigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Trigger.EnterActions>
+                                <BeginStoryboard><Storyboard>
+                                    <DoubleAnimation Storyboard.TargetName="Choice" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)" To="0.92" Duration="{StaticResource AppDurationPressIn}"/>
+                                    <DoubleAnimation Storyboard.TargetName="Choice" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)" To="0.92" Duration="{StaticResource AppDurationPressIn}"/>
+                                </Storyboard></BeginStoryboard>
+                            </Trigger.EnterActions>
+                            <Trigger.ExitActions>
+                                <BeginStoryboard><Storyboard>
+                                    <DoubleAnimation Storyboard.TargetName="Choice" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)" To="1" Duration="{StaticResource AppDurationPressOut}"/>
+                                    <DoubleAnimation Storyboard.TargetName="Choice" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)" To="1" Duration="{StaticResource AppDurationPressOut}"/>
+                                </Storyboard></BeginStoryboard>
+                            </Trigger.ExitActions>
+                        </Trigger>
+                        <Trigger Property="IsKeyboardFocused" Value="True">
+                            <Setter TargetName="FocusRing" Property="BorderBrush" Value="{DynamicResource AppFocusRing}" />
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter TargetName="Ring" Property="Fill" Value="{DynamicResource AppSurfaceDisabled}" />
+                            <Setter TargetName="Ring" Property="Stroke" Value="{DynamicResource AppStrokeDisabled}" />
+                            <Setter Property="Foreground" Value="{DynamicResource AppTextDisabled}" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+    <Style TargetType="RadioButton" BasedOn="{StaticResource AppRadioButton}" />
+
+    <!-- ============ Combo box ============
+         A choice that carries both a stored value and a label renders the label. This template is
+         the shared answer to "show the human-readable side": bound as ItemTemplate it also fills
+         SelectionBoxItemTemplate, so the closed control and the open list agree, and neither can
+         fall back to an item's ToString. -->
+    <DataTemplate x:Key="AppPropertyChoiceTemplate">
+        <TextBlock Text="{Binding Label}" VerticalAlignment="Center" />
+    </DataTemplate>
+
+    <Style x:Key="AppComboBoxItem" TargetType="ComboBoxItem">
+        <Setter Property="Background" Value="{DynamicResource AppSurfaceTransparent}" />
+        <Setter Property="Foreground" Value="{DynamicResource AppTextPrimary}" />
+        <Setter Property="Padding" Value="{StaticResource AppRowPadding}" />
+        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ComboBoxItem">
+                    <Border x:Name="Root" Background="{TemplateBinding Background}"
+                            CornerRadius="{StaticResource AppCornerSmall}"
+                            Padding="{TemplateBinding Padding}"
+                            Margin="{StaticResource AppInset4}"
+                            SnapsToDevicePixels="True">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <ContentPresenter VerticalAlignment="Center" />
+                            <ds:AppIcon x:Name="Mark" Grid.Column="1" Kind="Checkmark" Scale="Small"
+                                        Foreground="{DynamicResource AppTextAccent}"
+                                        Visibility="Collapsed" />
+                        </Grid>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsHighlighted" Value="True">
+                            <Setter TargetName="Root" Property="Background" Value="{DynamicResource AppSurfaceHover}" />
+                        </Trigger>
+                        <!-- The chosen item is marked with a tick, not with colour alone. -->
+                        <Trigger Property="IsSelected" Value="True">
+                            <Setter TargetName="Root" Property="Background" Value="{DynamicResource AppSurfaceSelected}" />
+                            <Setter TargetName="Mark" Property="Visibility" Value="Visible" />
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter Property="Foreground" Value="{DynamicResource AppTextDisabled}" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+    <Style TargetType="ComboBoxItem" BasedOn="{StaticResource AppComboBoxItem}" />
+
+    <Style x:Key="AppComboBox" TargetType="ComboBox">
+        <Setter Property="Background" Value="{DynamicResource AppSurfaceSunken}" />
+        <Setter Property="Foreground" Value="{DynamicResource AppTextPrimary}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource AppStroke}" />
+        <Setter Property="BorderThickness" Value="{StaticResource AppStrokeThickness}" />
+        <Setter Property="Padding" Value="{StaticResource AppControlPadding}" />
+        <Setter Property="MinHeight" Value="{StaticResource AppControlHeight}" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+        <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ComboBox">
+                    <Border x:Name="FocusRing" Style="{StaticResource InternalFocusRing}">
+                        <Grid>
+                            <Border x:Name="Root" Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="{TemplateBinding BorderThickness}"
+                                    CornerRadius="{StaticResource AppCornerControl}"
+                                    SnapsToDevicePixels="True">
+                                <Grid Margin="{TemplateBinding Padding}">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <ContentPresenter x:Name="SelectionPresenter"
+                                                      Content="{TemplateBinding SelectionBoxItem}"
+                                                      ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
+                                                      VerticalAlignment="Center" />
+                                    <TextBox x:Name="PART_EditableTextBox" Visibility="Hidden"
+                                             Background="{DynamicResource AppSurfaceTransparent}"
+                                             Foreground="{TemplateBinding Foreground}"
+                                             BorderThickness="0" Padding="0"
+                                             Cursor="IBeam" FocusVisualStyle="{x:Null}"
+                                             IsReadOnly="{TemplateBinding IsReadOnly}"
+                                             Text="{Binding Text, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}">
+                                        <TextBox.Template>
+                                            <ControlTemplate TargetType="TextBox">
+                                                <ScrollViewer x:Name="PART_ContentHost"/>
+                                            </ControlTemplate>
+                                        </TextBox.Template>
+                                    </TextBox>
+                                    <ds:AppIcon x:Name="Chevron" Grid.Column="1" Kind="ChevronDown" Scale="Small"
+                                                Margin="{StaticResource AppInlineGap}"
+                                                Foreground="{DynamicResource AppTextMuted}" />
+                                </Grid>
+                            </Border>
+                            <!-- Invisible toggle covering the whole control keeps the whole field clickable. -->
+                            <ToggleButton x:Name="DropDownToggle"
+                                          Background="{DynamicResource AppSurfaceTransparent}"
+                                          BorderThickness="{StaticResource AppStrokeThicknessNone}"
+                                          Focusable="False" ClickMode="Press"
+                                          IsChecked="{Binding IsDropDownOpen, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}">
+                                <ToggleButton.Template>
+                                    <ControlTemplate TargetType="ToggleButton">
+                                        <Border Background="{DynamicResource AppSurfaceTransparent}" />
+                                    </ControlTemplate>
+                                </ToggleButton.Template>
+                            </ToggleButton>
+                            <Popup x:Name="PART_Popup" Placement="Bottom" AllowsTransparency="True"
+                                   Focusable="False" PopupAnimation="None"
+                                   IsOpen="{TemplateBinding IsDropDownOpen}">
+                                <Border Background="{DynamicResource AppSurfaceOverlay}"
+                                        BorderBrush="{DynamicResource AppStrokeStrong}"
+                                        BorderThickness="{StaticResource AppStrokeThickness}"
+                                        CornerRadius="{StaticResource AppCornerCard}"
+                                        Effect="{StaticResource AppElevationOverlay}"
+                                        Margin="{StaticResource AppPopupOffset}"
+                                        MinWidth="{Binding ActualWidth, RelativeSource={RelativeSource TemplatedParent}}"
+                                        MaxHeight="{TemplateBinding MaxDropDownHeight}">
+                                    <ScrollViewer>
+                                        <ItemsPresenter />
+                                    </ScrollViewer>
+                                </Border>
+                            </Popup>
+                        </Grid>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Root" Property="BorderBrush" Value="{DynamicResource AppStrokeStrong}" />
+                        </Trigger>
+                        <Trigger Property="IsKeyboardFocusWithin" Value="True">
+                            <Setter TargetName="FocusRing" Property="BorderBrush" Value="{DynamicResource AppFocusRing}" />
+                            <Setter TargetName="Root" Property="BorderBrush" Value="{DynamicResource AppAccent}" />
+                        </Trigger>
+                        <Trigger Property="IsEditable" Value="True">
+                            <Setter TargetName="SelectionPresenter" Property="Visibility" Value="Hidden" />
+                            <Setter TargetName="PART_EditableTextBox" Property="Visibility" Value="Visible" />
+                            <!-- Leave the text field uncovered; only the chevron opens the list. -->
+                            <Setter TargetName="DropDownToggle" Property="HorizontalAlignment" Value="Right" />
+                            <Setter TargetName="DropDownToggle" Property="Width" Value="36" />
+                            <Setter Property="Cursor" Value="IBeam" />
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter TargetName="Root" Property="Background" Value="{DynamicResource AppSurfaceDisabled}" />
+                            <Setter TargetName="Root" Property="BorderBrush" Value="{DynamicResource AppStrokeDisabled}" />
+                            <Setter Property="Foreground" Value="{DynamicResource AppTextDisabled}" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+    <Style TargetType="ComboBox" BasedOn="{StaticResource AppComboBox}" />
+
+    <!-- ============ Segmented control ============
+         The approved replacement for TabControl when a surface offers two to four views of the
+         same subject. Items are RadioButtons in a shared group, so keyboard arrows work and only
+         one view is ever active. -->
+    <Style x:Key="AppSegmentedControl" TargetType="ItemsControl">
+        <Setter Property="Background" Value="{DynamicResource AppSurfaceSunken}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource AppStrokeSubtle}" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ItemsControl">
+                    <Border Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{StaticResource AppStrokeThickness}"
+                            CornerRadius="{StaticResource AppCornerControl}"
+                            Padding="{StaticResource AppInset4}"
+                            HorizontalAlignment="Left">
+                        <ItemsPresenter />
+                    </Border>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+        <Setter Property="ItemsPanel">
+            <Setter.Value>
+                <ItemsPanelTemplate>
+                    <StackPanel Orientation="Horizontal" />
+                </ItemsPanelTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style x:Key="AppSegmentedItem" TargetType="RadioButton">
+        <Setter Property="Foreground" Value="{DynamicResource AppTextSecondary}" />
+        <Setter Property="Background" Value="{DynamicResource AppSurfaceTransparent}" />
+        <Setter Property="Padding" Value="{StaticResource AppControlPadding}" />
+        <Setter Property="MinHeight" Value="{StaticResource AppControlHeightCompact}" />
+        <Setter Property="FontSize" Value="{StaticResource AppFontSizeBody}" />
+        <!-- Unselected segments are Regular; the checked trigger promotes the chosen one to
+             Strong so selection is carried by weight as well as surface, never by colour alone. -->
+        <Setter Property="FontWeight" Value="{StaticResource AppFontWeightRegular}" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="RadioButton">
+                    <Border x:Name="FocusRing" Style="{StaticResource InternalFocusRing}"
+                            BorderThickness="{StaticResource AppStrokeThickness}"
+                            CornerRadius="{StaticResource AppCornerSmall}">
+                        <Border x:Name="Root" Background="{TemplateBinding Background}"
+                                CornerRadius="{StaticResource AppCornerSmall}"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter VerticalAlignment="Center" RecognizesAccessKey="True" />
+                        </Border>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsChecked" Value="True">
+                            <Setter TargetName="Root" Property="Background" Value="{DynamicResource AppSurfaceRaised}" />
+                            <Setter Property="Foreground" Value="{DynamicResource AppTextPrimary}" />
+                            <Setter Property="FontWeight" Value="{StaticResource AppFontWeightStrong}" />
+                        </Trigger>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter Property="Foreground" Value="{DynamicResource AppTextPrimary}" />
+                        </Trigger>
+                        <Trigger Property="IsKeyboardFocused" Value="True">
+                            <Setter TargetName="FocusRing" Property="BorderBrush" Value="{DynamicResource AppFocusRing}" />
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter Property="Foreground" Value="{DynamicResource AppTextDisabled}" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+</ResourceDictionary>

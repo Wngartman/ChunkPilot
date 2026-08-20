@@ -1,0 +1,176 @@
+<!--
+    Spacing, size, radius and stroke tokens.
+
+    Spacing is a 4px rhythm. Every margin, padding, gap, height and corner in the
+    application must come from this file. Typed tokens (Thickness, CornerRadius) exist
+    so setters bind without relying on string coercion.
+-->
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:sys="clr-namespace:System;assembly=mscorlib">
+
+    <!-- ============ Spacing scale (scalars, for Grid/StackPanel spacing) ============ -->
+    <sys:Double x:Key="AppSpace2">2</sys:Double>
+    <sys:Double x:Key="AppSpace4">4</sys:Double>
+    <sys:Double x:Key="AppSpace6">6</sys:Double>
+    <sys:Double x:Key="AppSpace8">8</sys:Double>
+    <sys:Double x:Key="AppSpace12">12</sys:Double>
+    <sys:Double x:Key="AppSpace16">16</sys:Double>
+    <sys:Double x:Key="AppSpace20">20</sys:Double>
+    <sys:Double x:Key="AppSpace24">24</sys:Double>
+    <sys:Double x:Key="AppSpace32">32</sys:Double>
+    <sys:Double x:Key="AppSpace40">40</sys:Double>
+
+    <!-- ============ Uniform insets ============ -->
+    <Thickness x:Key="AppInsetNone">0</Thickness>
+    <Thickness x:Key="AppInset2">2</Thickness>
+    <Thickness x:Key="AppInset4">4</Thickness>
+    <Thickness x:Key="AppInset8">8</Thickness>
+    <Thickness x:Key="AppInset12">12</Thickness>
+    <Thickness x:Key="AppInset16">16</Thickness>
+    <Thickness x:Key="AppInset20">20</Thickness>
+    <Thickness x:Key="AppInset24">24</Thickness>
+
+    <!-- ============ Purposeful insets ============ -->
+    <Thickness x:Key="AppPagePadding">24,20,24,24</Thickness>
+    <Thickness x:Key="AppPagePaddingCompact">16,14,16,16</Thickness>
+    <Thickness x:Key="AppCardPadding">16</Thickness>
+    <Thickness x:Key="AppSurfacePadding">20</Thickness>
+    <Thickness x:Key="AppControlPadding">12,6</Thickness>
+    <!--
+        Text-entry inset, separate from AppControlPadding on purpose.
+
+        A text field's leading inset is not one number: the field draws a permanently present 2px
+        focus ring and a 1px border before its own padding starts, so a 12px padding put the first
+        glyph and the caret 15px from the outside edge. That reads as an indent rather than as a
+        field. Eight keeps the total at eleven - clear of the border at every scaling factor, and
+        compact. A button's padding is about the label's breathing room and stays at twelve.
+    -->
+    <Thickness x:Key="AppTextFieldPadding">8,6</Thickness>
+    <Thickness x:Key="AppControlPaddingCompact">8,4</Thickness>
+    <Thickness x:Key="AppControlPaddingLarge">16,8</Thickness>
+    <Thickness x:Key="AppRowPadding">12,8</Thickness>
+    <!-- The selected-server header. Deliberately taller at the top than a page inset: the header sat
+         10px from the window chrome, which read as part of the title bar rather than as the start of
+         the workspace, and the user reported missing it entirely. -->
+    <Thickness x:Key="AppWorkspaceHeaderPadding">24,20,24,0</Thickness>
+    <!-- One workspace tab. The vertical halves are unequal on purpose: the selection underline sits
+         in the lower gap, so the label stays optically centred in the tab. -->
+    <Thickness x:Key="AppTabPadding">12,8,12,6</Thickness>
+    <Thickness x:Key="AppNavRowPadding">10,8</Thickness>
+    <Thickness x:Key="AppNavRowGap">0,1</Thickness>
+    <Thickness x:Key="AppNavSectionLabelInset">18,16,18,6</Thickness>
+    <Thickness x:Key="AppBadgePadding">8,2</Thickness>
+    <Thickness x:Key="AppMenuPadding">4</Thickness>
+    <Thickness x:Key="AppTooltipPadding">10,6</Thickness>
+    <!-- Gap between an anchor and its popup, plus room for the popup's shadow. -->
+    <Thickness x:Key="AppPopupOffset">0,4,0,8</Thickness>
+
+    <!-- ============ Stacking gaps (bottom margins between stacked blocks) ============ -->
+    <Thickness x:Key="AppStackGapTiny">0,2,0,0</Thickness>
+    <Thickness x:Key="AppStackGapTop">0,12,0,0</Thickness>
+    <Thickness x:Key="AppStackGapSmall">0,0,0,8</Thickness>
+    <Thickness x:Key="AppStackGap">0,0,0,12</Thickness>
+    <Thickness x:Key="AppStackGapLarge">0,0,0,20</Thickness>
+    <!-- Trailing gaps: put these on the *leading* element of a horizontal pair, such as an icon
+         before a label or a status dot before its text. -->
+    <Thickness x:Key="AppInlineGap">0,0,8,0</Thickness>
+    <Thickness x:Key="AppInlineGapLarge">0,0,12,0</Thickness>
+    <!-- Leading gaps: put these on the *following* element when the leading element cannot carry
+         the gap itself, such as the content presenter of a check box, radio button or switch. -->
+    <Thickness x:Key="AppInlineGapLeading">8,0,0,0</Thickness>
+    <Thickness x:Key="AppInlineGapLeadingLarge">12,0,0,0</Thickness>
+
+    <!-- ============ Corner radii ============ -->
+    <CornerRadius x:Key="AppCornerSmall">4</CornerRadius>
+    <CornerRadius x:Key="AppCornerControl">6</CornerRadius>
+    <CornerRadius x:Key="AppCornerCard">8</CornerRadius>
+    <CornerRadius x:Key="AppCornerSurface">12</CornerRadius>
+    <CornerRadius x:Key="AppCornerPill">999</CornerRadius>
+    <CornerRadius x:Key="AppCornerNone">0</CornerRadius>
+
+    <!-- ============ Stroke thickness ============ -->
+    <Thickness x:Key="AppStrokeThickness">1</Thickness>
+    <Thickness x:Key="AppStrokeThicknessNone">0</Thickness>
+    <Thickness x:Key="AppFocusRingThickness">2</Thickness>
+    <Thickness x:Key="AppSelectionIndicatorThickness">3,0,0,0</Thickness>
+    <Thickness x:Key="AppTopStrokeThickness">0,1,0,0</Thickness>
+    <Thickness x:Key="AppBottomStrokeThickness">0,0,0,1</Thickness>
+    <Thickness x:Key="AppRightStrokeThickness">0,0,1,0</Thickness>
+
+    <!-- ============ Control sizing ============ -->
+    <sys:Double x:Key="AppControlHeightCompact">28</sys:Double>
+    <sys:Double x:Key="AppControlHeight">32</sys:Double>
+    <sys:Double x:Key="AppControlHeightLarge">36</sys:Double>
+    <sys:Double x:Key="AppRowHeight">40</sys:Double>
+    <sys:Double x:Key="AppRowHeightLarge">52</sys:Double>
+    <sys:Double x:Key="AppNavRowHeight">36</sys:Double>
+    <sys:Double x:Key="AppIconButtonSize">32</sys:Double>
+    <sys:Double x:Key="AppIconSizeSmall">16</sys:Double>
+    <sys:Double x:Key="AppIconSizeMedium">20</sys:Double>
+    <sys:Double x:Key="AppIconSizeLarge">24</sys:Double>
+    <sys:Double x:Key="AppIconSizeEmptyState">32</sys:Double>
+    <sys:Double x:Key="AppProgressHeight">4</sys:Double>
+    <sys:Double x:Key="AppHairlineHeight">1</sys:Double>
+    <sys:Double x:Key="AppSelectionIndicatorWidth">3</sys:Double>
+    <!-- The accent underline that states selection on a workspace tab. -->
+    <sys:Double x:Key="AppSelectionUnderlineHeight">2</sys:Double>
+    <sys:Double x:Key="AppSelectionIndicatorHeight">18</sys:Double>
+    <sys:Double x:Key="AppBusyIndicatorSize">18</sys:Double>
+    <!--
+        Three separate numbers on purpose.
+
+        AppScrollBarHitWidth is what the pointer can grab: the primary page scroller draws its bar as
+        an overlay above the content's right edge, so this width can be generous without reserving
+        layout space and without moving content when the bar appears. Most of it sits on the content
+        side, where the pointer arrives from.
+
+        AppScrollBarThickness is the reserved width used by scrollers that are not overlaid, such as a
+        list inside a card. AppScrollBarThumbThickness is all that is ever drawn - the interface stays
+        quiet whichever of the two is in play.
+    -->
+    <sys:Double x:Key="AppScrollBarHitWidth">24</sys:Double>
+    <sys:Double x:Key="AppScrollBarThickness">14</sys:Double>
+    <sys:Double x:Key="AppScrollBarThumbThickness">4</sys:Double>
+    <Thickness x:Key="AppScrollBarThumbInset">0,4,3,4</Thickness>
+    <Thickness x:Key="AppScrollBarThumbInsetHorizontal">4,0,4,3</Thickness>
+    <sys:Double x:Key="AppStatusDotSize">8</sys:Double>
+    <sys:Double x:Key="AppSelectionDotSize">8</sys:Double>
+    <sys:Double x:Key="AppSelectionBoxSize">16</sys:Double>
+    <sys:Double x:Key="AppSwitchWidth">40</sys:Double>
+    <sys:Double x:Key="AppSwitchHeight">22</sys:Double>
+    <sys:Double x:Key="AppSwitchKnobSize">16</sys:Double>
+    <sys:Double x:Key="AppToastWidth">360</sys:Double>
+    <sys:Double x:Key="AppDialogWidth">480</sys:Double>
+    <sys:Double x:Key="AppSearchWidth">280</sys:Double>
+    <sys:Double x:Key="AppServerIconCropDialogWidth">760</sys:Double>
+    <sys:Double x:Key="AppServerIconCropDialogHeight">560</sys:Double>
+    <sys:Double x:Key="AppServerIconLibraryDialogWidth">620</sys:Double>
+    <sys:Double x:Key="AppServerIconLibraryDialogHeight">520</sys:Double>
+    <sys:Double x:Key="AppServerIconCropViewport">360</sys:Double>
+    <sys:Double x:Key="AppServerIconPreviewSize">64</sys:Double>
+    <sys:Double x:Key="AppPerformanceChartHeight">132</sys:Double>
+    <sys:Double x:Key="AppInfoRowLabelWidth">180</sys:Double>
+    <sys:Double x:Key="AppNavRailWidth">232</sys:Double>
+    <sys:Double x:Key="AppNavRailWidthCompact">56</sys:Double>
+    <sys:Double x:Key="AppContentMaxWidth">1120</sys:Double>
+    <!-- Comfortable measure for centred explanatory text. -->
+    <sys:Double x:Key="AppProseMaxWidth">360</sys:Double>
+
+    <!-- ============ Page content measure bands ============
+         A page picks the band that matches its content, not one width for everything.
+         A capped region is centred (HorizontalAlignment default of Stretch + MaxWidth), never
+         left-aligned - a left-aligned cap just relocates the empty space instead of using it.
+         Lists, tables and the console stay uncapped: width is genuinely useful there. -->
+    <!-- Single-column settings/forms. -->
+    <sys:Double x:Key="AppMeasureForm">720</sys:Double>
+    <!-- Multi-section creation form: wider than settings without colliding with its step rail. -->
+    <sys:Double x:Key="AppMeasureWizard">960</sys:Double>
+    <!-- Card grids and summary content that should not stretch edge-to-edge on a wide monitor. -->
+    <sys:Double x:Key="AppMeasureContent">1280</sys:Double>
+
+    <!-- ============ Responsive breakpoints (device-independent pixels) ============
+         Consumed by DesignSystem/AppLayout.cs. Documented in docs/UI-RESPONSIVE-RULES.md. -->
+    <sys:Double x:Key="AppBreakpointStandard">900</sys:Double>
+    <sys:Double x:Key="AppBreakpointWide">1280</sys:Double>
+</ResourceDictionary>

@@ -1,0 +1,33 @@
+{
+  // Cloudflare Worker configuration for ChunkPilot's optional external reachability probe.
+  //
+  // Nothing here is deployed by the repository. Deployment is a deliberate manual step documented in
+  // docs/EXTERNAL-REACHABILITY-PROBE.md, and the desktop application is fully usable without it.
+  //
+  // There is deliberately no D1, KV, R2, Durable Object, queue, cron trigger or Analytics Engine
+  // binding: the service is stateless, stores nothing, and has nothing to store.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "chunkpilot-reachability-probe",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-08-01",
+  "workers_dev": true,
+
+  // Persistent request logging is deliberately off. The service necessarily sees a caller's public
+  // address in order to connect back to it; it must not also keep it.
+  "observability": {
+    "enabled": false
+  },
+
+  // Conservative limits for a button a person presses, not for polling. Cloudflare's Rate Limiting
+  // binding accepts a period of 10 or 60 seconds only.
+  "ratelimits": [
+    {
+      "name": "PROBE_RATE_LIMITER",
+      "namespace_id": "1001",
+      "simple": {
+        "limit": 6,
+        "period": 60
+      }
+    }
+  ]
+}

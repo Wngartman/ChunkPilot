@@ -1,0 +1,166 @@
+﻿<!--
+    Type styles and window defaults.
+
+    Pages never set FontFamily, FontSize, FontWeight or Foreground on a TextBlock. They pick a
+    style from this file. That is what keeps hierarchy legible when a page is written months after
+    the one next to it.
+
+    There is deliberately NO implicit TextBlock style. An implicit style outranks property
+    inheritance, so a global TextBlock style would repaint and resize the label inside every button,
+    badge and header slot that legitimately sets its own text properties on the parent control.
+    Unstyled text therefore inherits from its container, and every deviation is named.
+-->
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- ============ Window ============ -->
+    <Style x:Key="AppWindow" TargetType="Window">
+        <Setter Property="FontFamily" Value="{StaticResource AppFontFamily}" />
+        <Setter Property="FontSize" Value="{StaticResource AppFontSizeBody}" />
+        <Setter Property="Background" Value="{DynamicResource AppSurfaceCanvas}" />
+        <Setter Property="Foreground" Value="{DynamicResource AppTextPrimary}" />
+        <Setter Property="UseLayoutRounding" Value="True" />
+        <Setter Property="TextOptions.TextFormattingMode" Value="Ideal" />
+        <Setter Property="TextOptions.TextRenderingMode" Value="ClearType" />
+    </Style>
+    <Style TargetType="Window" BasedOn="{StaticResource AppWindow}" />
+
+    <!-- ============ Hierarchy ============
+         These numbers are the real token values. Keep this block in step with
+         Tokens/TypographyTokens.xaml and with the Design Gallery's type-ramp labels; a
+         contract test asserts all three agree.
+
+         Display    30 Regular    a single page-defining value or a first-run headline
+         Numeric    20 Strong     one measured figure in a summary tile
+         TitleLarge 24 Strong     page title
+         Title      19 Strong     major section
+         Subtitle   16 Strong     group heading, card title
+         Body       14 Regular    everything else
+         Small      13 Regular    metadata, field labels
+         Caption    12 Regular    badges and dense labels -->
+    <Style x:Key="AppDisplayText" TargetType="TextBlock">
+        <Setter Property="Foreground" Value="{DynamicResource AppTextPrimary}" />
+        <Setter Property="FontFamily" Value="{StaticResource AppFontFamilyDisplay}" />
+        <Setter Property="FontSize" Value="{StaticResource AppFontSizeDisplay}" />
+        <!-- Regular, not Strong. At 30px the Display optical face already carries the weight of
+             the statement; SemiBold at this size reads as shouting rather than as confidence. -->
+        <Setter Property="FontWeight" Value="{StaticResource AppFontWeightRegular}" />
+        <Setter Property="LineStackingStrategy" Value="BlockLineHeight" />
+        <Setter Property="LineHeight" Value="{StaticResource AppLineHeightDisplay}" />
+    </Style>
+
+    <!-- One measured value in a summary tile. Never used for text. -->
+    <Style x:Key="AppNumericText" TargetType="TextBlock">
+        <Setter Property="Foreground" Value="{DynamicResource AppTextPrimary}" />
+        <Setter Property="FontFamily" Value="{StaticResource AppFontFamilyDisplay}" />
+        <Setter Property="FontSize" Value="{StaticResource AppFontSizeNumeric}" />
+        <Setter Property="FontWeight" Value="{StaticResource AppFontWeightStrong}" />
+        <Setter Property="LineStackingStrategy" Value="BlockLineHeight" />
+        <Setter Property="LineHeight" Value="{StaticResource AppLineHeightNumeric}" />
+    </Style>
+
+    <Style x:Key="AppTitleLargeText" TargetType="TextBlock">
+        <Setter Property="Foreground" Value="{DynamicResource AppTextPrimary}" />
+        <Setter Property="FontFamily" Value="{StaticResource AppFontFamilyDisplay}" />
+        <Setter Property="FontSize" Value="{StaticResource AppFontSizeTitleLarge}" />
+        <Setter Property="FontWeight" Value="{StaticResource AppFontWeightStrong}" />
+        <Setter Property="LineStackingStrategy" Value="BlockLineHeight" />
+        <Setter Property="LineHeight" Value="{StaticResource AppLineHeightTitleLarge}" />
+        <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+    </Style>
+
+    <Style x:Key="AppTitleText" TargetType="TextBlock">
+        <Setter Property="Foreground" Value="{DynamicResource AppTextPrimary}" />
+        <Setter Property="FontSize" Value="{StaticResource AppFontSizeTitle}" />
+        <Setter Property="FontWeight" Value="{StaticResource AppFontWeightStrong}" />
+        <Setter Property="LineStackingStrategy" Value="BlockLineHeight" />
+        <Setter Property="LineHeight" Value="{StaticResource AppLineHeightTitle}" />
+    </Style>
+
+    <Style x:Key="AppSubtitleText" TargetType="TextBlock">
+        <Setter Property="Foreground" Value="{DynamicResource AppTextPrimary}" />
+        <Setter Property="FontSize" Value="{StaticResource AppFontSizeSubtitle}" />
+        <Setter Property="FontWeight" Value="{StaticResource AppFontWeightStrong}" />
+        <Setter Property="LineStackingStrategy" Value="BlockLineHeight" />
+        <Setter Property="LineHeight" Value="{StaticResource AppLineHeightSubtitle}" />
+    </Style>
+
+    <Style x:Key="AppBodyText" TargetType="TextBlock">
+        <Setter Property="Foreground" Value="{DynamicResource AppTextPrimary}" />
+        <Setter Property="FontSize" Value="{StaticResource AppFontSizeBody}" />
+        <Setter Property="LineStackingStrategy" Value="BlockLineHeight" />
+        <Setter Property="LineHeight" Value="{StaticResource AppLineHeightBody}" />
+        <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+
+    <Style x:Key="AppBodyStrongText" TargetType="TextBlock" BasedOn="{StaticResource AppBodyText}">
+        <Setter Property="FontWeight" Value="{StaticResource AppFontWeightStrong}" />
+        <Setter Property="TextWrapping" Value="NoWrap" />
+        <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+    </Style>
+
+    <Style x:Key="AppSecondaryText" TargetType="TextBlock" BasedOn="{StaticResource AppBodyText}">
+        <Setter Property="Foreground" Value="{DynamicResource AppTextSecondary}" />
+    </Style>
+
+    <!-- Metadata and hint text. Uses the Small optical face: at 13px it is drawn with heavier
+         stems and slightly wider spacing than the Text face, which is what "small optical size"
+         means, and is the honest way to give small type more presence when no Medium weight
+         exists. Windows 10 resolves the same fallback it always did. -->
+    <Style x:Key="AppMutedText" TargetType="TextBlock">
+        <Setter Property="Foreground" Value="{DynamicResource AppTextMuted}" />
+        <Setter Property="FontFamily" Value="{StaticResource AppFontFamilySmall}" />
+        <Setter Property="FontSize" Value="{StaticResource AppFontSizeSmall}" />
+        <Setter Property="LineStackingStrategy" Value="BlockLineHeight" />
+        <Setter Property="LineHeight" Value="{StaticResource AppLineHeightSmall}" />
+        <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+
+    <Style x:Key="AppCaptionText" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource AppFontFamilySmall}" />
+        <Setter Property="Foreground" Value="{DynamicResource AppTextMuted}" />
+        <Setter Property="FontSize" Value="{StaticResource AppFontSizeCaption}" />
+        <Setter Property="LineStackingStrategy" Value="BlockLineHeight" />
+        <Setter Property="LineHeight" Value="{StaticResource AppLineHeightCaption}" />
+    </Style>
+
+    <!-- Field label. Sits above its input; a placeholder is a hint, not a substitute. -->
+    <Style x:Key="AppLabelText" TargetType="TextBlock">
+        <Setter Property="Foreground" Value="{DynamicResource AppTextSecondary}" />
+        <Setter Property="FontFamily" Value="{StaticResource AppFontFamilySmall}" />
+        <Setter Property="FontSize" Value="{StaticResource AppFontSizeSmall}" />
+        <!-- Regular. A field label identifies its input; it does not compete with the page's
+             headings. The secondary foreground already separates it from the value below. -->
+        <Setter Property="FontWeight" Value="{StaticResource AppFontWeightRegular}" />
+        <Setter Property="LineStackingStrategy" Value="BlockLineHeight" />
+        <Setter Property="LineHeight" Value="{StaticResource AppLineHeightSmall}" />
+        <Setter Property="Margin" Value="{StaticResource AppStackGapSmall}" />
+    </Style>
+
+    <!-- Group eyebrow above a set of sections. Used sparingly. -->
+    <Style x:Key="AppEyebrowText" TargetType="TextBlock">
+        <Setter Property="Foreground" Value="{DynamicResource AppTextMuted}" />
+        <Setter Property="FontSize" Value="{StaticResource AppFontSizeCaption}" />
+        <Setter Property="FontWeight" Value="{StaticResource AppFontWeightStrong}" />
+        <Setter Property="LineStackingStrategy" Value="BlockLineHeight" />
+        <Setter Property="LineHeight" Value="{StaticResource AppLineHeightCaption}" />
+    </Style>
+
+    <!-- Paths, addresses, versions, hashes and console output. -->
+    <Style x:Key="AppMonoText" TargetType="TextBlock">
+        <Setter Property="Foreground" Value="{DynamicResource AppTextPrimary}" />
+        <Setter Property="FontFamily" Value="{StaticResource AppFontFamilyMono}" />
+        <Setter Property="FontSize" Value="{StaticResource AppFontSizeSmall}" />
+        <Setter Property="LineStackingStrategy" Value="BlockLineHeight" />
+        <Setter Property="LineHeight" Value="{StaticResource AppLineHeightSmall}" />
+        <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+    </Style>
+
+    <!-- Visually hidden text that assistive technology still reads. -->
+    <Style x:Key="AppScreenReaderText" TargetType="TextBlock">
+        <Setter Property="Opacity" Value="0" />
+        <Setter Property="IsHitTestVisible" Value="False" />
+        <Setter Property="Width" Value="1" />
+        <Setter Property="Height" Value="1" />
+    </Style>
+</ResourceDictionary>

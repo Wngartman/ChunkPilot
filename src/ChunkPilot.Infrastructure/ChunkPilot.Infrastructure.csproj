@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\ChunkPilot.Core\ChunkPilot.Core.csproj" />
+    <PackageReference Include="Microsoft.Data.Sqlite" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Console" />
+    <PackageReference Include="SQLitePCLRaw.lib.e_sqlite3" />
+    <PackageReference Include="SixLabors.ImageSharp" />
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Resources\vanilla-runtime-certification-v1.json"
+                      LogicalName="ChunkPilot.Infrastructure.Resources.vanilla-runtime-certification-v1.json" />
+    <EmbeddedResource Include="Resources\paper-runtime-certification-v1.json"
+                      LogicalName="ChunkPilot.Infrastructure.Resources.paper-runtime-certification-v1.json" />
+    <EmbeddedResource Include="Resources\managed-loader-runtime-certification-v1.json"
+                      LogicalName="ChunkPilot.Infrastructure.Resources.managed-loader-runtime-certification-v1.json" />
+  </ItemGroup>
+</Project>
