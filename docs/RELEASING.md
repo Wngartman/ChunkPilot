@@ -24,7 +24,7 @@ git diff --check
 - `.NET` is pinned by `global.json`; npm packages are locked by `package-lock.json`.
 - The release workflow uses full commit pins for official GitHub actions.
 - Inno Setup 7.0.2 is downloaded from the publisher's GitHub release and checked against a pinned SHA-256 plus its valid Pyrsys B.V. Authenticode signature.
-- The Microsoft Edge WebView2 Evergreen bootstrapper is downloaded from Microsoft's official programmatic link and checked against a pinned SHA-256 plus its valid Microsoft Corporation Authenticode signature before being embedded.
+- The Microsoft Edge WebView2 Evergreen bootstrapper is downloaded from Microsoft's official programmatic link. Because Microsoft intentionally updates the bytes behind that Evergreen URL, acquisition requires a valid Microsoft Corporation Authenticode signature and the expected Microsoft Edge Update product identity, then records the exact SHA-256 and file version embedded in that build.
 - Microsoft SBOM Tool 4.1.5 is installed repository-locally from its verified NuGet package and run on a pinned, SHA-512-verified Microsoft .NET 8.0.30 runtime. Its telemetry output is written only to the ignored build-artifact directory; the tool states that no telemetry is submitted to Microsoft.
 - Gitleaks 8.30.1 is downloaded from its official GitHub release and verified with the release checksum before scanning the exact public history.
 
