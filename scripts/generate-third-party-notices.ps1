@@ -16,17 +16,17 @@ function Find-LicenseFile([string]$PackageRoot) {
 
 # JavaScript packages whose code is included in the compiled WebUI bundle.
 $webUi = Join-Path $repoRoot 'src\ChunkPilot.WebUi'
-$lock = Get-Content -LiteralPath (Join-Path $webUi 'package-lock.json') -Raw | ConvertFrom-Json
-foreach ($property in $lock.packages.PSObject.Properties) {
-    if (-not $property.Name.StartsWith('node_modules/', [StringComparison]::Ordinal) -or
-        $property.Value.dev -eq $true) { continue }
-    $packageRoot = Join-Path $webUi ($property.Name -replace '/', [IO.Path]::DirectorySeparatorChar)
+$lock = Get-Content -LiteralPath (Join-Path $webUi 'package-lock.json') -Raw | ConvertFrom-Json -AsHashtable
+foreach ($entry in $lock['packages'].GetEnumerator()) {
+    if (-not $entry.Key.StartsWith('node_modules/', [StringComparison]::Ordinal) -or
+        $entry.Value['dev'] -eq $true) { continue }
+    $packageRoot = Join-Path $webUi ($entry.Key -replace '/', [IO.Path]::DirectorySeparatorChar)
     $licenseFile = Find-LicenseFile $packageRoot
     $records.Add([PSCustomObject]@{
         Ecosystem = 'npm'
-        Name = if ($property.Value.name) { [string]$property.Value.name } else { $property.Name.Substring(13) }
-        Version = [string]$property.Value.version
-        License = if ($property.Value.license) { [string]$property.Value.license } else { 'See package metadata' }
+        Name = if ($entry.Value['name']) { [string]$entry.Value['name'] } else { $entry.Key.Substring(13) }
+        Version = [string]$entry.Value['version']
+        License = if ($entry.Value['license']) { [string]$entry.Value['license'] } else { 'See package metadata' }
         LicenseFile = if ($licenseFile) { $licenseFile.FullName } else { $null }
     })
 }

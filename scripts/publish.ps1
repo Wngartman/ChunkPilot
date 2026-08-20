@@ -64,8 +64,7 @@ if ($LASTEXITCODE -ne 0) { throw "Self-contained agent publish failed." }
 Get-ChildItem -LiteralPath $selfContainedOutput -Filter '*.pdb' -File -Recurse |
     Remove-Item -Force
 
-& (Join-Path $repoRoot 'scripts\generate-third-party-notices.ps1') -OutputPath (Join-Path $releaseSupportOutput 'THIRD-PARTY-NOTICES.txt')
-if ($LASTEXITCODE -ne 0) { throw "Third-party notice generation failed with exit code $LASTEXITCODE." }
+& (Join-Path $repoRoot 'scripts\generate-third-party-notices.ps1') -OutputPath (Join-Path $releaseSupportOutput 'THIRD-PARTY-NOTICES.txt') | Out-Host
 Copy-Item -LiteralPath (Join-Path $releaseSupportOutput 'THIRD-PARTY-NOTICES.txt') -Destination (Join-Path $selfContainedOutput 'THIRD-PARTY-NOTICES.txt') -Force
 
 Reset-OutputDirectory $portableTestOutput
@@ -74,7 +73,6 @@ Copy-Item -LiteralPath (Join-Path $repoRoot 'release\PORTABLE-README.txt') -Dest
 
 if ($BuildInstaller) {
     & (Join-Path $repoRoot 'scripts\acquire-webview2-bootstrapper.ps1') | Out-Host
-    if ($LASTEXITCODE -ne 0) { throw "WebView2 bootstrapper acquisition failed with exit code $LASTEXITCODE." }
     $candidates = @(
         (Join-Path $repoRoot ".tools\InnoSetup\ISCC.exe"),
         (Join-Path ${env:ProgramFiles} "Inno Setup 7\ISCC.exe"),

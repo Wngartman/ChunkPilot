@@ -99,10 +99,10 @@ if ([IO.Path]::GetFullPath($previewShortcut.TargetPath) -ne [IO.Path]::GetFullPa
     throw 'The WebUI Preview Start Menu shortcut target or arguments are incorrect.'
 }
 
-$defaultSmoke = & (Join-Path $repoRoot 'scripts\test-packaged-ui-close.ps1') -PortableRoot $installRoot
-if ($LASTEXITCODE -ne 0) { throw 'Installed default-UI launch/close smoke failed.' }
-$previewSmoke = & (Join-Path $repoRoot 'scripts\test-packaged-ui-close.ps1') -PortableRoot $installRoot -WebUiPreview
-if ($LASTEXITCODE -ne 0) { throw 'Installed WebUI-preview launch/close smoke failed.' }
+$defaultSmoke = (& (Join-Path $repoRoot 'scripts\test-packaged-ui-close.ps1') -PortableRoot $installRoot) | ConvertFrom-Json
+if (-not $defaultSmoke.OverallPass) { throw "Installed default-UI launch/close smoke failed: $($defaultSmoke.Failures -join '; ')" }
+$previewSmoke = (& (Join-Path $repoRoot 'scripts\test-packaged-ui-close.ps1') -PortableRoot $installRoot -WebUiPreview) | ConvertFrom-Json
+if (-not $previewSmoke.OverallPass) { throw "Installed WebUI-preview launch/close smoke failed: $($previewSmoke.Failures -join '; ')" }
 
 # Same-version reinstall/repair must remain non-destructive and leave both entry points intact.
 Invoke-Setup $reinstallLog

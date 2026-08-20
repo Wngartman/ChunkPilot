@@ -79,20 +79,35 @@ if (-not (Test-Path -LiteralPath $sbomTool)) {
     & dotnet tool install Microsoft.Sbom.DotNetTool --tool-path $sbomToolDirectory --version 4.1.5
     if ($LASTEXITCODE -ne 0) { throw 'Repository-local Microsoft SBOM tool installation failed.' }
 }
-$oldRollForward = $env:DOTNET_ROLL_FORWARD
-$env:DOTNET_ROLL_FORWARD = 'Major'
-try {
-    & $sbomTool Generate -b $selfContained -bc $repoRoot -m $sbomWork -pn ChunkPilot `
-        -pv $ReleaseTag.TrimStart('v') -ps ChunkPilot -nsb 'https://github.com/Wngartman/ChunkPilot' `
-        -nsu "$ReleaseTag-$commit" -D true -pm true -li false -t (Join-Path $sbomWork 'generation-telemetry.json') -V Warning
-    if ($LASTEXITCODE -ne 0) { throw "SBOM generation failed with exit code $LASTEXITCODE." }
-    $generated = Get-ChildItem -LiteralPath $sbomWork -Filter 'manifest.spdx.json' -File -Recurse | Select-Object -First 1
-    if (-not $generated) { throw 'Microsoft SBOM Tool did not produce manifest.spdx.json.' }
-    Copy-Item -LiteralPath $generated.FullName -Destination $sbom
-    & $sbomTool Validate -b $selfContained -m $sbomWork -o (Join-Path $sbomWork 'validation.json') -n true -t (Join-Path $sbomWork 'validation-telemetry.json') -V Warning
-    if ($LASTEXITCODE -ne 0) { throw "SBOM validation failed with exit code $LASTEXITCODE." }
+$sbomRuntime = (& (Join-Path $repoRoot 'scripts\install-sbom-runtime.ps1')).FullName
+$sbomAssembly = Get-ChildItem -LiteralPath $sbomToolDirectory -Filter 'Microsoft.Sbom.DotNetTool.dll' -File -Recurse |
+    Select-Object -First 1
+if (-not $sbomAssembly) { throw 'The repository-local Microsoft SBOM tool assembly was not found.' }
+
+& $sbomRuntime $sbomAssembly.FullName Generate -b $selfContained -bc (Join-Path $repoRoot 'src') -m $sbomWork -pn ChunkPilot `
+    -pv $ReleaseTag.TrimStart('v') -ps ChunkPilot -nsb 'https://github.com/Wngartman/ChunkPilot' `
+    -nsu "$ReleaseTag-$commit" -D true -pm true -li false -t (Join-Path $sbomWork 'generation-telemetry.json') -V Warning
+if ($LASTEXITCODE -ne 0) { throw "SBOM generation failed with exit code $LASTEXITCODE." }
+$generated = Get-ChildItem -LiteralPath $sbomWork -Filter 'manifest.spdx.json' -File -Recurse | Select-Object -First 1
+if (-not $generated) { throw 'Microsoft SBOM Tool did not produce manifest.spdx.json.' }
+Copy-Item -LiteralPath $generated.FullName -Destination $sbom
+$sbomDocument = Get-Content -LiteralPath $sbom -Raw | ConvertFrom-Json
+if ($sbomDocument.spdxVersion -ne 'SPDX-2.2' -or @($sbomDocument.files).Count -eq 0 -or
+    @($sbomDocument.packages).Count -le 1) {
+    throw 'Generated SPDX 2.2 SBOM does not contain both shipped files and detected dependency packages.'
 }
-finally { $env:DOTNET_ROLL_FORWARD = $oldRollForward }
+$validationPath = Join-Path $sbomWork 'validation.json'
+& $sbomRuntime $sbomAssembly.FullName Validate -b $selfContained -m (Join-Path $sbomWork '_manifest') `
+    -o $validationPath -mi 'SPDX:2.2' -n `
+    -t (Join-Path $sbomWork 'validation-telemetry.json') -V Warning
+if ($LASTEXITCODE -ne 0) { throw "SBOM validation failed with exit code $LASTEXITCODE." }
+if (-not (Test-Path -LiteralPath $validationPath)) { throw 'SBOM validation did not produce its result document.' }
+$validation = Get-Content -LiteralPath $validationPath -Raw | ConvertFrom-Json
+if ($validation.Result -ne 'Success' -or $validation.ValidationErrors.Count -ne 0 -or
+    $validation.Summary.ValidationTelemetery.FilesFailedCount -ne 0 -or
+    $validation.Summary.ValidationTelemetery.TotalPackagesInManifest -le 1) {
+    throw 'SBOM validator did not report a complete dependency-bearing success.'
+}
 
 $hashTargets = @($installer, $portable, $sbom, $notices)
 $hashLines = foreach ($path in $hashTargets) {

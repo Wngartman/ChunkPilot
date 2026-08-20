@@ -56,6 +56,18 @@ public sealed class PublicDistributionContractTests
     }
 
     [Fact]
+    public void Sbom_packaging_uses_a_pinned_verified_runtime_and_requires_detected_packages()
+    {
+        var runtime = File.ReadAllText(Path.Combine(Root, "scripts", "install-sbom-runtime.ps1"));
+        var package = File.ReadAllText(Path.Combine(Root, "scripts", "package-release.ps1"));
+        Assert.Contains("8.0.30", runtime, StringComparison.Ordinal);
+        Assert.Contains("Get-FileHash", runtime, StringComparison.Ordinal);
+        Assert.Contains("Get-AuthenticodeSignature", runtime, StringComparison.Ordinal);
+        Assert.Contains("packages).Count -le 1", package, StringComparison.Ordinal);
+        Assert.Contains("SPDX:2.2", package, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Public_snapshot_declares_pre_alpha_unsigned_and_no_source_license()
     {
         var readme = File.ReadAllText(Path.Combine(Root, "README.md"));
