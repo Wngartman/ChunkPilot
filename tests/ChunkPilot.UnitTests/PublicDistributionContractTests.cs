@@ -68,6 +68,13 @@ public sealed class PublicDistributionContractTests
     }
 
     [Fact]
+    public void Inno_installer_normalizes_the_compilers_nonzero_help_exit_code()
+    {
+        var source = File.ReadAllText(Path.Combine(Root, "scripts", "install-inno-setup.ps1"));
+        Assert.Contains("$global:LASTEXITCODE = 0", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Public_snapshot_declares_pre_alpha_unsigned_and_no_source_license()
     {
         var readme = File.ReadAllText(Path.Combine(Root, "README.md"));
