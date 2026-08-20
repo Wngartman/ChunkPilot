@@ -1622,7 +1622,7 @@ public sealed class RouterMappingContinuityIntegrationTests : IAsyncLifetime
         return current?.FullName ?? throw new DirectoryNotFoundException("Could not locate the repository root.");
     }
 
-    private static string DotnetPath() => Path.Combine(RepositoryRoot(), ".tools", "dotnet", "dotnet.exe");
+    private static string DotnetPath() => IntegrationTestRuntime.DotnetPath(RepositoryRoot());
 
     private static string FakeServerDll() => Path.Combine(RepositoryRoot(), "tests", "ChunkPilot.FakeServer",
         "bin", "Release", "net10.0", "ChunkPilot.FakeServer.dll");

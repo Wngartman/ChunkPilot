@@ -186,7 +186,7 @@ public sealed class ServerCreationAgentRecoverySmokeTests
         return current?.FullName ?? throw new DirectoryNotFoundException();
     }
 
-    private static string DotnetPath() => Path.Combine(RepositoryRoot(), ".tools", "dotnet", "dotnet.exe");
+    private static string DotnetPath() => IntegrationTestRuntime.DotnetPath(RepositoryRoot());
 
     private static string AgentDll() => Path.Combine(RepositoryRoot(), "src", "ChunkPilot.Agent",
         "bin", "Release", "net10.0", "ChunkPilot.Agent.dll");

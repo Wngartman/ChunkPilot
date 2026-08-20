@@ -339,7 +339,7 @@ public sealed class VersionUpdateIntegrationTests : IAsyncLifetime
         return current?.FullName ?? throw new DirectoryNotFoundException("Could not locate ChunkPilot repository root.");
     }
 
-    private static string DotnetPath() => Path.Combine(RepositoryRoot(), ".tools", "dotnet", "dotnet.exe");
+    private static string DotnetPath() => IntegrationTestRuntime.DotnetPath(RepositoryRoot());
 
     private static string FakeServerDll()
     {
