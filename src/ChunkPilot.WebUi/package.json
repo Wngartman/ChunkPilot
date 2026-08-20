@@ -8,7 +8,7 @@
     "build": "tsc -b && vite build",
     "typecheck": "tsc -b --pretty false",
     "lint": "node scripts/lint.mjs",
-    "test": "vitest run --environment node",
+    "test": "vitest run --environment node --maxWorkers=2 --testTimeout=15000",
     "dev": "vite --host 127.0.0.1",
     "preview": "vite preview --host 127.0.0.1"
   },
