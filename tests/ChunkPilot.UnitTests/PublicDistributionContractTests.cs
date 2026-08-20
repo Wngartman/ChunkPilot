@@ -24,6 +24,8 @@ public sealed class PublicDistributionContractTests
         Assert.Contains("MicrosoftEdgeWebview2Setup.exe", source, StringComparison.Ordinal);
         Assert.Contains("RemoveManagedCheck.Checked := False", source, StringComparison.Ordinal);
         Assert.Contains("RemoveBackupsCheck.Checked := False", source, StringComparison.Ordinal);
+        Assert.Contains("procedure InitializeUninstallProgressForm;", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("function InitializeUninstall(): Boolean;", source, StringComparison.Ordinal);
     }
 
     [Fact]
