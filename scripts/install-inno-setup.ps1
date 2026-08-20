@@ -49,4 +49,8 @@ $help = & $compiler /? 2>&1 | Out-String
 if ($help -notmatch 'Inno Setup 7 Command-Line Compiler') {
     throw 'The repository-local Inno Setup compiler did not identify itself as Inno Setup 7.'
 }
+# ISCC deliberately returns 1 for its help banner. PowerShell otherwise carries
+# that native exit code out of this successful script invocation on a fresh CI
+# runner, even after a subsequent cmdlet succeeds.
+$global:LASTEXITCODE = 0
 Get-Item -LiteralPath $compiler
