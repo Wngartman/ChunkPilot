@@ -6,6 +6,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $records = [Collections.Generic.List[object]]::new()
+$strictUtf8 = [Text.UTF8Encoding]::new($false, $true)
 
 function Find-LicenseFile([string]$PackageRoot) {
     if (-not (Test-Path -LiteralPath $PackageRoot)) { return $null }
@@ -16,17 +17,26 @@ function Find-LicenseFile([string]$PackageRoot) {
 
 # JavaScript packages whose code is included in the compiled WebUI bundle.
 $webUi = Join-Path $repoRoot 'src\ChunkPilot.WebUi'
-$lock = Get-Content -LiteralPath (Join-Path $webUi 'package-lock.json') -Raw | ConvertFrom-Json -AsHashtable
-foreach ($entry in $lock['packages'].GetEnumerator()) {
-    if (-not $entry.Key.StartsWith('node_modules/', [StringComparison]::Ordinal) -or
-        $entry.Value['dev'] -eq $true) { continue }
-    $packageRoot = Join-Path $webUi ($entry.Key -replace '/', [IO.Path]::DirectorySeparatorChar)
+$lockJson = [IO.File]::ReadAllText((Join-Path $webUi 'package-lock.json'), $strictUtf8)
+# Windows PowerShell 5.1 rejects the empty-string root-package property emitted by npm lockfile v3.
+# Give only that structural key a temporary parse name; it is excluded from the node_modules inventory.
+$emptyRootPattern = '(?m)^    "": \{$'
+if ([regex]::Matches($lockJson, $emptyRootPattern).Count -ne 1) {
+    throw 'package-lock.json did not contain exactly one npm root-package entry.'
+}
+$lock = [regex]::Replace($lockJson, $emptyRootPattern, '    "__chunkpilot_root__": {') | ConvertFrom-Json
+foreach ($entry in $lock.packages.PSObject.Properties) {
+    $packagePath = [string]$entry.Name
+    $metadata = $entry.Value
+    if (-not $packagePath.StartsWith('node_modules/', [StringComparison]::Ordinal) -or
+        $metadata.dev -eq $true) { continue }
+    $packageRoot = Join-Path $webUi ($packagePath -replace '/', [IO.Path]::DirectorySeparatorChar)
     $licenseFile = Find-LicenseFile $packageRoot
     $records.Add([PSCustomObject]@{
         Ecosystem = 'npm'
-        Name = if ($entry.Value['name']) { [string]$entry.Value['name'] } else { $entry.Key.Substring(13) }
-        Version = [string]$entry.Value['version']
-        License = if ($entry.Value['license']) { [string]$entry.Value['license'] } else { 'See package metadata' }
+        Name = if ($metadata.name) { [string]$metadata.name } else { $packagePath.Substring(13) }
+        Version = [string]$metadata.version
+        License = if ($metadata.license) { [string]$metadata.license } else { 'See package metadata' }
         LicenseFile = if ($licenseFile) { $licenseFile.FullName } else { $null }
     })
 }
@@ -38,7 +48,7 @@ foreach ($project in $projects) {
     if (-not (Test-Path -LiteralPath $assetsPath)) {
         throw "NuGet restore metadata is missing: $assetsPath"
     }
-    $assets = Get-Content -LiteralPath $assetsPath -Raw | ConvertFrom-Json
+    $assets = [IO.File]::ReadAllText($assetsPath, $strictUtf8) | ConvertFrom-Json
     $packageFolders = @($assets.packageFolders.PSObject.Properties.Name)
     foreach ($library in $assets.libraries.PSObject.Properties) {
         if ($library.Value.type -ne 'package') { continue }
@@ -55,7 +65,7 @@ foreach ($project in $projects) {
         if ($packageRoot) {
             $nuspec = Get-ChildItem -LiteralPath $packageRoot -Filter '*.nuspec' -File | Select-Object -First 1
             if ($nuspec) {
-                [xml]$xml = Get-Content -LiteralPath $nuspec.FullName -Raw
+                [xml]$xml = [IO.File]::ReadAllText($nuspec.FullName, $strictUtf8)
                 $metadata = $xml.package.metadata
                 if ($metadata.license) {
                     $license = [string]$metadata.license.InnerText
@@ -77,14 +87,23 @@ foreach ($project in $projects) {
     }
 }
 
-$unique = @($records | Sort-Object Ecosystem, Name, Version -Unique)
+$recordsByIdentity = [Collections.Generic.Dictionary[string, object]]::new([StringComparer]::Ordinal)
+foreach ($record in $records) {
+    $identity = "$($record.Ecosystem)`0$($record.Name)`0$($record.Version)"
+    if (-not $recordsByIdentity.ContainsKey($identity)) {
+        $recordsByIdentity.Add($identity, $record)
+    }
+}
+[string[]]$recordIdentities = @($recordsByIdentity.Keys)
+[Array]::Sort($recordIdentities, [StringComparer]::Ordinal)
+$unique = @($recordIdentities | ForEach-Object { $recordsByIdentity[$_] })
 $builder = [Text.StringBuilder]::new()
 [void]$builder.AppendLine('CHUNKPILOT THIRD-PARTY NOTICES')
 [void]$builder.AppendLine('Generated from the exact locked npm and restored NuGet dependency metadata used by this build.')
 [void]$builder.AppendLine()
 [void]$builder.AppendLine('PACKAGE INVENTORY')
 foreach ($record in $unique) {
-    [void]$builder.AppendLine("- $($record.Ecosystem): $($record.Name) $($record.Version) — $($record.License)")
+    [void]$builder.AppendLine("- $($record.Ecosystem): $($record.Name) $($record.Version) - $($record.License)")
 }
 
 $licenseGroups = @{}
@@ -98,16 +117,21 @@ foreach ($record in $unique | Where-Object LicenseFile) {
 
 [void]$builder.AppendLine()
 [void]$builder.AppendLine('LICENSE TEXTS')
-foreach ($group in $licenseGroups.GetEnumerator() | Sort-Object { $_.Value.Packages[0] }) {
+[string[]]$licenseHashes = @($licenseGroups.Keys)
+[Array]::Sort($licenseHashes, [StringComparer]::Ordinal)
+foreach ($hash in $licenseHashes) {
+    $group = $licenseGroups[$hash]
+    [string[]]$groupPackages = @($group.Packages)
+    [Array]::Sort($groupPackages, [StringComparer]::Ordinal)
     [void]$builder.AppendLine()
     [void]$builder.AppendLine(('=' * 78))
-    [void]$builder.AppendLine(($group.Value.Packages | Sort-Object) -join ', ')
+    [void]$builder.AppendLine($groupPackages -join ', ')
     [void]$builder.AppendLine(('=' * 78))
-    [void]$builder.AppendLine((Get-Content -LiteralPath $group.Value.Path -Raw).Trim())
+    [void]$builder.AppendLine(([IO.File]::ReadAllText($group.Path, $strictUtf8)).Trim())
     [void]$builder.AppendLine()
 }
 
-$manual = Get-Content -LiteralPath (Join-Path $repoRoot 'THIRD-PARTY-NOTICES.md') -Raw
+$manual = [IO.File]::ReadAllText((Join-Path $repoRoot 'THIRD-PARTY-NOTICES.md'), $strictUtf8)
 [void]$builder.AppendLine()
 [void]$builder.AppendLine('PROJECT-SPECIFIC NOTICE')
 [void]$builder.AppendLine($manual.Trim())
