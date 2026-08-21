@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Alpha 3 lifecycle ownership hotfix
+
+- Stopped treating a server's last observed running state, crash-recovery state, or stale restart
+  journal as permission to start it when Windows, ChunkPilot, or the Agent starts. Startup now requires
+  an explicit persisted autostart setting or a due user-created schedule.
+- Manual Stop now records stop intent and cancels a pending Start, Restart, or restartable data
+  operation before waiting for the per-server operation queue. An operation that ignores cancellation
+  reaches a bounded actionable failure instead of leaving the UI in `Stopping` indefinitely.
+- Reconciled stopped/process state before completing Stop and made WebUI lifecycle completion report
+  the authoritative Agent result rather than an optimistic command return.
+
 ### First public GitHub alpha snapshot
 
 - Added reproducible GitHub-hosted Windows CI and an intentionally manual prerelease workflow with

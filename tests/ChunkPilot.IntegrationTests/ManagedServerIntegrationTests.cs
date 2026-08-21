@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using ChunkPilot.Agent;
 using ChunkPilot.Core;
 using ChunkPilot.Infrastructure;
@@ -125,6 +126,129 @@ public sealed class ManagedServerIntegrationTests : IAsyncLifetime
             $"Observed indexes save={saveIndex}, stop={stopIndex}, secondStart={secondStart}");
         var finalStop = await server.StopAsync();
         Assert.True(finalStop.Success, finalStop.Message);
+    }
+
+    [Fact(Timeout = 30_000)]
+    public async Task Ordinary_start_records_observation_without_creating_autostart_authority()
+    {
+        await using var server = CreateManaged("normal");
+
+        Assert.True((await server.StartAsync()).Success);
+        var running = Assert.Single(await store.GetRunningStatesAsync(), state =>
+            state.ServerId == server.Definition.Id);
+        Assert.Equal(AutostartMode.Never, running.AutostartMode);
+        Assert.True(running.WasRunning);
+
+        Assert.True((await server.StopAsync()).Success);
+        var stopped = Assert.Single(await store.GetRunningStatesAsync(), state =>
+            state.ServerId == server.Definition.Id);
+        Assert.Equal(AutostartMode.Never, stopped.AutostartMode);
+        Assert.False(stopped.WasRunning);
+        Assert.Equal(LifecycleIntentKind.ManualStop, stopped.LastIntent);
+
+        var deliberateRestart = await server.StartAsync();
+        Assert.True(deliberateRestart.Success, deliberateRestart.Message);
+        Assert.Equal(ServerState.Running, server.State);
+        Assert.True((await server.StopAsync()).Success);
+    }
+
+    [Fact(Timeout = 30_000)]
+    public async Task Manual_stop_preempts_an_in_progress_restart_and_prevents_the_new_start()
+    {
+        var definition = Definition("normal") with { RestartDelaySeconds = 10 };
+        await using var server = new ManagedServer(definition, new ProcessStatisticsProvider(),
+            new MinecraftStatusClient(), store, paths, loggerFactory.CreateLogger<ManagedServer>());
+        Assert.True((await server.StartAsync()).Success);
+
+        var restart = server.RestartAsync();
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
+        while (server.State is not (ServerState.Restarting or ServerState.Stopped) &&
+               DateTimeOffset.UtcNow < deadline)
+            await Task.Delay(25);
+
+        var stop = await server.StopAsync(saveFirst: false).WaitAsync(TimeSpan.FromSeconds(3));
+        Assert.True(stop.Success, stop.Message);
+        try
+        {
+            _ = await restart;
+        }
+        catch (OperationCanceledException)
+        {
+            // Manual Stop owns the cancellation; the restart must not continue into another start.
+        }
+        await Task.Delay(250);
+        Assert.Equal(ServerState.Stopped, server.State);
+        Assert.Single(server.Snapshot(1_000).Console, line =>
+            line.Text.Contains("Starting fake Minecraft server", StringComparison.Ordinal));
+    }
+
+    [Fact(Timeout = 30_000)]
+    public async Task Duplicate_stop_joins_the_serial_lifecycle_and_both_calls_finish()
+    {
+        await using var server = CreateManaged("slow-stop");
+        Assert.True((await server.StartAsync()).Success);
+
+        var first = server.StopAsync(saveFirst: false);
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(3);
+        while (server.State != ServerState.Stopping && DateTimeOffset.UtcNow < deadline)
+            await Task.Delay(25);
+        var second = server.StopAsync(saveFirst: false);
+
+        var results = await Task.WhenAll(first, second).WaitAsync(TimeSpan.FromSeconds(8));
+        Assert.All(results, result => Assert.True(result.Success, result.Message));
+        Assert.Equal(ServerState.Stopped, server.State);
+    }
+
+    [Fact(Timeout = 35_000)]
+    public async Task Stop_reports_an_actionable_failure_when_an_operation_ignores_cancellation()
+    {
+        await using var server = CreateManaged("normal");
+        Assert.True((await server.StartAsync()).Success);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var uncooperative = server.RunExclusiveDataOperationAsync(
+            "Uncooperative fixture operation",
+            requireStopped: false,
+            saveIfRunning: false,
+            freezeWorldSaving: false,
+            async _ =>
+            {
+                entered.TrySetResult();
+                await release.Task;
+                return true;
+            });
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        var timer = Stopwatch.StartNew();
+        var blocked = await server.StopAsync(saveFirst: false);
+        timer.Stop();
+
+        Assert.False(blocked.Success);
+        Assert.Contains("could not take control", blocked.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("did not cancel", blocked.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.InRange(timer.Elapsed, TimeSpan.FromSeconds(9), TimeSpan.FromSeconds(14));
+        Assert.Equal(ServerState.Running, server.State);
+
+        release.TrySetResult();
+        Assert.True(await uncooperative);
+        var final = await server.StopAsync(saveFirst: false);
+        Assert.True(final.Success, final.Message);
+        Assert.Equal(ServerState.Stopped, server.State);
+    }
+
+    [Fact(Timeout = 20_000)]
+    public async Task Stop_reconciles_to_stopped_when_the_owned_process_already_exited()
+    {
+        var definition = Definition("crash") with { CrashRestartEnabled = false };
+        await using var server = new ManagedServer(definition, new ProcessStatisticsProvider(),
+            new MinecraftStatusClient(), store, paths, loggerFactory.CreateLogger<ManagedServer>());
+        Assert.True((await server.StartAsync()).Success);
+        await WaitForStateAsync(server, ServerState.Crashed, timeoutSeconds: 12);
+
+        var stop = await server.StopAsync(saveFirst: false);
+
+        Assert.True(stop.Success, stop.Message);
+        Assert.Equal(ServerState.Stopped, server.State);
     }
 
     [Fact(Timeout = 30_000)]

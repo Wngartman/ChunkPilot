@@ -8,6 +8,36 @@ them fixed.
 
 ---
 
+## CP-2026-029 — Stale running evidence restarts a server after reboot and Stop can wait behind Start
+
+| Field | Value |
+|---|---|
+| Date | 2026-08-20 |
+| Severity | Stop-the-line — a server can start without persisted user policy and a manual Stop can appear stuck |
+| Area | Agent startup reconciliation / serialized lifecycle / WebUI lifecycle completion |
+| Affected | `v1.3.0-alpha.2` (`5a763e2f621b3273e312784969ceb6650bce3678`) and development commit `56c57ed27d2974c0c3540d320bf1b5f56503634c` |
+| Status | **Fixed locally** — explicit startup authority, preemptive manual Stop, bounded gate wait and truthful completion |
+| Fixed branches | `codex/fix-lifecycle-reboot-stop` (`52f143365065ac1f6efd6d63b5384bd93a856689`) and `codex/hotfix-alpha3-lifecycle` (`45262e0e6fc009f35296fa10cff2295315ec24f2`) |
+| Validation | Isolated stale-reboot reproduction, explicit autostart/schedule starts, restart suppression, unresponsive/duplicate Stop, reconnect, exact process identity and owned-network cleanup tests |
+
+Every successful ordinary start was persisted as `RestorePreviousRunningState`. On the next Agent launch,
+`ServerSupervisor` treated that runtime observation as permission to start again, including stale
+`CrashRecovery` and restart intent. This made a Windows reboot followed by App/Agent startup look like
+an authorized autostart even when the server had no autostart setting or Start schedule.
+
+Manual Stop also waited for the per-server operation gate before recording stop intent or cancelling the
+operation that held the gate. A Start waiting for readiness (up to the configured startup timeout) or a
+restart delay therefore kept Stop queued while the UI optimistically displayed `Stopping`. The fixed path
+records manual-stop intent first, invalidates pending restart generations, cooperatively cancels the active
+operation, has a ten-second gate-acquisition deadline, reconciles the final process observation, and sends
+the real failed `OperationResult` through the WebUI completion event.
+
+Ordinary running-state evidence is now persisted with `AutostartMode.Never`. Only the explicit server
+autostart setting or an explicit persisted `AgentStart`/`WindowsLoginWithDelay` policy authorizes Agent
+startup; user-created Start schedules remain an independent, tested authority.
+
+---
+
 ## CP-2026-028 — Loader creation can continue after the WebUI reports a timeout
 
 | Field | Value |

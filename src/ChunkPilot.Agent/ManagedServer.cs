@@ -12,6 +12,7 @@ namespace ChunkPilot.Agent;
 
 public sealed class ManagedServer : IAsyncDisposable
 {
+    internal static readonly TimeSpan ManualStopGateDeadline = TimeSpan.FromSeconds(10);
     private readonly SemaphoreSlim operationGate = new(1, 1);
     private readonly object processGate = new();
     private readonly LifecycleStateMachine lifecycle = new();
@@ -71,6 +72,7 @@ public sealed class ManagedServer : IAsyncDisposable
     private DateTimeOffset lastPlayerQuery;
     private DateTimeOffset lastPersistedStatistics;
     private LifecycleIntentKind lastIntent;
+    private readonly AutostartMode autostartMode;
     private int lifecycleGeneration;
     private ProcessIdentity? detachedIdentity;
     private CrashAnalysisReport? lastCrashAnalysis;
@@ -83,7 +85,8 @@ public sealed class ManagedServer : IAsyncDisposable
         AppDataPaths paths,
         ILogger<ManagedServer> logger,
         int consoleCapacity = 5_000,
-        JarInventoryService? jarInventory = null)
+        JarInventoryService? jarInventory = null,
+        AutostartMode autostartMode = AutostartMode.Never)
     {
         Definition = definition;
         this.statistics = statistics;
@@ -92,6 +95,9 @@ public sealed class ManagedServer : IAsyncDisposable
         this.paths = paths;
         this.logger = logger;
         this.jarInventory = jarInventory;
+        this.autostartMode = autostartMode is AutostartMode.AgentStart or AutostartMode.WindowsLoginWithDelay
+            ? autostartMode
+            : AutostartMode.Never;
         console = new BoundedConsoleBuffer(consoleCapacity);
     }
 
@@ -348,18 +354,35 @@ public sealed class ManagedServer : IAsyncDisposable
         string source = "Manual",
         CancellationToken cancellationToken = default)
     {
-        await operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        var stopIntent = source.Equals("Application exit", StringComparison.OrdinalIgnoreCase)
+            ? LifecycleIntentKind.ApplicationExit
+            : source.Equals("Windows shutdown", StringComparison.OrdinalIgnoreCase)
+                ? LifecycleIntentKind.WindowsShutdown
+                : LifecycleIntentKind.ManualStop;
+        await RequestStopIntentAsync(stopIntent).ConfigureAwait(false);
+
+        using var gateTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        gateTimeout.CancelAfter(ManualStopGateDeadline);
+        try
+        {
+            await operationGate.WaitAsync(gateTimeout.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            string operation;
+            lock (operationCancellationGate)
+                operation = string.IsNullOrWhiteSpace(activeOperationName)
+                    ? "another server operation"
+                    : activeOperationName;
+            return OperationResult.Fail(
+                $"Stop could not take control within {ManualStopGateDeadline.TotalSeconds:0} seconds because {operation} did not cancel. " +
+                "The authoritative process state is unchanged; retry Stop or use exact-process recovery.");
+        }
         using var trackedOperation = TrackOperation(cancellationToken);
         cancellationToken = trackedOperation.Token;
         var timer = Stopwatch.StartNew();
         try
         {
-            lastIntent = source.Equals("Application exit", StringComparison.OrdinalIgnoreCase)
-                ? LifecycleIntentKind.ApplicationExit
-                : source.Equals("Windows shutdown", StringComparison.OrdinalIgnoreCase)
-                    ? LifecycleIntentKind.WindowsShutdown
-                    : LifecycleIntentKind.ManualStop;
-            Interlocked.Increment(ref lifecycleGeneration);
             if (detachedIdentity is not null)
                 return OperationResult.Fail(
                     "The server is running but detached. Verify or end the recorded process before stopping it through ChunkPilot.",
@@ -367,6 +390,7 @@ public sealed class ManagedServer : IAsyncDisposable
             if (State == ServerState.Stopped)
                 return OperationResult.Ok("Server is already stopped.");
             var result = await StopCoreAsync(saveFirst, cancellationToken).ConfigureAwait(false);
+            await PersistStopObservationAsync().ConfigureAwait(false);
             await RecordAsync("Safe stop", result, timer, source, cancellationToken).ConfigureAwait(false);
             return result;
         }
@@ -777,6 +801,44 @@ public sealed class ManagedServer : IAsyncDisposable
             operationGate.Release();
         }
     }
+
+    private async Task RequestStopIntentAsync(LifecycleIntentKind intent)
+    {
+        lock (operationCancellationGate)
+        {
+            lastIntent = intent;
+            intentionalStop = true;
+            Interlocked.Increment(ref lifecycleGeneration);
+            if (!activeOperationName.Equals("Stop", StringComparison.Ordinal))
+                activeOperationCancellation?.Cancel();
+        }
+
+        try
+        {
+            await store.SetRunningStateAsync(Definition.Id, CurrentAutostartMode,
+                HasExactOwnedProcessAlive(), intent, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is IOException or Microsoft.Data.Sqlite.SqliteException)
+        {
+            logger.LogWarning(exception, "Could not persist stop intent for {Server}", Definition.Name);
+        }
+    }
+
+    private async Task PersistStopObservationAsync()
+    {
+        try
+        {
+            await store.SetRunningStateAsync(Definition.Id, CurrentAutostartMode,
+                HasExactOwnedProcessAlive(), lastIntent, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is IOException or Microsoft.Data.Sqlite.SqliteException)
+        {
+            logger.LogWarning(exception, "Could not persist final stop observation for {Server}", Definition.Name);
+        }
+    }
+
+    private AutostartMode CurrentAutostartMode =>
+        Definition.AutoStart ? AutostartMode.AgentStart : autostartMode;
 
     /// <summary>
     /// Applies a reversible data mutation while stopped. When explicitly requested for a running
@@ -1249,7 +1311,7 @@ public sealed class ManagedServer : IAsyncDisposable
             if (lastIntent is LifecycleIntentKind.SafeRestart or LifecycleIntentKind.ScheduledRestart or
                 LifecycleIntentKind.UpdateRestart or LifecycleIntentKind.CrashRecovery)
                 lastIntent = LifecycleIntentKind.None;
-            await store.SetRunningStateAsync(Definition.Id, AutostartMode.RestorePreviousRunningState,
+            await store.SetRunningStateAsync(Definition.Id, CurrentAutostartMode,
                 true, lastIntent, CancellationToken.None).ConfigureAwait(false);
             await ApplyPendingGamerulesAsync().ConfigureAwait(false);
             return OperationResult.Ok("Server reported readiness.");
@@ -1396,6 +1458,19 @@ public sealed class ManagedServer : IAsyncDisposable
             return OperationResult.Fail(
                 $"The server exceeded its {Definition.ShutdownTimeoutSeconds}-second graceful shutdown timeout.",
                 requiresForce: true);
+        }
+        catch (OperationCanceledException)
+        {
+            if (current.HasExited)
+            {
+                SafeTransition(ServerState.Stopped);
+                return OperationResult.Ok(
+                    "The stop operation was interrupted after the server process had already exited.");
+            }
+            SafeTransition(ServerState.Unresponsive);
+            return OperationResult.Fail(
+                "The stop operation was interrupted while the exact server process was still running. " +
+                "Retry Stop or use exact-process recovery.", requiresForce: true);
         }
     }
 
@@ -1591,7 +1666,7 @@ public sealed class ManagedServer : IAsyncDisposable
                 // StopCoreAsync owns the final transition for an intentional stop. The Java process
                 // exiting is not enough: success also means its process tree is gone and the
                 // configured listening port has actually been released.
-                await store.SetRunningStateAsync(Definition.Id, AutostartMode.RestorePreviousRunningState,
+                await store.SetRunningStateAsync(Definition.Id, CurrentAutostartMode,
                     false, lastIntent, CancellationToken.None).ConfigureAwait(false);
             }
             else
@@ -1865,7 +1940,7 @@ public sealed class ManagedServer : IAsyncDisposable
     private async Task ClearDetachedIdentityAsync(CancellationToken cancellationToken)
     {
         await store.RemoveProcessIdentityAsync(Definition.Id, cancellationToken).ConfigureAwait(false);
-        await store.SetRunningStateAsync(Definition.Id, AutostartMode.RestorePreviousRunningState,
+        await store.SetRunningStateAsync(Definition.Id, CurrentAutostartMode,
             false, LifecycleIntentKind.ManualStop, cancellationToken).ConfigureAwait(false);
         detachedIdentity = null;
     }

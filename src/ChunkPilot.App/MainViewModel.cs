@@ -1939,11 +1939,25 @@ public sealed partial class MainViewModel : ObservableObject
             runKey.DeleteValue("ChunkPilot", false);
     }
 
-    private async Task LifecycleAsync(string operation, ServerSnapshot? server, string message, object? payload = null)
+    internal Task<OperationResult> RunWebUiLifecycleAsync(string method, ServerSnapshot server) =>
+        method switch
+        {
+            "servers.start" => LifecycleAsync("Start", server, "Starting server…"),
+            "servers.stop" => LifecycleAsync("Stop", server, "Saving and stopping server…",
+                AuthorizedStopRequest(server.Definition.Id, true)),
+            "servers.restart" => LifecycleAsync("Restart", server, "Saving, stopping, and restarting server…"),
+            _ => Task.FromResult(OperationResult.Fail("The lifecycle operation is not supported."))
+        };
+
+    private async Task<OperationResult> LifecycleAsync(
+        string operation,
+        ServerSnapshot? server,
+        string message,
+        object? payload = null)
     {
         server ??= SelectedServer;
         if (server is null)
-            return;
+            return OperationResult.Fail("Select a server first.");
         SelectedServer = server;
         var optimisticState = operation switch
         {
@@ -1962,6 +1976,7 @@ public sealed partial class MainViewModel : ObservableObject
             ApplyOptimisticServerState(server.Definition.Id, state);
             NotifyMemoryState();
         }
+        OperationResult? outcome = null;
         await RunBusyAsync(message, async () =>
         {
             try
@@ -1974,17 +1989,23 @@ public sealed partial class MainViewModel : ObservableObject
                         PublicConnectivityOperation.RestartServer),
                     _ => new ServerIdRequest(server.Definition.Id)
                 };
-                var result = await client.SendAsync<OperationResult>(operation, request).ConfigureAwait(true);
-                StatusMessage = result.Message;
-                if (!result.Success && result.RequiresForceConfirmation &&
+                outcome = await client.SendAsync<OperationResult>(operation, request).ConfigureAwait(true);
+                StatusMessage = outcome.Message;
+                if (!outcome.Success && outcome.RequiresForceConfirmation &&
                     dialogs.Confirm("Server did not stop cleanly",
-                        $"{result.Message}\n\nForce terminate this server process tree? This can risk world corruption. Choose No to keep ChunkPilot open."))
+                        $"{outcome.Message}\n\nForce terminate this server process tree? This can risk world corruption. Choose No to keep ChunkPilot open."))
                 {
-                    result = await client.SendAsync<OperationResult>("ForceTerminate",
+                    outcome = await client.SendAsync<OperationResult>("ForceTerminate",
                         ConnectivityRequest(server.Definition.Id,
                             PublicConnectivityOperation.ForceTerminateServer)).ConfigureAwait(true);
-                    StatusMessage = result.Message;
+                    StatusMessage = outcome.Message;
                 }
+            }
+            catch (Exception exception) when (exception is IOException or TimeoutException or InvalidOperationException or
+                                              UnauthorizedAccessException or ArgumentException)
+            {
+                outcome = OperationResult.Fail(exception.Message);
+                throw;
             }
             finally
             {
@@ -2001,6 +2022,8 @@ public sealed partial class MainViewModel : ObservableObject
                 }
             }
         }).ConfigureAwait(true);
+        return outcome ?? OperationResult.Fail(
+            string.IsNullOrWhiteSpace(StatusMessage) ? "The lifecycle operation did not run." : StatusMessage);
     }
 
     private void ApplyOptimisticServerState(Guid serverId, ServerState state)
