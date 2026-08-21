@@ -357,11 +357,12 @@ function LoaderBuildPicker({ platform, catalog, value, error, onChange }: {
   error: string;
   onChange: (id: string) => void;
 }) {
-  if (error) return <div className={styles.buildPanel}><strong>{platform} version</strong><p className={styles.error}>{error}</p></div>;
-  if (!catalog) return <div className={styles.buildPanel}><strong>{platform} version</strong><p className={styles.loading}>Loading exact official versions…</p></div>;
+  const heading = `Exact ${loaderTitle(platform)} version`;
+  if (error) return <div className={styles.buildPanel}><strong>{heading}</strong><p className={styles.error}>{error}</p></div>;
+  if (!catalog) return <div className={styles.buildPanel}><strong>{heading}</strong><p className={styles.loading}>Loading exact official versions…</p></div>;
   const selectable = catalog.builds.filter(build => build.selectable);
   return <section className={styles.buildPanel} aria-labelledby="loader-build-heading">
-    <header><div><strong id="loader-build-heading">Exact {loaderTitle(platform)} version</strong><p>{platform === 'Fabric' ? 'The Fabric server launcher preserves the exact Minecraft, Loader, and installer versions.' : platform === 'Quilt' ? 'Quilt uses its official compatibility catalog and verified installer artifact.' : platform === 'Forge' ? 'Forge uses an exact official installer selected for this Minecraft version.' : platform === 'NeoForge' ? 'NeoForge installers are verified against their official Maven checksum and run headlessly in staging.' : 'This historical loader inventory is visible without claiming that ChunkPilot can safely create it yet.'}</p></div><span>{selectable.length} selectable</span></header>
+    <header><div><strong id="loader-build-heading">{heading}</strong><p>{platform === 'Fabric' ? 'The Fabric server launcher preserves the exact Minecraft, Loader, and installer versions.' : platform === 'Quilt' ? 'Quilt uses its official compatibility catalog and verified installer artifact.' : platform === 'Forge' ? 'Forge uses an exact official installer selected for this Minecraft version.' : platform === 'NeoForge' ? 'NeoForge installers are verified against their official Maven checksum and run headlessly in staging.' : 'This historical loader inventory is visible without claiming that ChunkPilot can safely create it yet.'}</p></div><span>{selectable.length} selectable</span></header>
     <div className={styles.buildList} role="radiogroup" aria-label={`${platform} versions`}>
       {catalog.builds.slice(0, 48).map(build => <button type="button" key={build.id} role="radio" aria-checked={value === build.id} data-selected={value === build.id || undefined} disabled={!build.selectable} onClick={() => onChange(build.id)}>
         <span><strong>{build.label} · {build.channel} · {build.support}</strong><small>{platform === 'Fabric' ? `Server launcher installer ${build.installerVersion}` : build.hasIntegrityMetadata ? 'Official provider checksum' : 'Provider checksum unavailable'}</small></span>
