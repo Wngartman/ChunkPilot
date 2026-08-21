@@ -120,7 +120,7 @@ try {
         throw 'The completed workflow is not a successful run for the exact public main commit.'
     }
 
-    Invoke-Git fetch origin "refs/tags/$tag:refs/tags/$tag" | Out-Null
+    Invoke-Git fetch origin "refs/tags/${tag}:refs/tags/${tag}" | Out-Null
     if ((Invoke-GitSingleLine cat-file -t "refs/tags/$tag") -ne 'tag') {
         throw 'Published release tag is not annotated.'
     }
