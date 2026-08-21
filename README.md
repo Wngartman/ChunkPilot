@@ -58,7 +58,6 @@ Managed servers default to `%USERPROFILE%\ChunkPilot\Servers`; application state
 ## Requirements
 
 - 64-bit Windows 10 or Windows 11
-- Microsoft Edge WebView2 Evergreen Runtime (the installer can obtain it)
 - Internet access for provider metadata, downloads, and optional outside-in reachability checks
 
 ## Known limitations
