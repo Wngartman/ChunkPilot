@@ -76,6 +76,8 @@ public sealed class PublicDistributionContractTests
         var source = File.ReadAllText(Path.Combine(Root, "scripts", "publish-release.ps1"));
         var docs = File.ReadAllText(Path.Combine(Root, "docs", "release", "RELEASING.md"));
         Assert.Contains("git -C $repoRoot", source, StringComparison.Ordinal);
+        Assert.Contains("function Invoke-GitSingleLine", source, StringComparison.Ordinal);
+        Assert.DoesNotContain(")[0].Trim()", source, StringComparison.Ordinal);
         Assert.Contains("status --porcelain", source, StringComparison.Ordinal);
         Assert.Contains("branch --show-current", source, StringComparison.Ordinal);
         Assert.Contains("ls-remote origin refs/heads/main", source, StringComparison.Ordinal);
