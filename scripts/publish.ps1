@@ -3,8 +3,8 @@ param(
     [ValidateSet("Release")]
     [string]$Configuration = "Release",
     [switch]$BuildInstaller,
-    [ValidatePattern('^v1\.3\.0-alpha\.[1-9][0-9]*$')]
-    [string]$ReleaseTag = 'v1.3.0-alpha.3'
+    [ValidatePattern('^$|^v1\.3\.0-alpha\.[1-9][0-9]*$')]
+    [string]$ReleaseTag = ''
 )
 
 $ErrorActionPreference = "Stop"
@@ -72,6 +72,7 @@ Copy-Item -Path (Join-Path $selfContainedOutput "*") -Destination $portableTestO
 Copy-Item -LiteralPath (Join-Path $repoRoot 'release\PORTABLE-README.txt') -Destination (Join-Path $portableTestOutput 'README.txt') -Force
 
 if ($BuildInstaller) {
+    if (-not $ReleaseTag) { throw '-ReleaseTag is required when -BuildInstaller is used.' }
     & (Join-Path $repoRoot 'scripts\acquire-webview2-bootstrapper.ps1') | Out-Host
     $candidates = @(
         (Join-Path $repoRoot ".tools\InnoSetup\ISCC.exe"),
