@@ -204,6 +204,7 @@ internal static class WebUiFixtureLauncher
                 ("global-settings", "running", "settings", null, null, null, false, 1280, 820),
                 ("help-center", "running", "settings", null, null, null, false, 1280, 820),
                 ("create-game", "running", "create", null, "0", null, false, 1280, 820),
+                ("create-world-upload", "running", "create", null, "4", null, false, 1280, 820),
                 ("create-paper-game", "running", "create", null, "0", "paper", false, 1280, 820),
                 ("create-paper-version", "running", "create", null, "1", "paper", false, 1280, 820),
                 ("create-paper-review", "running", "create", null, "6", "paper", false, 1280, 820),
@@ -225,6 +226,7 @@ internal static class WebUiFixtureLauncher
                 ("mods-browse", "fabric", "servers", "content", null, "mods-browse", false, 1280, 820),
                 ("mods-updates", "neoforge", "servers", "content", null, "mods-updates", false, 1280, 820),
                 ("overview-narrow-1100x700", "running", "servers", "overview", null, null, false, 1100, 700),
+                ("server-list-long-names", "longnames", "dashboard", null, null, null, false, 920, 700),
                 ("dashboard-large-1440x900", "several", "dashboard", null, null, null, false, 1440, 900),
                 // Keep the dirty state last: its real beforeunload guard intentionally blocks a
                 // subsequent navigation, while still allowing the capture itself to be reviewed.
@@ -301,6 +303,14 @@ internal static class WebUiFixtureLauncher
                             break;
                         await Task.Delay(100).ConfigureAwait(true);
                     }
+                }
+                if (capture.Name == "create-world-upload")
+                {
+                    _ = await browser.CoreWebView2.ExecuteScriptAsync(
+                        "[...document.querySelectorAll('button')].find(button => button.textContent?.includes('Upload World'))?.click()").ConfigureAwait(true);
+                    await Task.Delay(100).ConfigureAwait(true);
+                    _ = await browser.CoreWebView2.ExecuteScriptAsync(
+                        "[...document.querySelectorAll('button')].find(button => button.textContent?.includes('Choose world folder'))?.click()").ConfigureAwait(true);
                 }
                 await Task.Delay(250).ConfigureAwait(true);
                 var path = Path.Combine(directory, capture.Name + ".png");

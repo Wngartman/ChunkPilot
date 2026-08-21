@@ -33,6 +33,34 @@ function renderWorkspace() {
 }
 
 describe('Minecraft players workspace', () => {
+  it('never renders the previous server roster while a new authoritative selection is pending', () => {
+    const current = structuredClone(fixtures.running);
+    const previous = current.servers[0];
+    const next = structuredClone(previous);
+    next.id = 'server-b';
+    next.name = 'Server B';
+    current.servers.push(next);
+    current.selectedServerId = previous.id;
+    current.players[0].name = 'PreviousServerPlayer';
+    useAppStore.setState({ snapshot: current });
+
+    render(<NavigationGuardProvider><ServerWorkspace serverId={next.id} /></NavigationGuardProvider>);
+
+    expect(screen.getByRole('status').textContent).toContain('Opening Server B');
+    expect(screen.queryByText('PreviousServerPlayer')).toBeNull();
+    expect(calls.some(call => call.method === 'workspace.load' && call.params.serverId === next.id)).toBe(false);
+
+    const authoritative = structuredClone(current);
+    authoritative.revision += 1;
+    authoritative.selectedServerId = next.id;
+    authoritative.playerAccess = { ...authoritative.playerAccess!, serverId: next.id };
+    authoritative.players = [{ ...authoritative.players[0], name: 'ServerBPlayer' }];
+    act(() => useAppStore.getState().applySnapshot(authoritative));
+
+    expect(screen.getByText('ServerBPlayer')).toBeTruthy();
+    expect(screen.queryByText('PreviousServerPlayer')).toBeNull();
+  });
+
   it('remains available to a Minecraft server whose ecosystem is unknown or custom', () => {
     const current = structuredClone(fixtures.running);
     current.servers[0].ecosystem = 'Custom';

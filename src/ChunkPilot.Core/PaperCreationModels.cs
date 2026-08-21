@@ -127,6 +127,7 @@ public sealed record PaperCreationPlan
     public DateTimeOffset? MetadataRetrievedUtc { get; init; }
     public bool MetadataFromCache { get; init; }
     public bool ExperimentalRuntimeRiskAccepted { get; init; }
+    public CreationWorldSource? InitialWorld { get; init; }
 
     public IReadOnlyList<string> Problems()
     {
@@ -148,6 +149,8 @@ public sealed record PaperCreationPlan
         var portProblem = ServerPortPolicy.Validate(Port);
         if (portProblem is not null)
             problems.Add(portProblem);
+        if (InitialWorld is { } world)
+            problems.AddRange(world.Problems());
         return problems;
     }
 }

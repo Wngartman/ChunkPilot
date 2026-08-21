@@ -311,6 +311,7 @@ public sealed class InstallationCoordinator
                 Port = plan.Port,
                 CreationNetworkingPreference = plan.NetworkingPreference,
                 MaxPlayers = plan.MaxPlayers,
+                InitialWorld = plan.InitialWorld,
                 EulaAccepted = plan.Eula.Accepted,
                 EulaAcceptedAt = plan.Eula.AcceptedAtUtc,
                 // The hash the user reviewed is carried through, so an artifact that changed between
@@ -462,6 +463,7 @@ public sealed class InstallationCoordinator
                 Port = plan.Port,
                 CreationNetworkingPreference = plan.NetworkingPreference,
                 MaxPlayers = plan.MaxPlayers,
+                InitialWorld = plan.InitialWorld,
                 EulaAccepted = plan.Eula.Accepted,
                 EulaAcceptedAt = plan.Eula.AcceptedAtUtc,
                 ExpectedSha256 = plan.Build.ServerSha256
@@ -651,6 +653,7 @@ public sealed class InstallationCoordinator
                 Port = plan.Port,
                 CreationNetworkingPreference = plan.NetworkingPreference,
                 MaxPlayers = plan.MaxPlayers,
+                InitialWorld = plan.InitialWorld,
                 EulaAccepted = plan.Eula.Accepted,
                 EulaAcceptedAt = plan.Eula.AcceptedAtUtc,
                 ExpectedSha1 = plan.Build.ArtifactSha1,
@@ -809,6 +812,7 @@ public sealed class InstallationCoordinator
                 Port = plan.Port,
                 CreationNetworkingPreference = plan.NetworkingPreference,
                 MaxPlayers = plan.MaxPlayers,
+                InitialWorld = plan.InitialWorld,
                 EulaAccepted = plan.Eula.Accepted,
                 EulaAcceptedAt = plan.Eula.AcceptedAtUtc,
                 ExpectedSha1 = plan.ExpectedSha1,

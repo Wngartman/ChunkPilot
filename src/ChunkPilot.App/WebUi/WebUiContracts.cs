@@ -55,7 +55,7 @@ internal static class WebUiMethodPolicy
         "connectivity.firewall.primary", "connectivity.firewall.secondary", "connectivity.firewall.confirm",
         "connectivity.firewall.cancelConsent", "connectivity.firewall.remove", "connectivity.firewall.cancel",
         "versions.check", "versions.install", "versions.rollback", "versions.verify", "versions.cancel",
-        "creation.catalog", "creation.paperBuilds", "creation.loaderBuilds", "creation.previewDestination", "creation.chooseFolder", "creation.chooseLegacyArtifact",
+        "creation.catalog", "creation.paperBuilds", "creation.loaderBuilds", "creation.previewDestination", "creation.chooseFolder", "creation.chooseWorld", "creation.chooseLegacyArtifact",
         "creation.begin", "creation.operations", "creation.progress", "creation.cancel"
     };
 

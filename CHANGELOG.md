@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Server workspace clarity and existing-world creation
+
+- Kept sidebar status indicators at a fixed readable size when server names are long, and remounted
+  server-scoped workspaces during selection so the previous server's players or whitelist cannot flash
+  while the Agent loads the new authoritative snapshot.
+- Added a locally reviewed **Upload World** creation path for regular folders and ZIP archives. ChunkPilot
+  requires exactly one main world, carries Paper-style Nether and End siblings, ignores stale
+  `session.lock`, rechecks the source before and after transactional copying, and never modifies the
+  selected source.
+- Reorganized the Modpack page around installed identity, Minecraft and loader facts, truthful update
+  state, exact provider evidence, and clear pack-managed versus user-owned file rules.
+- Removed the retired native creation window, its unused gateway abstractions, stale preview scripts,
+  and an unreferenced legacy icon source after verifying that the shipped WebUI is the only creation path.
+
 ## 1.3.0-alpha.4 - 2026-08-20
 
 ### Current product synchronization

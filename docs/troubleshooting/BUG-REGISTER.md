@@ -398,9 +398,11 @@ location chooser and completion navigator, and reuses the existing live wizard i
 The retained development switch calls that same shell route. The Dashboard and Servers presentations
 all bind the semantic command; **Add existing server** continues to use its by-reference import path.
 
-The old `InstallServerWindow` implementation remains in source only because it contains broader
-Advanced/custom fields that have not yet been migrated. No normal beginner Vanilla path constructs
-it or exposes unfinished server types.
+The later WebUI product cutover migrated the broader version, platform, memory, storage, and
+networking fields into the single shipped Create server flow. The now-unreachable
+`InstallServerWindow`, its view model, its dead presentation event, and three review scripts for the
+removed `--create-server-v2-live-vanilla` switch were deleted rather than left as misleading product
+scaffolding. The synthetic `--create-server-v2-preview` remains isolated for native design review.
 
 ---
 

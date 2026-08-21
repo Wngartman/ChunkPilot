@@ -17,8 +17,8 @@
 .navItem[data-selected="true"] { background: var(--cp-selected-surface); color: var(--cp-selected-text); }
 .navItem[data-selected="true"]::before { content: ""; position: absolute; left: -11px; width: 3px; height: 20px; border-radius: 0 3px 3px 0; background: var(--cp-accent); }
 .navItem svg { flex: 0 0 auto; }
-.navItem span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.serverDot { width: 8px; height: 8px; margin-left: auto; border-radius: 50%; background: var(--cp-text-muted); }
+.navItem > span { min-width: 0; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.serverDot { width: 8px; height: 8px; flex: 0 0 8px; margin-left: auto; border-radius: 50%; background: var(--cp-text-muted); }
 .serverDot[data-state="Running"] { background: var(--cp-success); }
 .serverDot[data-state="Starting"], .serverDot[data-state="Restarting"] { background: var(--cp-info); }
 .serverDot[data-state="Crashed"], .serverDot[data-state="Unresponsive"] { background: var(--cp-danger); }

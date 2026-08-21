@@ -165,6 +165,7 @@ public sealed class WebUiContractTests
         Assert.True(WebUiMethodPolicy.IsAllowed("modpacks.image"));
         Assert.True(WebUiMethodPolicy.IsAllowed("modpacks.chooseLocal"));
         Assert.True(WebUiMethodPolicy.IsAllowed("creation.chooseLegacyArtifact"));
+        Assert.True(WebUiMethodPolicy.IsAllowed("creation.chooseWorld"));
         Assert.False(WebUiMethodPolicy.IsAllowed("settings.curseforge.status"));
         Assert.False(WebUiMethodPolicy.IsAllowed("settings.curseforge.save"));
         Assert.False(WebUiMethodPolicy.IsAllowed("settings.curseforge.disconnect"));

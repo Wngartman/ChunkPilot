@@ -22,7 +22,7 @@ ChunkPilot is prerelease software. The binaries are currently unsigned, so Windo
 
 ## What ChunkPilot does
 
-- **Create servers:** guided Vanilla, Paper, Fabric, Quilt, Forge, NeoForge, and modpack setup with managed Java and exact version selection.
+- **Create servers:** guided Vanilla, Paper, Fabric, Quilt, Forge, NeoForge, and modpack setup with managed Java, exact version selection, and a safe choice between a new world or an existing world folder/ZIP.
 - **Play with friends:** choose local-only, home-network, or Internet hosting while ChunkPilot keeps local, LAN, router-reported, and verified public addresses distinct.
 - **Install content:** browse Modrinth, paste a supported provider link, or import a server ZIP, `.mrpack`, JAR, or existing folder without manual extraction.
 - **Protect worlds:** transactional installs and updates, verified backups, rollback snapshots, safe restore, and recovery-first removal.

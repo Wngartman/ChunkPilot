@@ -89,7 +89,8 @@ export function ServerWorkspace({ serverId, onOpenHelp = () => undefined }: { se
   const closeShare = useCallback(() => setShareOpen(false), []);
   const navigate = useGuardedNavigation();
   const server = snapshot.servers.find(item => item.id === serverId);
-  useEffect(() => { if (server) void command('workspace.load', { serverId: server.id, destination: tab }).catch(() => undefined); }, [tab, server?.id]);
+  const scopedSnapshotReady = Boolean(server && snapshot.selectedServerId === server.id);
+  useEffect(() => { if (server && scopedSnapshotReady) void command('workspace.load', { serverId: server.id, destination: tab }).catch(() => undefined); }, [tab, server?.id, scopedSnapshotReady]);
   if (!server) return null;
   const tabs: { id: Tab; label: string; icon: typeof ServerIcon; enabled: boolean }[] = [
     { id: 'overview', label: 'Overview', icon: ServerIcon, enabled: true },
@@ -131,17 +132,19 @@ export function ServerWorkspace({ serverId, onOpenHelp = () => undefined }: { se
       <nav className={styles.tabs} aria-label={`${server.name} navigation`}>{tabs.filter(item => item.enabled).map(item => <button className={styles.tab} key={item.id} data-selected={tab === item.id} aria-current={tab === item.id ? 'page' : undefined} onClick={() => navigate(() => runMeasuredNavigation(`server-tab-${item.id}`, () => { setMenuOpen(false); setTab(item.id); }))}><item.icon size={14} />{item.label}</button>)}</nav>
     </section>
     <div className={styles.content}>
-      {tab === 'overview' && <Overview server={server} onTab={setTab} onSettings={openSettings} onOpenHelp={onOpenHelp} />}
-      {tab === 'console' && <ConsolePage server={server} />}
-      {tab === 'players' && <PlayersPage server={server} />}
-      {tab === 'files' && <FilesPage server={server} />}
-      {tab === 'content' && <ContentPage server={server} />}
-      {tab === 'backups' && <BackupsPage server={server} />}
-      {tab === 'versions' && <VersionsPage server={server} />}
-      {tab === 'settings' && <ServerSettingsPage key={server.id} server={server} initialCategory={settingsCategory} />}
+      {!scopedSnapshotReady ? <section className={styles.panel} role="status"><EmptyState title={`Opening ${server.name}`} detail="Waiting for authoritative data from this server. Previous server details are not carried across the switch." /></section> : <>
+        {tab === 'overview' && <Overview server={server} onTab={setTab} onSettings={openSettings} onOpenHelp={onOpenHelp} />}
+        {tab === 'console' && <ConsolePage server={server} />}
+        {tab === 'players' && <PlayersPage server={server} />}
+        {tab === 'files' && <FilesPage server={server} />}
+        {tab === 'content' && <ContentPage server={server} />}
+        {tab === 'backups' && <BackupsPage server={server} />}
+        {tab === 'versions' && <VersionsPage server={server} />}
+        {tab === 'settings' && <ServerSettingsPage key={server.id} server={server} initialCategory={settingsCategory} />}
+      </>}
     </div>
-    <ShareDialog open={shareOpen} onClose={closeShare} server={server} connectivity={snapshot.connectivity?.serverId === server.id ? snapshot.connectivity : null} onManage={() => { closeShare(); openSettings('Connectivity'); }} />
-    <DeleteServerDialog open={deleteOpen} preflight={deletePreflight} server={server} onClose={() => setDeleteOpen(false)} />
+    {scopedSnapshotReady && <ShareDialog open={shareOpen} onClose={closeShare} server={server} connectivity={snapshot.connectivity?.serverId === server.id ? snapshot.connectivity : null} onManage={() => { closeShare(); openSettings('Connectivity'); }} />}
+    {scopedSnapshotReady && <DeleteServerDialog open={deleteOpen} preflight={deletePreflight} server={server} onClose={() => setDeleteOpen(false)} />}
   </div>;
 }
 
@@ -456,31 +459,34 @@ function ModpackPage({ server }: { server: ServerSummary }) {
   const versionBusy = ['versions.check', 'versions.install', 'versions.rollback', 'versions.cancel'].some(method => busy.has(method));
   if (!pack || !update?.sourceLinked)
     return <section className={styles.panel}><EmptyState title="Pack identity unavailable" detail="ChunkPilot has not established an exact provider project and release for this server. Individual mods remain visible in the managed content inventory, but pack-level updates are disabled until identity is proven." /></section>;
-  return <div className={styles.versionStack}>
-    <section className={styles.panel}>
-      <div className={styles.pathBar}>
-        <div><strong>{pack.projectName}</strong> <span className={page.muted}>· {pack.provider} · {pack.versionName}</span></div>
-        <div className={page.actions}>
+  return <div className={styles.modpackPage}>
+    <section className={styles.modpackOverview}>
+      <header className={styles.modpackHeader}>
+        <div className={styles.modpackIdentity}><span aria-hidden="true"><Archive size={20} /></span><div><small>Installed modpack</small><strong>{pack.projectName}</strong><p>{pack.provider} · {update.installedVersionName || pack.versionName}</p></div></div>
+        <div className={`${page.actions} ${styles.modpackActions}`}>
           {providerUpdates && update.cancellable && <Button variant="subtle" disabled={busy.has('versions.cancel')} onClick={() => void command('versions.cancel', { serverId: server.id })}>Cancel safely</Button>}
           {canInstallUpdate && <Button variant="primary" disabled={versionBusy} onClick={() => setShowInstall(true)}>Install pack {update.latestVersionName ?? 'update'}</Button>}
           {providerUpdates && <Button icon={<RotateCw size={14} />} disabled={versionBusy} onClick={() => void command('versions.check', { serverId: server.id })}>{busy.has('versions.check') ? 'Checking…' : 'Check pack release'}</Button>}
         </div>
+      </header>
+      <div className={styles.modpackFacts}>
+        <div><span>Pack release</span><strong>{update.installedVersionName || pack.versionName}</strong><small>{update.releaseChannel || 'Release channel unavailable'}</small></div>
+        <div><span>Minecraft</span><strong>{update.minecraftVersion || server.minecraftVersion}</strong><small>Exact pack requirement</small></div>
+        <div><span>Loader</span><strong>{update.loader || server.ecosystem}{update.loaderVersion ? ` ${update.loaderVersion}` : ''}</strong><small>Server runtime platform</small></div>
       </div>
-      <div className={styles.catalogPolicy}>
-        <div><span>Installed release</span><strong>{update.installedVersionName || pack.versionName}</strong></div>
-        <div><span>Platform</span><strong>{update.loader || server.ecosystem}{update.loaderVersion ? ` ${update.loaderVersion}` : ''}</strong></div>
-        <p>Minecraft {update.minecraftVersion || server.minecraftVersion} · {update.releaseChannel || 'Channel unavailable'}. Pack updates compare exact provider releases and never update constituent mods independently.</p>
-      </div>
-      <div className={styles.updateSummary}>
-        <div><StatusBadge tone={canInstallUpdate ? 'warning' : providerUpdates ? 'success' : 'neutral'}>{providerUpdates ? update.status : 'Local pack'}</StatusBadge><strong>{providerUpdates ? update.detail : 'Provider updates are unavailable until this local archive is linked to an exact project release.'}</strong><span>{providerUpdates ? update.checkedAt ? `Last checked ${new Date(update.checkedAt).toLocaleString()}` : 'Not checked yet' : 'The inspected archive remains the installed baseline.'}</span></div>
+      <div className={styles.modpackUpdate} data-tone={canInstallUpdate ? 'warning' : providerUpdates ? 'success' : 'neutral'}>
+        <div><StatusBadge tone={canInstallUpdate ? 'warning' : providerUpdates ? 'success' : 'neutral'}>{providerUpdates ? update.status : 'Local pack'}</StatusBadge><span><strong>{providerUpdates ? update.detail || 'The installed release is the latest confirmed provider release.' : 'Provider updates are unavailable for this local archive.'}</strong><small>{providerUpdates ? update.checkedAt ? `Last checked ${new Date(update.checkedAt).toLocaleString()}` : 'No provider check has completed yet.' : 'The inspected archive remains the installed baseline until an exact project release is linked.'}</small></span></div>
         {update.operationPercent != null && <div className={styles.updateProgress} aria-label={`Pack update progress ${update.operationPercent.toFixed(0)} percent`}><i><b style={{ width: `${Math.max(0, Math.min(100, update.operationPercent))}%` }} /></i><span>{update.operationStep || update.operationState} · {update.operationPercent.toFixed(0)}%</span>{update.operationDetail && update.operationDetail !== update.operationStep && <small>{update.operationDetail}</small>}</div>}
       </div>
       <UpdateInstallDialog open={showInstall} onClose={() => setShowInstall(false)} server={server} update={update} />
     </section>
-    <section className={styles.versionEvidence}>
-      <header><div><strong>Pack ownership</strong><p>ChunkPilot owns the exact pack release as one recovery-backed unit. Files added outside the pack remain user-owned; changed pack-managed files are reviewed during update migration.</p></div><StatusBadge tone="info">Exact release linked</StatusBadge></header>
-      <dl className={styles.evidenceGrid}><div><dt>Provider</dt><dd>{pack.provider}</dd></div><div><dt>Project</dt><dd>{pack.projectName}</dd></div><div><dt>Release ID</dt><dd>{pack.versionId}</dd></div><div><dt>Project ID</dt><dd>{pack.projectId}</dd></div><div><dt>Update model</dt><dd>Whole pack release</dd></div></dl>
-      <p className={styles.contextNote}>Use Versions for verified recovery snapshots and rollback history. Use Mods to inspect pack-managed and user-added JAR inventory only; ordinary per-mod update is not applied to this linked pack.</p>
+    <section className={styles.packEvidence}>
+      <header><div><strong>Verified pack identity</strong><p>These exact identifiers bind updates and recovery history to this installed release.</p></div><StatusBadge tone="info">Exact release linked</StatusBadge></header>
+      <div className={styles.packEvidenceBody}>
+        <dl className={styles.packEvidenceGrid}><div><dt>Provider</dt><dd>{pack.provider}</dd></div><div><dt>Project</dt><dd>{pack.projectName}</dd></div><div><dt>Update model</dt><dd>Whole pack release</dd></div><div><dt>Project ID</dt><dd><code>{pack.projectId}</code></dd></div><div><dt>Release ID</dt><dd><code>{pack.versionId}</code></dd></div></dl>
+        <div className={styles.packRules}><div><strong>Updates stay pack-aware</strong><p>ChunkPilot compares exact provider releases. It will never update constituent mods independently or split the pack from its tested release.</p></div><div><strong>User files stay user-owned</strong><p>Files added outside the pack remain yours. Changed pack-managed files are reviewed during update migration rather than silently overwritten.</p></div></div>
+      </div>
+      <footer className={styles.packDestinations}><span><strong>Versions</strong> contains verified recovery snapshots and rollback history.</span><span><strong>Mods</strong> shows pack-managed and user-added JAR inventory.</span></footer>
     </section>
   </div>;
 }

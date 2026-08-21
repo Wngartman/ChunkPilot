@@ -109,7 +109,7 @@ function AppContent() {
     setRoute('servers');
   };
   let content = route === 'dashboard' ? <DashboardPage onServers={openLibrary} onOpenServer={openServer} onCreate={() => setRoute('create')} />
-    : route === 'servers' ? (selected ? <ServerWorkspace serverId={activeServerId!} onOpenHelp={openHelp} /> : <ServersPage onOpenServer={openServer} onCreate={() => setRoute('create')} />)
+    : route === 'servers' ? (selected ? <ServerWorkspace key={activeServerId!} serverId={activeServerId!} onOpenHelp={openHelp} /> : <ServersPage onOpenServer={openServer} onCreate={() => setRoute('create')} />)
     : route === 'activity' ? <ActivityPage />
     : route === 'automation' ? <AutomationPage />
     : route === 'settings' ? <SettingsPage initialCategory={settingsCategory} initialHelpArticleId={helpArticleId} onHelpDeepLink={followHelpDeepLink} />

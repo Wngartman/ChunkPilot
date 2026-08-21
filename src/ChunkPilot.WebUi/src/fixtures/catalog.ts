@@ -246,6 +246,14 @@ export const fixtures: Record<string, WebUiSnapshot> = {
   running: snapshot([server()]),
   plugins: snapshot([paperPlugins]),
   several: snapshot([server(), stopped, attention, fabric, neoForge]),
+  longnames: snapshot([
+    server({ name: 'StaTech Industry-2' }),
+    stopped,
+    attention,
+    fabric,
+    neoForge,
+    server({ id: '672c39be-28f3-4651-b1a7-f9556fc335a4', name: 'StaTech Industry-2.0.0-rc4-serverpack with friends' })
+  ]),
   fabric: snapshot([fabric]),
   neoforge: snapshot([neoForge]),
   modpack: modpackSnapshot,
@@ -340,6 +348,19 @@ export class FixtureBridge implements BridgeAdapter {
     }
     if (method === 'creation.previewDestination') return { available: true, path: `C:\\ChunkPilot Servers\\${String(params.name ?? 'New Server').replaceAll(' ', '-')}`, message: 'This destination is available.' } as T;
     if (method === 'creation.chooseFolder') return { path: 'D:\\Minecraft Servers' } as T;
+    if (method === 'creation.chooseWorld') return {
+      cancelled: false,
+      token: 'fixture-existing-world-token',
+      displayName: 'Copper Harbor',
+      kind: params.kind === 'ZipArchive' ? 'ZipArchive' : 'Folder',
+      worldName: 'Copper Harbor',
+      sourceSizeBytes: 86_507_922,
+      expandedSizeBytes: 86_507_922,
+      fileCount: 143,
+      includesNether: true,
+      includesEnd: true,
+      expiresAt: new Date(Date.now() + 300_000).toISOString()
+    } as T;
     if (method === 'creation.begin') return { operationId: params.operationId, accepted: true } as T;
     if (method === 'creation.operations') return [] as T;
     if (method === 'creation.progress') return { stage: 'Preparing', percent: 34, message: 'Preparing the managed server safely.', isTerminal: false } as T;

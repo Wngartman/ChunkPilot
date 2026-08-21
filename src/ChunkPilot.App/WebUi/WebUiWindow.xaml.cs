@@ -79,6 +79,8 @@ public partial class WebUiWindow : Window
     private readonly WebUiLocalPluginTokenStore localPluginTokens = new();
     private readonly WebUiServerImportTokenStore localImportTokens = new();
     private readonly WebUiLegacyArtifactTokenStore legacyArtifactTokens = new();
+    private readonly WebUiWorldSourceTokenStore worldSourceTokens = new();
+    private readonly CreationWorldSourceService creationWorldSources = new();
     private readonly HttpClient modpackImages = new() { Timeout = TimeSpan.FromSeconds(20) };
     private readonly PlayerHeadImageService playerHeads = new();
 
@@ -168,6 +170,7 @@ public partial class WebUiWindow : Window
         core.Settings.IsZoomControlEnabled = false;
         core.Settings.IsStatusBarEnabled = false;
         core.Settings.IsBuiltInErrorPageEnabled = false;
+        core.Settings.AreDefaultScriptDialogsEnabled = false;
         core.Settings.IsGeneralAutofillEnabled = false;
         core.Settings.IsPasswordAutosaveEnabled = false;
         core.NavigationStarting += CoreOnNavigationStarting;
@@ -864,6 +867,8 @@ public partial class WebUiWindow : Window
                 return await CreationDestinationAsync(parameters).ConfigureAwait(true);
             case "creation.chooseFolder":
                 return ChooseCreationFolder(parameters);
+            case "creation.chooseWorld":
+                return await ChooseCreationWorldAsync(parameters).ConfigureAwait(true);
             case "creation.begin":
                 return BeginCreationOperation(parameters);
             case "creation.operations":
@@ -1984,6 +1989,52 @@ public partial class WebUiWindow : Window
         return JsonSerializer.SerializeToNode(new { path }, WebUiProtocol.Json);
     }
 
+    private async Task<JsonNode?> ChooseCreationWorldAsync(JsonObject parameters)
+    {
+        var kindText = OptionalString(parameters, "kind", 16);
+        var kind = kindText.Equals("folder", StringComparison.OrdinalIgnoreCase)
+            ? CreationWorldSourceKind.Folder
+            : kindText.Equals("zip", StringComparison.OrdinalIgnoreCase)
+                ? CreationWorldSourceKind.ZipArchive
+                : throw new ArgumentException("Choose either a world folder or a world ZIP.");
+        string path;
+        if (kind == CreationWorldSourceKind.Folder)
+        {
+            path = new DialogService().SelectFolder("Choose an existing Minecraft world folder") ?? "";
+            if (string.IsNullOrWhiteSpace(path))
+                return JsonSerializer.SerializeToNode(new { cancelled = true }, WebUiProtocol.Json);
+        }
+        else
+        {
+            var dialog = new Microsoft.Win32.OpenFileDialog
+            {
+                Title = "Choose a ZIP containing one Minecraft world",
+                Filter = "Minecraft world ZIP (*.zip)|*.zip",
+                CheckFileExists = true,
+                Multiselect = false
+            };
+            if (dialog.ShowDialog(this) != true)
+                return JsonSerializer.SerializeToNode(new { cancelled = true }, WebUiProtocol.Json);
+            path = dialog.FileName;
+        }
+        var source = await creationWorldSources.InspectAsync(path, kind).ConfigureAwait(true);
+        var token = worldSourceTokens.Issue(source);
+        return JsonSerializer.SerializeToNode(new
+        {
+            cancelled = false,
+            token.Token,
+            token.DisplayName,
+            kind = token.Kind.ToString(),
+            token.WorldName,
+            token.SourceSizeBytes,
+            token.ExpandedSizeBytes,
+            token.FileCount,
+            token.IncludesNether,
+            token.IncludesEnd,
+            token.ExpiresAt
+        }, WebUiProtocol.Json);
+    }
+
     private JsonNode? BeginCreationOperation(JsonObject parameters)
     {
         if (!Guid.TryParse(RequiredString(parameters, "operationId", 64), out var operationId))
@@ -2050,6 +2101,7 @@ public partial class WebUiWindow : Window
         }
         if (parameters["eulaAccepted"]?.GetValue<bool>() is not true)
             throw new ArgumentException("You must deliberately accept the Minecraft EULA before creation.");
+        var initialWorld = await ConsumeInitialWorldAsync(parameters, cancellationToken).ConfigureAwait(true);
         var plan = new VanillaCreationPlan
         {
             OperationId = Guid.Parse(RequiredString(parameters, "operationId", 64)),
@@ -2071,6 +2123,7 @@ public partial class WebUiWindow : Window
             MetadataRetrievedUtc = creationCatalog.RetrievedUtc,
             MetadataFromCache = creationCatalog.IsFromCache,
             UserSuppliedArtifact = suppliedArtifact,
+            InitialWorld = initialWorld,
             AcknowledgedWarnings = version.Warnings
         };
         var problems = plan.Problems();
@@ -2088,6 +2141,7 @@ public partial class WebUiWindow : Window
         if (parameters["experimentalAccepted"]?.GetValue<bool>() is not true)
             throw new ArgumentException(
                 "Acknowledge that this exact modpack release will be validated on demand during creation.");
+        var initialWorld = await ConsumeInitialWorldAsync(parameters, cancellationToken).ConfigureAwait(true);
 
         ModpackCreationPlan plan;
         var localToken = OptionalString(parameters, "localPackToken", 128);
@@ -2104,6 +2158,8 @@ public partial class WebUiWindow : Window
                 throw new InvalidOperationException("The selected local server source changed after review. Choose it again.");
             if (reviewed.SourceKind != ServerImportSourceKind.ModrinthPack)
             {
+                if (initialWorld is not null)
+                    throw new ArgumentException("A complete imported server source already owns its world layout. Choose Create new world for that path, or create a managed server from a version or pack and upload the world there.");
                 var management = Enum.TryParse<ServerImportManagementMode>(
                     OptionalString(parameters, "importManagementMode", 32), true, out var parsedManagement)
                     ? parsedManagement : ServerImportManagementMode.ManagedCopy;
@@ -2219,7 +2275,8 @@ public partial class WebUiWindow : Window
                 OptionalString(parameters, "networking", 60), true, out var preference)
                 ? preference
                 : VanillaNetworkingPreference.DecideLater,
-            ExperimentalRuntimeRiskAccepted = true
+            ExperimentalRuntimeRiskAccepted = true,
+            InitialWorld = initialWorld
         };
     }
 
@@ -2252,6 +2309,7 @@ public partial class WebUiWindow : Window
             throw new ArgumentException("Acknowledge that this exact loader combination is Experimental before creation.");
         if (parameters["eulaAccepted"]?.GetValue<bool>() is not true)
             throw new ArgumentException("You must deliberately accept the Minecraft EULA before creation.");
+        var initialWorld = await ConsumeInitialWorldAsync(parameters, cancellationToken).ConfigureAwait(true);
         var plan = new ManagedLoaderCreationPlan
         {
             OperationId = Guid.Parse(RequiredString(parameters, "operationId", 64)),
@@ -2276,7 +2334,8 @@ public partial class WebUiWindow : Window
             MetadataRetrievedUtc = builds.RetrievedUtc,
             MetadataFromCache = versions.IsFromCache || builds.IsFromCache,
             ExperimentalRuntimeRiskAccepted = build.SupportTier != MinecraftVersionSupportTier.Experimental ||
-                                              parameters["experimentalAccepted"]?.GetValue<bool>() is true
+                                              parameters["experimentalAccepted"]?.GetValue<bool>() is true,
+            InitialWorld = initialWorld
         };
         var problems = plan.Problems();
         if (problems.Count > 0) throw new ArgumentException(string.Join(" ", problems));
@@ -2317,6 +2376,7 @@ public partial class WebUiWindow : Window
         }
         if (parameters["eulaAccepted"]?.GetValue<bool>() is not true)
             throw new ArgumentException("You must deliberately accept the Minecraft EULA before creation.");
+        var initialWorld = await ConsumeInitialWorldAsync(parameters, cancellationToken).ConfigureAwait(true);
 
         var plan = new PaperCreationPlan
         {
@@ -2342,12 +2402,23 @@ public partial class WebUiWindow : Window
             MetadataRetrievedUtc = builds.RetrievedUtc,
             MetadataFromCache = paperVersionCatalog.IsFromCache || builds.IsFromCache,
             ExperimentalRuntimeRiskAccepted = build.SupportTier != MinecraftVersionSupportTier.Experimental ||
-                                                parameters["experimentalAccepted"]?.GetValue<bool>() is true
+                                                parameters["experimentalAccepted"]?.GetValue<bool>() is true,
+            InitialWorld = initialWorld
         };
         var problems = plan.Problems();
         if (problems.Count > 0)
             throw new ArgumentException(string.Join(" ", problems));
         return await paperCreation.BeginAsync(plan, cancellationToken).ConfigureAwait(true);
+    }
+
+    private async Task<CreationWorldSource?> ConsumeInitialWorldAsync(
+        JsonObject parameters,
+        CancellationToken cancellationToken)
+    {
+        var token = OptionalString(parameters, "initialWorldToken", 128);
+        return string.IsNullOrWhiteSpace(token)
+            ? null
+            : await worldSourceTokens.ConsumeAsync(token, cancellationToken).ConfigureAwait(true);
     }
 
     private async Task<JsonNode?> CreationProgressAsync(JsonObject parameters)
@@ -2756,6 +2827,7 @@ public partial class WebUiWindow : Window
         localPluginTokens.Clear();
         localImportTokens.Clear();
         legacyArtifactTokens.Clear();
+        worldSourceTokens.Clear();
         modpackImageCache.Clear();
         modpackImages.Dispose();
         playerHeads.Dispose();

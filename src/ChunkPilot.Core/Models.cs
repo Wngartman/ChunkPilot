@@ -499,6 +499,7 @@ public sealed record ServerInstallRequest
     public int MaxPlayers { get; init; } = 20;
     public IReadOnlyDictionary<string, string> InitialProperties { get; init; } =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+    public CreationWorldSource? InitialWorld { get; init; }
     public bool EnableDailyBackup { get; init; }
     public bool EulaAccepted { get; init; }
     public DateTimeOffset? EulaAcceptedAt { get; init; }
