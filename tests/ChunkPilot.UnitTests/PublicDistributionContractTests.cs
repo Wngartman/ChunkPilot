@@ -18,7 +18,9 @@ public sealed class PublicDistributionContractTests
         var source = File.ReadAllText(Path.Combine(Root, "installer", "ChunkPilot.iss"));
         Assert.Contains("PrivilegesRequired=lowest", source, StringComparison.Ordinal);
         Assert.Contains("artifacts\\self-contained-win-x64", source, StringComparison.Ordinal);
-        Assert.DoesNotContain("ChunkPilot WebUI Preview", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("Name: \"{autoprograms}\\ChunkPilot\\ChunkPilot WebUI Preview\"", source,
+            StringComparison.Ordinal);
+        Assert.Contains("[InstallDelete]", source, StringComparison.Ordinal);
         Assert.DoesNotContain("--webui-preview", source, StringComparison.Ordinal);
         Assert.Contains("F3017226-FE2A-4295-8BDF-00C3A9A7E4C5", source, StringComparison.Ordinal);
         Assert.Contains("MicrosoftEdgeWebview2Setup.exe", source, StringComparison.Ordinal);
@@ -30,7 +32,7 @@ public sealed class PublicDistributionContractTests
     }
 
     [Fact]
-    public void Hotfix_publication_builds_once_then_tags_and_publishes_the_exact_payload()
+    public void Release_publication_builds_once_then_tags_and_publishes_the_exact_payload()
     {
         var release = File.ReadAllText(Path.Combine(Root, ".github", "workflows", "release.yml"));
         var ci = File.ReadAllText(Path.Combine(Root, ".github", "workflows", "ci.yml"));
@@ -48,7 +50,8 @@ public sealed class PublicDistributionContractTests
         Assert.Contains("git tag -a", release, StringComparison.Ordinal);
         Assert.Contains("release-manifest.json", release, StringComparison.Ordinal);
         Assert.Contains("Redownload and verify public assets", release, StringComparison.Ordinal);
-        Assert.Contains("hotfix-release-${{ inputs.tag }}", release, StringComparison.Ordinal);
+        Assert.Contains("release-${{ inputs.tag }}", release, StringComparison.Ordinal);
+        Assert.Contains("ChunkPilot-Release-Metadata-$env:RELEASE_TAG.zip", release, StringComparison.Ordinal);
         Assert.Equal(1, release.Split("scripts/publish.ps1", StringSplitOptions.None).Length - 1);
         Assert.True(
             release.IndexOf("Build, test, publish, and compile installer once", StringComparison.Ordinal) <
@@ -63,10 +66,10 @@ public sealed class PublicDistributionContractTests
     }
 
     [Fact]
-    public void Hotfix_command_refuses_ambiguous_state_and_watches_one_exact_workflow_run()
+    public void Release_command_refuses_ambiguous_state_and_watches_one_exact_workflow_run()
     {
-        var source = File.ReadAllText(Path.Combine(Root, "scripts", "publish-hotfix.ps1"));
-        var docs = File.ReadAllText(Path.Combine(Root, "docs", "RELEASING.md"));
+        var source = File.ReadAllText(Path.Combine(Root, "scripts", "publish-release.ps1"));
+        var docs = File.ReadAllText(Path.Combine(Root, "docs", "release", "RELEASING.md"));
         Assert.Contains("git -C $repoRoot", source, StringComparison.Ordinal);
         Assert.Contains("status --porcelain", source, StringComparison.Ordinal);
         Assert.Contains("branch --show-current", source, StringComparison.Ordinal);
@@ -74,9 +77,9 @@ public sealed class PublicDistributionContractTests
         Assert.Contains("tags are immutable", source, StringComparison.Ordinal);
         Assert.Contains("gh workflow run release.yml", source, StringComparison.Ordinal);
         Assert.Contains("gh run watch $runId", source, StringComparison.Ordinal);
-        Assert.Contains("release-manifest.json", source, StringComparison.Ordinal);
+        Assert.Contains("build-manifest.json", source, StringComparison.Ordinal);
         Assert.Contains("-Version 1.3.0-alpha.4", docs, StringComparison.Ordinal);
-        Assert.Contains("builds and tests the WebUI and .NET solution once", docs, StringComparison.Ordinal);
+        Assert.Contains("builds once and tests the exact artifacts", docs, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -84,7 +87,6 @@ public sealed class PublicDistributionContractTests
     {
         var template = File.ReadAllText(Path.Combine(Root, "release", "RELEASE_NOTES.template.md"));
         var package = File.ReadAllText(Path.Combine(Root, "scripts", "package-release.ps1"));
-        Assert.Contains("{{RELEASE_TITLE}}", template, StringComparison.Ordinal);
         Assert.Contains("{{RELEASE_TAG}}", template, StringComparison.Ordinal);
         Assert.Contains("{{INSTALLER_NAME}}", template, StringComparison.Ordinal);
         Assert.Contains("{{HOTFIX_NOTES}}", template, StringComparison.Ordinal);
@@ -108,6 +110,7 @@ public sealed class PublicDistributionContractTests
         Assert.Contains("PersistentDataUnchanged", source, StringComparison.Ordinal);
         Assert.Contains("DefaultLaunch", source, StringComparison.Ordinal);
         Assert.DoesNotContain("WebUiPreviewLaunch", source, StringComparison.Ordinal);
+        Assert.Contains("PreviousReleaseUpgrade", source, StringComparison.Ordinal);
         Assert.Contains("Get-Content -LiteralPath $uninstallLog -Tail 250", source, StringComparison.Ordinal);
     }
 
@@ -153,11 +156,26 @@ public sealed class PublicDistributionContractTests
     public void Public_snapshot_declares_pre_alpha_unsigned_and_no_source_license()
     {
         var readme = File.ReadAllText(Path.Combine(Root, "README.md"));
-        Assert.Contains("Pre-alpha", readme, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("alpha prerelease", readme, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("unsigned", readme, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("no account system, ads, or telemetry", readme, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("no required ChunkPilot account, no ads, and no telemetry", readme, StringComparison.OrdinalIgnoreCase);
         Assert.False(File.Exists(Path.Combine(Root, "LICENSE")));
         Assert.False(File.Exists(Path.Combine(Root, "LICENSE.md")));
+    }
+
+    [Fact]
+    public void Release_metadata_and_signing_are_explicit_and_secret_free()
+    {
+        var package = File.ReadAllText(Path.Combine(Root, "scripts", "package-release.ps1"));
+        var publish = File.ReadAllText(Path.Combine(Root, "scripts", "publish.ps1"));
+        var signing = File.ReadAllText(Path.Combine(Root, "scripts", "sign-release.ps1"));
+        Assert.Contains("ChunkPilot-Release-Metadata-$ReleaseTag.zip", package, StringComparison.Ordinal);
+        Assert.Contains("build-manifest.json", package, StringComparison.Ordinal);
+        Assert.Contains("provenance.json", package, StringComparison.Ordinal);
+        Assert.Contains("verify-release-signatures.ps1", publish, StringComparison.Ordinal);
+        Assert.Contains("CHUNKPILOT_SIGNING_CERT_THUMBPRINT", signing, StringComparison.Ordinal);
+        Assert.Contains("TimeStamperCertificate", signing, StringComparison.Ordinal);
+        Assert.DoesNotContain("BEGIN PRIVATE KEY", signing, StringComparison.Ordinal);
     }
 
     private static string RepositoryRoot()

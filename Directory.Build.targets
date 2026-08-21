@@ -4,6 +4,7 @@
     <ChunkPilotGitSha Condition="'$(ChunkPilotGitSha)' == ''">unknown</ChunkPilotGitSha>
     <ChunkPilotBuildTimestampUtc Condition="'$(ChunkPilotBuildTimestampUtc)' == ''">unknown</ChunkPilotBuildTimestampUtc>
     <InformationalVersion>1.3.0-alpha.4+$(ChunkPilotGitSha)</InformationalVersion>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
   </PropertyGroup>
   <ItemGroup>
     <AssemblyMetadata Include="ChunkPilotReleaseTag" Value="$(ChunkPilotReleaseTag)" />

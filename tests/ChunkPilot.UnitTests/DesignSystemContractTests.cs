@@ -10,7 +10,7 @@ using ChunkPilot.UnitTests.DesignSystem;
 namespace ChunkPilot.UnitTests;
 
 /// <summary>
-/// Enforces the design-system contract described in <c>docs/UI-DESIGN-SYSTEM.md</c>.
+/// Enforces the design-system contract described in <c>docs/architecture/UI-DESIGN-SYSTEM.md</c>.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -207,7 +207,7 @@ public sealed class DesignSystemContractTests
         var undocumented = themeKeys.Except(catalog.Keys, StringComparer.Ordinal).OrderBy(key => key, StringComparer.Ordinal).ToArray();
         Assert.True(
             undocumented.Length == 0,
-            "Shared components missing from docs/UI-COMPONENT-CATALOG.md: " + string.Join(", ", undocumented));
+            "Shared components missing from docs/architecture/UI-COMPONENT-CATALOG.md: " + string.Join(", ", undocumented));
 
         var phantom = catalog.Keys.Except(themeKeys, StringComparer.Ordinal).OrderBy(key => key, StringComparer.Ordinal).ToArray();
         Assert.True(

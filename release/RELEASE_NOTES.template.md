@@ -1,48 +1,33 @@
-# {{RELEASE_TITLE}} Hotfix
+## Download ChunkPilot for Windows
 
-ChunkPilot is a local-first Windows x64 launcher and manager for Minecraft servers. This prerelease is a focused hotfix built and tested from the exact public release commit.
+**Recommended:** download and run [`{{INSTALLER_NAME}}`](https://github.com/Wngartman/ChunkPilot/releases/download/{{RELEASE_TAG}}/{{INSTALLER_NAME}}).
+
+**Portable:** use [`ChunkPilot-Portable-{{RELEASE_TAG}}-win-x64.zip`](https://github.com/Wngartman/ChunkPilot/releases/download/{{RELEASE_TAG}}/ChunkPilot-Portable-{{RELEASE_TAG}}-win-x64.zip) when you do not want an installed Start Menu entry.
+
+ChunkPilot is a local-first Windows x64 launcher and manager for Minecraft servers. This prerelease was built, tested, installed, upgraded, and packaged from one exact public commit.
 
 - Release tag: `{{RELEASE_TAG}}`
 - Release commit: `{{RELEASE_COMMIT}}`
 - Product version: `{{PRODUCT_VERSION}}`
 - Build completed: `{{BUILD_TIME_UTC}}`
 
-## Install
-
-Download `{{INSTALLER_NAME}}`. It is a per-user, self-contained Windows x64 installer, so a separate .NET installation is not required. The installer adds **ChunkPilot** and **ChunkPilot WebUI Preview** shortcuts. The preview remains explicitly opt-in.
-
-## Hotfix changes
+## What's in Alpha 4
 
 {{HOTFIX_NOTES}}
 
-If Microsoft Edge WebView2 Evergreen Runtime is missing, setup runs the Microsoft-signed Evergreen bootstrapper included in the installer. The portable package can run the default WPF interface without Node.js or an installer; its WebUI preview still requires WebView2.
+The default uninstall preserves settings, servers, worlds, backups, provider credentials, and history. Imported servers remain in their original folders.
 
-## Current capabilities
+## Current limitations
 
-- Guided creation for Vanilla, Paper, Purpur, Fabric, NeoForge, Forge, Quilt, and exact server-capable Modrinth releases.
-- Managed Java without changing system `PATH` or uninstalling system Java.
-- Safe lifecycle control, bounded console capture, backups, restore, worlds, schedules, plugins/mods, and version rollback.
-- Consent-first router and Windows Firewall workflows that never claim public reachability from a local port check.
-- Local-only application state with no accounts, ads, or telemetry.
-
-## Data preservation
-
-The default uninstall removes application binaries and shortcuts while preserving settings, servers, worlds, backups, credentials, and history. Imported servers remain in their original folders. Optional removal controls are separate and unchecked by default.
-
-## Known limitations
-
-- This is a pre-alpha snapshot, not a stable or beta release.
-- The WebUI remains a preview; normal no-argument launch uses the accepted WPF interface.
-- Windows x64 is the only packaged platform.
+- This is alpha software for 64-bit Windows 10 and Windows 11.
 - The installer and executables are unsigned, so SmartScreen may warn.
-- Some historical Minecraft releases have no redistributable official server artifact and require a user-supplied artifact or remain unavailable.
-- CurseForge integration requires the user's own API key.
-- Terraria support is an engineering-only experimental foundation and is not presented as supported product functionality.
-- Router, firewall, CGNAT, and outside-in behavior varies by real network; deterministic tests do not prove every environment.
+- CurseForge production access remains disabled while the application credential model is approved; users are never asked for an API key.
+- Some historical Minecraft versions have no current official server artifact and require an original user-supplied ZIP or JAR.
+- Router, firewall, CGNAT, and outside-in behavior varies by network and still requires acceptance on the actual machine.
 
 ## SHA-256
 
-Verify downloaded assets with `SHA256SUMS.txt`.
+Verify the installer, portable ZIP, and release metadata with `SHA256SUMS.txt`.
 
 ```text
 {{SHA256_SUMS}}

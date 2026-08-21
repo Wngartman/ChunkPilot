@@ -177,8 +177,8 @@ unchanged.
   types, overlay coverage, duplicate keys, catalogue/theme/gallery agreement, icon uniqueness, and
   bans on page-local colours, typography literals, glyph literals, tab navigation, nested scroll
   regions and stray message boxes.
-- Rewrote `docs/UI-DESIGN-SYSTEM.md`, `docs/UI-COMPONENT-CATALOG.md` and
-  `docs/UI-RESPONSIVE-RULES.md`, and added an always-loaded reuse-first UI steering rule.
+- Rewrote `docs/architecture/UI-DESIGN-SYSTEM.md`, `docs/architecture/UI-COMPONENT-CATALOG.md` and
+  `docs/architecture/UI-RESPONSIVE-RULES.md`, and added an always-loaded reuse-first UI steering rule.
 
 Product pages, dialogs and workflows are unchanged in this phase; they still use a temporary
 compatibility alias layer that later phases delete.

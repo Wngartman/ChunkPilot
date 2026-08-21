@@ -1,7 +1,7 @@
 #define MyAppName "ChunkPilot"
 #define MyAppVersion "1.3.0"
 #ifndef MyReleaseTag
-  #define MyReleaseTag "v1.3.0-alpha.3"
+  #define MyReleaseTag "v1.3.0-alpha.4"
 #endif
 #define MyAppPublisher "ChunkPilot"
 #define MyAppExeName "ChunkPilot.exe"
@@ -46,6 +46,9 @@ Source: "prerequisites\MicrosoftEdgeWebview2Setup.exe"; Flags: dontcopy
 [Icons]
 Name: "{autoprograms}\ChunkPilot\ChunkPilot"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\Assets\ChunkPilot.ico"; Comment: "Open ChunkPilot"; AppUserModelID: "ChunkPilot.Desktop"
 Name: "{autodesktop}\ChunkPilot"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\Assets\ChunkPilot.ico"; Tasks: desktopicon
+
+[InstallDelete]
+Type: files; Name: "{autoprograms}\ChunkPilot\ChunkPilot WebUI Preview.lnk"
 
 [Registry]
 Root: HKA; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: none; ValueName: "ChunkPilot"; Flags: deletevalue uninsdeletevalue

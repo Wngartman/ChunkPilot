@@ -11,7 +11,7 @@ namespace ChunkPilot.App.DesignSystem;
 /// </para>
 /// <para>
 /// Adding a member is a design-system change: extend <see cref="AppIconMap"/>, show the icon in the
-/// Design Gallery, and describe the intent in <c>docs/UI-DESIGN-SYSTEM.md</c>. Never add a member
+/// Design Gallery, and describe the intent in <c>docs/architecture/UI-DESIGN-SYSTEM.md</c>. Never add a member
 /// whose meaning duplicates an existing one.
 /// </para>
 /// </remarks>

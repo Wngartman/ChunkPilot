@@ -81,6 +81,18 @@ Get-ChildItem -LiteralPath $selfContainedOutput -Filter '*.pdb' -File -Recurse |
 Get-ChildItem -LiteralPath $selfContainedOutput -Filter 'Microsoft.Web.WebView2.*.xml' -File -Recurse |
     Remove-Item -Force
 
+$firstPartyBinaries = @(
+    (Join-Path $selfContainedOutput 'ChunkPilot.exe'),
+    (Join-Path $selfContainedOutput 'ChunkPilot.FirewallHelper.exe'),
+    (Join-Path $selfContainedOutput 'Agent\ChunkPilot.Agent.exe')
+)
+$signingConfigured = -not [string]::IsNullOrWhiteSpace($env:CHUNKPILOT_SIGNING_CERT_THUMBPRINT)
+if ($signingConfigured) {
+    & (Join-Path $repoRoot 'scripts\sign-release.ps1') -Path $firstPartyBinaries -Required
+}
+& (Join-Path $repoRoot 'scripts\verify-release-signatures.ps1') -Path $firstPartyBinaries `
+    -RequireSigned:$signingConfigured | Format-Table -AutoSize | Out-Host
+
 & (Join-Path $repoRoot 'scripts\generate-third-party-notices.ps1') -OutputPath (Join-Path $releaseSupportOutput 'THIRD-PARTY-NOTICES.txt') | Out-Host
 Copy-Item -LiteralPath (Join-Path $releaseSupportOutput 'THIRD-PARTY-NOTICES.txt') -Destination (Join-Path $selfContainedOutput 'THIRD-PARTY-NOTICES.txt') -Force
 
@@ -102,6 +114,12 @@ if ($BuildInstaller) {
     }
     & $iscc "/DMyReleaseTag=$ReleaseTag" (Join-Path $repoRoot "installer\ChunkPilot.iss")
     if ($LASTEXITCODE -ne 0) { throw "Inno Setup compiler failed with exit code $LASTEXITCODE." }
+    $installerPath = Join-Path $repoRoot "installer\output\ChunkPilot-Setup-$ReleaseTag.exe"
+    if ($signingConfigured) {
+        & (Join-Path $repoRoot 'scripts\sign-release.ps1') -Path $installerPath -Required
+    }
+    & (Join-Path $repoRoot 'scripts\verify-release-signatures.ps1') -Path $installerPath `
+        -RequireSigned:$signingConfigured | Format-Table -AutoSize | Out-Host
 }
 
 Write-Host "Framework-dependent publish: $frameworkOutput"

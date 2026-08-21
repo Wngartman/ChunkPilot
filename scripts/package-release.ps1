@@ -12,6 +12,7 @@ $selfContained = Join-Path $artifactsRoot 'self-contained-win-x64'
 $portableSource = Join-Path $artifactsRoot 'portable-test'
 $releaseDirectory = Join-Path $artifactsRoot ("release\$ReleaseTag")
 $sbomWork = Join-Path $artifactsRoot ("sbom-work\$ReleaseTag")
+$metadataWork = Join-Path $artifactsRoot ("release-metadata-work\$ReleaseTag")
 $safeArtifacts = [IO.Path]::GetFullPath($artifactsRoot) + [IO.Path]::DirectorySeparatorChar
 
 function Reset-ArtifactsDirectory([string]$Path) {
@@ -44,9 +45,11 @@ function New-DeterministicZip([string]$Source, [string]$Destination, [DateTimeOf
 
 $required = @(
     (Join-Path $selfContained 'ChunkPilot.exe'),
+    (Join-Path $selfContained 'ChunkPilot.FirewallHelper.exe'),
     (Join-Path $selfContained 'Agent\ChunkPilot.Agent.exe'),
     (Join-Path $portableSource 'README.txt'),
-    (Join-Path $repoRoot 'release\RELEASE_NOTES.template.md')
+    (Join-Path $repoRoot 'release\RELEASE_NOTES.template.md'),
+    (Join-Path $artifactsRoot 'release-support\THIRD-PARTY-NOTICES.txt')
 )
 foreach ($path in $required) {
     if (-not (Test-Path -LiteralPath $path)) { throw "Required release input is missing: $path" }
@@ -54,15 +57,20 @@ foreach ($path in $required) {
 
 $installerName = "ChunkPilot-Setup-$ReleaseTag.exe"
 $portableName = "ChunkPilot-Portable-$ReleaseTag-win-x64.zip"
+$metadataName = "ChunkPilot-Release-Metadata-$ReleaseTag.zip"
 $installerSource = Join-Path $repoRoot "installer\output\$installerName"
 if (-not (Test-Path -LiteralPath $installerSource)) { throw "Installer input is missing: $installerSource" }
 
 Reset-ArtifactsDirectory $releaseDirectory
 Reset-ArtifactsDirectory $sbomWork
+Reset-ArtifactsDirectory $metadataWork
 $installer = Join-Path $releaseDirectory $installerName
 $portable = Join-Path $releaseDirectory $portableName
-$notices = Join-Path $releaseDirectory 'THIRD-PARTY-NOTICES.txt'
-$sbom = Join-Path $releaseDirectory 'ChunkPilot-SBOM.spdx.json'
+$metadataZip = Join-Path $releaseDirectory $metadataName
+$notices = Join-Path $metadataWork 'THIRD-PARTY-NOTICES.txt'
+$sbom = Join-Path $metadataWork 'ChunkPilot-SBOM.spdx.json'
+$buildManifest = Join-Path $metadataWork 'build-manifest.json'
+$provenance = Join-Path $metadataWork 'provenance.json'
 $checksums = Join-Path $releaseDirectory 'SHA256SUMS.txt'
 $releaseNotes = Join-Path $releaseDirectory 'RELEASE_NOTES.md'
 
@@ -99,10 +107,8 @@ if ($sbomDocument.spdxVersion -ne 'SPDX-2.2' -or @($sbomDocument.files).Count -e
 }
 $validationPath = Join-Path $sbomWork 'validation.json'
 & $sbomRuntime $sbomAssembly.FullName Validate -b $selfContained -m (Join-Path $sbomWork '_manifest') `
-    -o $validationPath -mi 'SPDX:2.2' -n `
-    -t (Join-Path $sbomWork 'validation-telemetry.json') -V Warning
+    -o $validationPath -mi 'SPDX:2.2' -n -t (Join-Path $sbomWork 'validation-telemetry.json') -V Warning
 if ($LASTEXITCODE -ne 0) { throw "SBOM validation failed with exit code $LASTEXITCODE." }
-if (-not (Test-Path -LiteralPath $validationPath)) { throw 'SBOM validation did not produce its result document.' }
 $validation = Get-Content -LiteralPath $validationPath -Raw | ConvertFrom-Json
 if ($validation.Result -ne 'Success' -or $validation.ValidationErrors.Count -ne 0 -or
     $validation.Summary.ValidationTelemetery.FilesFailedCount -ne 0 -or
@@ -110,36 +116,73 @@ if ($validation.Result -ne 'Success' -or $validation.ValidationErrors.Count -ne 
     throw 'SBOM validator did not report a complete dependency-bearing success.'
 }
 
-$hashTargets = @($installer, $portable, $sbom, $notices)
+$productVersion = [Diagnostics.FileVersionInfo]::GetVersionInfo((Join-Path $selfContained 'ChunkPilot.exe')).ProductVersion
+if (-not $productVersion.EndsWith($commit, [StringComparison]::OrdinalIgnoreCase)) {
+    throw "Packaged ProductVersion $productVersion is not bound to release commit $commit."
+}
+$signatureFiles = @(
+    (Join-Path $selfContained 'ChunkPilot.exe'),
+    (Join-Path $selfContained 'ChunkPilot.FirewallHelper.exe'),
+    (Join-Path $selfContained 'Agent\ChunkPilot.Agent.exe'),
+    $installer
+)
+$signatureReport = @(& (Join-Path $repoRoot 'scripts\verify-release-signatures.ps1') -Path $signatureFiles)
+$build = [PSCustomObject]@{
+    SchemaVersion = 1
+    ProductVersion = $productVersion
+    ReleaseTag = $ReleaseTag
+    GitSha = $commit
+    SourceCommitTimeUtc = $commitTime.UtcDateTime.ToString('yyyy-MM-ddTHH:mm:ssZ')
+    PackagingTimeUtc = [DateTimeOffset]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
+    DatabaseSchema = 6
+    Architecture = 'win-x64'
+    DefaultUi = 'WebUI'
+    Signed = @($signatureReport | Where-Object { -not $_.Signed }).Count -eq 0
+    Signatures = $signatureReport
+    PackageLayout = [PSCustomObject]@{
+        TopLevelEntries = @(Get-ChildItem -LiteralPath $portableSource).Count
+        TotalFiles = @(Get-ChildItem -LiteralPath $portableSource -File -Recurse).Count
+        Bytes = (Get-ChildItem -LiteralPath $portableSource -File -Recurse | Measure-Object Length -Sum).Sum
+    }
+}
+[IO.File]::WriteAllText($buildManifest, ($build | ConvertTo-Json -Depth 6), [Text.UTF8Encoding]::new($false))
+$provenanceDocument = [PSCustomObject]@{
+    SchemaVersion = 1
+    Repository = 'https://github.com/Wngartman/ChunkPilot'
+    Commit = $commit
+    Tag = $ReleaseTag
+    Builder = if ($env:GITHUB_ACTIONS -eq 'true') { 'GitHub Actions' } else { 'Local release verification' }
+    WorkflowRun = if ($env:GITHUB_RUN_ID) { "https://github.com/Wngartman/ChunkPilot/actions/runs/$env:GITHUB_RUN_ID" } else { $null }
+    DependencyEvidence = @('SPDX 2.2 SBOM', 'locked npm graph', 'restored NuGet graph', 'third-party notices')
+}
+[IO.File]::WriteAllText($provenance, ($provenanceDocument | ConvertTo-Json -Depth 4), [Text.UTF8Encoding]::new($false))
+New-DeterministicZip $metadataWork $metadataZip $commitTime
+
+$hashTargets = @($installer, $portable, $metadataZip)
 $hashLines = foreach ($path in $hashTargets) {
     $hash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
     "$hash  $([IO.Path]::GetFileName($path))"
 }
 [IO.File]::WriteAllLines($checksums, $hashLines, [Text.UTF8Encoding]::new($false))
 
-$productVersion = [Diagnostics.FileVersionInfo]::GetVersionInfo((Join-Path $selfContained 'ChunkPilot.exe')).ProductVersion
-if (-not $productVersion.EndsWith($commit, [StringComparison]::OrdinalIgnoreCase)) {
-    throw "Packaged ProductVersion $productVersion is not bound to release commit $commit."
-}
 $notes = Get-Content -LiteralPath (Join-Path $repoRoot 'release\RELEASE_NOTES.template.md') -Raw
 $hotfixNotes = Get-Content -LiteralPath (Join-Path $repoRoot 'release\HOTFIX_NOTES.md') -Raw
 if ([string]::IsNullOrWhiteSpace($hotfixNotes)) { throw 'release/HOTFIX_NOTES.md is empty.' }
 if ($ReleaseTag -notmatch '^v(?<version>\d+\.\d+\.\d+)-alpha\.(?<alpha>[1-9][0-9]*)$') {
     throw "Could not derive release metadata from $ReleaseTag."
 }
-$releaseTitle = "ChunkPilot $($matches.version) Alpha $($matches.alpha)"
 $notes = $notes.Replace('{{RELEASE_COMMIT}}', $commit)
 $notes = $notes.Replace('{{PRODUCT_VERSION}}', $productVersion)
 $notes = $notes.Replace('{{BUILD_TIME_UTC}}', [DateTimeOffset]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ'))
 $notes = $notes.Replace('{{SHA256_SUMS}}', ($hashLines -join "`n"))
-$notes = $notes.Replace('{{RELEASE_TITLE}}', $releaseTitle)
 $notes = $notes.Replace('{{RELEASE_TAG}}', $ReleaseTag)
 $notes = $notes.Replace('{{INSTALLER_NAME}}', $installerName)
 $notes = $notes.Replace('{{HOTFIX_NOTES}}', $hotfixNotes.Trim())
 if ($notes -match '\{\{[A-Z0-9_]+\}\}') { throw "Release notes contain an unresolved placeholder: $($matches[0])" }
 [IO.File]::WriteAllText($releaseNotes, $notes, [Text.UTF8Encoding]::new($false))
 
-$assetReport = foreach ($path in @($installer, $portable, $checksums, $sbom, $notices, $releaseNotes)) {
+$publicAssets = @($installer, $portable, $checksums, $metadataZip)
+$assetReport = foreach ($path in $publicAssets) {
     $item = Get-Item -LiteralPath $path
     [PSCustomObject]@{
         Name = $item.Name
@@ -151,7 +194,9 @@ $manifest = [PSCustomObject]@{
     Tag = $ReleaseTag
     Commit = $commit
     ProductVersion = $productVersion
+    Signed = $build.Signed
     Assets = $assetReport
 }
-[IO.File]::WriteAllText((Join-Path $releaseDirectory 'release-manifest.json'), ($manifest | ConvertTo-Json -Depth 5), [Text.UTF8Encoding]::new($false))
+[IO.File]::WriteAllText((Join-Path $releaseDirectory 'release-manifest.json'),
+    ($manifest | ConvertTo-Json -Depth 5), [Text.UTF8Encoding]::new($false))
 $manifest
