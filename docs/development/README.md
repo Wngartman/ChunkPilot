@@ -26,8 +26,8 @@ Use `-Tier Feature` for ordinary provider, bridge, or non-destructive applicatio
 The full release factory runs only for an explicit release or a frozen high-risk milestone:
 
 ```powershell
-.\scripts\publish.ps1 -BuildInstaller -ReleaseTag v1.3.0-alpha.4
-.\scripts\package-release.ps1 -ReleaseTag v1.3.0-alpha.4
+.\scripts\publish.ps1 -BuildInstaller -ReleaseTag v1.3.0-alpha.5
+.\scripts\package-release.ps1 -ReleaseTag v1.3.0-alpha.5
 ```
 
 Release automation builds once, tests those exact artifacts, and publishes only the tested commit. See [release instructions](../release/RELEASING.md).

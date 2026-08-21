@@ -15,8 +15,8 @@ From clean public `main`:
 
 ```powershell
 .\scripts\publish-release.ps1 `
-    -Version 1.3.0-alpha.4 `
-    -Supersedes v1.3.0-alpha.3
+    -Version 1.3.0-alpha.5 `
+    -Supersedes v1.3.0-alpha.4
 ```
 
 The command rejects a dirty or non-main tree, stale public main, reused tag/release, or unknown superseded release. It dispatches `.github/workflows/release.yml` with the full public-main SHA, watches that exact run, then independently redownloads and verifies the public assets.

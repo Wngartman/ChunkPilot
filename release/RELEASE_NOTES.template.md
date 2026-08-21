@@ -11,7 +11,7 @@ ChunkPilot is a local-first Windows x64 launcher and manager for Minecraft serve
 - Product version: `{{PRODUCT_VERSION}}`
 - Build completed: `{{BUILD_TIME_UTC}}`
 
-## What's in Alpha 4
+## What's in Alpha 5
 
 {{HOTFIX_NOTES}}
 

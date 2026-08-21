@@ -1,7 +1,7 @@
 #define MyAppName "ChunkPilot"
 #define MyAppVersion "1.3.0"
 #ifndef MyReleaseTag
-  #define MyReleaseTag "v1.3.0-alpha.4"
+  #define MyReleaseTag "v1.3.0-alpha.5"
 #endif
 #define MyAppPublisher "ChunkPilot"
 #define MyAppExeName "ChunkPilot.exe"

@@ -7,12 +7,12 @@
 ## Repository State
 
 - Worktree: `D:\ChunkPilot\temp\networking-players-clarity`
-- Branch: `codex/fix-motd-and-pack-install-state`
-- Verified implementation checkpoint: `49a14eb3e0b4740840dab78aeb6c47964a67c24c`
+- Branch: `codex/world-import-ui-hardening`
+- Verified implementation checkpoints: `115491ce305af32b7fe809983506b44f3ac0d7c0` plus the Alpha 5 release-preparation commit reported at handoff
 - Base: public Alpha 4, `3bd0131fac16625ff006191c4493cfcfb53153f1`
-- Version: `1.3.0-alpha.4`; schema: `6` (unchanged; no migration)
+- Version: `1.3.0-alpha.5`; schema: `6` (unchanged; no migration)
 - Preservation stash: untouched
-- Publication: no upstream, push, tag, install, release, or public asset in this gate
+- Publication: Alpha 5 candidate; push, tag, workflow, and public asset state are reported only after live verification
 - This checkpoint is committed as a metadata/tooling descendant. The final live HEAD is reported at
   handoff because a commit cannot contain its own hash.
 
@@ -37,11 +37,17 @@ remains blocked on manual user acceptance and the external checks listed below.
   failure evidence. Dismissals are fingerprinted and reversible from Help.
 - Settings includes 28 offline articles across 10 categories, exact-signature/alias search, stable deep links,
   safe steps, stop conditions, related help, and user-invoked allowlisted primary sources.
+- Long server names cannot shrink their sidebar status indicator, and a server selection cannot render the
+  previous server's player or whitelist state while the new authoritative snapshot is loading.
+- Existing world folders and ZIPs are bounded, reviewed, revalidated, copied through managed transactional
+  staging, and never modified. Paper-style Nether and End siblings are carried with the main world.
+- Installed modpack identity, runtime requirements, update state, provider evidence, ownership boundaries,
+  recovery, and inventory destinations are visually distinct.
 
 ## Final-Source Checks
 
-- Frontend: **passed** — 24 files, 141 tests; typecheck, lint, and Vite production build; 207 modules.
-- Native unit: **passed** — 1,331/1,331, zero skipped.
+- Frontend: **passed** — 25 files, 143 tests; typecheck, lint, and Vite production build; 207 modules.
+- Native unit: **passed** — 1,337/1,337, zero skipped.
 - Native integration: **passed** — 349/349, zero skipped, sequential isolated fixtures.
 - Release build: **passed** — zero warnings and zero errors.
 - Feature development package: **passed** — targeted native/package contracts 38/38.
@@ -87,7 +93,7 @@ remains blocked on manual user acceptance and the external checks listed below.
 
 ```powershell
 Set-Location 'D:\ChunkPilot\temp\networking-players-clarity'
-& 'D:\ChunkPilot\temp\networking-players-clarity\artifacts\dev-current\ChunkPilot.exe'
+Start-Process -FilePath 'D:\ChunkPilot\temp\networking-players-clarity\artifacts\self-contained-win-x64\ChunkPilot.exe'
 ```
 
 Confirm server A/B/C MOTD isolation, Whitelist copy, automatic owned connectivity state, taskbar identity,

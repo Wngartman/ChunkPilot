@@ -1,6 +1,6 @@
 # Code signing and SmartScreen
 
-ChunkPilot's release factory is signing-ready but no trusted publisher identity is configured. Public Alpha 4 artifacts are therefore expected to be unsigned, and Windows SmartScreen may warn. Repository cleanup and checksums do not create Authenticode trust or SmartScreen reputation.
+ChunkPilot's release factory is signing-ready but no trusted publisher identity is configured. Public Alpha 5 artifacts are therefore expected to be unsigned, and Windows SmartScreen may warn. Repository cleanup and checksums do not create Authenticode trust or SmartScreen reputation.
 
 ## Trusted signing gate
 

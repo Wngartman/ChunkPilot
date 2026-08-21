@@ -1,5 +1,6 @@
-- Synchronizes the public application with the current React/WebView2 product, including guided server creation, connectivity, recovery, content management, and the Alpha 3 lifecycle ownership fixes.
-- Makes the WebUI the only shipped product interface and adds a native WebView2 recovery surface.
-- Adds direct Modrinth provider-link resolution plus safe ZIP, `.mrpack`, JAR, and folder import with native opaque tokens and transactional installation.
-- Removes every end-user CurseForge API-key prompt. CurseForge production access remains truthfully gated while its application credential model is approved.
-- Organizes the public source, documentation, development workflow, portable package, build identity, and immutable release automation.
+- Prevents server-scoped settings, MOTD drafts, player lists, whitelist entries, and late native responses from crossing a server-selection boundary.
+- Keeps long sidebar names readable without shrinking their status indicator, restores capability-driven player controls for modpack servers, and adds locally cropped player-head fallbacks.
+- Adds a safe **Upload World** creation path for folders and ZIP archives with bounded inspection, one-time native authority, transactional copying, source revalidation, and source preservation.
+- Reorganizes installed-modpack identity, runtime requirements, updates, ownership, recovery, and exact provider evidence into distinct readable sections.
+- Clarifies LAN, router, firewall, and outside-in states; adds evidence-based server-health cards and a local searchable help center without turning local checks into public-reachability claims.
+- Removes retired native creation scaffolding and stale review scripts, hardens packaged identity checks, and disables default WebView script dialogs.

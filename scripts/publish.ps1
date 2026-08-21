@@ -22,7 +22,7 @@ $env:DOTNET_NOLOGO = "1"
 $sourceCommit = (& git -C $repoRoot rev-parse HEAD).Trim()
 if ($LASTEXITCODE -ne 0 -or $sourceCommit -notmatch '^[0-9a-f]{40}$') { throw 'Could not resolve the source commit.' }
 $buildTimestamp = [DateTimeOffset]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
-$effectiveReleaseTag = if ($ReleaseTag) { $ReleaseTag } else { 'v1.3.0-alpha.4' }
+$effectiveReleaseTag = if ($ReleaseTag) { $ReleaseTag } else { 'v1.3.0-alpha.5' }
 $identityProperties = @(
     "-p:ChunkPilotGitSha=$sourceCommit",
     "-p:ChunkPilotReleaseTag=$effectiveReleaseTag",

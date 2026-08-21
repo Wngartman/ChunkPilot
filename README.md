@@ -10,11 +10,11 @@ ChunkPilot is a local-first Windows app that creates and manages Minecraft serve
 
 ## Download
 
-**Recommended: [Windows Installer](https://github.com/Wngartman/ChunkPilot/releases/download/v1.3.0-alpha.4/ChunkPilot-Setup-v1.3.0-alpha.4.exe)**
+**Recommended: [Windows Installer](https://github.com/Wngartman/ChunkPilot/releases/download/v1.3.0-alpha.5/ChunkPilot-Setup-v1.3.0-alpha.5.exe)**
 
 The per-user installer includes the required .NET runtime and can install Microsoft WebView2 when it is missing.
 
-**Portable: [Windows x64 ZIP](https://github.com/Wngartman/ChunkPilot/releases/download/v1.3.0-alpha.4/ChunkPilot-Portable-v1.3.0-alpha.4-win-x64.zip)**
+**Portable: [Windows x64 ZIP](https://github.com/Wngartman/ChunkPilot/releases/download/v1.3.0-alpha.5/ChunkPilot-Portable-v1.3.0-alpha.5-win-x64.zip)**
 
 Extract the whole ZIP and run `ChunkPilot.exe`; no installation or developer tools are required.
 

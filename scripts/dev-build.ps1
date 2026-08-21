@@ -69,7 +69,7 @@ if (-not $outputFull.StartsWith($artifactsFull, [StringComparison]::OrdinalIgnor
 if (Test-Path -LiteralPath $outputFull) { Remove-Item -LiteralPath $outputFull -Recurse -Force }
 New-Item -ItemType Directory -Path (Join-Path $outputFull 'Agent') -Force | Out-Null
 $timestamp = [DateTimeOffset]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
-$identity = @("-p:ChunkPilotGitSha=$commit", '-p:ChunkPilotReleaseTag=v1.3.0-alpha.4-dev', "-p:ChunkPilotBuildTimestampUtc=$timestamp")
+$identity = @("-p:ChunkPilotGitSha=$commit", '-p:ChunkPilotReleaseTag=v1.3.0-alpha.5-dev', "-p:ChunkPilotBuildTimestampUtc=$timestamp")
 $single = @('-p:PublishSingleFile=true', '-p:IncludeNativeLibrariesForSelfExtract=true', '-p:DebugType=None', '-p:DebugSymbols=false')
 dotnet publish (Join-Path $repoRoot 'src\ChunkPilot.App\ChunkPilot.App.csproj') -c Release -r win-x64 --self-contained true --no-restore -o $outputFull @identity @single
 if ($LASTEXITCODE -ne 0) { throw 'App development publish failed.' }

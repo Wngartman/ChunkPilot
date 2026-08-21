@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.3.0-alpha.5 - 2026-08-21
+
 ### Server workspace clarity and existing-world creation
 
 - Kept sidebar status indicators at a fixed readable size when server names are long, and remounted

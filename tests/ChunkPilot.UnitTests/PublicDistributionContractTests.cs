@@ -83,7 +83,7 @@ public sealed class PublicDistributionContractTests
         Assert.Contains("gh workflow run release.yml", source, StringComparison.Ordinal);
         Assert.Contains("gh run watch $runId", source, StringComparison.Ordinal);
         Assert.Contains("build-manifest.json", source, StringComparison.Ordinal);
-        Assert.Contains("-Version 1.3.0-alpha.4", docs, StringComparison.Ordinal);
+        Assert.Contains("-Version 1.3.0-alpha.5", docs, StringComparison.Ordinal);
         Assert.Contains("builds once and tests the exact artifacts", docs, StringComparison.OrdinalIgnoreCase);
     }
 

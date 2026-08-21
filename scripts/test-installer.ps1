@@ -228,8 +228,8 @@ if (-not [string]::IsNullOrWhiteSpace($PreviousInstallerPath)) {
     if (-not (Test-Path -LiteralPath $app)) { throw 'Previous prerelease did not install before upgrade.' }
     Invoke-Setup $installer $upgradeLog
     $upgradedVersion = [Diagnostics.FileVersionInfo]::GetVersionInfo($app).ProductVersion
-    if (-not $upgradedVersion.StartsWith('1.3.0-alpha.4+', [StringComparison]::OrdinalIgnoreCase)) {
-        throw "Prior-release upgrade did not install Alpha 4 binaries: $upgradedVersion"
+    if (-not $upgradedVersion.StartsWith('1.3.0-alpha.5+', [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Prior-release upgrade did not install Alpha 5 binaries: $upgradedVersion"
     }
     if (Test-Path -LiteralPath (Join-Path $startMenuRoot 'ChunkPilot WebUI Preview.lnk')) {
         throw 'Prior-release upgrade left the obsolete WebUI Preview shortcut behind.'
