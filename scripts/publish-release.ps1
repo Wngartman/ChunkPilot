@@ -23,6 +23,14 @@ function Invoke-Git([Parameter(ValueFromRemainingArguments)][string[]]$Arguments
     return $output
 }
 
+function Invoke-GitSingleLine([Parameter(ValueFromRemainingArguments)][string[]]$Arguments) {
+    $lines = @(Invoke-Git @Arguments)
+    if ($lines.Count -ne 1) {
+        throw "git $($Arguments -join ' ') returned $($lines.Count) lines; expected exactly one."
+    }
+    return ([string]$lines[0]).Trim()
+}
+
 function Assert-GitHubReleaseUnused([string]$ReleaseTag) {
     $result = @(& gh api "repos/$Repository/releases/tags/$ReleaseTag" 2>&1)
     $exitCode = $LASTEXITCODE
@@ -43,11 +51,11 @@ try {
 
     $changed = @(Invoke-Git status --porcelain)
     if ($changed.Count -ne 0) { throw 'The release worktree must be clean.' }
-    $branch = (Invoke-Git branch --show-current)[0].Trim()
+    $branch = Invoke-GitSingleLine branch --show-current
     if ($branch -ne 'main') { throw "Run hotfix publication from public main, not $branch." }
 
     Invoke-Git fetch origin main --tags | Out-Null
-    $head = (Invoke-Git rev-parse HEAD)[0].Trim()
+    $head = Invoke-GitSingleLine rev-parse HEAD
     $remoteMainRows = @(Invoke-Git ls-remote origin refs/heads/main)
     if ($remoteMainRows.Count -ne 1) { throw 'Could not resolve the exact public main commit.' }
     $remoteMain = ($remoteMainRows[0] -split '\s+')[0]
@@ -104,10 +112,10 @@ try {
     }
 
     Invoke-Git fetch origin "refs/tags/$tag:refs/tags/$tag" | Out-Null
-    if ((Invoke-Git cat-file -t "refs/tags/$tag")[0].Trim() -ne 'tag') {
+    if ((Invoke-GitSingleLine cat-file -t "refs/tags/$tag") -ne 'tag') {
         throw 'Published release tag is not annotated.'
     }
-    $tagCommit = (Invoke-Git rev-list -n 1 $tag)[0].Trim()
+    $tagCommit = Invoke-GitSingleLine rev-list -n 1 $tag
     if ($tagCommit -ne $head) { throw "Published tag targets $tagCommit instead of $head." }
 
     $release = & gh release view $tag --repo $Repository `
