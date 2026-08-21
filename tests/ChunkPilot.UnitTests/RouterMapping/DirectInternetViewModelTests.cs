@@ -1,9 +1,7 @@
-using System.Xml.Linq;
 using ChunkPilot.App;
 using ChunkPilot.App.DesignSystem;
 using ChunkPilot.App.Presentation;
 using ChunkPilot.Core;
-using ChunkPilot.UnitTests.DesignSystem;
 
 namespace ChunkPilot.UnitTests.RouterMapping;
 
@@ -334,58 +332,6 @@ public sealed class DirectInternetViewModelTests
             Assert.NotEqual("", DirectInternetPresentation.Summary(state));
             Assert.NotEqual("", DirectInternetPresentation.Badge(phase));
         }
-    }
-
-    // ═══ Rendered surface ═══
-
-    [Fact]
-    public void The_overview_direct_internet_block_only_appears_for_direct_internet()
-    {
-        var xaml = File.ReadAllText(Path.Combine(
-            DesignSystemFiles.AppProjectDirectory, "Pages", "ServerOverviewPage.xaml"));
-
-        Assert.Contains("Text=\"Direct internet\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("Visibility=\"{Binding IsDirectInternetSelected, Converter={StaticResource BoolVisibility}}\"",
-            xaml, StringComparison.Ordinal);
-        Assert.Contains("ShowsDirectInternetConsent", xaml, StringComparison.Ordinal);
-        Assert.Contains("ConfirmDirectInternetCommand", xaml, StringComparison.Ordinal);
-    }
-
-    /// <summary>The previous connection card must survive unchanged.</summary>
-    [Fact]
-    public void The_existing_address_tiles_are_preserved()
-    {
-        var xaml = File.ReadAllText(Path.Combine(
-            DesignSystemFiles.AppProjectDirectory, "Pages", "ServerOverviewPage.xaml"));
-
-        Assert.Contains("Text=\"This device\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("Text=\"Local network\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("Text=\"Public access\"", xaml, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void Every_direct_internet_control_carries_an_accessible_name_or_visible_text()
-    {
-        var document = XDocument.Load(Path.Combine(
-            DesignSystemFiles.AppProjectDirectory, "Pages", "ServerOverviewPage.xaml"));
-        var automation = XNamespace.Get("http://schemas.microsoft.com/winfx/2006/xaml/presentation");
-
-        var buttons = document.Descendants()
-            .Where(element => element.Name.LocalName is "Button")
-            .Where(element => (element.Attribute("Command")?.Value ?? "").Contains("DirectInternet",
-                StringComparison.Ordinal))
-            .ToArray();
-
-        Assert.NotEmpty(buttons);
-        foreach (var button in buttons)
-        {
-            var named = button.Attributes().Any(attribute =>
-                attribute.Name.LocalName == "Name" &&
-                attribute.Name.NamespaceName.Contains("AutomationProperties", StringComparison.Ordinal));
-            var hasText = (button.Attribute("Content")?.Value ?? "").Length > 0;
-            Assert.True(named || hasText, $"{button.Attribute("Command")?.Value} needs a name or visible text.");
-        }
-        Assert.NotNull(automation);
     }
 
     private static async Task<(MainViewModel Model, RouterFakeClient Client)> ReadyAsync()

@@ -166,13 +166,12 @@ public partial class App : Application
     /// </remarks>
     private void ConfigureTray(Window window)
     {
-        var iconPath = Path.Combine(AppContext.BaseDirectory, "Assets", "ChunkPilot.ico");
         var menu = new Forms.ContextMenuStrip();
         menu.Items.Add("Open ChunkPilot", null, (_, _) => RestoreFromTray(window));
         menu.Items.Add("Safe stop all and exit", null, (_, _) => window.Close());
         trayIcon = new Forms.NotifyIcon
         {
-            Icon = new System.Drawing.Icon(iconPath),
+            Icon = LoadTrayIcon(),
             Text = "ChunkPilot",
             Visible = window.DataContext is MainViewModel { MinimizeToTray: true },
             ContextMenuStrip = menu
@@ -204,6 +203,15 @@ public partial class App : Application
         // The icon goes the moment the window closes, before the agent is asked to stop anything. A
         // tray icon that outlives its window is indistinguishable from an application that did not exit.
         window.Closing += (_, _) => RemoveTrayIcon();
+    }
+
+    private static System.Drawing.Icon LoadTrayIcon()
+    {
+        var resource = GetResourceStream(new Uri("pack://application:,,,/Assets/ChunkPilot.ico"))
+            ?? throw new InvalidOperationException("The embedded ChunkPilot tray icon is unavailable.");
+        using var stream = resource.Stream;
+        using var source = new System.Drawing.Icon(stream);
+        return (System.Drawing.Icon)source.Clone();
     }
 
     /// <summary>The minimize gesture is converted into a tray hide only when the preference is on.</summary>

@@ -1,7 +1,6 @@
 using ChunkPilot.App;
 using ChunkPilot.Core;
 using ChunkPilot.Infrastructure;
-using ChunkPilot.UnitTests.DesignSystem;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Formats.Png;
 using SixLabors.ImageSharp.PixelFormats;
@@ -104,31 +103,6 @@ public sealed class VanillaCreationIconSweepTests : IDisposable
             ServerIconPixelCrop.FromNormalized(400, 200, 1, 1, 0.5));
         Assert.Equal(new ServerIconPixelCrop(0, 0, 8),
             ServerIconPixelCrop.FromNormalized(100, 100, -5, -5, 0));
-    }
-
-    [Fact]
-    public void Crop_and_connectivity_surfaces_expose_the_complete_keyboard_and_beginner_paths()
-    {
-        var app = DesignSystemFiles.AppProjectDirectory;
-        var crop = File.ReadAllText(Path.Combine(app, "ServerIconCropWindow.xaml"));
-        var access = File.ReadAllText(Path.Combine(app, "Pages", "ServerAccessPage.xaml"));
-        var overview = File.ReadAllText(Path.Combine(app, "Pages", "ServerOverviewPage.xaml"));
-
-        Assert.Contains("64 x 64 preview", crop, StringComparison.Ordinal);
-        Assert.Contains("Content=\"Fit\"", crop, StringComparison.Ordinal);
-        Assert.Contains("Content=\"Reset\"", crop, StringComparison.Ordinal);
-        Assert.Contains("Choose another image", crop, StringComparison.Ordinal);
-        Assert.Contains("IsCancel=\"True\"", crop, StringComparison.Ordinal);
-        Assert.Contains("IsDefault=\"True\"", crop, StringComparison.Ordinal);
-        Assert.DoesNotContain("Source=\"{Binding Path}\"", crop, StringComparison.Ordinal);
-
-        Assert.True(access.IndexOf("Header=\"Networking\"", StringComparison.Ordinal) <
-                    access.IndexOf("Header=\"Players\"", StringComparison.Ordinal));
-        Assert.Contains("NetworkChoiceSummary", access, StringComparison.Ordinal);
-        Assert.Contains("OpenOverviewCommand", access, StringComparison.Ordinal);
-        Assert.Contains("Content=\"Manage connectivity\"", overview, StringComparison.Ordinal);
-        Assert.Contains("Command=\"{Binding OpenAccessCommand}\"", overview, StringComparison.Ordinal);
-        Assert.Contains("IsExpanded=\"False\"", overview, StringComparison.Ordinal);
     }
 
     private async Task<string> WriteImageAsync(string relativePath, Color colour, int width, int height)

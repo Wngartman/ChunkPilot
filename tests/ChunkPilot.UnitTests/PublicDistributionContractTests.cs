@@ -178,6 +178,18 @@ public sealed class PublicDistributionContractTests
         Assert.DoesNotContain("BEGIN PRIVATE KEY", signing, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void Single_file_app_loads_the_tray_icon_from_an_embedded_resource()
+    {
+        var project = File.ReadAllText(Path.Combine(Root, "src", "ChunkPilot.App", "ChunkPilot.App.csproj"));
+        var app = File.ReadAllText(Path.Combine(Root, "src", "ChunkPilot.App", "App.xaml.cs"));
+
+        Assert.Contains("<Resource Include=\"..\\..\\assets\\ChunkPilot.ico\"", project, StringComparison.Ordinal);
+        Assert.DoesNotContain("<Content Include=\"..\\..\\assets\\ChunkPilot.ico\"", project, StringComparison.Ordinal);
+        Assert.Contains("pack://application:,,,/Assets/ChunkPilot.ico", app, StringComparison.Ordinal);
+        Assert.DoesNotContain("AppContext.BaseDirectory, \"Assets\", \"ChunkPilot.ico\"", app, StringComparison.Ordinal);
+    }
+
     private static string RepositoryRoot()
     {
         var current = new DirectoryInfo(AppContext.BaseDirectory);

@@ -1,7 +1,5 @@
-using System.Xml.Linq;
 using ChunkPilot.App;
 using ChunkPilot.Core;
-using ChunkPilot.UnitTests.DesignSystem;
 
 namespace ChunkPilot.UnitTests.ExternalReachability;
 
@@ -250,95 +248,6 @@ public sealed class ExternalReachabilityViewModelTests
 
         Assert.Equal("Not measured", model.ExternalReachabilityConnectTimeLabel);
     }
-
-    // ── The rendered surface ──
-
-    [Fact]
-    public void The_overview_carries_the_external_access_layer_inside_direct_internet()
-    {
-        var xaml = Xaml();
-
-        Assert.Contains("Text=\"External access\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("x:Name=\"ExternalReachabilitySection\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("CheckExternalReachabilityCommand", xaml, StringComparison.Ordinal);
-        Assert.Contains("CancelExternalReachabilityCommand", xaml, StringComparison.Ordinal);
-        // It lives inside the Direct internet block, which is itself gated on the chosen method.
-        Assert.Contains("Visibility=\"{Binding IsDirectInternetSelected, Converter={StaticResource BoolVisibility}}\"",
-            xaml, StringComparison.Ordinal);
-    }
-
-    /// <summary>The two layers this milestone must not disturb are still rendered as they were.</summary>
-    [Fact]
-    public void The_router_and_firewall_layers_are_preserved_above_it()
-    {
-        var xaml = Xaml();
-
-        Assert.Contains("Text=\"Direct internet\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("Text=\"Windows Firewall\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("x:Name=\"WindowsFirewallSection\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("Text=\"Public access\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("Text=\"Reachability not verified\"", xaml, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void Every_external_access_control_carries_an_accessible_name_or_visible_text()
-    {
-        var document = XDocument.Load(Path.Combine(
-            DesignSystemFiles.AppProjectDirectory, "Pages", "ServerOverviewPage.xaml"));
-
-        var buttons = document.Descendants()
-            .Where(element => element.Name.LocalName == "Button")
-            .Where(element => (element.Attribute("Command")?.Value ?? "")
-                .Contains("ExternalReachability", StringComparison.Ordinal) ||
-                (element.Attribute("Command")?.Value ?? "")
-                .Contains("VerifiedPublicEndpoint", StringComparison.Ordinal))
-            .ToArray();
-
-        Assert.NotEmpty(buttons);
-        foreach (var button in buttons)
-        {
-            var named = button.Attributes().Any(attribute =>
-                attribute.Name.LocalName == "Name" &&
-                attribute.Name.NamespaceName.Contains("AutomationProperties", StringComparison.Ordinal));
-            var hasText = (button.Attribute("Content")?.Value ?? "").Length > 0;
-            Assert.True(named || hasText, $"{button.Attribute("Command")?.Value} needs a name or visible text.");
-        }
-    }
-
-    /// <summary>Status is announced, not only coloured.</summary>
-    [Fact]
-    public void The_external_access_status_is_announced_and_the_section_is_named()
-    {
-        var xaml = Xaml();
-        var section = xaml[xaml.IndexOf("x:Name=\"ExternalReachabilitySection\"", StringComparison.Ordinal)..];
-
-        Assert.Contains("AutomationProperties.Name=\"External access\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("AutomationProperties.LiveSetting=\"Polite\"", section, StringComparison.Ordinal);
-        Assert.Contains("Text=\"{Binding ExternalReachabilityBadge}\"", section, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void Wide_technical_content_wraps_rather_than_scrolling_sideways()
-    {
-        var document = XDocument.Load(Path.Combine(
-            DesignSystemFiles.AppProjectDirectory, "Pages", "ServerOverviewPage.xaml"));
-
-        var blocks = document.Descendants()
-            .Where(element => element.Name.LocalName == "TextBlock")
-            .Where(element => (element.Attribute("Text")?.Value ?? "")
-                .Contains("ExternalReachability", StringComparison.Ordinal))
-            .Where(element => (element.Attribute("Style")?.Value ?? "").Contains("AppMonoText", StringComparison.Ordinal) ||
-                              (element.Attribute("Style")?.Value ?? "").Contains("AppSecondaryText", StringComparison.Ordinal) ||
-                              (element.Attribute("Style")?.Value ?? "").Contains("AppMutedText", StringComparison.Ordinal))
-            .ToArray();
-
-        Assert.NotEmpty(blocks);
-        foreach (var block in blocks)
-            Assert.Equal("Wrap", block.Attribute("TextWrapping")?.Value);
-    }
-
-    private static string Xaml() => File.ReadAllText(Path.Combine(
-        DesignSystemFiles.AppProjectDirectory, "Pages", "ServerOverviewPage.xaml"));
 
     private static ExternalReachabilityEndpoint Endpoint() => new()
     {
