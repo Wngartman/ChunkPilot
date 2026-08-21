@@ -1,15 +1,26 @@
-# ChunkPilot 1.3.0 Alpha Snapshot
+# ChunkPilot 1.3.0 Alpha 3 Lifecycle Hotfix
 
-ChunkPilot is a local-first Windows x64 launcher and manager for Minecraft servers. This first public prerelease freezes the current 1.3.0 application as a reproducible baseline for later installer and updater testing.
+ChunkPilot is a local-first Windows x64 launcher and manager for Minecraft servers. This alpha hotfix corrects startup intent and manual Stop ownership without changing the application schema or making the WebUI preview the default.
 
-- Release tag: `v1.3.0-alpha.2`
+- Release tag: `v1.3.0-alpha.3`
 - Release commit: `{{RELEASE_COMMIT}}`
 - Product version: `{{PRODUCT_VERSION}}`
 - Build completed: `{{BUILD_TIME_UTC}}`
 
 ## Install
 
-Download `ChunkPilot-Setup-v1.3.0-alpha.2.exe`. It is a per-user, self-contained Windows x64 installer, so a separate .NET installation is not required. The installer adds **ChunkPilot** and **ChunkPilot WebUI Preview** shortcuts. The preview remains explicitly opt-in.
+Download `ChunkPilot-Setup-v1.3.0-alpha.3.exe`. It is a per-user, self-contained Windows x64 installer, so a separate .NET installation is not required. The installer adds **ChunkPilot** and **ChunkPilot WebUI Preview** shortcuts. The preview remains explicitly opt-in.
+
+## Alpha 3 hotfix
+
+- A stale prior-running, crash-recovery, or restart-journal observation can no longer start a server
+  after Windows login, App startup, or Agent startup. Only explicit autostart policy or a due
+  user-created schedule authorizes startup.
+- Manual **Stop server** now suppresses a pending automatic restart immediately and cancels the owned
+  operation before waiting for the server's serialized operation queue.
+- Stop reconciles the exact owned process and persisted running state before reporting completion. A
+  non-cooperative operation produces an actionable bounded failure instead of an indefinite
+  `Stopping` state.
 
 If Microsoft Edge WebView2 Evergreen Runtime is missing, setup runs the Microsoft-signed Evergreen bootstrapper included in the installer. The portable package can run the default WPF interface without Node.js or an installer; its WebUI preview still requires WebView2.
 

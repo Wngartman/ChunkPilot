@@ -17,7 +17,7 @@ them fixed.
 | Area | Agent startup reconciliation / serialized lifecycle / WebUI lifecycle completion |
 | Affected | `v1.3.0-alpha.2` (`5a763e2f621b3273e312784969ceb6650bce3678`) and development commit `56c57ed27d2974c0c3540d320bf1b5f56503634c` |
 | Status | **Fixed locally** — explicit startup authority, preemptive manual Stop, bounded gate wait and truthful completion |
-| Fixed branch | `codex/fix-lifecycle-reboot-stop` |
+| Fixed branches | `codex/fix-lifecycle-reboot-stop` (`52f143365065ac1f6efd6d63b5384bd93a856689`) and `codex/hotfix-alpha3-lifecycle` (`45262e0e6fc009f35296fa10cff2295315ec24f2`) |
 | Validation | Isolated stale-reboot reproduction, explicit autostart/schedule starts, restart suppression, unresponsive/duplicate Stop, reconnect, exact process identity and owned-network cleanup tests |
 
 Every successful ordinary start was persisted as `RestorePreviousRunningState`. On the next Agent launch,
