@@ -45,16 +45,22 @@ jobs:
         with:
           global-json-file: global.json
       - name: Set up Node.js
-        if: steps.scope.outputs.frontend == 'true'
+        if: steps.scope.outputs.frontend == 'true' || steps.scope.outputs.dotnet == 'true'
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24.x
           cache: npm
           cache-dependency-path: src/ChunkPilot.WebUi/package-lock.json
-      - name: Build and test WebUI
-        if: steps.scope.outputs.frontend == 'true'
+      - name: Prepare and test WebUI assets
+        if: steps.scope.outputs.frontend == 'true' || steps.scope.outputs.dotnet == 'true'
         shell: pwsh
-        run: ./scripts/build-webui.ps1
+        run: |
+          if ('${{ steps.scope.outputs.frontend }}' -eq 'true') {
+            ./scripts/build-webui.ps1
+          }
+          else {
+            ./scripts/build-webui.ps1 -SkipTests
+          }
       - name: Restore and build .NET solution
         if: steps.scope.outputs.dotnet == 'true'
         shell: pwsh

@@ -143,9 +143,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          New-Item -ItemType Directory -Path previous-release | Out-Null
+          New-Item -ItemType Directory -Path artifacts/previous-release | Out-Null
           gh release download $env:SUPERSEDES_TAG --repo '${{ github.repository }}' `
-            --pattern "ChunkPilot-Setup-$env:SUPERSEDES_TAG.exe" --dir previous-release
+            --pattern "ChunkPilot-Setup-$env:SUPERSEDES_TAG.exe" --dir artifacts/previous-release
           if ($LASTEXITCODE -ne 0) { throw 'Could not download the previous prerelease installer.' }
 
       - name: Test clean install, prior-release upgrade, reinstall, uninstall, and data preservation
@@ -154,7 +154,7 @@ jobs:
           $arguments = @{
             InstallerPath = "./artifacts/release/$env:RELEASE_TAG/ChunkPilot-Setup-$env:RELEASE_TAG.exe"
           }
-          $previous = "./previous-release/ChunkPilot-Setup-$env:SUPERSEDES_TAG.exe"
+          $previous = "./artifacts/previous-release/ChunkPilot-Setup-$env:SUPERSEDES_TAG.exe"
           if ($env:SUPERSEDES_TAG -and (Test-Path -LiteralPath $previous)) {
             $arguments.PreviousInstallerPath = $previous
           }
@@ -171,7 +171,11 @@ jobs:
         run: |
           git diff --check
           if ($LASTEXITCODE -ne 0) { throw 'git diff --check failed.' }
-          if (git status --porcelain) { throw 'Release build changed tracked source files.' }
+          $status = @(git status --porcelain)
+          if ($status.Count -gt 0) {
+            $status | ForEach-Object { Write-Host $_ }
+            throw 'Release build changed tracked or unignored source files.'
+          }
 
       - name: Upload the one verified release payload
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
