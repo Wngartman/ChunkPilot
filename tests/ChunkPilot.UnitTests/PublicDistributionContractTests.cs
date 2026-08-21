@@ -64,6 +64,9 @@ public sealed class PublicDistributionContractTests
         Assert.DoesNotContain("push:", ci, StringComparison.Ordinal);
         Assert.Contains("pull_request:", ci, StringComparison.Ordinal);
         Assert.Contains("workflow_dispatch:", ci, StringComparison.Ordinal);
+        Assert.Contains("steps.scope.outputs.frontend == 'true' || steps.scope.outputs.dotnet == 'true'", ci,
+            StringComparison.Ordinal);
+        Assert.Contains("./scripts/build-webui.ps1 -SkipTests", ci, StringComparison.Ordinal);
         Assert.DoesNotContain("test-installer.ps1", ci, StringComparison.Ordinal);
     }
 
