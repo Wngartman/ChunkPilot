@@ -124,6 +124,7 @@ function snapshot(servers: ServerSummary[]): WebUiSnapshot {
     capturedAt: now,
     agentConnected: true,
     appVersion: '1.3.0',
+    build: { productVersion: '1.3.0-alpha.4+fixture', releaseTag: 'v1.3.0-alpha.4', gitSha: 'fixture', buildTimestampUtc: '2026-08-20T00:00:00Z', schemaVersion: '6', architecture: 'x64', defaultUi: 'WebUI' },
     selectedServerId: selected?.id ?? null,
     operation: null,
     statusMessage: null,

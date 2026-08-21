@@ -45,6 +45,16 @@ internal sealed class WebUiSnapshotMapper
             capturedAt = DateTimeOffset.UtcNow,
             agentConnected = viewModel.Dashboard.AgentConnected,
             appVersion = Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "1.3.0",
+            build = new
+            {
+                productVersion = BuildIdentity.Current.ProductVersion,
+                releaseTag = BuildIdentity.Current.ReleaseTag,
+                gitSha = BuildIdentity.Current.GitSha,
+                buildTimestampUtc = BuildIdentity.Current.BuildTimestampUtc,
+                schemaVersion = BuildIdentity.Current.SchemaVersion,
+                architecture = BuildIdentity.Current.Architecture,
+                defaultUi = BuildIdentity.Current.DefaultUi
+            },
             selectedServerId = selectedId,
             operation = viewModel.IsBusy ? new
             {

@@ -269,6 +269,15 @@ export interface WebUiSnapshot {
   capturedAt: string;
   agentConnected: boolean;
   appVersion: string;
+  build: {
+    productVersion: string;
+    releaseTag: string;
+    gitSha: string;
+    buildTimestampUtc: string;
+    schemaVersion: string;
+    architecture: string;
+    defaultUi: string;
+  };
   selectedServerId: string | null;
   operation: { method: string; serverId: string | null; message: string } | null;
   statusMessage: string | null;

@@ -13,13 +13,13 @@ public sealed class PublicDistributionContractTests
     }
 
     [Fact]
-    public void Installer_is_self_contained_per_user_and_exposes_preview_truthfully()
+    public void Installer_is_self_contained_per_user_and_exposes_only_the_current_interface()
     {
         var source = File.ReadAllText(Path.Combine(Root, "installer", "ChunkPilot.iss"));
         Assert.Contains("PrivilegesRequired=lowest", source, StringComparison.Ordinal);
         Assert.Contains("artifacts\\self-contained-win-x64", source, StringComparison.Ordinal);
-        Assert.Contains("ChunkPilot WebUI Preview", source, StringComparison.Ordinal);
-        Assert.Contains("--webui-preview", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("ChunkPilot WebUI Preview", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("--webui-preview", source, StringComparison.Ordinal);
         Assert.Contains("F3017226-FE2A-4295-8BDF-00C3A9A7E4C5", source, StringComparison.Ordinal);
         Assert.Contains("MicrosoftEdgeWebview2Setup.exe", source, StringComparison.Ordinal);
         Assert.Contains("RemoveManagedCheck.Checked := False", source, StringComparison.Ordinal);
@@ -106,7 +106,8 @@ public sealed class PublicDistributionContractTests
         Assert.Contains("DisplayVersion -eq '1.3.0'", source, StringComparison.Ordinal);
         Assert.Contains("TrimEnd(", source, StringComparison.Ordinal);
         Assert.Contains("PersistentDataUnchanged", source, StringComparison.Ordinal);
-        Assert.Contains("WebUiPreviewLaunch", source, StringComparison.Ordinal);
+        Assert.Contains("DefaultLaunch", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("WebUiPreviewLaunch", source, StringComparison.Ordinal);
         Assert.Contains("Get-Content -LiteralPath $uninstallLog -Tail 250", source, StringComparison.Ordinal);
     }
 

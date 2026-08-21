@@ -1,5 +1,4 @@
 using ChunkPilot.App.CreateServer;
-using ChunkPilot.App.CreateServerLive;
 using ChunkPilot.App.DesignSystem;
 using ChunkPilot.App.DesignSystem.Gallery;
 using ChunkPilot.App.WebUi;
@@ -23,6 +22,13 @@ public partial class App : Application
         base.OnStartup(e);
         AppTheme.Initialize(this);
 
+        if (BuildIdentity.IsVersionRequest(e.Args))
+        {
+            BuildIdentity.WriteToParentConsole();
+            Shutdown();
+            return;
+        }
+
         // Development-only branch. Takes no single-instance lock, starts no tray icon and never
         // contacts the agent, so running the gallery cannot disturb a real ChunkPilot session or
         // any managed server. There is no product control that reaches this path.
@@ -33,11 +39,6 @@ public partial class App : Application
         // lock, no tray icon, no agent connection, no database, and entirely synthetic data. No
         // product control reaches it, and the normal Create Server path is unchanged.
         if (CreateServerPreviewLauncher.TryRun(this, e.Args))
-            return;
-
-        // Development/review-only batch renderer. It uses the real Overview XAML and synthetic
-        // firewall states, starts no Agent and cannot invoke the elevated helper.
-        if (FirewallReviewLauncher.TryRun(this, e.Args))
             return;
 
         // Development-only WebView2 fixtures and deterministic captures. This branch has no Agent,
@@ -85,10 +86,9 @@ public partial class App : Application
 
         agentClient = new AgentClient();
         var viewModel = new MainViewModel(agentClient, new DialogService());
-        var useWebUi = WebUiPreviewOptions.IsRequested(e.Args);
-        Window window = useWebUi
-            ? new WebUiWindow(viewModel, agentClient)
-            : new MainWindow(viewModel, agentClient);
+        // The locally bundled WebUI is ChunkPilot's only product interface. Native WPF remains the
+        // window/recovery host, but there is deliberately no legacy product-shell fallback.
+        Window window = new WebUiWindow(viewModel, agentClient);
         AppTheme.Attach(window);
         MainWindow = window;
 
@@ -123,31 +123,20 @@ public partial class App : Application
             sessionId = registration.Session.SessionId;
             sessionCapability = registration.SessionCapability;
             viewModel.ConfigureSession(sessionId, sessionCapability);
-            if (window is WebUiWindow webUiWindow)
-                webUiWindow.ConfigureSession(sessionId, sessionCapability);
-            else
-                ((MainWindow)window).ConfigureSession(sessionId, sessionCapability);
+            ((WebUiWindow)window).ConfigureSession(sessionId, sessionCapability);
             await viewModel.InitializeAsync().ConfigureAwait(true);
             if (registration.PreviousExitWasUnexpected)
                 viewModel.ShowRecoveryNotice(registration.RecoveryMessage);
 
             // Main window is ready - show it and close splash
             splash.CloseSplash();
-            if (window is WebUiWindow webUiShell)
-                webUiShell.TransitionToShell();
-            else
-                ((MainWindow)window).TransitionToShell();
+            ((WebUiWindow)window).TransitionToShell();
             window.Show();
             if (viewModel.StartMinimized)
                 window.WindowState = WindowState.Minimized;
             else
                 window.Activate();
 
-            // Retained development shortcut. It deliberately runs after normal startup because the
-            // live workflow needs the shell, Agent, database, and completion navigator. The shortcut
-            // enters the same product composition used by every normal Create server action.
-            if (!useWebUi && CreateServerLiveLauncher.IsRequested(e.Args))
-                ((MainWindow)window).OpenVanillaCreation();
         }
         catch (Exception exception)
         {
@@ -155,10 +144,7 @@ public partial class App : Application
             splash.CloseSplash();
             viewModel.Startup.Fail(exception.Message);
             window.Show();
-            if (window is WebUiWindow webUiFailure)
-                webUiFailure.ShowStartupFailure();
-            else
-                ((MainWindow)window).ShowStartupFailure();
+            ((WebUiWindow)window).ShowStartupFailure();
         }
     }
 

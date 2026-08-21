@@ -102,27 +102,18 @@ if (-not ($displayNameMatches -and $displayVersionMatches -and $installLocationM
 }
 
 $normalShortcutPath = Join-Path $startMenuRoot 'ChunkPilot.lnk'
-$previewShortcutPath = Join-Path $startMenuRoot 'ChunkPilot WebUI Preview.lnk'
 $normalShortcut = Get-Shortcut $normalShortcutPath
-$previewShortcut = Get-Shortcut $previewShortcutPath
 if ([IO.Path]::GetFullPath($normalShortcut.TargetPath) -ne [IO.Path]::GetFullPath($app) -or
     -not [string]::IsNullOrWhiteSpace($normalShortcut.Arguments)) {
     throw 'The normal Start Menu shortcut target or arguments are incorrect.'
 }
-if ([IO.Path]::GetFullPath($previewShortcut.TargetPath) -ne [IO.Path]::GetFullPath($app) -or
-    $previewShortcut.Arguments -ne '--webui-preview') {
-    throw 'The WebUI Preview Start Menu shortcut target or arguments are incorrect.'
-}
-
 $defaultSmoke = (& (Join-Path $repoRoot 'scripts\test-packaged-ui-close.ps1') -PortableRoot $installRoot) | ConvertFrom-Json
-if (-not $defaultSmoke.OverallPass) { throw "Installed default-UI launch/close smoke failed: $($defaultSmoke.Failures -join '; ')" }
-$previewSmoke = (& (Join-Path $repoRoot 'scripts\test-packaged-ui-close.ps1') -PortableRoot $installRoot -WebUiPreview) | ConvertFrom-Json
-if (-not $previewSmoke.OverallPass) { throw "Installed WebUI-preview launch/close smoke failed: $($previewSmoke.Failures -join '; ')" }
+if (-not $defaultSmoke.OverallPass) { throw "Installed WebUI launch/close smoke failed: $($defaultSmoke.Failures -join '; ')" }
 
-# Same-version reinstall/repair must remain non-destructive and leave both entry points intact.
+# Same-version reinstall/repair must remain non-destructive and leave the current entry point intact.
 Invoke-Setup $reinstallLog
-if (-not (Test-Path -LiteralPath $normalShortcutPath) -or -not (Test-Path -LiteralPath $previewShortcutPath)) {
-    throw 'Same-version reinstall did not preserve both Start Menu shortcuts.'
+if (-not (Test-Path -LiteralPath $normalShortcutPath)) {
+    throw 'Same-version reinstall did not preserve the Start Menu shortcut.'
 }
 
 # Create a valid schema-v6 database with one fake registered server, plus world, backup, settings,
@@ -201,7 +192,7 @@ if ($uninstallProcess.ExitCode -notin @(0, 3010)) {
 }
 
 if ((Test-Path -LiteralPath $app) -or (Test-Path -LiteralPath $agent)) { throw 'Uninstall left application binaries behind.' }
-if ((Test-Path -LiteralPath $normalShortcutPath) -or (Test-Path -LiteralPath $previewShortcutPath)) { throw 'Uninstall left Start Menu shortcuts behind.' }
+if (Test-Path -LiteralPath $normalShortcutPath) { throw 'Uninstall left the Start Menu shortcut behind.' }
 if (Get-ChunkPilotUninstallEntry) { throw 'Uninstall registration remains after uninstall.' }
 $orphans = @(Get-CimInstance Win32_Process | Where-Object {
     $_.ExecutablePath -and $_.ExecutablePath.StartsWith($installRoot, [StringComparison]::OrdinalIgnoreCase)
@@ -224,7 +215,6 @@ if (-not $webViewVersion -or $webViewVersion -eq '0.0.0.0') { throw 'WebView2 Ru
 [PSCustomObject]@{
     CleanInstall = $true
     DefaultLaunch = $defaultSmoke
-    WebUiPreviewLaunch = $previewSmoke
     Reinstall = $true
     Uninstall = $true
     PersistentFixtureCount = $fixtures.Count

@@ -1,7 +1,7 @@
 <!--
     TEMPORARY compatibility layer. Scheduled for deletion.
 
-    MainWindow, ImportServerWindow and InstallServerWindow have not been rebuilt yet. They reference
+    A small number of focused native dialogs still reference
     resource keys from the previous design system. Rather than leave those windows broken, or freeze
     the old dictionaries in place beside the new ones, this file maps the old key names onto the new
     tokens and components.

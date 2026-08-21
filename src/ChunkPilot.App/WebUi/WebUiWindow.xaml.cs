@@ -128,7 +128,7 @@ public partial class WebUiWindow : Window
             var root = string.IsNullOrWhiteSpace(dataRoot)
                 ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ChunkPilot")
                 : Path.GetFullPath(dataRoot);
-            var profile = Path.Combine(root, "WebView2", "PreviewProfile");
+            var profile = Path.Combine(root, "WebView2", "CurrentProfile");
             Directory.CreateDirectory(profile);
             var environmentOptions = CreateEnvironmentOptions();
             var environment = await CoreWebView2Environment.CreateAsync(userDataFolder: profile, options: environmentOptions).ConfigureAwait(true);
@@ -145,7 +145,7 @@ public partial class WebUiWindow : Window
         }
         catch (WebView2RuntimeNotFoundException)
         {
-            ShowFailure("Microsoft Edge WebView2 Runtime is required for this preview. ChunkPilot did not download or open anything automatically. Install the Evergreen WebView2 Runtime, then try again.");
+            ShowFailure("Microsoft Edge WebView2 Runtime is required. ChunkPilot did not download or open anything automatically. Repair or install the Evergreen WebView2 Runtime, then retry.");
         }
         catch (Exception exception)
         {
@@ -213,12 +213,12 @@ public partial class WebUiWindow : Window
                 }
                 catch (Exception exception) when (exception is InvalidOperationException or COMException)
                 {
-                    ShowFailure("The WebUI renderer could not be recovered. Managed servers remain owned by the ChunkPilot Agent. Close ChunkPilot safely, then reopen the preview.");
+                    ShowFailure("The interface renderer could not be recovered. Managed servers remain owned by the ChunkPilot Agent. Exit ChunkPilot safely, then reopen it.");
                 }
             }, DispatcherPriority.Background);
             return;
         }
-        ShowFailure("The WebUI renderer stopped unexpectedly. Managed servers remain owned by the ChunkPilot Agent. Try reloading the interface or close ChunkPilot safely.");
+        ShowFailure("The interface renderer stopped unexpectedly. Managed servers remain owned by the ChunkPilot Agent. Retry the interface or exit ChunkPilot safely.");
     }
 
     private static void OpenExternalHttps(string value)
@@ -2649,6 +2649,12 @@ public partial class WebUiWindow : Window
     }
 
     private async void RetryButton_OnClick(object sender, RoutedEventArgs e) => await InitializeWebViewAsync().ConfigureAwait(true);
+
+    private void RepairWebViewButton_OnClick(object sender, RoutedEventArgs e) =>
+        OpenExternalHttps("https://developer.microsoft.com/microsoft-edge/webview2/");
+
+    private void OpenDiagnosticsButton_OnClick(object sender, RoutedEventArgs e) =>
+        viewModel.OpenLogsFolderCommand.Execute(null);
 
     private void CloseButton_OnClick(object sender, RoutedEventArgs e) => Close();
 

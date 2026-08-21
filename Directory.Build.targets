@@ -1,0 +1,15 @@
+<Project>
+  <PropertyGroup>
+    <ChunkPilotReleaseTag Condition="'$(ChunkPilotReleaseTag)' == ''">v1.3.0-alpha.4</ChunkPilotReleaseTag>
+    <ChunkPilotGitSha Condition="'$(ChunkPilotGitSha)' == ''">unknown</ChunkPilotGitSha>
+    <ChunkPilotBuildTimestampUtc Condition="'$(ChunkPilotBuildTimestampUtc)' == ''">unknown</ChunkPilotBuildTimestampUtc>
+    <InformationalVersion>1.3.0-alpha.4+$(ChunkPilotGitSha)</InformationalVersion>
+  </PropertyGroup>
+  <ItemGroup>
+    <AssemblyMetadata Include="ChunkPilotReleaseTag" Value="$(ChunkPilotReleaseTag)" />
+    <AssemblyMetadata Include="ChunkPilotGitSha" Value="$(ChunkPilotGitSha)" />
+    <AssemblyMetadata Include="ChunkPilotBuildTimestampUtc" Value="$(ChunkPilotBuildTimestampUtc)" />
+    <AssemblyMetadata Include="ChunkPilotDefaultUi" Value="WebUI" />
+    <AssemblyMetadata Include="ChunkPilotSchemaVersion" Value="6" />
+  </ItemGroup>
+</Project>

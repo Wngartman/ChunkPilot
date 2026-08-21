@@ -45,7 +45,6 @@ Source: "prerequisites\MicrosoftEdgeWebview2Setup.exe"; Flags: dontcopy
 
 [Icons]
 Name: "{autoprograms}\ChunkPilot\ChunkPilot"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\Assets\ChunkPilot.ico"; Comment: "Open ChunkPilot"; AppUserModelID: "ChunkPilot.Desktop"
-Name: "{autoprograms}\ChunkPilot\ChunkPilot WebUI Preview"; Filename: "{app}\{#MyAppExeName}"; Parameters: "--webui-preview"; IconFilename: "{app}\Assets\ChunkPilot.ico"; Comment: "Open the preview WebUI (not the default interface)"; AppUserModelID: "ChunkPilot.Desktop.WebUiPreview"
 Name: "{autodesktop}\ChunkPilot"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\Assets\ChunkPilot.ico"; Tasks: desktopicon
 
 [Registry]
@@ -94,7 +93,7 @@ begin
     exit;
 
   WizardForm.StatusLabel.Caption :=
-    'Installing the Microsoft Edge WebView2 Runtime required by the WebUI preview...';
+    'Installing the Microsoft Edge WebView2 Runtime required by ChunkPilot...';
   ExtractTemporaryFile('MicrosoftEdgeWebview2Setup.exe');
   Bootstrapper := ExpandConstant('{tmp}\MicrosoftEdgeWebview2Setup.exe');
   if not Exec(Bootstrapper, '/silent /install', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then

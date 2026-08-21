@@ -89,15 +89,6 @@ public sealed class WebUiContractTests
     }
 
     [Fact]
-    public void PreviewArgumentIsExplicitAndDoesNotMatchNormalStartup()
-    {
-        Assert.True(WebUiPreviewOptions.IsRequested(["--webui-preview"]));
-        Assert.True(WebUiPreviewOptions.IsRequested(["--WEBUI-PREVIEW"]));
-        Assert.False(WebUiPreviewOptions.IsRequested([]));
-        Assert.False(WebUiPreviewOptions.IsRequested(["--create-server-v2-preview"]));
-    }
-
-    [Fact]
     public void MethodPolicyIsAnExplicitAllowlist()
     {
         Assert.True(WebUiMethodPolicy.IsAllowed("servers.start"));
@@ -292,9 +283,9 @@ public sealed class WebUiContractTests
     }
 
     [Fact]
-    public void FixtureLauncherAndPreviewLauncherRemainSeparateDevelopmentRoutes()
+    public void FixtureLauncherRemainsAnExplicitDevelopmentRoute()
     {
-        Assert.False(WebUiPreviewOptions.IsRequested([WebUiFixtureLauncher.FixtureArgument, "running"]));
+        Assert.Equal("--webui-fixture", WebUiFixtureLauncher.FixtureArgument);
         Assert.Equal("--render", WebUiFixtureLauncher.RenderArgument);
     }
 

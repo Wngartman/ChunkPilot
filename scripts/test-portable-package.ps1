@@ -25,11 +25,9 @@ try {
     if ($agent.AgentExitCode -ne 0 -or $agent.SelfTestErrors -ne 0 -or -not $agent.DatabaseCreated) {
         throw 'Portable Agent self-test failed.'
     }
-    $accepted = (& (Join-Path $repoRoot 'scripts\test-packaged-ui-close.ps1') -PortableRoot $testRoot) | ConvertFrom-Json
-    if (-not $accepted.OverallPass) { throw "Portable default-UI close smoke failed: $($accepted.Failures -join '; ')" }
-    $preview = (& (Join-Path $repoRoot 'scripts\test-packaged-ui-close.ps1') -PortableRoot $testRoot -WebUiPreview) | ConvertFrom-Json
-    if (-not $preview.OverallPass) { throw "Portable WebUI-preview close smoke failed: $($preview.Failures -join '; ')" }
-    [PSCustomObject]@{ Zip = $zip; Agent = $agent; AcceptedUi = $accepted; WebUiPreview = $preview; Pass = $true }
+    $webUi = (& (Join-Path $repoRoot 'scripts\test-packaged-ui-close.ps1') -PortableRoot $testRoot) | ConvertFrom-Json
+    if (-not $webUi.OverallPass) { throw "Portable WebUI close smoke failed: $($webUi.Failures -join '; ')" }
+    [PSCustomObject]@{ Zip = $zip; Agent = $agent; WebUi = $webUi; Pass = $true }
 }
 finally {
     $full = [IO.Path]::GetFullPath($testRoot)
