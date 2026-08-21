@@ -1008,6 +1008,10 @@ public partial class WebUiWindow : Window
                      throw new InvalidOperationException("No server is selected.");
         var check = viewModel.CurrentUpdateCheck ??
                     throw new InvalidOperationException("No authoritative update check is available.");
+        if (check.Status != ServerUpdateStatus.UpdateAvailable)
+            throw new InvalidOperationException(check.Status == ServerUpdateStatus.UpToDate
+                ? "This exact pack release is already installed."
+                : "No installable pack update is currently available.");
         var target = check.LatestVersion ??
                      throw new InvalidOperationException("No installable update has been confirmed for this server.");
         if (check.Compatibility is UpdateCompatibility.Incompatible or UpdateCompatibility.Unknown)

@@ -409,6 +409,8 @@ function ModpackPage({ server }: { server: ServerSummary }) {
   const [showInstall, setShowInstall] = useState(false);
   const pack = server.modpack;
   const providerUpdates = pack?.provider === 'Modrinth' || pack?.provider === 'CurseForge';
+  const updateAvailable = update?.status.startsWith('Update available') ?? false;
+  const canInstallUpdate = Boolean(providerUpdates && updateAvailable && update?.canInstall);
   const versionBusy = ['versions.check', 'versions.install', 'versions.rollback', 'versions.cancel'].some(method => busy.has(method));
   if (!pack || !update?.sourceLinked)
     return <section className={styles.panel}><EmptyState title="Pack identity unavailable" detail="ChunkPilot has not established an exact provider project and release for this server. Individual mods remain visible in the managed content inventory, but pack-level updates are disabled until identity is proven." /></section>;
@@ -418,7 +420,7 @@ function ModpackPage({ server }: { server: ServerSummary }) {
         <div><strong>{pack.projectName}</strong> <span className={page.muted}>· {pack.provider} · {pack.versionName}</span></div>
         <div className={page.actions}>
           {providerUpdates && update.cancellable && <Button variant="subtle" disabled={busy.has('versions.cancel')} onClick={() => void command('versions.cancel', { serverId: server.id })}>Cancel safely</Button>}
-          {providerUpdates && update.canInstall && <Button variant="primary" disabled={versionBusy} onClick={() => setShowInstall(true)}>Install pack {update.latestVersionName ?? 'update'}</Button>}
+          {canInstallUpdate && <Button variant="primary" disabled={versionBusy} onClick={() => setShowInstall(true)}>Install pack {update.latestVersionName ?? 'update'}</Button>}
           {providerUpdates && <Button icon={<RotateCw size={14} />} disabled={versionBusy} onClick={() => void command('versions.check', { serverId: server.id })}>{busy.has('versions.check') ? 'Checking…' : 'Check pack release'}</Button>}
         </div>
       </div>
@@ -428,7 +430,7 @@ function ModpackPage({ server }: { server: ServerSummary }) {
         <p>Minecraft {update.minecraftVersion || server.minecraftVersion} · {update.releaseChannel || 'Channel unavailable'}. Pack updates compare exact provider releases and never update constituent mods independently.</p>
       </div>
       <div className={styles.updateSummary}>
-        <div><StatusBadge tone={providerUpdates && update.canInstall ? 'warning' : providerUpdates ? 'success' : 'neutral'}>{providerUpdates ? update.status : 'Local pack'}</StatusBadge><strong>{providerUpdates ? update.detail : 'Provider updates are unavailable until this local archive is linked to an exact project release.'}</strong><span>{providerUpdates ? update.checkedAt ? `Last checked ${new Date(update.checkedAt).toLocaleString()}` : 'Not checked yet' : 'The inspected archive remains the installed baseline.'}</span></div>
+        <div><StatusBadge tone={canInstallUpdate ? 'warning' : providerUpdates ? 'success' : 'neutral'}>{providerUpdates ? update.status : 'Local pack'}</StatusBadge><strong>{providerUpdates ? update.detail : 'Provider updates are unavailable until this local archive is linked to an exact project release.'}</strong><span>{providerUpdates ? update.checkedAt ? `Last checked ${new Date(update.checkedAt).toLocaleString()}` : 'Not checked yet' : 'The inspected archive remains the installed baseline.'}</span></div>
         {update.operationPercent != null && <div className={styles.updateProgress} aria-label={`Pack update progress ${update.operationPercent.toFixed(0)} percent`}><i><b style={{ width: `${Math.max(0, Math.min(100, update.operationPercent))}%` }} /></i><span>{update.operationStep || update.operationState} · {update.operationPercent.toFixed(0)}%</span>{update.operationDetail && update.operationDetail !== update.operationStep && <small>{update.operationDetail}</small>}</div>}
       </div>
       <UpdateInstallDialog open={showInstall} onClose={() => setShowInstall(false)} server={server} update={update} />

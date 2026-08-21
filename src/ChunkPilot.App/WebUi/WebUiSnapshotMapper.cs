@@ -180,8 +180,7 @@ internal sealed class WebUiSnapshotMapper
                 downloadSizeBytes = viewModel.CurrentUpdateCheck?.LatestVersion?.FileSize,
                 compatibilityReasons = viewModel.CurrentUpdateCheck?.CompatibilityReasons ?? [],
                 compatibility = viewModel.CurrentUpdateCheck?.Compatibility.ToString(),
-                canInstall = viewModel.CurrentUpdateCheck?.LatestVersion is not null &&
-                    viewModel.CurrentUpdateCheck.Compatibility is not UpdateCompatibility.Incompatible and not UpdateCompatibility.Unknown,
+                canInstall = IsInstallableUpdate(viewModel.CurrentUpdateCheck),
                 operationState = viewModel.CurrentUpdateOperation?.Progress.State.ToString(),
                 operationStep = viewModel.CurrentUpdateOperation?.Progress.CurrentStep,
                 operationDetail = viewModel.CurrentUpdateOperation?.Progress.Detail,
@@ -396,6 +395,10 @@ internal sealed class WebUiSnapshotMapper
             }
         };
     }
+
+    internal static bool IsInstallableUpdate(UpdateCheckResult? check) =>
+        check is { Status: ServerUpdateStatus.UpdateAvailable, LatestVersion: not null } &&
+        check.Compatibility is not UpdateCompatibility.Incompatible and not UpdateCompatibility.Unknown;
 
     internal static bool HasPlayersWorkspace(ServerDefinition definition) =>
         definition.GameKind == ServerGameKind.Minecraft;

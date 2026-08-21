@@ -58,6 +58,31 @@ public sealed class WebUiContractTests
     }
 
     [Fact]
+    public void Pack_install_action_requires_an_authoritative_update_available_state()
+    {
+        var latest = new PackVersionInfo { VersionId = "release-2", VersionName = "Release 2" };
+        var check = new UpdateCheckResult
+        {
+            Status = ServerUpdateStatus.UpToDate,
+            LatestVersion = latest,
+            Compatibility = UpdateCompatibility.Compatible
+        };
+
+        Assert.False(WebUiSnapshotMapper.IsInstallableUpdate(check));
+        Assert.True(WebUiSnapshotMapper.IsInstallableUpdate(check with { Status = ServerUpdateStatus.UpdateAvailable }));
+        Assert.False(WebUiSnapshotMapper.IsInstallableUpdate(check with
+        {
+            Status = ServerUpdateStatus.UpdateAvailable,
+            Compatibility = UpdateCompatibility.Incompatible
+        }));
+        Assert.False(WebUiSnapshotMapper.IsInstallableUpdate(check with
+        {
+            Status = ServerUpdateStatus.UpdateAvailable,
+            LatestVersion = null
+        }));
+    }
+
+    [Fact]
     public void Players_workspace_follows_game_kind_not_detected_minecraft_ecosystem()
     {
         Assert.True(WebUiSnapshotMapper.HasPlayersWorkspace(new ServerDefinition

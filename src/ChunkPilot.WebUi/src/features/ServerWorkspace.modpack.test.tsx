@@ -27,6 +27,18 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('installed modpack workspace', () => {
+  it('does not offer the already-installed release even if a stale renderer flag says it is installable', () => {
+    const snapshot = structuredClone(fixtures.modpack);
+    snapshot.update = { ...snapshot.update!, status: 'Up to date', canInstall: true };
+    useAppStore.setState({ snapshot });
+    const server = snapshot.servers[0];
+
+    render(<NavigationGuardProvider><ServerWorkspace serverId={server.id} /></NavigationGuardProvider>);
+
+    expect(screen.getByText('Up to date')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /^Install pack / })).toBeNull();
+  });
+
   it('uses exact pack identity and whole-pack update actions', async () => {
     const server = useAppStore.getState().snapshot!.servers[0];
     render(<NavigationGuardProvider><ServerWorkspace serverId={server.id} /></NavigationGuardProvider>);
