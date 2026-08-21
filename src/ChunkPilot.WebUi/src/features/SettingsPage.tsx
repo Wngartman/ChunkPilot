@@ -5,6 +5,7 @@ import { useAppStore } from '../state/store';
 import page from './Page.module.css';
 import styles from './ServerWorkspace.module.css';
 import { useUnsavedChangesGuard } from '../app/NavigationGuard';
+import type { CurseForgeSourceStatus } from '../bridge/types';
 
 const categories = [
   ['General', Monitor], ['Appearance', SunMoon], ['Content sources', Box], ['Privacy & diagnostics', Shield], ['About', Info]
@@ -32,21 +33,23 @@ function Toggle({ value, onChange }: { value: boolean; onChange: (value: boolean
 
 function CurseForgeSource() {
   const command = useAppStore(state => state.command);
-  const [configured, setConfigured] = useState<boolean | null>(null);
+  const [status, setStatus] = useState<CurseForgeSourceStatus | null>(null);
   const [apiKey, setApiKey] = useState('');
   const [message, setMessage] = useState('');
-  const refresh = useCallback(() => void command<{ configured: boolean }>('settings.curseforge.status')
-    .then(result => setConfigured(result.configured)).catch(reason => setMessage(reason instanceof Error ? reason.message : 'Provider status is unavailable.')), [command]);
+  const refresh = useCallback(() => void command<CurseForgeSourceStatus>('settings.curseforge.status')
+    .then(setStatus).catch(reason => setMessage(reason instanceof Error ? reason.message : 'Provider status is unavailable.')), [command]);
   useEffect(refresh, [refresh]);
   const save = () => void command('settings.curseforge.save', { apiKey }).then(() => {
-    setApiKey(''); setConfigured(true); setMessage('CurseForge is connected for this Windows user.');
+    setApiKey(''); setMessage('The API key is saved securely. The first browse will validate it.'); refresh();
   }).catch(reason => setMessage(reason instanceof Error ? reason.message : 'The key could not be saved.'));
   const disconnect = () => void command('settings.curseforge.disconnect').then(() => {
-    setConfigured(false); setMessage('CurseForge is disconnected.');
+    setStatus({ configured: false, readyToBrowse: false, detail: 'No CurseForge API key is configured.' }); setMessage('The saved CurseForge API key was removed.');
   }).catch(reason => setMessage(reason instanceof Error ? reason.message : 'The connection could not be removed.'));
-  return <><Row label="CurseForge" detail="Use your own CurseForge API key for official modpack browsing. The key is encrypted with Windows DPAPI and never sent to the WebUI after saving.">
-    <div className={page.actions}><StatusText configured={configured} /><TextInput type="password" value={apiKey} onChange={event => setApiKey(event.target.value)} placeholder="API key" aria-label="CurseForge API key" /><Button variant="primary" disabled={!apiKey.trim()} onClick={save}>Connect</Button>{configured && <Button onClick={disconnect}>Disconnect</Button>}</div>
-  </Row>{message && <p role="status">{message}</p>}</>;
+  return <><Row label="CurseForge" detail="Use your own CurseForge API key for official modpack browsing. The key is encrypted with Windows DPAPI and never returned to the WebUI.">
+    <div className={page.actions}><StatusText status={status} /><TextInput type="password" value={apiKey} onChange={event => setApiKey(event.target.value)} placeholder="API key" aria-label="CurseForge API key" autoComplete="off" /><Button variant="primary" disabled={!apiKey.trim()} onClick={save}>Save key</Button>{status?.configured && <Button onClick={disconnect}>Remove key</Button>}</div>
+  </Row><p>Get a key through the official CurseForge developer console. ChunkPilot validates it only when you browse CurseForge; saving never claims the provider accepted it. <Button variant="subtle" onClick={() => void command('settings.curseforge.openConsole')}>Open developer console</Button></p>{message && <p role="status">{message}</p>}</>;
 }
 
-function StatusText({ configured }: { configured: boolean | null }) { return <span>{configured == null ? 'Checking…' : configured ? 'Connected' : 'Not connected'}</span>; }
+function StatusText({ status }: { status: CurseForgeSourceStatus | null }) {
+  return <span title={status?.detail}>{status == null ? 'Checking…' : status.readyToBrowse ? 'Key saved' : status.configured ? 'Key saved · validation pending' : 'No key saved'}</span>;
+}

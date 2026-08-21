@@ -411,6 +411,7 @@ public sealed class VersionSnapshotService
         var archivePath = Path.Combine(directory, baseName + ".zip");
         var manifestPath = archivePath + ".manifest.json";
         var entries = new List<BackupManifestEntry>();
+        var contentObjects = new List<VersionSnapshotContentObject>();
         try
         {
             await using var output = new FileStream(temporary, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None,
@@ -423,6 +424,12 @@ public sealed class VersionSnapshotService
                     if (new FileInfo(file).Attributes.HasFlag(FileAttributes.ReparsePoint))
                         throw new IOException($"Version snapshots refuse reparse-point files: {file}");
                     var relative = PersistentDataClassifier.Normalize(Path.GetRelativePath(server.RootPath, file));
+                    if (IsContentObjectCandidate(relative))
+                    {
+                        contentObjects.Add(await StoreContentObjectAsync(directory, file, relative, cancellationToken)
+                            .ConfigureAwait(false));
+                        continue;
+                    }
                     var entry = archive.CreateEntry(relative, CompressionLevel.Optimal);
                     await using var input = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read,
                         128 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
@@ -447,7 +454,8 @@ public sealed class VersionSnapshotService
                     VersionId = source.InstalledVersionId,
                     CreatedAt = DateTimeOffset.UtcNow,
                     IncludesWorldData = true,
-                    Files = entries
+                    Files = entries,
+                    ContentObjects = contentObjects
                 };
                 var manifestEntry = archive.CreateEntry(
                     $".chunkpilot/version-manifest-{id:N}.json", CompressionLevel.Optimal);
@@ -525,6 +533,17 @@ public sealed class VersionSnapshotService
             if (!hash.Equals(expected.Sha256, StringComparison.OrdinalIgnoreCase))
                 return false;
         }
+        var snapshotDirectory = Path.GetDirectoryName(Path.GetFullPath(archivePath))!;
+        foreach (var expected in manifest.ContentObjects)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var objectPath = ResolveContainedPath(snapshotDirectory, expected.ObjectKey, "snapshot object");
+            if (!File.Exists(objectPath) || new FileInfo(objectPath).Length != expected.SizeBytes)
+                return false;
+            if (!string.Equals(await PackMigrationPlanner.Sha256Async(objectPath, cancellationToken).ConfigureAwait(false),
+                    expected.Sha256, StringComparison.OrdinalIgnoreCase))
+                return false;
+        }
         return true;
     }
 
@@ -538,24 +557,35 @@ public sealed class VersionSnapshotService
         Directory.CreateDirectory(destination);
         using var archive = ZipFile.OpenRead(archivePath);
         var prefix = Path.TrimEndingDirectorySeparator(Path.GetFullPath(destination)) + Path.DirectorySeparatorChar;
-        var internalManifest = archive.Entries.LastOrDefault(entry => IsInternalManifest(entry.FullName));
-        foreach (var entry in archive.Entries.Where(entry => !ReferenceEquals(entry, internalManifest)))
+        var manifestEntry = archive.Entries.Last(entry => IsInternalManifest(entry.FullName));
+        VersionSnapshotManifest manifest;
+        await using (var manifestStream = manifestEntry.Open())
+            manifest = await JsonSerializer.DeserializeAsync<VersionSnapshotManifest>(manifestStream,
+                ProtocolJson.Options, cancellationToken).ConfigureAwait(false)
+                ?? throw new InvalidDataException("The selected snapshot manifest is empty.");
+        foreach (var expected in manifest.Files)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            var entry = archive.GetEntry(expected.RelativePath)
+                        ?? throw new InvalidDataException($"Snapshot entry is missing: {expected.RelativePath}");
             var output = Path.GetFullPath(Path.Combine(destination,
-                entry.FullName.Replace('/', Path.DirectorySeparatorChar)));
+                expected.RelativePath.Replace('/', Path.DirectorySeparatorChar)));
             if (!output.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
-                throw new InvalidDataException($"Snapshot entry escapes the destination: {entry.FullName}");
-            if (string.IsNullOrEmpty(entry.Name))
-            {
-                Directory.CreateDirectory(output);
-                continue;
-            }
+                throw new InvalidDataException($"Snapshot entry escapes the destination: {expected.RelativePath}");
             Directory.CreateDirectory(Path.GetDirectoryName(output)!);
             await using var source = entry.Open();
             await using var target = new FileStream(output, FileMode.CreateNew, FileAccess.Write, FileShare.None,
                 128 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
             await source.CopyToAsync(target, cancellationToken).ConfigureAwait(false);
+        }
+        var snapshotDirectory = Path.GetDirectoryName(Path.GetFullPath(archivePath))!;
+        foreach (var expected in manifest.ContentObjects)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var sourcePath = ResolveContainedPath(snapshotDirectory, expected.ObjectKey, "snapshot object");
+            var output = ResolveContainedPath(destination, expected.RelativePath, "snapshot destination");
+            Directory.CreateDirectory(Path.GetDirectoryName(output)!);
+            await CopyFileAsync(sourcePath, output, cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -586,12 +616,89 @@ public sealed class VersionSnapshotService
                     expected.Sha256, StringComparison.OrdinalIgnoreCase))
                 return false;
         }
+        foreach (var expected in manifest.ContentObjects)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var path = ResolveContainedPath(directory, expected.RelativePath, "restored snapshot file");
+            if (!File.Exists(path) || new FileInfo(path).Length != expected.SizeBytes)
+                return false;
+            if (!string.Equals(await PackMigrationPlanner.Sha256Async(path, cancellationToken).ConfigureAwait(false),
+                    expected.Sha256, StringComparison.OrdinalIgnoreCase))
+                return false;
+        }
         return true;
     }
 
     private static bool IsInternalManifest(string entryName) =>
         entryName.StartsWith(".chunkpilot/version-manifest-", StringComparison.OrdinalIgnoreCase) &&
         entryName.EndsWith(".json", StringComparison.OrdinalIgnoreCase);
+
+    internal static bool IsContentObjectCandidate(string relativePath) =>
+        Path.GetExtension(relativePath).Equals(".jar", StringComparison.OrdinalIgnoreCase);
+
+    private static async Task<VersionSnapshotContentObject> StoreContentObjectAsync(
+        string snapshotDirectory,
+        string sourcePath,
+        string relativePath,
+        CancellationToken cancellationToken)
+    {
+        var length = new FileInfo(sourcePath).Length;
+        var sha256 = await PackMigrationPlanner.Sha256Async(sourcePath, cancellationToken).ConfigureAwait(false);
+        var objectKey = $"objects/sha256/{sha256[..2]}/{sha256}.object";
+        var objectPath = ResolveContainedPath(snapshotDirectory, objectKey, "snapshot object");
+        if (!File.Exists(objectPath))
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(objectPath)!);
+            var partial = objectPath + $".{Guid.NewGuid():N}.partial";
+            try
+            {
+                await CopyFileAsync(sourcePath, partial, cancellationToken).ConfigureAwait(false);
+                if (new FileInfo(partial).Length != length ||
+                    !string.Equals(await PackMigrationPlanner.Sha256Async(partial, cancellationToken).ConfigureAwait(false),
+                        sha256, StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidDataException("A staged snapshot content object failed verification.");
+                try
+                {
+                    File.Move(partial, objectPath);
+                }
+                catch (IOException) when (File.Exists(objectPath))
+                {
+                    File.Delete(partial);
+                }
+            }
+            finally
+            {
+                if (File.Exists(partial))
+                    File.Delete(partial);
+            }
+        }
+        if (new FileInfo(objectPath).Length != length)
+            throw new InvalidDataException("A hash-addressed snapshot content object has an unexpected size.");
+        return new VersionSnapshotContentObject(relativePath, objectKey, length, sha256);
+    }
+
+    private static string ResolveContainedPath(string root, string relativePath, string description)
+    {
+        var normalized = PersistentDataClassifier.Normalize(relativePath);
+        if (normalized.Length == 0 || Path.IsPathRooted(normalized) || normalized.Contains(':') ||
+            normalized.Equals("..", StringComparison.Ordinal) || normalized.StartsWith("../", StringComparison.Ordinal))
+            throw new InvalidDataException($"The {description} path is unsafe: {relativePath}");
+        var fullRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
+        var full = Path.GetFullPath(Path.Combine(fullRoot, normalized.Replace('/', Path.DirectorySeparatorChar)));
+        if (!full.StartsWith(fullRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException($"The {description} path escapes its root: {relativePath}");
+        return full;
+    }
+
+    private static async Task CopyFileAsync(string source, string destination, CancellationToken cancellationToken)
+    {
+        await using var input = new FileStream(source, FileMode.Open, FileAccess.Read, FileShare.Read,
+            128 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
+        await using var output = new FileStream(destination, FileMode.CreateNew, FileAccess.Write, FileShare.None,
+            128 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
+        await input.CopyToAsync(output, cancellationToken).ConfigureAwait(false);
+        await output.FlushAsync(cancellationToken).ConfigureAwait(false);
+    }
 
     public async Task DeleteAsync(
         Guid serverId,
@@ -609,6 +716,51 @@ public sealed class VersionSnapshotService
         MoveContainedFileToRecovery(snapshotRoot, candidate.SnapshotPath, recovery);
         MoveContainedFileToRecovery(snapshotRoot, candidate.ManifestPath, recovery);
         await store.DeleteVersionSnapshotRecordAsync(snapshotId, cancellationToken).ConfigureAwait(false);
+        await MoveUnreferencedContentObjectsToRecoveryAsync(snapshotRoot, recovery, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    private static async Task MoveUnreferencedContentObjectsToRecoveryAsync(
+        string snapshotRoot,
+        string recovery,
+        CancellationToken cancellationToken)
+    {
+        var objectRoot = Path.Combine(snapshotRoot, "objects");
+        if (!Directory.Exists(objectRoot))
+            return;
+        var referenced = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var manifestPath in Directory.EnumerateFiles(snapshotRoot, "*.manifest.json", SearchOption.TopDirectoryOnly))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                await using var stream = new FileStream(manifestPath, FileMode.Open, FileAccess.Read, FileShare.Read,
+                    64 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
+                var manifest = await JsonSerializer.DeserializeAsync<VersionSnapshotManifest>(stream,
+                    ProtocolJson.Options, cancellationToken).ConfigureAwait(false);
+                if (manifest is null)
+                    return;
+                foreach (var item in manifest.ContentObjects)
+                    referenced.Add(PersistentDataClassifier.Normalize(item.ObjectKey));
+            }
+            catch (JsonException)
+            {
+                // An unreadable retained manifest means ownership is uncertain. Preserve every object.
+                return;
+            }
+        }
+        foreach (var objectPath in Directory.EnumerateFiles(objectRoot, "*", SearchOption.AllDirectories))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var relative = PersistentDataClassifier.Normalize(Path.GetRelativePath(snapshotRoot, objectPath));
+            if (referenced.Contains(relative))
+                continue;
+            var destination = ResolveContainedPath(Path.Combine(recovery, "objects"),
+                PersistentDataClassifier.Normalize(Path.GetRelativePath(objectRoot, objectPath)),
+                "recovered snapshot object");
+            Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+            File.Move(objectPath, destination);
+        }
     }
 
     private static void MoveContainedFileToRecovery(string root, string path, string recovery)

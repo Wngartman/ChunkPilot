@@ -98,6 +98,41 @@ describe('authoritative WebUI store', () => {
     expect(useAppStore.getState().busy.has('servers.delete')).toBe(false);
   });
 
+  it('keeps managed-copy conversion pending until verification and registration complete', async () => {
+    const bridge: BridgeAdapter = {
+      request: async <T,>() => ({ accepted: true, operationId: 'managed-copy-operation' } as T),
+      subscribe: () => () => undefined,
+      dispose: () => undefined
+    };
+    useAppStore.getState().setBridge(bridge);
+
+    await useAppStore.getState().command('servers.createManagedCopy', { serverId: 'server-1', preflightToken: 'review' });
+    expect(useAppStore.getState().busy.has('servers.createManagedCopy')).toBe(true);
+
+    useAppStore.getState().consumeEvent({ protocolVersion: 1, event: 'operation.completed', revision: 6,
+      payload: { operationId: 'managed-copy-operation', method: 'servers.createManagedCopy', success: true } });
+
+    expect(useAppStore.getState().busy.has('servers.createManagedCopy')).toBe(false);
+  });
+
+  it('keeps a pack update pending after prompt acceptance until the Agent operation completes', async () => {
+    const bridge: BridgeAdapter = {
+      request: async <T,>() => ({ accepted: true, operationId: 'update-operation' } as T),
+      subscribe: () => () => undefined,
+      dispose: () => undefined
+    };
+    useAppStore.getState().setBridge(bridge);
+
+    await useAppStore.getState().command('versions.install', { serverId: 'server-1', operationId: 'update-operation' });
+    expect(useAppStore.getState().busy.has('versions.install')).toBe(true);
+
+    useAppStore.getState().consumeEvent({ protocolVersion: 1, event: 'operation.completed', revision: 6,
+      payload: { operationId: 'update-operation', method: 'versions.install', success: false, error: 'Activation failed; rollback completed.' } });
+
+    expect(useAppStore.getState().busy.has('versions.install')).toBe(false);
+    expect(useAppStore.getState().error).toContain('rollback');
+  });
+
   it('keeps unknown player and metric values distinct from zero', () => {
     const unknown = fixtures.unknown.servers[0];
     expect(unknown.playersOnline).toBeNull();

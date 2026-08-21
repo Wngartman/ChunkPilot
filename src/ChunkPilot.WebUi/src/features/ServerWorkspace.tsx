@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { Archive, Box, Check, CircleAlert, CircleHelp, Clipboard, CloudOff, Code2, File, Folder, FolderOpen, Globe2, History, Monitor, MoreHorizontal, Play, RotateCw, Send, Server as ServerIcon, Settings, Share2, ShieldCheck, Square, Terminal, Trash2, Users, Wifi } from '../design-system/Icons';
-import type { ConnectivitySnapshot, ManagedContentOperation, PluginInstallPlan, PluginProject, PluginProviderStatus, PluginRelease, ServerDeletionMode, ServerDeletionPreflight, ServerSummary, TextFileContent } from '../bridge/types';
+import { Archive, Box, Check, CircleAlert, CircleHelp, Clipboard, CloudOff, Code2, File, Folder, FolderOpen, Globe2, History, MoreHorizontal, Play, RotateCw, Send, Server as ServerIcon, Settings, Share2, ShieldCheck, Square, Terminal, Trash2, Users, Wifi } from '../design-system/Icons';
+import type { ConnectivitySnapshot, ManagedContentOperation, PluginInstallPlan, PluginProject, PluginProviderStatus, PluginRelease, ServerDeletionMode, ServerDeletionPreflight, ServerSummary, TextFileContent, UpdateSummary } from '../bridge/types';
 import { Button, ConfirmDialog, Dialog, EmptyState, PanelTitle, SearchInput, SelectInput, Sparkline, StatusBadge, TextInput } from '../design-system/Primitives';
 import { ActionMenu } from '../design-system/ActionMenu';
 import { useAppStore } from '../state/store';
@@ -173,10 +173,23 @@ function DeleteServerDialog({ open, preflight, server, onClose }: {
       acknowledgeManagedBackupDeletion: backupsAcknowledged
     }).then(onClose);
   };
+  const createManagedCopy = () => {
+    if (!preflight?.canCreateManagedCopy || busy.has('servers.createManagedCopy')) return;
+    void command('servers.createManagedCopy', {
+      serverId: server.id,
+      preflightToken: preflight.token
+    }).then(onClose);
+  };
   return <Dialog open={open} title={`Delete ${server.name}?`} wide onClose={onClose} footer={<><Button onClick={onClose}>Cancel</Button><Button variant="danger" disabled={!canSubmit} icon={<Trash2 size={14} />} onClick={submit}>{mode === 'Permanent' ? 'Permanently delete' : mode === 'MoveToRecovery' ? 'Move to Recovery' : 'Remove from ChunkPilot'}</Button></>}>
     {!preflight ? <div className={styles.deletionLoading}>Reviewing ownership, operations, schedules, backups, and networking…</div> : <div className={styles.deletionDialog}>
       <div className={styles.deletionSummary}><div><span>Server</span><strong>{preflight.serverName}</strong></div><div><span>Platform</span><strong>{preflight.platform} {preflight.version}</strong></div><div><span>State</span><strong>{preflight.state}</strong></div><div><span>Active schedules</span><strong>{preflight.activeScheduleCount}</strong></div><div><span>Backups</span><strong>{preflight.backupCount}</strong></div><div><span>Internet sharing</span><strong>{preflight.internetSharingConfigured ? 'Configured' : 'Not active'}</strong></div></div>
       <div className={styles.deletionPaths}><span>Server root</span><code>{preflight.managedRoot}</code><span>World location</span><code>{preflight.worldLocation}</code></div>
+      <div className={styles.ownershipEvidence}>
+        <strong>{preflight.ownershipProven ? 'Deletion ownership proven' : 'Ownership is uncertain'}</strong>
+        <p>{preflight.ownershipDetail}</p>
+        <details><summary>Ownership evidence</summary>{preflight.ownershipEvidence.map(item => <div key={item.code} data-satisfied={item.satisfied}><span>{item.satisfied ? 'Proven' : 'Not proven'}</span><p>{item.detail}</p></div>)}</details>
+        {!preflight.ownershipProven && preflight.canCreateManagedCopy && <div className={styles.managedCopyAction}><div><strong>Create a verified managed copy</strong><p>ChunkPilot copies and verifies every file into a new owned folder, then transfers this registration. The original folder is never changed or claimed.</p></div><Button variant="primary" disabled={busy.has('servers.createManagedCopy')} onClick={createManagedCopy}>{busy.has('servers.createManagedCopy') ? 'Copying…' : 'Create managed copy'}</Button></div>}
+      </div>
       {preflight.blockers.length > 0 && <div className={styles.deletionBlockers}><strong>Needs attention</strong>{preflight.blockers.map(item => <p key={item}>{item}</p>)}</div>}
       <div className={styles.deletionModes} role="radiogroup" aria-label="Deletion method">
         <button role="radio" aria-checked={mode === 'MoveToRecovery'} disabled={!preflight.ownershipProven} onClick={() => setMode('MoveToRecovery')}><span><strong>Move to Recovery — recommended</strong><small>Stops the server, withdraws owned Internet access, disables schedules, and moves owned data to a recoverable folder.</small></span></button>
@@ -205,6 +218,36 @@ function ShareDialog({ open, onClose, server, connectivity, onManage }: {
       <div className={styles.shareFacts}><div><span>Connection method</span><strong>{connectivity.modeTitle}</strong></div><div><span>Outside-in evidence</span><strong>{publicVerified ? `Verified ${connectivity.external.checkedAt}` : 'Not verified'}</strong></div><div><span>Minecraft</span><strong>{server.ecosystem} {server.minecraftVersion}</strong></div></div>
       <p className={styles.shareCaveat}>{publicVerified ? 'This endpoint answered from outside your network at the recorded check time. Reachability can change later.' : routerReported ? 'This is the most likely address. ChunkPilot is still checking whether it works from outside your network.' : connectivity.mode === 'PortForwarding' ? 'Internet setup has not produced a public address yet.' : 'This address is not for friends outside your home network.'}</p>
     </div> : <EmptyState title="Connection state unavailable" detail="ChunkPilot has not received authoritative networking state for this server." />}
+  </Dialog>;
+}
+
+function UpdateInstallDialog({ open, onClose, server, update }: {
+  open: boolean; onClose: () => void; server: ServerSummary; update: UpdateSummary;
+}) {
+  const command = useAppStore(state => state.command);
+  const busy = useAppStore(state => state.busy.has('versions.install'));
+  const target = update.latestVersionName ?? update.targetVersionId ?? 'selected update';
+  const published = update.targetPublishedAt ? new Date(update.targetPublishedAt).toLocaleString() : 'Not provided';
+  const compatibility = update.compatibilityReasons?.length ? update.compatibilityReasons : ['No compatibility changes were reported by the provider.'];
+  const confirm = () => {
+    onClose();
+    void command('versions.install', { serverId: server.id, operationId: crypto.randomUUID() });
+  };
+  return <Dialog open={open} title={`Install ${target}?`} wide onClose={onClose} footer={<><Button onClick={onClose}>Cancel</Button><Button variant="primary" disabled={busy} onClick={confirm}>{busy ? 'Starting…' : 'Install update'}</Button></>}>
+    <div className={styles.updateProposal}>
+      <dl>
+        <div><dt>Server</dt><dd>{server.name}</dd></div>
+        <div><dt>Installed</dt><dd>{update.installedVersionName ?? 'Unavailable'}</dd></div>
+        <div><dt>Target</dt><dd>{target}</dd></div>
+        <div><dt>Provider</dt><dd>{update.provider ?? 'Unavailable'}</dd></div>
+        <div><dt>Published</dt><dd>{published}</dd></div>
+        <div><dt>Download</dt><dd>{bytes(update.downloadSizeBytes ?? null)}</dd></div>
+        <div><dt>Minecraft</dt><dd>{update.minecraftVersion ?? server.minecraftVersion}</dd></div>
+        <div><dt>Platform</dt><dd>{update.loader ?? server.ecosystem}{update.loaderVersion ? ` ${update.loaderVersion}` : ''}</dd></div>
+      </dl>
+      <section><strong>Compatibility</strong><ul>{compatibility.map(reason => <li key={reason}>{reason}</li>)}</ul></section>
+      <p>ChunkPilot will save and stop the owned process when needed, create and verify a rollback snapshot, stage and verify the package, switch atomically, start for validation, and roll back if activation fails.</p>
+    </div>
   </Dialog>;
 }
 
@@ -348,6 +391,7 @@ function ModpackPage({ server }: { server: ServerSummary }) {
   const command = useAppStore(state => state.command);
   const busy = useAppStore(state => state.busy);
   const update = snapshot.update;
+  const [showInstall, setShowInstall] = useState(false);
   const pack = server.modpack;
   const providerUpdates = pack?.provider === 'Modrinth' || pack?.provider === 'CurseForge';
   const versionBusy = ['versions.check', 'versions.install', 'versions.rollback', 'versions.cancel'].some(method => busy.has(method));
@@ -359,7 +403,7 @@ function ModpackPage({ server }: { server: ServerSummary }) {
         <div><strong>{pack.projectName}</strong> <span className={page.muted}>· {pack.provider} · {pack.versionName}</span></div>
         <div className={page.actions}>
           {providerUpdates && update.cancellable && <Button variant="subtle" disabled={busy.has('versions.cancel')} onClick={() => void command('versions.cancel', { serverId: server.id })}>Cancel safely</Button>}
-          {providerUpdates && update.canInstall && <Button variant="primary" disabled={versionBusy} onClick={() => void command('versions.install', { serverId: server.id })}>Install pack {update.latestVersionName ?? 'update'}</Button>}
+          {providerUpdates && update.canInstall && <Button variant="primary" disabled={versionBusy} onClick={() => setShowInstall(true)}>Install pack {update.latestVersionName ?? 'update'}</Button>}
           {providerUpdates && <Button icon={<RotateCw size={14} />} disabled={versionBusy} onClick={() => void command('versions.check', { serverId: server.id })}>{busy.has('versions.check') ? 'Checking…' : 'Check pack release'}</Button>}
         </div>
       </div>
@@ -370,8 +414,9 @@ function ModpackPage({ server }: { server: ServerSummary }) {
       </div>
       <div className={styles.updateSummary}>
         <div><StatusBadge tone={providerUpdates && update.canInstall ? 'warning' : providerUpdates ? 'success' : 'neutral'}>{providerUpdates ? update.status : 'Local pack'}</StatusBadge><strong>{providerUpdates ? update.detail : 'Provider updates are unavailable until this local archive is linked to an exact project release.'}</strong><span>{providerUpdates ? update.checkedAt ? `Last checked ${new Date(update.checkedAt).toLocaleString()}` : 'Not checked yet' : 'The inspected archive remains the installed baseline.'}</span></div>
-        {update.operationPercent != null && <div className={styles.updateProgress} aria-label={`Pack update progress ${update.operationPercent.toFixed(0)} percent`}><i><b style={{ width: `${Math.max(0, Math.min(100, update.operationPercent))}%` }} /></i><span>{update.operationState} · {update.operationPercent.toFixed(0)}%</span></div>}
+        {update.operationPercent != null && <div className={styles.updateProgress} aria-label={`Pack update progress ${update.operationPercent.toFixed(0)} percent`}><i><b style={{ width: `${Math.max(0, Math.min(100, update.operationPercent))}%` }} /></i><span>{update.operationStep || update.operationState} · {update.operationPercent.toFixed(0)}%</span>{update.operationDetail && update.operationDetail !== update.operationStep && <small>{update.operationDetail}</small>}</div>}
       </div>
+      <UpdateInstallDialog open={showInstall} onClose={() => setShowInstall(false)} server={server} update={update} />
     </section>
     <section className={styles.versionEvidence}>
       <header><div><strong>Pack ownership</strong><p>ChunkPilot owns the exact pack release as one recovery-backed unit. Files added outside the pack remain user-owned; changed pack-managed files are reviewed during update migration.</p></div><StatusBadge tone="info">Exact release linked</StatusBadge></header>
@@ -648,6 +693,7 @@ function BackupsPage({ server }: { server: ServerSummary }) {
 function VersionsPage({ server }: { server: ServerSummary }) {
   const snapshot = useAppStore(state => state.snapshot)!;
   const command = useAppStore(state => state.command);
+  const [showInstall, setShowInstall] = useState(false);
   const busy = useAppStore(state => state.busy);
   const update = snapshot.update;
   const isPaper = server.capabilities.versioning === 'paper';
@@ -708,7 +754,7 @@ function VersionsPage({ server }: { server: ServerSummary }) {
         <div><strong>Versions and updates</strong> <span className={page.muted}>· installed Minecraft {server.minecraftVersion}{isPaper && server.loaderVersion ? ` · Paper build ${server.loaderVersion}` : isLoader && server.loaderVersion ? ` · ${loaderPlatform} ${server.loaderVersion}` : ''}</span></div>
         <div className={page.actions}>
           {update?.cancellable && <Button variant="subtle" disabled={busy.has('versions.cancel')} onClick={() => void command('versions.cancel', { serverId: server.id })}>Cancel safely</Button>}
-          {update?.canInstall && <Button variant="primary" disabled={versionBusy} onClick={() => void command('versions.install', { serverId: server.id })}>Install {update.latestVersionName ?? 'update'}</Button>}
+          {update?.canInstall && <Button variant="primary" disabled={versionBusy} onClick={() => setShowInstall(true)}>Install {update.latestVersionName ?? 'update'}</Button>}
           <Button icon={<RotateCw size={14} />} disabled={versionBusy} onClick={() => void command('versions.check', { serverId: server.id })}>{busy.has('versions.check') ? 'Checking…' : 'Check for updates'}</Button>
         </div>
       </div>
@@ -731,8 +777,9 @@ function VersionsPage({ server }: { server: ServerSummary }) {
           </div>)}
       {update && <div className={styles.updateSummary}>
         <div><StatusBadge tone={update.canInstall ? 'warning' : update.sourceLinked ? 'success' : 'neutral'}>{update.status}</StatusBadge><strong>{update.detail}</strong><span>{update.checkedAt ? `Last checked ${new Date(update.checkedAt).toLocaleString()}` : update.sourceLinked ? 'Not checked yet' : 'No authoritative update source is linked.'}</span></div>
-        {update.operationPercent != null && <div className={styles.updateProgress} aria-label={`Update progress ${update.operationPercent.toFixed(0)} percent`}><i><b style={{ width: `${Math.max(0, Math.min(100, update.operationPercent))}%` }} /></i><span>{update.operationState} · {update.operationPercent.toFixed(0)}%</span></div>}
+        {update.operationPercent != null && <div className={styles.updateProgress} aria-label={`Update progress ${update.operationPercent.toFixed(0)} percent`}><i><b style={{ width: `${Math.max(0, Math.min(100, update.operationPercent))}%` }} /></i><span>{update.operationStep || update.operationState} · {update.operationPercent.toFixed(0)}%</span>{update.operationDetail && update.operationDetail !== update.operationStep && <small>{update.operationDetail}</small>}</div>}
       </div>}
+      {update && <UpdateInstallDialog open={showInstall} onClose={() => setShowInstall(false)} server={server} update={update} />}
       {snapshot.versions.length ? <table className={styles.table}><thead><tr><th>Version</th><th>Platform</th><th>Installed</th><th>Snapshot</th><th>Status</th><th /></tr></thead><tbody>{snapshot.versions.map(version => <tr key={version.id}><td><strong>{version.version}</strong><small className={styles.cellMeta}>{version.health}</small></td><td>{version.platform}</td><td>{version.installedAt ? new Date(version.installedAt).toLocaleDateString() : 'Unavailable'}</td><td>{version.snapshotSizeBytes > 0 ? bytes(version.snapshotSizeBytes) : version.active ? 'Active files' : 'Unavailable'}{version.includesWorldData && <small className={styles.cellMeta}>World data included</small>}</td><td><StatusBadge tone={version.active ? 'success' : version.rollbackReady ? 'info' : version.verified ? 'neutral' : 'warning'}>{version.active ? 'Active' : version.rollbackReady ? 'Rollback ready' : version.verified ? 'Verified' : 'Unverified'}</StatusBadge></td><td><div className={styles.tableActions}><Button disabled={versionBusy} variant="subtle" onClick={() => void command('versions.verify', { serverId: server.id, versionId: version.id })}>Verify</Button>{version.rollbackReady && <Button disabled={versionBusy} variant="subtle" onClick={() => void command('versions.rollback', { serverId: server.id, versionId: version.id })}>Roll back</Button>}</div></td></tr>)}</tbody></table> : <EmptyState title="No rollback snapshots recorded" detail="The current installed version is shown above. ChunkPilot will list verified version snapshots here after an update or rollback creates them." />}
     </section>
     <section className={styles.versionEvidence}>
@@ -801,10 +848,8 @@ function ConnectivitySettings({ server }: { server: ServerSummary }) {
   if (!connectivity || connectivity.serverId !== server.id)
     return <EmptyState title="Connectivity unavailable" detail="ChunkPilot has not received authoritative networking state for this server." />;
   const modes: { id: ConnectivitySnapshot['mode']; title: string; detail: string; icon: typeof Wifi }[] = [
-    { id: 'ThisComputerOnly', title: 'Local only', detail: 'Only this PC can join.', icon: Monitor },
     { id: 'HomeNetwork', title: 'LAN', detail: 'People on this Wi-Fi or wired network.', icon: Wifi },
-    { id: 'PortForwarding', title: 'Internet hosting', detail: 'Friends elsewhere, after deliberate setup.', icon: Globe2 },
-    { id: 'ConfigureLater', title: 'Configure later', detail: 'Keep the server local for now.', icon: CircleHelp }
+    { id: 'PortForwarding', title: 'Internet', detail: 'Friends elsewhere, after deliberate setup and outside-in verification.', icon: Globe2 }
   ];
   const setMode = (mode: ConnectivitySnapshot['mode']) => void command('connectivity.setMode', { serverId: server.id, mode });
   const focusConsent = (id: string) => document.getElementById(id)?.focus();
@@ -823,7 +868,7 @@ function ConnectivitySettings({ server }: { server: ServerSummary }) {
       if (connectivity.router.canCheck) { await command('connectivity.router.check', { serverId: server.id }); return; }
     }
     if (server.state !== 'Running') { await command('servers.start', { serverId: server.id }); return; }
-    if (connectivity.external.canCheck) await command('connectivity.external.check', { serverId: server.id });
+    // Outside-in verification starts from the automatic effect once all prerequisites are true.
   };
   const setupBusy = connectivity.router.busy || connectivity.firewall.busy || connectivity.external.busy ||
     busy.has('connectivity.setMode') || busy.has('connectivity.router.check') || busy.has('connectivity.firewall.primary') ||
@@ -832,8 +877,7 @@ function ConnectivitySettings({ server }: { server: ServerSummary }) {
     : !connectivity.firewall.configured ? connectivity.firewall.consentRequired ? 'Review Windows approval' : 'Continue Windows setup'
     : !connectivity.router.enabled ? connectivity.router.consentRequired ? 'Review router approval' : 'Continue router setup'
     : server.state !== 'Running' ? 'Start server'
-    : connectivity.addresses.publicVerified ? 'Recheck Internet access'
-    : connectivity.external.busy ? 'Verifying…' : 'Verify now';
+    : null;
   const setupSteps = [
     { label: 'Windows Firewall', done: connectivity.firewall.configured, active: connectivity.firewall.busy || connectivity.firewall.consentRequired, state: connectivity.firewall.configured ? 'Ready' : connectivity.firewall.busy ? 'In progress' : connectivity.firewall.consentRequired ? 'Approval needed' : 'Not set up' },
     { label: 'Automatic router setup', done: connectivity.router.enabled, active: connectivity.router.busy || connectivity.router.consentRequired, state: connectivity.router.enabled ? 'Router ready' : connectivity.router.busy ? 'In progress' : connectivity.router.consentRequired ? 'Approval needed' : 'Not set up' },
@@ -844,7 +888,7 @@ function ConnectivitySettings({ server }: { server: ServerSummary }) {
     <header className={styles.connectivityHeader}><div><h2>Connectivity</h2><p>Choose who should be able to join. Router, firewall, and verification details stay separate and truthful.</p></div><StatusBadge tone={connectivity.status.tone}>{connectivity.status.title}</StatusBadge></header>
     <div className={styles.modeGrid} aria-label="Connection method">{modes.map(mode => <button key={mode.id} data-selected={connectivity.mode === mode.id} onClick={() => setMode(mode.id)} disabled={busy.has('connectivity.setMode')}><mode.icon size={17} /><span><strong>{mode.title}</strong><small>{mode.detail}</small></span><i aria-hidden="true" /></button>)}</div>
     <div className={styles.connectivityStatus} data-tone={connectivity.status.tone}><div><strong>{connectivity.status.title}</strong><p>{connectivity.status.detail}</p></div><span>{connectivity.modeTitle}</span></div>
-    <section className={styles.internetPrompt}><Globe2 size={20} /><div><strong>{connectivity.addresses.publicVerified ? 'Internet access verified' : 'Finish Internet setup'}</strong><p>ChunkPilot works through Windows access, your router, server startup, and a real outside-in check. Every network change still requires your deliberate approval.</p></div><Button variant="primary" disabled={setupBusy && !connectivity.addresses.publicVerified} onClick={() => void advanceInternetSetup()}>{setupBusy && !connectivity.addresses.publicVerified ? 'Working…' : mainAction}</Button></section>
+    <section className={styles.internetPrompt}><Globe2 size={20} /><div><strong>{connectivity.addresses.publicVerified ? 'Internet access verified' : connectivity.mode === 'PortForwarding' ? 'Finish Internet setup' : 'Internet hosting'}</strong><p>ChunkPilot works through Windows access, your router, server startup, and a real outside-in check. Every network change still requires your deliberate approval.</p></div>{mainAction ? <Button variant="primary" disabled={setupBusy} onClick={() => void advanceInternetSetup()}>{setupBusy ? 'Working…' : mainAction}</Button> : <StatusBadge tone={connectivity.addresses.publicVerified ? 'success' : connectivity.external.busy ? 'info' : 'neutral'}>{connectivity.addresses.publicVerified ? 'Verified' : connectivity.external.busy ? 'Checking automatically' : 'Background verification pending'}</StatusBadge>}</section>
     {connectivity.mode === 'PortForwarding' && <div className={styles.setupStepper} aria-label="Internet setup progress">{setupSteps.map((step, index) => <div key={step.label} data-complete={step.done || undefined} data-active={step.active || undefined}><span>{step.done ? <Check size={12} /> : index + 1}</span><div><strong>{step.label}</strong><small>{step.state}</small></div></div>)}</div>}
     <section className={styles.addressSection}><div className={styles.sectionHeading}><div><h3>Joining addresses</h3><p>ChunkPilot never substitutes a local check or router response for verified public reachability.</p></div></div><div className={styles.addressGrid}>
       <AddressRow label="This PC" value={connectivity.addresses.local} kind="local" serverId={server.id} command={command} />

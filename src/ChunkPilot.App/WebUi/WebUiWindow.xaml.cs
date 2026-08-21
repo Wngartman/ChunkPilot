@@ -29,7 +29,7 @@ public partial class WebUiWindow : Window
     internal static bool IsDeferredLifecycleMethod(string method) =>
         method is "servers.start" or "servers.stop" or "servers.restart";
     internal static bool IsDeferredOperationMethod(string method) =>
-        IsDeferredLifecycleMethod(method) || method == "servers.delete";
+        IsDeferredLifecycleMethod(method) || method is "servers.delete" or "servers.createManagedCopy" or "versions.install";
     internal static bool ShouldRetryRendererFailure(
         bool isClosed,
         bool retryUsed,
@@ -64,6 +64,7 @@ public partial class WebUiWindow : Window
     private readonly Dictionary<Guid, LifecycleWebUiOperation> lifecycleOperations = [];
     private readonly Dictionary<Guid, CreationWebUiOperation> creationOperations = [];
     private readonly HashSet<Guid> observedContentOperations = [];
+    private readonly HashSet<Guid> observedUpdateOperations = [];
     private readonly Dictionary<string, CatalogItem> modpackCatalog = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> modpackImageCache = new(StringComparer.Ordinal);
     private Guid sessionId;
@@ -239,6 +240,7 @@ public partial class WebUiWindow : Window
         JsonObject parameters,
         CancellationToken cancellationToken) => method switch
         {
+            "modpacks.versions" => LoadModpackVersionsAsync(parameters, cancellationToken),
             "modpacks.cache" => SearchModpacksAsync(parameters, cacheOnly: true, cancellationToken),
             "modpacks.search" => SearchModpacksAsync(parameters, cacheOnly: false, cancellationToken),
             _ => DispatchAsync(method, parameters)
@@ -324,6 +326,15 @@ public partial class WebUiWindow : Window
                     parameters["acknowledgeWorldDeletion"]?.GetValue<bool?>() ?? false,
                     parameters["acknowledgeManagedBackupDeletion"]?.GetValue<bool?>() ?? false));
             }
+            case "servers.createManagedCopy":
+            {
+                var server = RequireServer(parameters);
+                var tokenText = RequiredString(parameters, "preflightToken", 64);
+                if (!Guid.TryParse(tokenText, out var token))
+                    throw new ArgumentException("Ownership review token is invalid.");
+                return BeginManagedCopyOperation(server,
+                    new ManagedCopyConversionRequest(server.Definition.Id, token));
+            }
             case "plugins.openFolder":
             case "mods.openFolder":
             {
@@ -347,6 +358,8 @@ public partial class WebUiWindow : Window
                         "CatalogProviderStatuses").ConfigureAwait(true))
                     .Where(status => status.Provider is CatalogProvider.Modrinth or CatalogProvider.CurseForge),
                     WebUiProtocol.Json);
+            case "modpacks.versions":
+                return await LoadModpackVersionsAsync(parameters, CancellationToken.None).ConfigureAwait(true);
             case "modpacks.cache":
                 return await SearchModpacksAsync(parameters, cacheOnly: true, CancellationToken.None).ConfigureAwait(true);
             case "modpacks.search":
@@ -360,7 +373,16 @@ public partial class WebUiWindow : Window
             case "settings.curseforge.status":
             {
                 var state = await client.SendAsync<TextResponse>("HasCurseForgeApiKey").ConfigureAwait(true);
-                return JsonSerializer.SerializeToNode(new { configured = state.Value == "configured" }, WebUiProtocol.Json);
+                var configured = state.Value == "configured";
+                var provider = (await client.SendAsync<IReadOnlyList<CatalogProviderStatus>>(
+                        "CatalogProviderStatuses").ConfigureAwait(true))
+                    .FirstOrDefault(status => status.Provider == CatalogProvider.CurseForge);
+                return JsonSerializer.SerializeToNode(new
+                {
+                    configured,
+                    readyToBrowse = configured && provider?.Available == true,
+                    detail = provider?.Detail ?? "CurseForge is unavailable."
+                }, WebUiProtocol.Json);
             }
             case "settings.curseforge.save":
             {
@@ -375,6 +397,9 @@ public partial class WebUiWindow : Window
                 return JsonSerializer.SerializeToNode(
                     await client.SendAsync<OperationResult>("RemoveCurseForgeApiKey").ConfigureAwait(true),
                     WebUiProtocol.Json);
+            case "settings.curseforge.openConsole":
+                OpenExternalHttps("https://console.curseforge.com/");
+                return Accepted(method);
             case "plugins.chooseLocal":
             case "mods.chooseLocal":
                 return await ChooseLocalAddonAsync(parameters).ConfigureAwait(true);
@@ -673,8 +698,7 @@ public partial class WebUiWindow : Window
                 Select(parameters);
                 if (viewModel.CurrentUpdateCheck?.LatestVersion is null)
                     throw new InvalidOperationException("No installable update has been confirmed for this server.");
-                await viewModel.InstallAvailableUpdateCommand.ExecuteAsync(null).ConfigureAwait(true);
-                break;
+                return await BeginUpdateOperationAsync(parameters).ConfigureAwait(true);
             case "versions.rollback":
                 Select(parameters);
                 SelectVersion(parameters, requireRollbackReady: true);
@@ -715,8 +739,8 @@ public partial class WebUiWindow : Window
             case "connectivity.setMode":
                 Select(parameters);
                 if (!Enum.TryParse<NetworkMode>(RequiredString(parameters, "mode", 40), true, out var networkMode) ||
-                    networkMode == NetworkMode.OfficialTunnel)
-                    throw new ArgumentException("Choose Local only, LAN, Internet hosting, or Configure later.");
+                    networkMode is not (NetworkMode.HomeNetwork or NetworkMode.PortForwarding))
+                    throw new ArgumentException("Choose LAN or Internet hosting.");
                 viewModel.SelectedNetworkMode = networkMode;
                 await viewModel.SaveNetworkModeCommand.ExecuteAsync(null).ConfigureAwait(true);
                 break;
@@ -871,6 +895,30 @@ public partial class WebUiWindow : Window
         }, WebUiProtocol.Json);
     }
 
+    private JsonNode? BeginManagedCopyOperation(ServerSnapshot server, ManagedCopyConversionRequest request)
+    {
+        const string method = "servers.createManagedCopy";
+        var serverId = server.Definition.Id;
+        if (lifecycleOperations.TryGetValue(serverId, out var active) && !active.Task.IsCompleted)
+        {
+            if (!string.Equals(active.Method, method, StringComparison.Ordinal))
+                throw new InvalidOperationException($"{active.Method.Replace("servers.", "", StringComparison.OrdinalIgnoreCase)} is already in progress for this server.");
+            return JsonSerializer.SerializeToNode(new
+            {
+                accepted = true, operationId = active.OperationId, method, duplicate = true
+            }, WebUiProtocol.Json);
+        }
+
+        var operationId = Guid.NewGuid();
+        var task = client.SendAsync<ManagedCopyConversionReceipt>("CreateManagedCopy", request);
+        lifecycleOperations[serverId] = new(operationId, method, task);
+        _ = ObserveLifecycleOperationAsync(serverId, operationId, method, task);
+        return JsonSerializer.SerializeToNode(new
+        {
+            accepted = true, operationId, method, duplicate = false
+        }, WebUiProtocol.Json);
+    }
+
     private async Task ObserveLifecycleOperationAsync(Guid serverId, Guid operationId, string method, Task task)
     {
         string? error = null;
@@ -946,6 +994,95 @@ public partial class WebUiWindow : Window
     }
 
     private sealed record LifecycleWebUiOperation(Guid OperationId, string Method, Task Task);
+
+    private async Task<JsonNode?> BeginUpdateOperationAsync(JsonObject parameters)
+    {
+        const string method = "versions.install";
+        var server = viewModel.SelectedServer ??
+                     throw new InvalidOperationException("No server is selected.");
+        var check = viewModel.CurrentUpdateCheck ??
+                    throw new InvalidOperationException("No authoritative update check is available.");
+        var target = check.LatestVersion ??
+                     throw new InvalidOperationException("No installable update has been confirmed for this server.");
+        if (check.Compatibility is UpdateCompatibility.Incompatible or UpdateCompatibility.Unknown)
+            throw new InvalidOperationException(check.CompatibilityReasons.Count == 0
+                ? "This update is not compatible with the selected server."
+                : string.Join(Environment.NewLine, check.CompatibilityReasons));
+
+        var requestedOperationId = parameters["operationId"]?.GetValue<Guid?>() ?? Guid.NewGuid();
+        var started = await client.SendAsync<UpdateOperationRequest>("BeginPackUpdate", new UpdateInstallRequest
+        {
+            OperationId = requestedOperationId,
+            ServerId = server.Definition.Id,
+            TargetVersion = target,
+            PlayerCountdownSeconds = server.State == ServerState.Running ? 30 : 0,
+            StartForValidation = true
+        }).ConfigureAwait(true);
+        EnsureUpdateOperationObserver(started.OperationId, server.Definition.Id);
+        return JsonSerializer.SerializeToNode(new
+        {
+            accepted = true,
+            operationId = started.OperationId,
+            method
+        }, WebUiProtocol.Json);
+    }
+
+    private void EnsureUpdateOperationObserver(Guid operationId, Guid serverId)
+    {
+        if (!observedUpdateOperations.Add(operationId))
+            return;
+        _ = ObserveUpdateOperationAsync(operationId, serverId);
+    }
+
+    private async Task ObserveUpdateOperationAsync(Guid operationId, Guid serverId)
+    {
+        UpdateOperationSnapshot? terminal = null;
+        string? observerError = null;
+        try
+        {
+            while (!closed)
+            {
+                var current = await client.SendAsync<UpdateOperationSnapshot>("GetPackUpdate",
+                    new UpdateOperationRequest(operationId)).ConfigureAwait(true);
+                viewModel.CurrentUpdateOperation = current;
+                if (bridge is { } currentBridge)
+                    await currentBridge.PublishSnapshotAsync().ConfigureAwait(true);
+                if (current.IsTerminal)
+                {
+                    terminal = current;
+                    break;
+                }
+                await Task.Delay(TimeSpan.FromMilliseconds(500)).ConfigureAwait(true);
+            }
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            observerError = SecretRedactor.Redact(exception.Message);
+        }
+        finally
+        {
+            observedUpdateOperations.Remove(operationId);
+        }
+
+        if (closed)
+            return;
+        try
+        {
+            await viewModel.RefreshCommand.ExecuteAsync(null).ConfigureAwait(true);
+            await viewModel.LoadUpdateDetailsAsync().ConfigureAwait(true);
+            if (bridge is not { } currentBridge)
+                return;
+            await currentBridge.PublishSnapshotAsync().ConfigureAwait(true);
+            currentBridge.PublishOperationCompleted(operationId, "versions.install", serverId,
+                terminal?.Success is true && observerError is null,
+                observerError ?? (terminal?.Success is false ? terminal.Error : null));
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            bridge?.PublishOperationCompleted(operationId, "versions.install", serverId, false,
+                SecretRedactor.Redact(observerError ?? exception.Message));
+        }
+    }
 
     private void EnsureContentOperationObserver(ManagedContentOperationSnapshot operation)
     {
@@ -1190,6 +1327,38 @@ public partial class WebUiWindow : Window
             throw new ArgumentException("The schedule details are too long.");
         viewModel.RestartCountdownSeconds = RequiredInt(parameters, "restartCountdownSeconds", 0, 3600, 60);
         viewModel.BackupBeforeRestart = parameters["backupBeforeRestart"]?.GetValue<bool?>() ?? false;
+    }
+
+    private async Task<JsonNode?> LoadModpackVersionsAsync(
+        JsonObject parameters,
+        CancellationToken cancellationToken)
+    {
+        if (!Enum.TryParse<CatalogProvider>(RequiredString(parameters, "provider", 32), true,
+                out var provider) || provider is not (CatalogProvider.Modrinth or CatalogProvider.CurseForge))
+            throw new ArgumentException("The modpack provider is invalid.");
+        var result = await client.SendAsync<CatalogVersionInventory>(
+            "CatalogProviderVersions",
+            new CatalogVersionInventoryRequest(
+                provider,
+                parameters["cacheOnly"]?.GetValue<bool?>() ?? false),
+            cancellationToken).ConfigureAwait(true);
+        return JsonSerializer.SerializeToNode(new
+        {
+            provider = result.Provider.ToString(),
+            state = result.State.ToString(),
+            versions = result.Versions.Select(version => new
+            {
+                versionId = version.VersionId,
+                kind = version.Kind.ToString(),
+                version.PublishedAt,
+                version.IsMajor
+            }).ToArray(),
+            result.Detail,
+            result.FailedStage,
+            result.RetrievedAt,
+            result.FromCache,
+            result.Stale
+        }, WebUiProtocol.Json);
     }
 
     private async Task<JsonNode?> SearchModpacksAsync(

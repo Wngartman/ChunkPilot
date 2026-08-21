@@ -7,14 +7,16 @@ using ChunkPilot.Core;
 namespace ChunkPilot.Infrastructure;
 
 /// <summary>Cache-backed official metadata for managed loader catalogs.</summary>
-public sealed partial class ManagedLoaderCatalogService : IManagedLoaderCertificationCatalog
+public sealed partial class ManagedLoaderCatalogService : IManagedLoaderCertificationCatalog,
+    IOrnitheHeadlessProfileProvider
 {
     public const string FabricMetaRoot = "https://meta.fabricmc.net/v2/versions";
     public const string NeoForgeVersionsApiUrl =
         "https://maven.neoforged.net/api/maven/versions/releases/net/neoforged/neoforge";
     private const string NeoForgeMavenRoot =
         "https://maven.neoforged.net/releases/net/neoforged/neoforge";
-    private const int CacheSchemaVersion = 1;
+    // Schema 2 adds typed Ornithe headless-profile and base-server-artifact evidence.
+    private const int CacheSchemaVersion = 2;
     private readonly AppDataPaths paths;
     private readonly HttpClient http;
     private readonly TimeSpan cacheLifetime;
@@ -71,7 +73,7 @@ public sealed partial class ManagedLoaderCatalogService : IManagedLoaderCertific
                 ManagedLoaderPlatform.Forge => RefreshForgeBuildsAsync(minecraftVersion, cancellationToken),
                 ManagedLoaderPlatform.NeoForge => RefreshNeoForgeBuildsAsync(minecraftVersion, cancellationToken),
                 ManagedLoaderPlatform.LegacyFabric => RefreshCatalogOnlyBuildsAsync(platform, minecraftVersion),
-                ManagedLoaderPlatform.Ornithe => RefreshCatalogOnlyBuildsAsync(platform, minecraftVersion),
+                ManagedLoaderPlatform.Ornithe => RefreshOrnitheBuildsAsync(minecraftVersion, cancellationToken),
                 _ => throw new ArgumentOutOfRangeException(nameof(platform), platform,
                     "Unknown managed-loader catalog platform.")
             },

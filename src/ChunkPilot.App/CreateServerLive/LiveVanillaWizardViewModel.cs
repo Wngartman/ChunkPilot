@@ -103,6 +103,8 @@ public sealed partial class LiveVanillaWizardViewModel : ObservableObject, IDisp
     private readonly CancellationTokenSource lifetime = new();
 
     private VanillaVersionCatalog? catalog;
+    private Task catalogReload = Task.CompletedTask;
+    private long catalogRequestGeneration;
     private Guid? operationId;
     private bool submitted;
     private ServerDefinition? createdServer;
@@ -705,6 +707,7 @@ public sealed partial class LiveVanillaWizardViewModel : ObservableObject, IDisp
     /// </summary>
     public async Task LoadCatalogAsync(bool forceRefresh)
     {
+        var requestGeneration = Interlocked.Increment(ref catalogRequestGeneration);
         CatalogState = LiveCatalogState.Loading;
         CatalogDetail = "";
         NotifyCatalog();
@@ -712,11 +715,15 @@ public sealed partial class LiveVanillaWizardViewModel : ObservableObject, IDisp
         {
             var loaded = await gateway.GetCatalogAsync(IncludeSnapshots, forceRefresh, lifetime.Token)
                 .ConfigureAwait(true);
+            if (requestGeneration != Volatile.Read(ref catalogRequestGeneration))
+                return;
             Apply(loaded);
         }
         catch (OperationCanceledException) { }
         catch (Exception exception)
         {
+            if (requestGeneration != Volatile.Read(ref catalogRequestGeneration))
+                return;
             catalog = null;
             Versions.Clear();
             CatalogState = LiveCatalogState.RequestFailed;
@@ -1001,8 +1008,14 @@ public sealed partial class LiveVanillaWizardViewModel : ObservableObject, IDisp
     {
         OnPropertyChanged(nameof(ChannelDescription));
         if (CatalogState is not LiveCatalogState.Idle)
-            _ = LoadCatalogAsync(false);
+            catalogReload = LoadCatalogAsync(false);
     }
+
+    /// <summary>
+    /// The most recent catalogue reload started by a channel change. This keeps tests and other
+    /// in-process callers from guessing when a fire-and-forget refresh has finished.
+    /// </summary>
+    internal Task CatalogReload => catalogReload;
 
     partial void OnSelectedVersionChanged(VanillaVersionOption? value)
     {

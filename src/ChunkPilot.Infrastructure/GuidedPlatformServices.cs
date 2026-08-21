@@ -241,10 +241,15 @@ public interface IGuidedCatalogProvider
     Task<IReadOnlyList<CatalogItem>> BrowseAsync(
         CatalogQuery query,
         CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<CatalogGameVersion>> GetGameVersionsAsync(
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<CatalogGameVersion>>([]);
 }
 
 public sealed class GuidedCatalogService
 {
+    private static readonly TimeSpan ProviderRequestBudget = TimeSpan.FromSeconds(10);
     private readonly AppDataPaths paths;
     private readonly IReadOnlyDictionary<CatalogProvider, IGuidedCatalogProvider> providers;
     private readonly TimeSpan cacheLifetime;
@@ -388,6 +393,73 @@ public sealed class GuidedCatalogService
         }
     }
 
+    public async Task<CatalogVersionInventory> GetVersionInventoryAsync(
+        CatalogProvider provider,
+        bool cacheOnly,
+        CancellationToken cancellationToken = default)
+    {
+        var cached = await ReadVersionInventoryCacheAsync(provider, cancellationToken).ConfigureAwait(false);
+        if (cacheOnly)
+            return cached ?? VersionInventoryFailure(provider, CatalogLoadState.Empty,
+                "No cached Minecraft version inventory is available.", "cache");
+        if (!providers.TryGetValue(provider, out var adapter))
+            return cached ?? VersionInventoryFailure(provider, CatalogLoadState.Failed,
+                "No provider adapter is registered.", "provider");
+        if (!adapter.IsAvailable)
+            return cached ?? VersionInventoryFailure(provider,
+                provider == CatalogProvider.CurseForge
+                    ? CatalogLoadState.AuthenticationRequired
+                    : CatalogLoadState.Failed,
+                adapter.AvailabilityDetail,
+                provider == CatalogProvider.CurseForge ? "authentication" : "provider");
+
+        using var requestBudget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        requestBudget.CancelAfter(ProviderRequestBudget);
+        try
+        {
+            var versions = (await adapter.GetGameVersionsAsync(requestBudget.Token).ConfigureAwait(false))
+                .Where(version => !string.IsNullOrWhiteSpace(version.VersionId))
+                .GroupBy(version => version.VersionId, StringComparer.OrdinalIgnoreCase)
+                .Select(group => group.OrderByDescending(version => version.PublishedAt).First())
+                .OrderByDescending(version => version.PublishedAt)
+                .ThenByDescending(version => version.VersionId, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            if (versions.Length == 0)
+                return cached ?? VersionInventoryFailure(provider, CatalogLoadState.Empty,
+                    "The provider returned no Minecraft versions.", "provider response");
+            var now = DateTimeOffset.UtcNow;
+            await WriteVersionInventoryCacheAsync(provider, versions, now, cancellationToken).ConfigureAwait(false);
+            return new CatalogVersionInventory
+            {
+                Provider = provider,
+                State = CatalogLoadState.Ready,
+                Versions = versions,
+                Detail = $"Loaded {versions.Length} official provider version{(versions.Length == 1 ? "" : "s")}.",
+                RetrievedAt = now
+            };
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception) when (exception is HttpRequestException or IOException or TaskCanceledException or
+                                           JsonException or InvalidDataException)
+        {
+            return cached is not null
+                ? cached with
+                {
+                    State = CatalogLoadState.OfflineCache,
+                    Detail = "The provider version inventory could not be refreshed. Showing cached versions.",
+                    FailedStage = "provider request"
+                }
+                : VersionInventoryFailure(provider, CatalogLoadState.Failed,
+                    exception is TaskCanceledException
+                        ? "The provider version request timed out."
+                        : "The provider version inventory could not be loaded.",
+                    "provider request");
+        }
+    }
+
     private async Task<CatalogBrowseResult> ProviderFailureAsync(
         CatalogProvider provider,
         CatalogQuery query,
@@ -418,6 +490,63 @@ public sealed class GuidedCatalogService
             Detail = detail,
             FailedStage = failedStage
         };
+
+    private static CatalogVersionInventory VersionInventoryFailure(
+        CatalogProvider provider,
+        CatalogLoadState state,
+        string detail,
+        string failedStage) => new()
+        {
+            Provider = provider,
+            State = state,
+            Detail = detail,
+            FailedStage = failedStage
+        };
+
+    private async Task WriteVersionInventoryCacheAsync(
+        CatalogProvider provider,
+        IReadOnlyList<CatalogGameVersion> versions,
+        DateTimeOffset createdAt,
+        CancellationToken cancellationToken)
+    {
+        Directory.CreateDirectory(paths.CatalogCache);
+        var path = VersionInventoryCachePath(provider);
+        var temporary = path + ".tmp";
+        await File.WriteAllTextAsync(temporary,
+            JsonSerializer.Serialize(new CatalogVersionInventoryCacheEnvelope(createdAt, versions), ProtocolJson.Options),
+            new UTF8Encoding(false), cancellationToken).ConfigureAwait(false);
+        File.Move(temporary, path, true);
+    }
+
+    private async Task<CatalogVersionInventory?> ReadVersionInventoryCacheAsync(
+        CatalogProvider provider,
+        CancellationToken cancellationToken)
+    {
+        var path = VersionInventoryCachePath(provider);
+        if (!File.Exists(path)) return null;
+        try
+        {
+            var envelope = JsonSerializer.Deserialize<CatalogVersionInventoryCacheEnvelope>(
+                await File.ReadAllTextAsync(path, cancellationToken).ConfigureAwait(false),
+                ProtocolJson.Options);
+            if (envelope is null || DateTimeOffset.UtcNow - envelope.CreatedAt > offlineCacheLifetime)
+                return null;
+            return new CatalogVersionInventory
+            {
+                Provider = provider,
+                State = CatalogLoadState.OfflineCache,
+                Versions = envelope.Versions,
+                Detail = "Showing the cached official provider version inventory.",
+                RetrievedAt = envelope.CreatedAt,
+                FromCache = true,
+                Stale = DateTimeOffset.UtcNow - envelope.CreatedAt > cacheLifetime
+            };
+        }
+        catch (Exception exception) when (exception is JsonException or IOException)
+        {
+            return null;
+        }
+    }
 
     private async Task WriteCacheAsync(
         CatalogProvider provider,
@@ -477,9 +606,16 @@ public sealed class GuidedCatalogService
         return Path.Combine(paths.CatalogCache, $"{provider}-{hash}.json");
     }
 
+    private string VersionInventoryCachePath(CatalogProvider provider) =>
+        Path.Combine(paths.CatalogCache, $"{provider}-minecraft-versions.json");
+
     private sealed record CatalogCacheEnvelope(
         DateTimeOffset CreatedAt,
         IReadOnlyList<CatalogItem> Items);
+
+    private sealed record CatalogVersionInventoryCacheEnvelope(
+        DateTimeOffset CreatedAt,
+        IReadOnlyList<CatalogGameVersion> Versions);
 }
 
 public abstract class HttpCatalogProvider
@@ -572,6 +708,35 @@ public sealed class ModrinthCatalogProvider : HttpCatalogProvider, IGuidedCatalo
     public CatalogProvider Provider => CatalogProvider.Modrinth;
     public bool IsAvailable => true;
     public string AvailabilityDetail => "Official Modrinth search and project-version APIs are available.";
+
+    public async Task<IReadOnlyList<CatalogGameVersion>> GetGameVersionsAsync(
+        CancellationToken cancellationToken = default)
+    {
+        using var document = await GetJsonAsync(
+            "https://api.modrinth.com/v2/tag/game_version", cancellationToken).ConfigureAwait(false);
+        if (document.RootElement.ValueKind != JsonValueKind.Array)
+            throw new InvalidDataException("Modrinth's game-version response was not a version list.");
+        return document.RootElement.EnumerateArray().Select(version =>
+        {
+            var kind = version.TryGetProperty("version_type", out var type) ? type.GetString() : null;
+            return new CatalogGameVersion
+            {
+                VersionId = version.TryGetProperty("version", out var id) ? id.GetString() ?? "" : "",
+                Kind = kind switch
+                {
+                    "release" => CatalogGameVersionKind.Release,
+                    "snapshot" => CatalogGameVersionKind.Snapshot,
+                    "beta" => CatalogGameVersionKind.Beta,
+                    "alpha" => CatalogGameVersionKind.Alpha,
+                    _ => CatalogGameVersionKind.Unknown
+                },
+                PublishedAt = version.TryGetProperty("date", out var date) &&
+                              date.TryGetDateTimeOffset(out var published) ? published : null,
+                IsMajor = version.TryGetProperty("major", out var major) &&
+                          major.ValueKind is JsonValueKind.True or JsonValueKind.False && major.GetBoolean()
+            };
+        }).ToArray();
+    }
 
     public async Task<IReadOnlyList<CatalogItem>> BrowseAsync(
         CatalogQuery query,
@@ -796,6 +961,36 @@ public sealed class CurseForgeCatalogProvider : HttpCatalogProvider, IGuidedCata
         ? "User-provided API key is configured."
         : "Browsing is hidden until a user-provided CurseForge API key is encrypted with DPAPI.";
 
+    public async Task<IReadOnlyList<CatalogGameVersion>> GetGameVersionsAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var key = secrets.GetSecret(CurseForgeUpdateProvider.ApiKeyName);
+        if (string.IsNullOrWhiteSpace(key)) return [];
+        using var request = new HttpRequestMessage(
+            HttpMethod.Get, "https://api.curseforge.com/v1/minecraft/version?sortDescending=true");
+        request.Headers.Add("x-api-key", key);
+        using var response = await Http.SendAsync(
+            request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
+        response.EnsureSuccessStatusCode();
+        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+        using var document = await JsonDocument.ParseAsync(
+            stream, cancellationToken: cancellationToken).ConfigureAwait(false);
+        if (!document.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array)
+            throw new InvalidDataException("CurseForge's Minecraft-version response was not a version list.");
+        return data.EnumerateArray().Select(version =>
+        {
+            var id = version.TryGetProperty("versionString", out var value) ? value.GetString() ?? "" : "";
+            return new CatalogGameVersion
+            {
+                VersionId = id,
+                Kind = ClassifyMinecraftVersion(id),
+                PublishedAt = version.TryGetProperty("dateModified", out var date) &&
+                              date.TryGetDateTimeOffset(out var published) ? published : null,
+                IsMajor = ClassifyMinecraftVersion(id) == CatalogGameVersionKind.Release
+            };
+        }).ToArray();
+    }
+
     public async Task<IReadOnlyList<CatalogItem>> BrowseAsync(
         CatalogQuery query,
         CancellationToken cancellationToken = default)
@@ -987,6 +1182,23 @@ public sealed class CurseForgeCatalogProvider : HttpCatalogProvider, IGuidedCata
             HasServerPackage = url.StartsWith("https://", StringComparison.OrdinalIgnoreCase) &&
                                !string.IsNullOrWhiteSpace(sha1)
         };
+    }
+
+    private static CatalogGameVersionKind ClassifyMinecraftVersion(string version)
+    {
+        var normalized = version.Trim().ToLowerInvariant();
+        if (normalized.StartsWith("alpha", StringComparison.Ordinal) ||
+            normalized.StartsWith("a1.", StringComparison.Ordinal))
+            return CatalogGameVersionKind.Alpha;
+        if (normalized.StartsWith("beta", StringComparison.Ordinal) ||
+            normalized.StartsWith("b1.", StringComparison.Ordinal))
+            return CatalogGameVersionKind.Beta;
+        if (normalized.Contains("snapshot", StringComparison.Ordinal) ||
+            normalized.Contains("-pre", StringComparison.Ordinal) ||
+            normalized.Contains("-rc", StringComparison.Ordinal) ||
+            normalized.Length >= 5 && char.IsDigit(normalized[0]) && normalized.Contains('w'))
+            return CatalogGameVersionKind.Snapshot;
+        return normalized.Length > 0 ? CatalogGameVersionKind.Release : CatalogGameVersionKind.Unknown;
     }
 }
 

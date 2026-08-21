@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Box, Check, ChevronLeft, ChevronRight, CircleHelp, FolderOpen, Gamepad2, Globe2, HardDrive, Info, Monitor, SlidersHorizontal, Wifi } from '../design-system/Icons';
+import { Box, Check, ChevronLeft, ChevronRight, FolderOpen, Gamepad2, Globe2, HardDrive, Info, SlidersHorizontal, Wifi } from '../design-system/Icons';
 import { Button, TextInput } from '../design-system/Primitives';
 import { useAppStore } from '../state/store';
 import { runMeasuredNavigation } from '../app/performance';
@@ -129,18 +129,25 @@ export function CreateServerPage({ onDone, onOpenProviderSettings }: { onDone: (
     if (platform !== 'Paper' || !versionId) { setPaperBuildCatalog(null); setPaperBuildId(null); setPaperBuildError(''); return; }
     let active = true;
     setPaperBuildError('');
+    const applyPaperBuilds = (result: PaperBuildCatalog) => {
+      if (!active) return;
+      setPaperBuildCatalog(result);
+      setPaperBuildError(result.available ? '' : result.message || 'Paper build catalog unavailable.');
+      setPaperBuildId(current => result.builds.some(build => build.id === current && build.selectable)
+        ? current
+        : result.builds.find(build => build.selectable && build.support === 'Recommended')?.id
+          ?? result.builds.find(build => build.selectable && build.support === 'Verified')?.id
+          ?? result.builds.find(build => build.selectable && build.channel === 'Stable')?.id
+          ?? result.builds.find(build => build.selectable)?.id
+          ?? null);
+    };
     void command<PaperBuildCatalog>('creation.paperBuilds', { versionId })
       .then(result => {
-        if (!active) return;
-        setPaperBuildCatalog(result);
-        setPaperBuildError(result.available ? '' : result.message || 'Paper build catalog unavailable.');
-        setPaperBuildId(current => result.builds.some(build => build.id === current && build.selectable)
-          ? current
-          : result.builds.find(build => build.selectable && build.support === 'Recommended')?.id
-            ?? result.builds.find(build => build.selectable && build.support === 'Verified')?.id
-            ?? result.builds.find(build => build.selectable && build.channel === 'Stable')?.id
-            ?? result.builds.find(build => build.selectable)?.id
-            ?? null);
+        applyPaperBuilds(result);
+        if (result.stale && active)
+          void command<PaperBuildCatalog>('creation.paperBuilds', { versionId, forceRefresh: true })
+            .then(applyPaperBuilds)
+            .catch(() => { /* the last-known-good Paper build inventory remains usable */ });
       })
       .catch(error => { if (active) setPaperBuildError(error instanceof Error ? error.message : 'Paper build catalog unavailable.'); });
     return () => { active = false; };
@@ -267,18 +274,17 @@ export function CreateServerPage({ onDone, onOpenProviderSettings }: { onDone: (
   : step === 4 ? <div className={styles.form}><div className={styles.field}><label>Managed server location</label><div className={styles.inline}><TextInput value={(destination?.path ?? instanceRoot) || 'ChunkPilot managed servers'} readOnly /><Button icon={<FolderOpen size={14} />} onClick={chooseFolder}>Choose parent folder</Button></div><small>{destination?.message ?? 'Enter a server name to establish the exact destination.'}</small>{destination && !destination.available && <p className={styles.error}>{destination.message}</p>}</div></div>
   : step === 5 ? <div className={styles.choices}>{[
     ['HomeNetwork', 'LAN', 'People on the same Wi-Fi or wired network can join. Windows may still ask for approval.', Wifi],
-    ['FriendsOverInternet', 'Internet hosting', 'Guide router and firewall setup after creation. Nothing is exposed now.', Globe2],
-    ['DecideLater', 'Configure later', 'Create without configuring network access. You can choose later in Connectivity settings.', CircleHelp]
+    ['FriendsOverInternet', 'Internet', 'Host for friends outside your home after deliberate Windows, router, and outside-in verification steps. Nothing is exposed now.', Globe2]
   ].map(([id, title, detail, Icon]) => <button key={id as string} className={styles.choice} data-selected={networking === id} onClick={() => setNetworking(id as string)}><span className={styles.choiceIcon}><Icon size={18} /></span><span><strong>{title as string}</strong><p>{detail as string}</p></span><span className={styles.radio} /></button>)}</div>
   : operationId ? <div className={styles.operationProgress} aria-live="polite">
-      <div className={styles.operationHeading}><span><strong>{progress?.stage ?? 'Creation accepted'}</strong><small>{progress?.message ?? 'ChunkPilot is continuing this operation. You may leave this view without stopping it.'}</small></span><strong>{typeof progress?.percent === 'number' ? `${Math.round(progress.percent)}%` : 'Working'}</strong></div>
+      <div className={styles.operationHeading}><span><strong>{formatCreationStage(progress?.stage)}</strong><small>{progress?.message ?? 'ChunkPilot is continuing this operation. You may leave this view without stopping it.'}</small></span><strong>{typeof progress?.percent === 'number' ? `${Math.round(progress.percent)}%` : 'Working'}</strong></div>
       <div className={styles.operationTrack} role="progressbar" aria-label="Server creation progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={typeof progress?.percent === 'number' ? Math.max(0, Math.min(100, progress.percent)) : undefined} data-indeterminate={typeof progress?.percent !== 'number'}><span style={{ width: `${Math.max(2, Math.min(100, progress?.percent ?? 18))}%` }} /></div>
-      <div className={styles.operationMeta}><span>{progress?.currentArtifact || progress?.phase || 'Preparing the exact server files'}</span><span>{formatTransfer(progress)}</span></div>
+      <div className={styles.operationMeta}><span>{progress?.currentArtifact || (progress?.phase ? formatCreationStage(progress.phase) : 'Preparing the exact server files')}</span><span>{formatTransfer(progress)}</span></div>
       {isProgressStalled(progress) && <p className={styles.stalled}>ChunkPilot has not reported new progress within the expected time for this stage. The accepted operation is still authoritative; you can keep waiting or cancel it safely.</p>}
       {progress?.error && <p className={styles.error}>{progress.error}</p>}
     </div>
   : <><div className={styles.review}>{[
-    ['Game', platform === 'Vanilla' ? 'Vanilla Minecraft' : isLoaderPlatform(platform) ? loaderTitle(platform) : platform], ['Version', platform === 'Modpack' && modpack ? modpack.kind === 'remote' ? `${modpack.project.name} · ${modpack.release.versionName} · Minecraft ${modpack.release.minecraftVersion}` : `${modpack.local.inspection?.name} · ${modpack.local.inspection?.versionName} · Minecraft ${modpack.local.inspection?.minecraftVersion}` : selectedVersion ? platform === 'Paper' ? `Minecraft ${selectedVersion.id} · ${selectedPaperBuild ? `Paper build ${selectedPaperBuild.id}` : 'build not selected'}` : isLoaderPlatform(platform) ? `Minecraft ${selectedVersion.id} · ${selectedLoaderBuild ? `${loaderTitle(platform)} ${selectedLoaderBuild.loaderVersion}` : 'loader not selected'}` : `${selectedVersion.label} · ${selectedVersion.support}` : 'Not selected'], ['Memory', `${formatMemory(ramMb)} maximum · ${formatMemory(initialRamMb)} initial`], ['Server name', name || 'Not entered'], ['Destination', destination?.path ?? 'Not established'], ['Port', String(port)], ['Connectivity', networking === 'FriendsOverInternet' ? 'Internet hosting guidance after creation' : networking === 'HomeNetwork' ? 'LAN' : 'Configure later'], ['Java', platform === 'Modpack' && modpack ? `Java ${modpack.kind === 'remote' ? modpack.release.requiredJavaMajor : modpack.local.inspection?.requiredJavaMajor} · exact pack requirement` : selectedVersion?.javaMajor ? `Java ${selectedVersion.javaMajor} · compatibility policy` : 'Not established'], ['Launch', platform === 'Modpack' ? 'Verified pack files · exact declared loader · runtime validation on first start' : platform === 'Paper' ? 'Managed Paper dedicated server · plugins available after creation' : isLoaderPlatform(platform) ? `Managed ${loaderTitle(platform)} dedicated server · mods available after creation` : selectedVersion?.launchProfile.kind === 'ModernEulaNogui' ? 'Managed dedicated server' : selectedVersion?.launchProfile.kind ?? 'Not established']
+    ['Game', platform === 'Vanilla' ? 'Vanilla Minecraft' : isLoaderPlatform(platform) ? loaderTitle(platform) : platform], ['Version', platform === 'Modpack' && modpack ? modpack.kind === 'remote' ? `${modpack.project.name} · ${modpack.release.versionName} · Minecraft ${modpack.release.minecraftVersion}` : `${modpack.local.inspection?.name} · ${modpack.local.inspection?.versionName} · Minecraft ${modpack.local.inspection?.minecraftVersion}` : selectedVersion ? platform === 'Paper' ? `Minecraft ${selectedVersion.id} · ${selectedPaperBuild ? `Paper build ${selectedPaperBuild.id}` : 'build not selected'}` : isLoaderPlatform(platform) ? `Minecraft ${selectedVersion.id} · ${selectedLoaderBuild ? `${loaderTitle(platform)} ${selectedLoaderBuild.loaderVersion}` : 'loader not selected'}` : `${selectedVersion.label} · ${selectedVersion.support}` : 'Not selected'], ['Memory', `${formatMemory(ramMb)} maximum · ${formatMemory(initialRamMb)} initial`], ['Server name', name || 'Not entered'], ['Destination', destination?.path ?? 'Not established'], ['Port', String(port)], ['Connectivity', networking === 'FriendsOverInternet' ? 'Internet hosting guidance after creation' : 'LAN'], ['Java', platform === 'Modpack' && modpack ? `Java ${modpack.kind === 'remote' ? modpack.release.requiredJavaMajor : modpack.local.inspection?.requiredJavaMajor} · exact pack requirement` : selectedVersion?.javaMajor ? `Java ${selectedVersion.javaMajor} · compatibility policy` : 'Not established'], ['Launch', platform === 'Modpack' ? 'Verified pack files · exact declared loader · runtime validation on first start' : platform === 'Paper' ? 'Managed Paper dedicated server · plugins available after creation' : isLoaderPlatform(platform) ? `Managed ${loaderTitle(platform)} dedicated server · mods available after creation` : selectedVersion?.launchProfile.kind === 'ModernEulaNogui' ? 'Managed dedicated server' : selectedVersion?.launchProfile.kind ?? 'Not established']
   ].concat(legacyArtifact ? [['Server files', `${legacyArtifact.fileName} · user supplied · ${legacyArtifact.sha256.slice(0, 12)}…`]] : []).map(([label, value]) => <div className={styles.reviewRow} key={label}><span>{label}</span><strong>{value}</strong></div>)}</div>{requiresExperimentalAck && <label className={styles.warningConsent}><input type="checkbox" checked={experimentalAccepted} onChange={event => setExperimentalAccepted(event.target.checked)} /><span>I understand this exact {platform === 'Modpack' ? 'pack release will be validated on demand during creation' : legacyArtifact ? 'user-supplied historical server JAR has not been certified by ChunkPilot and its identity is not inferred from its filename' : 'build has not been runtime-certified by ChunkPilot'}. I will use a new or isolated world until I have verified it.</span></label>}<label className={styles.eula}><input type="checkbox" checked={eula} onChange={event => setEula(event.target.checked)} /><span>I have read and accept the <strong>Minecraft EULA</strong>. ChunkPilot writes <code>eula.txt</code> only after this deliberate acceptance.</span></label></>;
   return <div className={styles.wrap}><header className={styles.header}><h1>Create server</h1><p>Seven clear steps. Nothing is downloaded or exposed until you confirm.</p></header><div className={styles.layout}><nav className={styles.steps} aria-label="Creation stages">{stages.map(([label], index) => <button key={label} className={styles.step} data-current={step === index} data-complete={step > index} onClick={() => { if (index <= step || index < 6) goToStep(index); }}><span className={styles.number}>{step > index ? <Check size={12} /> : index + 1}</span><span className={styles.stepLabel}>{label}</span></button>)}</nav><section className={styles.stage}><header className={styles.stageHead}><div className={styles.eyebrow}>Step {step + 1} of {stages.length}</div><h2>{stages[step][0]}</h2><p>{stages[step][1]}</p></header><div className={styles.body}>{body}</div><footer className={styles.footer}><Button variant="subtle" icon={<ChevronLeft size={14} />} disabled={step === 0 || submitted} onClick={() => goToStep(step - 1)}>Back</Button><div>{operationId ? <>{!progress?.isTerminal && <Button variant="danger" onClick={cancelCreation}>Cancel creation</Button>}<Button variant="primary" onClick={onDone}>View servers</Button></> : step < 6 ? <Button variant="primary" disabled={!canNext} onClick={() => goToStep(step + 1)}>Continue <ChevronRight size={14} /></Button> : <Button variant="primary" disabled={!canNext || submitted} icon={submitted ? <SlidersHorizontal size={14} /> : <Check size={14} />} onClick={create}>{submitted ? 'Submitting…' : 'Create server'}</Button>}</div></footer></section></div></div>;
 }
@@ -291,6 +297,15 @@ function formatTransfer(progress: CreationProgress | null): string {
   if (downloaded <= 0 && speed <= 0) return progress.updatedAtUtc ? `Updated ${new Date(progress.updatedAtUtc).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' })}` : 'Preparing';
   const transfer = total > 0 ? `${formatBytes(downloaded)} of ${formatBytes(total)}` : formatBytes(downloaded);
   return speed > 0 ? `${transfer} · ${formatBytes(speed)}/s` : transfer;
+}
+
+function formatCreationStage(stage: string | undefined): string {
+  if (!stage) return 'Creation accepted';
+  const words = stage
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/[_-]+/g, ' ')
+    .toLowerCase();
+  return words.replace(/^./, value => value.toUpperCase());
 }
 
 function formatBytes(bytes: number): string {

@@ -408,6 +408,14 @@ public sealed class AgentPipeServer
             }
             case "CatalogProviderStatuses":
                 return JsonSerializer.SerializeToElement(guidedCatalog.GetProviderStatuses(), ProtocolJson.Options);
+            case "CatalogProviderVersions":
+            {
+                var input = Deserialize<CatalogVersionInventoryRequest>(request);
+                return JsonSerializer.SerializeToElement(
+                    await guidedCatalog.GetVersionInventoryAsync(
+                        input.Provider, input.CacheOnly, cancellationToken).ConfigureAwait(false),
+                    ProtocolJson.Options);
+            }
             case "BrowseCatalogCache":
             {
                 var input = Deserialize<CatalogQuery>(request);
@@ -1137,6 +1145,13 @@ public sealed class AgentPipeServer
                 var input = Deserialize<ServerDeletionRequest>(request);
                 return JsonSerializer.SerializeToElement(
                     await deletions.DeleteAsync(input, cancellationToken).ConfigureAwait(false),
+                    ProtocolJson.Options);
+            }
+            case "CreateManagedCopy":
+            {
+                var input = Deserialize<ManagedCopyConversionRequest>(request);
+                return JsonSerializer.SerializeToElement(
+                    await deletions.CreateManagedCopyAsync(input, cancellationToken).ConfigureAwait(false),
                     ProtocolJson.Options);
             }
             case "PluginRelease":

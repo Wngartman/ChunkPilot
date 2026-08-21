@@ -1,5 +1,6 @@
 using System.IO.Compression;
 using System.Security.Cryptography;
+using System.Text.Json;
 using ChunkPilot.Agent;
 using ChunkPilot.Core;
 using ChunkPilot.Infrastructure;
@@ -196,6 +197,38 @@ public sealed class VersionUpdateIntegrationTests : IAsyncLifetime
             Path.Combine(paths.Recovery, "DeletedVersionSnapshots"), "*.zip", SearchOption.AllDirectories));
         await Assert.ThrowsAsync<InvalidOperationException>(() => snapshots.DeleteAsync(definition.Id, active.Id));
         Assert.True(Directory.Exists(definition.RootPath));
+    }
+
+    [Fact(Timeout = 45_000)]
+    public async Task Snapshot_reuses_verified_jar_objects_and_restores_the_complete_tree()
+    {
+        var definition = await CreateOldServerAsync();
+        var source = Source(definition.Id);
+        var snapshots = new VersionSnapshotService(paths, store);
+
+        var first = await snapshots.CreateAsync(definition, source, "first object snapshot");
+        await File.WriteAllTextAsync(Path.Combine(definition.RootPath, "world", "level.dat"), "world-v2");
+        var second = await snapshots.CreateAsync(definition, source, "second object snapshot");
+
+        var firstManifest = JsonSerializer.Deserialize<VersionSnapshotManifest>(
+            await File.ReadAllTextAsync(first.ManifestPath), ProtocolJson.Options)!;
+        var secondManifest = JsonSerializer.Deserialize<VersionSnapshotManifest>(
+            await File.ReadAllTextAsync(second.ManifestPath), ProtocolJson.Options)!;
+        var firstJar = Assert.Single(firstManifest.ContentObjects);
+        var secondJar = Assert.Single(secondManifest.ContentObjects);
+        Assert.Equal("mods/old-pack.jar", firstJar.RelativePath);
+        Assert.Equal(firstJar.ObjectKey, secondJar.ObjectKey);
+        Assert.Equal(firstJar.Sha256, secondJar.Sha256);
+
+        using (var archive = ZipFile.OpenRead(second.SnapshotPath))
+            Assert.Null(archive.GetEntry("mods/old-pack.jar"));
+        Assert.True(await VersionSnapshotService.VerifyAsync(second.SnapshotPath));
+
+        var restored = Path.Combine(root, "object-restored-" + Guid.NewGuid().ToString("N"));
+        await VersionSnapshotService.ExtractVerifiedAsync(second.SnapshotPath, restored);
+        Assert.Equal("old-pack-v1", await File.ReadAllTextAsync(Path.Combine(restored, "mods", "old-pack.jar")));
+        Assert.Equal("world-v2", await File.ReadAllTextAsync(Path.Combine(restored, "world", "level.dat")));
+        Assert.True(await VersionSnapshotService.VerifyExtractedAsync(second.SnapshotPath, restored));
     }
 
     [Fact(Timeout = 45_000)]

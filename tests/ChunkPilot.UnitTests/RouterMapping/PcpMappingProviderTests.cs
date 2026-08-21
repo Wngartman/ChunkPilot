@@ -45,8 +45,7 @@ public sealed class PcpMappingProviderTests
     public async Task A_silent_gateway_is_unconfirmed_and_bounded()
     {
         await using var gateway = FakeDatagramGateway.Silent();
-        var provider = new PcpMappingProvider(new UdpGatewayDatagramChannel(),
-            gateway.Options(attempts: 3, attemptTimeout: TimeSpan.FromMilliseconds(300)));
+        var provider = new PcpMappingProvider(new UdpGatewayDatagramChannel(), gateway.Options(attempts: 3));
 
         var result = await provider.DiscoverAsync(gateway.Binding(), CancellationToken.None);
 
@@ -121,10 +120,7 @@ public sealed class PcpMappingProviderTests
             reply[Pcp.HeaderLength] ^= 0xFF;
             return reply;
         });
-        // A busy CI host can occasionally delay a loopback UDP response beyond the fixture's 300 ms
-        // attempt window. Retrying remains bounded and does not change the protocol assertion: every
-        // reply carries the deliberately wrong nonce and must be classified as malformed.
-        var provider = new PcpMappingProvider(new UdpGatewayDatagramChannel(), gateway.Options(attempts: 3));
+        var provider = new PcpMappingProvider(new UdpGatewayDatagramChannel(), gateway.Options(attempts: 1));
         var discovery = await provider.DiscoverAsync(gateway.Binding(), CancellationToken.None);
 
         var outcome = await provider.CreateAsync(gateway.Binding(), discovery, Request(), CancellationToken.None);

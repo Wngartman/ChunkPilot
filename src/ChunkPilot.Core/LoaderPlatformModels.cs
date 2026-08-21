@@ -24,6 +24,11 @@ public enum ManagedLoaderInstallationStrategy
 {
     DirectServerLauncher,
     JavaInstaller,
+    /// <summary>
+    /// An official provider profile describes the exact headless main class, libraries, and
+    /// arguments. The Minecraft server artifact remains a separate, explicitly proven input.
+    /// </summary>
+    HeadlessServerProfile,
     CatalogOnly
 }
 
@@ -40,6 +45,11 @@ public sealed record ManagedLoaderPlatformStrategy
     public bool SupportsTypedCreation { get; init; }
     public bool SupportsUpdateMaterialization { get; init; }
     public bool SupportsRuntimeCertification { get; init; }
+    /// <summary>
+    /// The provider exposes enough typed metadata to build a bounded headless materialization
+    /// plan. This does not by itself enable production creation or accept a server artifact.
+    /// </summary>
+    public bool SupportsHeadlessProfileMaterialization { get; init; }
     public bool AllowsArtifactWithoutProviderChecksum { get; init; }
     public string CreationUnavailableReason { get; init; } = "";
 }
@@ -92,9 +102,16 @@ public static class ManagedLoaderPlatformStrategies
         ManagedLoaderPlatform.LegacyFabric => CatalogOnly(platform, ManagedLoaderCatalogStrategy.LegacyFabricMeta,
             "https://meta.legacyfabric.net/v2/versions",
             "Legacy Fabric is inventoried from its official catalog, but typed installation is not enabled yet."),
-        ManagedLoaderPlatform.Ornithe => CatalogOnly(platform, ManagedLoaderCatalogStrategy.OrnitheMeta,
-            "https://meta.ornithemc.net/v3/versions",
-            "Ornithe is inventoried from its official catalog, but typed installation and user-supplied historical server-JAR import are not enabled yet."),
+        ManagedLoaderPlatform.Ornithe => new()
+        {
+            Platform = platform,
+            Catalog = ManagedLoaderCatalogStrategy.OrnitheMeta,
+            Installation = ManagedLoaderInstallationStrategy.HeadlessServerProfile,
+            OfficialSourceUrl = "https://meta.ornithemc.net/v3/versions",
+            SupportsHeadlessProfileMaterialization = true,
+            CreationUnavailableReason =
+                "Official Ornithe headless profiles are available, but production creation remains disabled until the native server-artifact consent and Agent activation path is connected."
+        },
         _ => throw new ArgumentOutOfRangeException(nameof(platform), platform, "Unknown managed-loader platform.")
     };
 
@@ -179,6 +196,15 @@ public sealed record ManagedLoaderBuild
     public string ArtifactSha1 { get; init; } = "";
     public string ArtifactSha256 { get; init; } = "";
     public long? ArtifactSizeBytes { get; init; }
+    /// <summary>Exact provider-side Minecraft identity (for example Ornithe's 1.0.0).</summary>
+    public string ProviderMinecraftVersion { get; init; } = "";
+    public OrnitheLoaderFamily? OrnitheLoaderFamily { get; init; }
+    public int? IntermediaryGeneration { get; init; }
+    /// <summary>
+    /// Official metadata endpoint for an exact headless profile. This is not a binary artifact URL.
+    /// </summary>
+    public string HeadlessProfileUrl { get; init; } = "";
+    public HistoricalMinecraftServerArtifactRequirement? MinecraftServerArtifact { get; init; }
     public int? RequiredJavaMajor { get; init; }
     /// <summary>
     /// Java used only to run a loader installer. This may differ from the Java that runs the
@@ -198,6 +224,13 @@ public sealed record ManagedLoaderBuild
 
     public bool HasProviderIntegrity => ArtifactSha256.Length == 64 && ArtifactSha256.All(Uri.IsHexDigit) ||
                                         ArtifactSha1.Length == 40 && ArtifactSha1.All(Uri.IsHexDigit);
+
+    public bool HasHeadlessProfileContract => Platform == ManagedLoaderPlatform.Ornithe &&
+        OrnitheLoaderFamily is not null && IntermediaryGeneration is > 0 &&
+        Uri.TryCreate(HeadlessProfileUrl, UriKind.Absolute, out var profileUri) &&
+        profileUri.Scheme == Uri.UriSchemeHttps &&
+        profileUri.Host.Equals("meta.ornithemc.net", StringComparison.OrdinalIgnoreCase) &&
+        MinecraftServerArtifact is not null;
 
     public bool IsSelectable => !string.IsNullOrWhiteSpace(MinecraftVersion) &&
         !string.IsNullOrWhiteSpace(LoaderVersion) && RequiredJavaMajor is >= 8 &&

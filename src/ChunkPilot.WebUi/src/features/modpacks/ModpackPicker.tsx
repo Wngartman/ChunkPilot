@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { Box, File, Image, Info, Search } from '../../design-system/Icons';
-import { Button, SelectInput, StatusBadge, TextInput } from '../../design-system/Primitives';
+import { Button, Combobox, StatusBadge, TextInput } from '../../design-system/Primitives';
 import { useAppStore } from '../../state/store';
 import type {
   LocalModpackSelection, ModpackCatalogResult, ModpackProject, ModpackProvider,
-  ModpackProviderStatus, ModpackRelease
+  ModpackProviderStatus, ModpackRelease, ModpackVersionInventory
 } from '../../bridge/types';
 import styles from './ModpackPicker.module.css';
 
@@ -37,6 +37,7 @@ export function ModpackPicker({ value, initialMode = 'Browse', onChange, onOpenP
   const [detail, setDetail] = useState('');
   const [failedStage, setFailedStage] = useState('');
   const [providerStatuses, setProviderStatuses] = useState<ModpackProviderStatus[]>([]);
+  const [providerVersions, setProviderVersions] = useState<ModpackVersionInventory | null>(null);
   const generation = useRef(0);
   const resultsRef = useRef<HTMLDivElement>(null);
   const onChangeRef = useRef(onChange);
@@ -52,6 +53,28 @@ export function ModpackPicker({ value, initialMode = 'Browse', onChange, onOpenP
     }).catch(() => undefined);
     return () => { active = false; };
   }, [bridge]);
+
+  useEffect(() => {
+    if (!bridge) return;
+    let active = true;
+    const controller = new AbortController();
+    const apply = (inventory: ModpackVersionInventory) => {
+      if (!active) return;
+      setProviderVersions(inventory);
+      setDraft(current => current.minecraftVersion && inventory.versions.length > 0 &&
+        !inventory.versions.some(version => version.versionId === current.minecraftVersion)
+        ? { ...current, minecraftVersion: '' } : current);
+    };
+    void (async () => {
+      const cached = await bridge.request<ModpackVersionInventory>('modpacks.versions',
+        { provider, cacheOnly: true }, controller.signal);
+      if (cached.versions.length) apply(cached);
+      const current = await bridge.request<ModpackVersionInventory>('modpacks.versions',
+        { provider, cacheOnly: false }, controller.signal);
+      apply(current);
+    })().catch(() => { if (active) setProviderVersions(null); });
+    return () => { active = false; controller.abort(); };
+  }, [bridge, provider]);
 
   useEffect(() => {
     if (!bridge) return;
@@ -98,8 +121,16 @@ export function ModpackPicker({ value, initialMode = 'Browse', onChange, onOpenP
 
   const selectedProject = value?.kind === 'remote' && value.project.provider === provider ? value.project : null;
   const releaseOptions = useMemo(() => selectedProject?.versions ?? [], [selectedProject]);
-  const versionOptions = useMemo(() => Array.from(new Set(projects.flatMap(project =>
-    project.versions.map(release => release.minecraftVersion)).filter(Boolean))), [projects]);
+  const versionOptions = useMemo(() => {
+    const official = providerVersions?.versions ?? [];
+    if (official.length) return official.map(version => ({
+      value: version.versionId,
+      label: version.kind === 'Release' ? version.versionId : `${version.versionId} · ${version.kind}`
+    }));
+    return Array.from(new Set(projects.flatMap(project =>
+      project.versions.map(release => release.minecraftVersion)).filter(Boolean)))
+      .map(version => ({ value: version, label: version }));
+  }, [projects, providerVersions]);
   const virtual = useVirtualizer({
     count: projects.length,
     getScrollElement: () => resultsRef.current,
@@ -136,19 +167,14 @@ export function ModpackPicker({ value, initialMode = 'Browse', onChange, onOpenP
         onChange={event => setDraft(current => ({ ...current, search: event.target.value }))}
         placeholder={initialMode === 'Link' ? `Paste a ${provider} project link` : `Search ${provider} modpacks`}
         aria-label={`Search ${provider} modpacks`} />
-      <TextInput value={draft.minecraftVersion} list="modpack-minecraft-versions"
-        onChange={event => setDraft(current => ({ ...current, minecraftVersion: event.target.value }))}
-        aria-label="Minecraft version filter" placeholder="Any Minecraft version" />
-      <datalist id="modpack-minecraft-versions">{versionOptions.map(version => <option key={version} value={version} />)}</datalist>
-      <SelectInput value={draft.loader} onChange={event => setDraft(current => ({ ...current, loader: event.target.value }))} aria-label="Loader filter">
-        <option value="">All loaders</option><option value="fabric">Fabric</option><option value="quilt">Quilt</option><option value="forge">Forge</option><option value="neoforge">NeoForge</option>
-      </SelectInput>
-      <SelectInput value={draft.category} onChange={event => setDraft(current => ({ ...current, category: event.target.value }))} aria-label="Category filter">
-        <option value="">All categories</option><option value="adventure">Adventure</option><option value="magic">Magic</option><option value="technology">Technology</option><option value="optimization">Optimization</option><option value="multiplayer">Multiplayer</option>
-      </SelectInput>
-      <SelectInput value={draft.sort} onChange={event => setDraft(current => ({ ...current, sort: event.target.value }))} aria-label="Sort modpacks">
-        <option value="Downloads">Popular</option><option value="Updated">Recently updated</option><option value="Newest">Newest</option><option value="Relevance">Relevance</option>
-      </SelectInput>
+      <Combobox value={draft.minecraftVersion} onChange={minecraftVersion => setDraft(current => ({ ...current, minecraftVersion }))}
+        options={[{ value: '', label: 'Any Minecraft version' }, ...versionOptions]} ariaLabel="Minecraft version filter" searchable />
+      <Combobox value={draft.loader} onChange={loader => setDraft(current => ({ ...current, loader }))} ariaLabel="Loader filter"
+        options={[{ value: '', label: 'All loaders' }, { value: 'fabric', label: 'Fabric' }, { value: 'quilt', label: 'Quilt' }, { value: 'forge', label: 'Forge' }, { value: 'neoforge', label: 'NeoForge' }]} />
+      <Combobox value={draft.category} onChange={category => setDraft(current => ({ ...current, category }))} ariaLabel="Category filter"
+        options={[{ value: '', label: 'All categories' }, { value: 'adventure', label: 'Adventure' }, { value: 'magic', label: 'Magic' }, { value: 'technology', label: 'Technology' }, { value: 'optimization', label: 'Optimization' }, { value: 'multiplayer', label: 'Multiplayer' }]} />
+      <Combobox value={draft.sort} onChange={sort => setDraft(current => ({ ...current, sort }))} ariaLabel="Sort modpacks"
+        options={[{ value: 'Downloads', label: 'Popular' }, { value: 'Updated', label: 'Recently updated' }, { value: 'Newest', label: 'Newest' }, { value: 'Relevance', label: 'Relevance' }]} />
       <Button variant="primary" icon={<Search size={14} />} type="submit">Search</Button>
     </form>
     <div className={styles.trendNote}><Info size={13} /><span>{status?.detail ?? `${provider} provider status is loading.`}</span></div>
@@ -191,10 +217,10 @@ export function ModpackPicker({ value, initialMode = 'Browse', onChange, onOpenP
         </> : selectedProject ? <>
           <div className={styles.detailTitle}><PackImage project={selectedProject} large /><div><h3>{selectedProject.name}</h3><p>by {selectedProject.author} · {selectedProject.provider}</p></div></div>
           <p>{selectedProject.summary}</p>
-          <label className={styles.releaseLabel}>Exact release<SelectInput value={value?.kind === 'remote' ? value.release.versionId : ''} onChange={event => {
-            const release = releaseOptions.find(item => item.versionId === event.target.value);
+          <label className={styles.releaseLabel}>Exact release<Combobox value={value?.kind === 'remote' ? value.release.versionId : ''} onChange={versionId => {
+            const release = releaseOptions.find(item => item.versionId === versionId);
             if (release) onChange({ kind: 'remote', project: selectedProject, release });
-          }}>{releaseOptions.map(release => <option key={release.versionId} value={release.versionId}>{release.versionName} · Minecraft {release.minecraftVersion} · {release.loader}</option>)}</SelectInput></label>
+          }} ariaLabel="Exact modpack release" options={releaseOptions.map(release => ({ value: release.versionId, label: `${release.versionName} · Minecraft ${release.minecraftVersion} · ${release.loader}` }))} /></label>
           {value?.kind === 'remote' && <dl><div><dt>Release</dt><dd>{value.release.releaseChannel}</dd></div><div><dt>Integrity</dt><dd>{value.release.hasIntegrity ? value.project.provider === 'Modrinth' ? 'SHA-1 + SHA-512' : 'Provider SHA-1' : 'Unavailable'}</dd></div><div><dt>Size</dt><dd>{value.release.sizeBytes ? `${(value.release.sizeBytes / 1024 / 1024).toFixed(1)} MB` : 'Unavailable'}</dd></div></dl>}
           {value?.kind === 'remote' && !value.release.canCreate && <div className={styles.releaseLimitation} role="status"><strong>Creation unavailable</strong><span>{value.release.limitation || 'This exact release does not have a complete managed server path.'}</span></div>}
           <StatusBadge tone={value?.kind === 'remote' && value.release.canCreate ? 'warning' : 'neutral'}>{value?.kind === 'remote' && value.release.canCreate ? 'Validated during creation' : 'Browse only'}</StatusBadge>

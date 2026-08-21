@@ -470,6 +470,7 @@ public sealed class VanillaLiveCreationIntegrationTests : IDisposable
             services.AddSingleton<ServerCreationTransaction>();
             services.AddSingleton<ServerCreationRecoveryService>();
             services.AddSingleton<ServerSupervisor>();
+            services.AddSingleton<ManagedInstanceCopyService>();
             services.AddSingleton<ServerDeletionCoordinator>();
             services.AddSingleton<InstallationCoordinator>();
             services.AddSingleton<ManagedContentOperationCoordinator>();

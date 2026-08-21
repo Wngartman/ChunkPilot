@@ -163,11 +163,17 @@ internal sealed class WebUiSnapshotMapper
                 loader = viewModel.CurrentUpdateSource?.Loader,
                 loaderVersion = viewModel.CurrentUpdateSource?.LoaderVersion,
                 checkedAt = viewModel.CurrentUpdateCheck?.CheckedAt,
+                targetVersionId = viewModel.CurrentUpdateCheck?.LatestVersion?.VersionId,
                 latestVersionName = viewModel.CurrentUpdateCheck?.LatestVersion?.VersionName,
+                targetPublishedAt = viewModel.CurrentUpdateCheck?.LatestVersion?.PublishedAt,
+                downloadSizeBytes = viewModel.CurrentUpdateCheck?.LatestVersion?.FileSize,
+                compatibilityReasons = viewModel.CurrentUpdateCheck?.CompatibilityReasons ?? [],
                 compatibility = viewModel.CurrentUpdateCheck?.Compatibility.ToString(),
                 canInstall = viewModel.CurrentUpdateCheck?.LatestVersion is not null &&
                     viewModel.CurrentUpdateCheck.Compatibility is not UpdateCompatibility.Incompatible and not UpdateCompatibility.Unknown,
                 operationState = viewModel.CurrentUpdateOperation?.Progress.State.ToString(),
+                operationStep = viewModel.CurrentUpdateOperation?.Progress.CurrentStep,
+                operationDetail = viewModel.CurrentUpdateOperation?.Progress.Detail,
                 operationPercent = viewModel.CurrentUpdateOperation is null ? (double?)null : viewModel.CurrentUpdateOperation.Progress.Percent,
                 cancellable = viewModel.CurrentUpdateOperation is { IsTerminal: false }
             },
@@ -380,26 +386,17 @@ internal sealed class WebUiSnapshotMapper
         var mode = viewModel.SelectedNetworkMode;
         var publicVerified = external.ServerId == selectedId && viewModel.PublicAccessVerified;
         var publicEndpoint = publicVerified ? viewModel.PublicAccessVerifiedEndpoint : null;
-        var modeTitle = mode switch
-        {
-            NetworkMode.ThisComputerOnly => "Local only",
-            NetworkMode.HomeNetwork => "LAN",
-            NetworkMode.PortForwarding => "Internet hosting",
-            _ => "Configure later"
-        };
-        var modeSummary = mode switch
-        {
-            NetworkMode.ThisComputerOnly => "Only this PC can join. No network access is requested.",
-            NetworkMode.HomeNetwork => "People on this Wi-Fi or wired LAN can use the LAN address when Windows allows it.",
-            NetworkMode.PortForwarding => "Friends elsewhere can join only after deliberate router setup and an outside-in check.",
-            _ => "No connection method is configured. The server remains local until you choose one."
-        };
+        var effectiveMode = mode == NetworkMode.PortForwarding ? NetworkMode.PortForwarding : NetworkMode.HomeNetwork;
+        var modeTitle = effectiveMode == NetworkMode.PortForwarding ? "Internet hosting" : "LAN";
+        var modeSummary = effectiveMode == NetworkMode.PortForwarding
+            ? "Friends elsewhere can join only after deliberate router setup and an outside-in check."
+            : "People on this Wi-Fi or wired LAN can use the LAN address when Windows allows it.";
         var (statusTitle, statusDetail, statusTone) = ConnectivityStatus(viewModel, server);
 
         return new
         {
             serverId = selectedId,
-            mode = mode.ToString(),
+            mode = effectiveMode.ToString(),
             modeTitle,
             modeSummary,
             status = new { title = statusTitle, detail = statusDetail, tone = statusTone },
@@ -500,14 +497,12 @@ internal sealed class WebUiSnapshotMapper
         MainViewModel viewModel,
         ServerSnapshot server)
     {
-        if (viewModel.SelectedNetworkMode == NetworkMode.ThisComputerOnly)
-            return ("Local only", "Use the local address from this PC. Nothing is exposed to the network.", "neutral");
         if (viewModel.SelectedNetworkMode == NetworkMode.HomeNetwork)
             return viewModel.ServerLanAddress == "Unavailable"
                 ? ("Needs attention", "ChunkPilot has not established a suitable home-network address.", "warning")
                 : ("Available on your home network", $"People on this network can use {viewModel.ServerLanAddress} when Windows allows it.", "info");
         if (viewModel.SelectedNetworkMode != NetworkMode.PortForwarding)
-            return ("Local only", "Choose a connection method when you are ready to invite other people.", "neutral");
+            return ("LAN setup incomplete", "This server uses an older private-mode setting. Choose LAN to confirm ordinary home-network access.", "warning");
         if (viewModel.PublicAccessVerified)
             return ("Friends can join", $"An outside-in check reached {viewModel.PublicAccessVerifiedEndpoint}.", "success");
         if (viewModel.IsDirectInternetBusy || viewModel.ExternalReachability.Busy)

@@ -78,8 +78,9 @@ public sealed class AgentReconnectIntegrationTests
             Assert.Equal(ServerState.Running, server?.State);
             Assert.True(IsPortListening(port));
             var session = await RegisterCurrentUiAsync(pipeName);
-            Assert.True((await SendAsync<OperationResult>(pipeName, "Stop",
-                AuthorizedStopRequest(definition.Id, session))).Success);
+            var stop = await SendAsync<OperationResult>(pipeName, "Stop",
+                AuthorizedStopRequest(definition.Id, session));
+            Assert.True(stop.Success, stop.Message);
             Assert.True((await SendAsync<OperationResult>(pipeName, "ShutdownAgent")).Success);
             await agent.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
         }
@@ -712,30 +713,8 @@ public sealed class AgentReconnectIntegrationTests
             if (!process.HasExited)
                 process.Kill(entireProcessTree: true);
             if (Directory.Exists(root))
-                await DeleteDirectoryEventuallyAsync(root);
+                Directory.Delete(root, recursive: true);
         }
-    }
-
-    private static async Task DeleteDirectoryEventuallyAsync(string path)
-    {
-        var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
-        Exception? lastFailure = null;
-        while (Directory.Exists(path) && DateTimeOffset.UtcNow < deadline)
-        {
-            try
-            {
-                Directory.Delete(path, recursive: true);
-                return;
-            }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-            {
-                lastFailure = exception;
-                await Task.Delay(100);
-            }
-        }
-
-        if (Directory.Exists(path))
-            throw new IOException($"Timed out deleting the temporary test root '{path}'.", lastFailure);
     }
 
     private static async Task<T> SendAsync<T>(string pipeName, string operation, object? payload = null)

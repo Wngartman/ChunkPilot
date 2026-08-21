@@ -178,6 +178,52 @@ public sealed class Release12Tests : IDisposable
     }
 
     [Fact]
+    public async Task Modrinth_version_inventory_preserves_official_release_snapshot_beta_and_alpha_kinds()
+    {
+        var handler = new StubHandler(request =>
+        {
+            Assert.Equal("/v2/tag/game_version", request.RequestUri!.AbsolutePath);
+            return Json("""
+                [
+                  {"version":"1.21.8","version_type":"release","date":"2026-08-01T00:00:00Z","major":true},
+                  {"version":"26w33a","version_type":"snapshot","date":"2026-08-13T00:00:00Z","major":false},
+                  {"version":"b1.8.1","version_type":"beta","date":"2011-09-19T00:00:00Z","major":false},
+                  {"version":"a1.2.6","version_type":"alpha","date":"2010-12-03T00:00:00Z","major":false}
+                ]
+                """);
+        });
+
+        var versions = await new ModrinthCatalogProvider(new HttpClient(handler)).GetGameVersionsAsync();
+
+        Assert.Equal(CatalogGameVersionKind.Release, Assert.Single(versions, item => item.VersionId == "1.21.8").Kind);
+        Assert.Equal(CatalogGameVersionKind.Snapshot, Assert.Single(versions, item => item.VersionId == "26w33a").Kind);
+        Assert.Equal(CatalogGameVersionKind.Beta, Assert.Single(versions, item => item.VersionId == "b1.8.1").Kind);
+        Assert.Equal(CatalogGameVersionKind.Alpha, Assert.Single(versions, item => item.VersionId == "a1.2.6").Kind);
+    }
+
+    [Fact]
+    public async Task CurseForge_version_inventory_requires_a_saved_key_and_classifies_historical_versions()
+    {
+        var secrets = new MemorySecrets();
+        var handler = new StubHandler(request =>
+        {
+            Assert.Equal("secret", request.Headers.GetValues("x-api-key").Single());
+            Assert.Equal("/v1/minecraft/version", request.RequestUri!.AbsolutePath);
+            return Json("""{"data":[{"versionString":"1.21.8","dateModified":"2026-08-01T00:00:00Z"},{"versionString":"b1.8.1","dateModified":"2011-09-19T00:00:00Z"},{"versionString":"a1.2.6","dateModified":"2010-12-03T00:00:00Z"}]}""");
+        });
+        var provider = new CurseForgeCatalogProvider(secrets, new HttpClient(handler));
+        Assert.Empty(await provider.GetGameVersionsAsync());
+        Assert.Equal(0, handler.RequestCount);
+
+        secrets.SetSecret(CurseForgeUpdateProvider.ApiKeyName, "secret");
+        var versions = await provider.GetGameVersionsAsync();
+
+        Assert.Equal(CatalogGameVersionKind.Release, Assert.Single(versions, item => item.VersionId == "1.21.8").Kind);
+        Assert.Equal(CatalogGameVersionKind.Beta, Assert.Single(versions, item => item.VersionId == "b1.8.1").Kind);
+        Assert.Equal(CatalogGameVersionKind.Alpha, Assert.Single(versions, item => item.VersionId == "a1.2.6").Kind);
+    }
+
+    [Fact]
     public async Task CurseForge_requires_key_before_network_access()
     {
         var handler = new StubHandler(_ => throw new InvalidOperationException("Network should not be called."));

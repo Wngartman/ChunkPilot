@@ -160,7 +160,7 @@ public sealed class ManagedLoaderCatalogTests : IDisposable
         var legacyUnsupported = await service.GetBuildsAsync(
             ManagedLoaderPlatform.LegacyFabric, "b1.8", forceRefresh: true);
         var ornithe = await service.GetVersionsAsync(ManagedLoaderPlatform.Ornithe, forceRefresh: true);
-        var ornitheBlocked = await service.GetBuildsAsync(
+        var ornitheBuilds = await service.GetBuildsAsync(
             ManagedLoaderPlatform.Ornithe, "1.0", forceRefresh: true);
 
         Assert.Contains(legacy.Versions, item => item.MinecraftVersion == "1.3.1");
@@ -175,11 +175,17 @@ public sealed class ManagedLoaderCatalogTests : IDisposable
         Assert.Equal(8, release.RequiredJavaMajor);
         Assert.False(release.IsSelectable);
         Assert.Contains(ornithe.Versions, item => item.MinecraftVersion == "b1.8" &&
-            item.RequiresUserSuppliedMinecraftServerJar && !item.StableMinecraft);
+            item.RequiresUserSuppliedMinecraftServerJar && item.StableMinecraft);
         Assert.Contains(ornithe.Versions, item => item.MinecraftVersion == "b1.8.1" &&
             item.RequiresUserSuppliedMinecraftServerJar);
-        Assert.Contains("Mojang's official version metadata publishes no server download", ornitheBlocked.UnavailableDetail,
-            StringComparison.OrdinalIgnoreCase);
+        Assert.NotEmpty(ornitheBuilds.Builds);
+        Assert.All(ornitheBuilds.Builds, build =>
+        {
+            Assert.True(build.HasHeadlessProfileContract);
+            Assert.Equal(HistoricalMinecraftServerArtifactSource.UserSupplied,
+                build.MinecraftServerArtifact!.Source);
+            Assert.False(build.IsSelectable);
+        });
     }
 
     [Fact]
@@ -408,8 +414,21 @@ public sealed class ManagedLoaderCatalogTests : IDisposable
             return Json("""{"latestIntermediaryGeneration":2,"stableIntermediaryGeneration":2}""");
         if (url.Equals("https://meta.ornithemc.net/v3/versions/gen2/intermediary", StringComparison.Ordinal))
             return Json("""
-                [{"version":"1.14.4","stable":true},{"version":"1.0.0","stable":true},
+                [{"version":"1.14.4","stable":true},{"version":"1.2.5","stable":true},
+                 {"version":"1.0.0","stable":true},
                  {"version":"b1.8","stable":true},{"version":"b1.8.1","stable":true}]
+                """);
+        if (url.Equals("https://meta.ornithemc.net/v3/versions/gen2/fabric-loader/1.0.0", StringComparison.Ordinal))
+            return Json("""
+                [{"loader":{"version":"0.19.3","stable":true},
+                  "intermediary":{"version":"1.0.0","stable":true},
+                  "launcherMeta":{"min_java_version":8}}]
+                """);
+        if (url.Equals("https://meta.ornithemc.net/v3/versions/gen2/quilt-loader/1.0.0", StringComparison.Ordinal))
+            return Json("""
+                [{"loader":{"version":"0.30.1-beta.2","stable":true},
+                  "intermediary":{"version":"1.0.0","stable":true},
+                  "launcherMeta":{"min_java_version":8}}]
                 """);
         if (url.EndsWith(".sha256", StringComparison.Ordinal))
             return Text(new string('a', 64));

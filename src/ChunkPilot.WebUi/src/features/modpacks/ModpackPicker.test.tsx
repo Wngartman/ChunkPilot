@@ -31,9 +31,10 @@ describe('modpack provider browser', () => {
 
     expect(await screen.findByRole('button', { name: /Copper Trails/ })).toBeTruthy();
     fireEvent.change(screen.getByRole('searchbox', { name: 'Search Modrinth modpacks' }), { target: { value: 'copper' } });
-    fireEvent.change(screen.getByRole('combobox', { name: 'Minecraft version filter' }), { target: { value: '1.20.1' } });
-    fireEvent.change(screen.getByRole('combobox', { name: 'Loader filter' }), { target: { value: 'forge' } });
-    fireEvent.change(screen.getByRole('combobox', { name: 'Sort modpacks' }), { target: { value: 'Downloads' } });
+    fireEvent.click(screen.getByRole('combobox', { name: 'Minecraft version filter' }));
+    fireEvent.click(await screen.findByRole('option', { name: '1.20.1' }));
+    fireEvent.click(screen.getByRole('combobox', { name: 'Loader filter' }));
+    fireEvent.click(await screen.findByRole('option', { name: 'Forge' }));
     fireEvent.click(screen.getByRole('button', { name: 'Search' }));
 
     await waitFor(() => expect(calls.some(call => call.method === 'modpacks.search' && call.params.search === 'copper' && call.params.minecraftVersion === '1.20.1' && call.params.loader === 'forge' && call.params.sort === 'Downloads')).toBe(true));

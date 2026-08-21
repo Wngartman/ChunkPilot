@@ -127,6 +127,17 @@
 .updateProgress { display: flex; align-items: center; gap: 10px; }
 .updateProgress i { height: 5px; flex: 1; overflow: hidden; border-radius: 2px; background: var(--cp-surface-active); }
 .updateProgress b { display: block; height: 100%; background: var(--cp-accent); }
+.updateProgress small { color: var(--cp-text-muted); font-size: 10px; }
+.updateProposal { display: grid; gap: var(--cp-space-4); }
+.updateProposal dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 0; border: 1px solid var(--cp-border); }
+.updateProposal dl > div { min-width: 0; padding: var(--cp-space-3); border-bottom: 1px solid var(--cp-border); }
+.updateProposal dl > div:nth-child(odd) { border-right: 1px solid var(--cp-border); }
+.updateProposal dt { color: var(--cp-text-muted); font-size: 9px; text-transform: uppercase; letter-spacing: .04em; }
+.updateProposal dd { margin: var(--cp-space-1) 0 0; color: var(--cp-text); overflow-wrap: anywhere; }
+.updateProposal section { padding: var(--cp-space-3); border-left: 2px solid var(--cp-accent); background: var(--cp-surface-raised); }
+.updateProposal ul { margin: var(--cp-space-2) 0 0; padding-left: var(--cp-space-5); color: var(--cp-text-secondary); }
+.updateProposal p { margin: 0; color: var(--cp-text-secondary); line-height: 1.55; }
+@media (max-width: 720px) { .updateProposal dl { grid-template-columns: 1fr; } .updateProposal dl > div:nth-child(odd) { border-right: 0; } }
 .cellMeta { display: block; margin-top: 3px; color: var(--cp-text-muted); font-size: 10px; }
 .versionStack { display: grid; gap: 14px; }
 .versionEvidence { border: 1px solid var(--cp-border); background: var(--cp-surface); }
@@ -171,7 +182,7 @@
 .connectivityHeader { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; padding: 17px 18px 14px; border-bottom: 1px solid var(--cp-border); }
 .connectivityHeader h2, .sectionHeading h3 { margin: 0; font-size: 15px; }
 .connectivityHeader p, .sectionHeading p, .connectionBody p, .internetPrompt p { margin: 4px 0 0; color: var(--cp-text-muted); font-size: 10px; line-height: 1.5; }
-.modeGrid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; padding: 14px 16px; border-bottom: 1px solid var(--cp-border); background: var(--cp-canvas); }
+.modeGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; padding: 14px 16px; border-bottom: 1px solid var(--cp-border); background: var(--cp-canvas); }
 .modeGrid button { position: relative; min-width: 0; min-height: 70px; display: grid; grid-template-columns: 22px minmax(0, 1fr) 12px; align-items: start; gap: 8px; border: 1px solid var(--cp-border); border-radius: var(--cp-radius-md); padding: 11px; background: var(--cp-surface); color: var(--cp-text-secondary); text-align: left; }
 .modeGrid button:hover { border-color: var(--cp-border-strong); background: var(--cp-surface-hover); color: var(--cp-text); }
 .modeGrid button[data-selected="true"] { border-color: var(--cp-accent); background: var(--cp-surface-active); color: var(--cp-text); box-shadow: inset 2px 0 0 var(--cp-accent); }
@@ -227,6 +238,14 @@
 .deletionSummary span, .deletionPaths span { color: var(--cp-text-muted); font-size: 11px; }
 .deletionPaths, .deletionProtected { display: grid; gap: 7px; }
 .deletionPaths code, .deletionProtected code { overflow-wrap: anywhere; color: var(--cp-text-secondary); }
+.ownershipEvidence { display: grid; gap: 8px; padding: 12px 13px; border: 1px solid var(--cp-border); background: var(--cp-surface-raised); }
+.ownershipEvidence > p, .ownershipEvidence details p, .managedCopyAction p { margin: 0; color: var(--cp-text-secondary); line-height: 1.45; }
+.ownershipEvidence summary { color: var(--cp-text-muted); cursor: pointer; }
+.ownershipEvidence details > div { display: grid; grid-template-columns: 72px 1fr; gap: 9px; padding-top: 8px; }
+.ownershipEvidence details > div > span { color: var(--cp-warning); font-size: 10px; font-weight: 700; }
+.ownershipEvidence details > div[data-satisfied="true"] > span { color: var(--cp-success); }
+.managedCopyAction { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-top: 10px; border-top: 1px solid var(--cp-border); }
+.managedCopyAction > div { display: grid; gap: 4px; }
 .deletionBlockers { padding: 12px 13px; border: 1px solid var(--cp-warning-border); background: var(--cp-warning-surface); }
 .deletionBlockers p { margin: 5px 0 0; color: var(--cp-text-secondary); }
 .deletionModes { display: grid; gap: 8px; }
