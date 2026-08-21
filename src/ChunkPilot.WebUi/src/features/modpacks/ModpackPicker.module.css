@@ -45,5 +45,28 @@
 .skeletons span, .skeletons i { display: block; border-radius: var(--cp-radius-xs); background: var(--cp-surface-raised); }
 .skeletons span { width: 44px; height: 44px; }
 .skeletons p { display: grid; gap: 7px; margin: 0; }.skeletons i { width: 70%; height: 7px; }.skeletons i:last-child { width: 94%; }
+.directRoot { display: grid; align-content: start; gap: 16px; min-height: 340px; padding: 22px; border: 1px solid var(--cp-border); background: var(--cp-surface); }
+.directRoot > header { display: flex; align-items: flex-start; gap: 12px; }
+.directRoot > header > svg { color: var(--cp-accent-strong); }
+.directRoot h3, .directRoot p { margin: 0; }
+.directRoot header p { margin-top: 4px; color: var(--cp-text-muted); font-size: 10px; line-height: 1.45; }
+.pasteRow { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px; }
+.supportedSources { color: var(--cp-text-muted); font-size: 9px; line-height: 1.45; }
+.importActions { display: flex; flex-wrap: wrap; gap: 8px; }
+.importReview { display: grid; gap: 12px; padding: 12px; border: 1px solid var(--cp-border); background: var(--cp-input); }
+.importReview dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 0; }
+.importReview dl div { padding: 8px; border-bottom: 1px solid var(--cp-border); }
+.importReview dt { color: var(--cp-text-muted); font-size: 9px; letter-spacing: .04em; text-transform: uppercase; }
+.importReview dd { margin: 4px 0 0; overflow-wrap: anywhere; font-size: 10px; }
+.importReview > label { display: grid; gap: 5px; color: var(--cp-text-secondary); font-size: 10px; font-weight: 650; }
+.managementModes { display: grid; gap: 8px; margin: 0; padding: 0; border: 0; }
+.managementModes legend { margin-bottom: 8px; color: var(--cp-text); font-size: 10px; font-weight: 700; }
+.managementModes button { display: grid; gap: 4px; padding: 11px; border: 1px solid var(--cp-border); border-radius: var(--cp-radius-sm); background: var(--cp-surface-raised); color: var(--cp-text); text-align: left; }
+.managementModes button[data-selected="true"] { border-color: var(--cp-accent); background: var(--cp-selected-surface); box-shadow: inset 3px 0 var(--cp-accent); }
+.managementModes small { color: var(--cp-text-muted); font-weight: 400; }
+.resolvedLink { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 14px; border: 1px solid var(--cp-accent); background: var(--cp-selected-surface); }
+.resolvedLink > div { display: grid; gap: 3px; }
+.resolvedLink p, .resolvedLink small, .resolvedLink div > span:last-child { color: var(--cp-text-secondary); font-size: 10px; }
+.eyebrow { color: var(--cp-accent-strong); font-size: 9px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
 @container (max-width: 680px) { .toolbar { grid-template-columns: 1fr 1fr; } .layout { grid-template-columns: 1fr; } .list { border-right: 0; border-bottom: 1px solid var(--cp-border); } }
-@container (max-width: 450px) { .providerBar { align-items: stretch; flex-direction: column; border-bottom: 0; } .toolbar { grid-template-columns: 1fr; } .project { grid-template-columns: 46px minmax(0, 1fr); } .project > :last-child { grid-column: 2; justify-self: start; } }
+@container (max-width: 450px) { .providerBar { align-items: stretch; flex-direction: column; border-bottom: 0; } .toolbar, .pasteRow { grid-template-columns: 1fr; } .project, .resolvedLink { grid-template-columns: 46px minmax(0, 1fr); } .project > :last-child, .resolvedLink > :last-child { grid-column: 2; justify-self: start; } }

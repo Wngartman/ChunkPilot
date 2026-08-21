@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { Box, File, Image, Info, Search } from '../../design-system/Icons';
-import { Button, SelectInput, StatusBadge, TextInput } from '../../design-system/Primitives';
+import { Box, Clipboard, File, Image, Info, Link, Search } from '../../design-system/Icons';
+import { Button, Combobox, StatusBadge, TextInput } from '../../design-system/Primitives';
 import { useAppStore } from '../../state/store';
 import type {
   LocalModpackSelection, ModpackCatalogResult, ModpackProject, ModpackProvider,
-  ModpackProviderStatus, ModpackRelease
+  ModpackProviderStatus, ModpackRelease, ModpackVersionInventory, ResolvedModpackLink
 } from '../../bridge/types';
 import styles from './ModpackPicker.module.css';
 
@@ -20,11 +20,20 @@ interface Query { search: string; minecraftVersion: string; loader: string; cate
 
 const emptyQuery: Query = { search: '', minecraftVersion: '', loader: '', category: '', sort: 'Downloads' };
 
-export function ModpackPicker({ value, initialMode = 'Browse', onChange, onOpenProviderSettings }: {
+export function ModpackPicker({ value, initialMode = 'Browse', onChange, onOpenProviderSettings: _onOpenProviderSettings }: {
   value: ModpackSelection | null;
   initialMode?: InitialMode;
   onChange: (selection: ModpackSelection | null) => void;
   onOpenProviderSettings?: () => void;
+}) {
+  if (initialMode === 'Link') return <ProviderLinkPicker value={value} onChange={onChange} />;
+  if (initialMode === 'Import') return <LocalPackImport value={value} onChange={onChange} />;
+  return <BrowseModpackPicker value={value} onChange={onChange} />;
+}
+
+function BrowseModpackPicker({ value, onChange }: {
+  value: ModpackSelection | null;
+  onChange: (selection: ModpackSelection | null) => void;
 }) {
   const bridge = useAppStore(state => state.bridge);
   const command = useAppStore(state => state.command);
@@ -37,6 +46,7 @@ export function ModpackPicker({ value, initialMode = 'Browse', onChange, onOpenP
   const [detail, setDetail] = useState('');
   const [failedStage, setFailedStage] = useState('');
   const [providerStatuses, setProviderStatuses] = useState<ModpackProviderStatus[]>([]);
+  const [providerVersions, setProviderVersions] = useState<ModpackVersionInventory | null>(null);
   const generation = useRef(0);
   const resultsRef = useRef<HTMLDivElement>(null);
   const onChangeRef = useRef(onChange);
@@ -52,6 +62,28 @@ export function ModpackPicker({ value, initialMode = 'Browse', onChange, onOpenP
     }).catch(() => undefined);
     return () => { active = false; };
   }, [bridge]);
+
+  useEffect(() => {
+    if (!bridge) return;
+    let active = true;
+    const controller = new AbortController();
+    const apply = (inventory: ModpackVersionInventory) => {
+      if (!active) return;
+      setProviderVersions(inventory);
+      setDraft(current => current.minecraftVersion && inventory.versions.length > 0 &&
+        !inventory.versions.some(version => version.versionId === current.minecraftVersion)
+        ? { ...current, minecraftVersion: '' } : current);
+    };
+    void (async () => {
+      const cached = await bridge.request<ModpackVersionInventory>('modpacks.versions',
+        { provider, cacheOnly: true }, controller.signal);
+      if (cached.versions.length) apply(cached);
+      const current = await bridge.request<ModpackVersionInventory>('modpacks.versions',
+        { provider, cacheOnly: false }, controller.signal);
+      apply(current);
+    })().catch(() => { if (active) setProviderVersions(null); });
+    return () => { active = false; controller.abort(); };
+  }, [bridge, provider]);
 
   useEffect(() => {
     if (!bridge) return;
@@ -98,8 +130,16 @@ export function ModpackPicker({ value, initialMode = 'Browse', onChange, onOpenP
 
   const selectedProject = value?.kind === 'remote' && value.project.provider === provider ? value.project : null;
   const releaseOptions = useMemo(() => selectedProject?.versions ?? [], [selectedProject]);
-  const versionOptions = useMemo(() => Array.from(new Set(projects.flatMap(project =>
-    project.versions.map(release => release.minecraftVersion)).filter(Boolean))), [projects]);
+  const versionOptions = useMemo(() => {
+    const official = providerVersions?.versions ?? [];
+    if (official.length) return official.map(version => ({
+      value: version.versionId,
+      label: version.kind === 'Release' ? version.versionId : `${version.versionId} · ${version.kind}`
+    }));
+    return Array.from(new Set(projects.flatMap(project =>
+      project.versions.map(release => release.minecraftVersion)).filter(Boolean)))
+      .map(version => ({ value: version, label: version }));
+  }, [projects, providerVersions]);
   const virtual = useVirtualizer({
     count: projects.length,
     getScrollElement: () => resultsRef.current,
@@ -132,27 +172,22 @@ export function ModpackPicker({ value, initialMode = 'Browse', onChange, onOpenP
       <Button icon={<File size={14} />} onClick={chooseLocal}>Import pack</Button>
     </div>
     <form className={styles.toolbar} onSubmit={event => { event.preventDefault(); applySearch(); }}>
-      <TextInput type="search" value={draft.search} autoFocus={initialMode === 'Link'}
+      <TextInput type="search" value={draft.search}
         onChange={event => setDraft(current => ({ ...current, search: event.target.value }))}
-        placeholder={initialMode === 'Link' ? `Paste a ${provider} project link` : `Search ${provider} modpacks`}
+        placeholder={`Search ${provider} modpacks`}
         aria-label={`Search ${provider} modpacks`} />
-      <TextInput value={draft.minecraftVersion} list="modpack-minecraft-versions"
-        onChange={event => setDraft(current => ({ ...current, minecraftVersion: event.target.value }))}
-        aria-label="Minecraft version filter" placeholder="Any Minecraft version" />
-      <datalist id="modpack-minecraft-versions">{versionOptions.map(version => <option key={version} value={version} />)}</datalist>
-      <SelectInput value={draft.loader} onChange={event => setDraft(current => ({ ...current, loader: event.target.value }))} aria-label="Loader filter">
-        <option value="">All loaders</option><option value="fabric">Fabric</option><option value="quilt">Quilt</option><option value="forge">Forge</option><option value="neoforge">NeoForge</option>
-      </SelectInput>
-      <SelectInput value={draft.category} onChange={event => setDraft(current => ({ ...current, category: event.target.value }))} aria-label="Category filter">
-        <option value="">All categories</option><option value="adventure">Adventure</option><option value="magic">Magic</option><option value="technology">Technology</option><option value="optimization">Optimization</option><option value="multiplayer">Multiplayer</option>
-      </SelectInput>
-      <SelectInput value={draft.sort} onChange={event => setDraft(current => ({ ...current, sort: event.target.value }))} aria-label="Sort modpacks">
-        <option value="Downloads">Popular</option><option value="Updated">Recently updated</option><option value="Newest">Newest</option><option value="Relevance">Relevance</option>
-      </SelectInput>
+      <Combobox value={draft.minecraftVersion} onChange={minecraftVersion => setDraft(current => ({ ...current, minecraftVersion }))}
+        options={[{ value: '', label: 'Any Minecraft version' }, ...versionOptions]} ariaLabel="Minecraft version filter" searchable />
+      <Combobox value={draft.loader} onChange={loader => setDraft(current => ({ ...current, loader }))} ariaLabel="Loader filter"
+        options={[{ value: '', label: 'All loaders' }, { value: 'fabric', label: 'Fabric' }, { value: 'quilt', label: 'Quilt' }, { value: 'forge', label: 'Forge' }, { value: 'neoforge', label: 'NeoForge' }]} />
+      <Combobox value={draft.category} onChange={category => setDraft(current => ({ ...current, category }))} ariaLabel="Category filter"
+        options={[{ value: '', label: 'All categories' }, { value: 'adventure', label: 'Adventure' }, { value: 'magic', label: 'Magic' }, { value: 'technology', label: 'Technology' }, { value: 'optimization', label: 'Optimization' }, { value: 'multiplayer', label: 'Multiplayer' }]} />
+      <Combobox value={draft.sort} onChange={sort => setDraft(current => ({ ...current, sort }))} ariaLabel="Sort modpacks"
+        options={[{ value: 'Downloads', label: 'Popular' }, { value: 'Updated', label: 'Recently updated' }, { value: 'Newest', label: 'Newest' }, { value: 'Relevance', label: 'Relevance' }]} />
       <Button variant="primary" icon={<Search size={14} />} type="submit">Search</Button>
     </form>
     <div className={styles.trendNote}><Info size={13} /><span>{status?.detail ?? `${provider} provider status is loading.`}</span></div>
-    {state === 'Authentication required' && <div className={styles.connectState} role="status"><Box size={22} /><div><strong>Connect CurseForge</strong><span>{detail || 'Browsing and provider links need your own CurseForge API key. Local pack import remains available.'}</span></div><Button variant="primary" onClick={onOpenProviderSettings}>Open Content sources</Button></div>}
+    {state === 'Authentication required' && <div className={styles.connectState} role="status"><Box size={22} /><div><strong>CurseForge activation in progress</strong><span>CurseForge integration is being activated for ChunkPilot. Modrinth and local pack import remain available.</span></div></div>}
     {(state === 'Failed' || state === 'Rate limited') && <div className={styles.error} role="alert"><strong>{state === 'Rate limited' ? `${provider} rate limit active` : `${provider} catalog unavailable`}</strong><span>{detail}</span><Button onClick={() => setQueryRevision(revision => revision + 1)}>Retry</Button>{failedStage && <details><summary>Technical details</summary><code>Failed stage: {failedStage}</code></details>}</div>}
     {state === 'Offline cache' && <div className={styles.cacheNotice} role="status">{detail}</div>}
     <div className={styles.layout}>
@@ -191,16 +226,119 @@ export function ModpackPicker({ value, initialMode = 'Browse', onChange, onOpenP
         </> : selectedProject ? <>
           <div className={styles.detailTitle}><PackImage project={selectedProject} large /><div><h3>{selectedProject.name}</h3><p>by {selectedProject.author} · {selectedProject.provider}</p></div></div>
           <p>{selectedProject.summary}</p>
-          <label className={styles.releaseLabel}>Exact release<SelectInput value={value?.kind === 'remote' ? value.release.versionId : ''} onChange={event => {
-            const release = releaseOptions.find(item => item.versionId === event.target.value);
+          <label className={styles.releaseLabel}>Exact release<Combobox value={value?.kind === 'remote' ? value.release.versionId : ''} onChange={versionId => {
+            const release = releaseOptions.find(item => item.versionId === versionId);
             if (release) onChange({ kind: 'remote', project: selectedProject, release });
-          }}>{releaseOptions.map(release => <option key={release.versionId} value={release.versionId}>{release.versionName} · Minecraft {release.minecraftVersion} · {release.loader}</option>)}</SelectInput></label>
+          }} ariaLabel="Exact modpack release" options={releaseOptions.map(release => ({ value: release.versionId, label: `${release.versionName} · Minecraft ${release.minecraftVersion} · ${release.loader}` }))} /></label>
           {value?.kind === 'remote' && <dl><div><dt>Release</dt><dd>{value.release.releaseChannel}</dd></div><div><dt>Integrity</dt><dd>{value.release.hasIntegrity ? value.project.provider === 'Modrinth' ? 'SHA-1 + SHA-512' : 'Provider SHA-1' : 'Unavailable'}</dd></div><div><dt>Size</dt><dd>{value.release.sizeBytes ? `${(value.release.sizeBytes / 1024 / 1024).toFixed(1)} MB` : 'Unavailable'}</dd></div></dl>}
           {value?.kind === 'remote' && !value.release.canCreate && <div className={styles.releaseLimitation} role="status"><strong>Creation unavailable</strong><span>{value.release.limitation || 'This exact release does not have a complete managed server path.'}</span></div>}
           <StatusBadge tone={value?.kind === 'remote' && value.release.canCreate ? 'warning' : 'neutral'}>{value?.kind === 'remote' && value.release.canCreate ? 'Validated during creation' : 'Browse only'}</StatusBadge>
         </> : <div className={styles.empty}><Box size={24} /><strong>{pending ? `Loading ${provider}` : 'Select a modpack'}</strong><span>{pending ? 'Fetching compatible server-pack releases.' : `Choose an exact ${provider} release or import a local pack.`}</span></div>}
       </aside>
     </div>
+  </section>;
+}
+
+function ProviderLinkPicker({ value, onChange }: {
+  value: ModpackSelection | null;
+  onChange: (selection: ModpackSelection | null) => void;
+}) {
+  const bridge = useAppStore(state => state.bridge);
+  const [url, setUrl] = useState('');
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState('');
+  const [detail, setDetail] = useState('');
+  const request = useRef<AbortController | null>(null);
+  const remote = value?.kind === 'remote' ? value : null;
+
+  useEffect(() => () => request.current?.abort(), []);
+  const paste = async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (text) setUrl(text.trim());
+    } catch {
+      setError('Clipboard access is unavailable. Paste the link into the field instead.');
+    }
+  };
+  const resolve = async () => {
+    request.current?.abort();
+    const controller = new AbortController();
+    request.current = controller;
+    setPending(true); setError(''); setDetail('');
+    try {
+      if (!bridge) throw new Error('ChunkPilot is still connecting to the native host.');
+      const result = await bridge.request<ResolvedModpackLink>('modpacks.resolveLink', { url: url.trim() }, controller.signal);
+      if (controller.signal.aborted) return;
+      onChange({ kind: 'remote', project: result.project, release: result.release });
+      setUrl(result.canonicalUrl);
+      setDetail(result.detail);
+    } catch (reason) {
+      if (!controller.signal.aborted)
+        setError(reason instanceof Error ? reason.message : 'The provider link could not be resolved.');
+    } finally {
+      if (!controller.signal.aborted) setPending(false);
+    }
+  };
+
+  return <section className={styles.directRoot} aria-label="Paste provider link">
+    <header><Link size={22} /><div><h3>Paste provider link</h3><p>Use an official Modrinth or CurseForge modpack project link. Exact release links stay exact.</p></div></header>
+    <form className={styles.pasteRow} onSubmit={event => { event.preventDefault(); void resolve(); }}>
+      <TextInput type="url" value={url} autoFocus onChange={event => setUrl(event.target.value)}
+        placeholder="modrinth.com/modpack/…" aria-label="Provider project link" />
+      <Button type="button" icon={<Clipboard size={14} />} onClick={() => void paste()}>Paste</Button>
+      <Button type="submit" variant="primary" icon={<Search size={14} />} disabled={!url.trim() || pending}>{pending ? 'Resolving…' : 'Resolve'}</Button>
+    </form>
+    <p className={styles.supportedSources}>Supported: Modrinth modpack project and exact-version links. CurseForge links are recognized and will activate after ChunkPilot receives approved application access.</p>
+    {error && <div className={styles.error} role="alert"><strong>Could not resolve link</strong><span>{error}</span></div>}
+    {remote && <article className={styles.resolvedLink} aria-label="Resolved modpack release">
+      <PackImage project={remote.project} large />
+      <div><span className={styles.eyebrow}>{remote.project.provider} · resolved release</span><h3>{remote.project.name}</h3><p>{remote.release.versionName}</p><small>Minecraft {remote.release.minecraftVersion} · {remote.release.loader} · {remote.release.releaseChannel}</small>{detail && <span role="status">{detail}</span>}</div>
+      <StatusBadge tone={remote.release.canCreate ? 'success' : 'warning'}>{remote.release.canCreate ? 'Ready for review' : 'Unavailable'}</StatusBadge>
+    </article>}
+  </section>;
+}
+
+function LocalPackImport({ value, onChange }: {
+  value: ModpackSelection | null;
+  onChange: (selection: ModpackSelection | null) => void;
+}) {
+  const command = useAppStore(state => state.command);
+  const [error, setError] = useState('');
+  const choose = (kind: 'file' | 'folder') => {
+    setError('');
+    void command<LocalModpackSelection>('modpacks.chooseLocal', { kind }).then(local => {
+      if (local.cancelled) return;
+      if (!local.inspection?.canCreate) {
+        setError(local.inspection?.limitation || 'This source does not contain a complete supported server path.');
+        return;
+      }
+      onChange({ kind: 'local', local: {
+        ...local,
+        managementMode: 'ManagedCopy',
+        launchRelativePath: local.inspection.launchCandidates.length === 1
+          ? local.inspection.launchCandidates[0] : undefined
+      } });
+    }).catch(reason => setError(reason instanceof Error ? reason.message : 'The server source could not be inspected.'));
+  };
+  const local = value?.kind === 'local' ? value.local : null;
+  const updateLocal = (changes: Partial<LocalModpackSelection>) => {
+    if (local) onChange({ kind: 'local', local: { ...local, ...changes } });
+  };
+  return <section className={styles.directRoot} aria-label="Import local server">
+    <header><File size={22} /><div><h3>Import server or modpack</h3><p>Choose a ZIP, .mrpack, server JAR, or complete folder. ChunkPilot inspects it before copying or running anything.</p></div></header>
+    <div className={styles.importActions}>
+      <Button variant="primary" icon={<File size={14} />} onClick={() => choose('file')}>Import ZIP, pack, or JAR</Button>
+      <Button icon={<File size={14} />} onClick={() => choose('folder')}>Import server folder</Button>
+    </div>
+    {error && <div className={styles.error} role="alert"><strong>Import unavailable</strong><span>{error}</span></div>}
+    {local?.inspection && <>
+      <article className={styles.resolvedLink}><span className={styles.fallback}><File size={22} /></span><div><span className={styles.eyebrow}>{local.inspection.sourceKind} · reviewed locally</span><h3>{local.inspection.name}</h3><p>{local.fileName}</p><small>Minecraft {local.inspection.minecraftVersion} · {local.inspection.loader} {local.inspection.loaderVersion}</small></div><StatusBadge tone="success">Ready for review</StatusBadge></article>
+      <div className={styles.importReview}>
+        <dl><div><dt>Contents</dt><dd>{local.inspection.fileCount.toLocaleString()} files · {(local.inspection.expandedSizeBytes / 1024 / 1024).toFixed(1)} MB</dd></div><div><dt>Server root</dt><dd>{local.inspection.serverRoot}</dd></div><div><dt>World data</dt><dd>{local.inspection.containsWorld ? 'Present — preserved' : 'Not detected'}</dd></div><div><dt>Content</dt><dd>{local.inspection.modCount} mods · {local.inspection.pluginCount} plugins</dd></div></dl>
+        {local.inspection.launchCandidates.length > 1 && <label>Server launcher<Combobox ariaLabel="Server launcher" value={local.launchRelativePath ?? ''} onChange={launchRelativePath => updateLocal({ launchRelativePath })} options={[{ value: '', label: 'Choose a launcher' }, ...local.inspection.launchCandidates.map(candidate => ({ value: candidate, label: candidate }))]} /></label>}
+        {local.inspection.sourceKind === 'ServerFolder' && local.inspection.canReference && <fieldset className={styles.managementModes}><legend>File management</legend><button type="button" data-selected={local.managementMode !== 'ByReference'} onClick={() => updateLocal({ managementMode: 'ManagedCopy' })}><strong>Managed copy</strong><small>Recommended. Source files remain unchanged; ChunkPilot owns the new copy and can recover it.</small></button><button type="button" data-selected={local.managementMode === 'ByReference'} onClick={() => updateLocal({ managementMode: 'ByReference' })}><strong>By reference</strong><small>Keep and run the original folder in place. ChunkPilot will not own or delete it.</small></button></fieldset>}
+      </div>
+    </>}
   </section>;
 }
 

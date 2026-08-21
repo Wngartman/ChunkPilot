@@ -583,7 +583,7 @@ public sealed partial class MainViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(NetworkGuidance))]
     [NotifyPropertyChangedFor(nameof(NetworkChoiceSummary))]
     [NotifyPropertyChangedFor(nameof(IsDirectInternetSelected))]
-    private NetworkMode selectedNetworkMode = NetworkMode.ConfigureLater;
+    private NetworkMode selectedNetworkMode = NetworkMode.HomeNetwork;
 
     public IReadOnlyList<NetworkMode> NetworkModes { get; } = Enum.GetValues<NetworkMode>();
     public string NetworkGuidance => string.Join(

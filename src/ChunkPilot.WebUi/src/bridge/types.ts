@@ -80,6 +80,11 @@ export interface ServerDeletionPreflight {
   state: ServerState;
   isManaged: boolean;
   ownershipProven: boolean;
+  ownershipStatus: 'External' | 'ProvenMarker' | 'ReconciledCreationEvidence' | 'Ambiguous';
+  ownershipDetail: string;
+  ownershipEvidence: { code: string; satisfied: boolean; detail: string }[];
+  canCreateManagedCopy: boolean;
+  reviewFingerprint: string;
   managedRoot: string;
   worldLocation: string;
   backupCount: number;
@@ -127,12 +132,47 @@ export type ModpackCatalogLoadState = 'Ready' | 'Empty' | 'OfflineCache' | 'Auth
 export interface ModpackProject { provider: ModpackProvider; projectId: string; slug: string; name: string; author: string; summary: string; downloadCount: number | null; updatedAt: string | null; categories: string[]; hasImage: boolean; serverSupport: string; clientRequirement: string; trend: { available: boolean; detail: string }; versions: ModpackRelease[]; }
 export interface ModpackCatalogResult { provider: ModpackProvider; state: ModpackCatalogLoadState; items: ModpackProject[]; detail: string; failedStage: string; retrievedAt: string | null; fromCache: boolean; stale: boolean; }
 export interface ModpackProviderStatus { provider: ModpackProvider; available: boolean; detail: string; }
-export interface LocalModpackSelection { cancelled: boolean; token?: string; fileName?: string; expiresAt?: string; inspection?: { name: string; versionName: string; summary: string; minecraftVersion: string; loader: string; loaderVersion: string; requiredJavaMajor: number; requiredServerFiles: number; optionalServerFiles: number; excludedClientFiles: number; indexedServerBytes: number; canCreate: boolean; limitation: string; }; }
+export type CatalogGameVersionKind = 'Release' | 'Snapshot' | 'Beta' | 'Alpha' | 'Unknown';
+export interface ModpackGameVersion { versionId: string; kind: CatalogGameVersionKind; publishedAt: string | null; isMajor: boolean; }
+export interface ModpackVersionInventory { provider: ModpackProvider; state: ModpackCatalogLoadState; versions: ModpackGameVersion[]; detail: string; failedStage: string; retrievedAt: string | null; fromCache: boolean; stale: boolean; }
+export interface ResolvedModpackLink { canonicalUrl: string; exactRelease: boolean; project: ModpackProject; release: ModpackRelease; detail: string; }
+export interface LocalModpackSelection {
+  cancelled: boolean;
+  token?: string;
+  fileName?: string;
+  expiresAt?: string;
+  managementMode?: 'ManagedCopy' | 'ByReference';
+  launchRelativePath?: string;
+  inspection?: {
+    sourceKind: 'ModrinthPack' | 'CurseForgePack' | 'ServerArchive' | 'ServerJar' | 'ServerFolder';
+    name: string;
+    summary: string;
+    minecraftVersion: string;
+    loader: string;
+    loaderVersion: string;
+    requiredJavaMajor: number;
+    requiredServerFiles: number;
+    optionalServerFiles: number;
+    excludedClientFiles: number;
+    indexedServerBytes: number;
+    sourceSizeBytes: number;
+    expandedSizeBytes: number;
+    fileCount: number;
+    modCount: number;
+    pluginCount: number;
+    containsWorld: boolean;
+    serverRoot: string;
+    launchCandidates: string[];
+    canReference: boolean;
+    canCreate: boolean;
+    limitation: string;
+  };
+}
 export interface TextFileContent { relativePath: string; content: string; encodingName: string; hasBom: boolean; lineEnding: string; loadedSha256: string; loadedLastWriteAt: string | null; }
 export interface ScheduleEntry { id: string; serverId: string; name: string; action: string; kind: string; intervalMinutes: number; at: string; cron: string; command: string; enabled: boolean; nextRunAt: string | null; lastRunAt: string | null; backupBeforeRestart: boolean; restartCountdownSeconds: number; }
 export interface BackupEntry { id: string; createdAt: string; description: string; sizeBytes: number; verified: boolean; source: string; }
 export interface VersionEntry { id: string; version: string; platform: string; installedAt: string | null; active: boolean; verified: boolean; health: string; snapshotSizeBytes: number; includesWorldData: boolean; rollbackReady: boolean; }
-export interface UpdateSummary { status: string; detail: string; sourceLinked: boolean; provider: string | null; projectId: string | null; projectName: string | null; installedVersionId: string | null; installedVersionName: string | null; releaseChannel: string | null; minecraftVersion: string | null; loader: string | null; loaderVersion: string | null; checkedAt: string | null; latestVersionName: string | null; compatibility: string | null; canInstall: boolean; operationState: string | null; operationPercent: number | null; cancellable: boolean; }
+export interface UpdateSummary { status: string; detail: string; sourceLinked: boolean; provider: string | null; projectId: string | null; projectName: string | null; installedVersionId: string | null; installedVersionName: string | null; releaseChannel: string | null; minecraftVersion: string | null; loader: string | null; loaderVersion: string | null; checkedAt: string | null; targetVersionId?: string | null; latestVersionName: string | null; targetPublishedAt?: string | null; downloadSizeBytes?: number | null; compatibilityReasons?: string[]; compatibility: string | null; canInstall: boolean; operationState: string | null; operationStep?: string | null; operationDetail?: string | null; operationPercent: number | null; cancellable: boolean; }
 export interface ActivityEntry { id: number; timestamp: string; serverId: string | null; serverName: string; action: string; result: string; error: string | null; durationMs: number; }
 
 export type ConnectivityMode = 'ThisComputerOnly' | 'HomeNetwork' | 'PortForwarding' | 'ConfigureLater';
@@ -229,6 +269,15 @@ export interface WebUiSnapshot {
   capturedAt: string;
   agentConnected: boolean;
   appVersion: string;
+  build: {
+    productVersion: string;
+    releaseTag: string;
+    gitSha: string;
+    buildTimestampUtc: string;
+    schemaVersion: string;
+    architecture: string;
+    defaultUi: string;
+  };
   selectedServerId: string | null;
   operation: { method: string; serverId: string | null; message: string } | null;
   statusMessage: string | null;
@@ -277,7 +326,7 @@ export type BridgeMethod =
   | 'renderer.ready' | 'snapshot.get' | 'snapshot.selectServer' | 'snapshot.refresh' | 'bridge.cancel'
   | 'window.drag' | 'window.minimize' | 'window.toggleMaximize' | 'window.close'
   | 'servers.start' | 'servers.stop' | 'servers.restart' | 'servers.openFolder'
-  | 'servers.deletePreflight' | 'servers.delete'
+  | 'servers.deletePreflight' | 'servers.delete' | 'servers.createManagedCopy'
   | 'diagnostics.openLogs' | 'diagnostics.bundle'
   | 'servers.import' | 'servers.rename' | 'servers.changeIcon'
   | 'appearance.chooseIcon'
@@ -286,11 +335,10 @@ export type BridgeMethod =
   | 'mods.openFolder' | 'mods.chooseLocal' | 'mods.installLocal' | 'mods.providers' | 'mods.search' | 'mods.release'
   | 'mods.install' | 'mods.plan' | 'mods.installPlan' | 'mods.setEnabled' | 'mods.remove' | 'mods.configFiles' | 'mods.saveConfig'
   | 'content.operations' | 'content.cancel'
-  | 'modpacks.providers' | 'modpacks.cache' | 'modpacks.search' | 'modpacks.image' | 'modpacks.chooseLocal'
+  | 'modpacks.providers' | 'modpacks.versions' | 'modpacks.cache' | 'modpacks.search' | 'modpacks.resolveLink' | 'modpacks.image' | 'modpacks.chooseLocal'
   | 'console.send' | 'workspace.load' | 'files.openFolder' | 'files.navigate' | 'files.read' | 'files.write'
   | 'backups.create' | 'backups.restore' | 'backups.verify'
   | 'players.moderate' | 'schedules.upsert' | 'schedules.delete' | 'settings.saveGlobal' | 'settings.saveServer'
-  | 'settings.curseforge.status' | 'settings.curseforge.save' | 'settings.curseforge.disconnect'
   | 'connectivity.copyAddress' | 'connectivity.open' | 'connectivity.setMode'
   | 'connectivity.router.check' | 'connectivity.router.confirm' | 'connectivity.router.cancelConsent' | 'connectivity.router.stop' | 'connectivity.router.cancel' | 'connectivity.router.retry'
   | 'connectivity.external.check' | 'connectivity.external.cancel'

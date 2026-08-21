@@ -15,6 +15,7 @@ public sealed partial class PaperVersionCatalogService
     public const string ProjectUrl = "https://fill.papermc.io/v3/projects/paper";
     private const int CacheSchemaVersion = 1;
     private const string VersionCacheFileName = "paper-version-catalog.json";
+    private static readonly TimeSpan ProviderRequestBudget = TimeSpan.FromSeconds(10);
 
     private readonly AppDataPaths paths;
     private readonly HttpClient http;
@@ -53,7 +54,9 @@ public sealed partial class PaperVersionCatalogService
 
         try
         {
-            var catalog = await RefreshVersionsAsync(cancellationToken).ConfigureAwait(false);
+            using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            budget.CancelAfter(ProviderRequestBudget);
+            var catalog = await RefreshVersionsAsync(budget.Token).ConfigureAwait(false);
             WriteCache(cachePath, catalog);
             return catalog;
         }
@@ -102,7 +105,9 @@ public sealed partial class PaperVersionCatalogService
 
         try
         {
-            var catalog = await RefreshBuildsAsync(minecraftVersion, cancellationToken).ConfigureAwait(false);
+            using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            budget.CancelAfter(ProviderRequestBudget);
+            var catalog = await RefreshBuildsAsync(minecraftVersion, budget.Token).ConfigureAwait(false);
             WriteCache(cachePath, catalog);
             return catalog;
         }

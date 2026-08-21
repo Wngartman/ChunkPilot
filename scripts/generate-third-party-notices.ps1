@@ -131,7 +131,7 @@ foreach ($hash in $licenseHashes) {
     [void]$builder.AppendLine()
 }
 
-$manual = [IO.File]::ReadAllText((Join-Path $repoRoot 'THIRD-PARTY-NOTICES.md'), $strictUtf8)
+$manual = [IO.File]::ReadAllText((Join-Path $repoRoot 'legal\THIRD-PARTY-NOTICES.md'), $strictUtf8)
 [void]$builder.AppendLine()
 [void]$builder.AppendLine('PROJECT-SPECIFIC NOTICE')
 [void]$builder.AppendLine($manual.Trim())

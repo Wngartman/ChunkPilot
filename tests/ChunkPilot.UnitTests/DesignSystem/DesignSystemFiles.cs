@@ -61,7 +61,7 @@ internal static class DesignSystemFiles
 
     public static string SplashWindowFile => Path.Combine(AppProjectDirectory, "SplashWindow.xaml");
 
-    public static string ComponentCatalogFile => Path.Combine(RepositoryRoot, "docs", "UI-COMPONENT-CATALOG.md");
+    public static string ComponentCatalogFile => Path.Combine(RepositoryRoot, "docs", "architecture", "UI-COMPONENT-CATALOG.md");
 
     /// <summary>Every XAML file in the WPF project, excluding build output.</summary>
     public static IReadOnlyList<string> AllXaml() => Enumerate(AppProjectDirectory, "*.xaml");

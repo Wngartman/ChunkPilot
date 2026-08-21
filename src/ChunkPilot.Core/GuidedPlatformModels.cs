@@ -311,7 +311,7 @@ public sealed record QuickStartPreset
     public bool DailyBackup { get; init; }
     public bool BackupBeforeUpdates { get; init; }
     public int MaxPlayers { get; init; } = 8;
-    public NetworkMode NetworkMode { get; init; } = NetworkMode.ConfigureLater;
+    public NetworkMode NetworkMode { get; init; } = NetworkMode.HomeNetwork;
     public IReadOnlyDictionary<string, string> Properties { get; init; } =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
     public IReadOnlyList<string> ReviewItems { get; init; } = [];
@@ -527,6 +527,24 @@ public sealed record CatalogProviderStatus(
     bool Available,
     string Detail);
 
+public enum CatalogGameVersionKind
+{
+    Release,
+    Snapshot,
+    Beta,
+    Alpha,
+    Unknown
+}
+
+/// <summary>An exact Minecraft version exposed by a content provider's official API.</summary>
+public sealed record CatalogGameVersion
+{
+    public string VersionId { get; init; } = "";
+    public CatalogGameVersionKind Kind { get; init; }
+    public DateTimeOffset? PublishedAt { get; init; }
+    public bool IsMajor { get; init; }
+}
+
 public enum CatalogLoadState
 {
     Ready,
@@ -548,6 +566,26 @@ public sealed record CatalogBrowseResult
     public bool FromCache { get; init; }
     public bool Stale { get; init; }
 }
+
+/// <summary>
+/// Provider-owned Minecraft version inventory used only to filter content discovery. This is not a
+/// server-support claim; exact pack compatibility is still established from the selected release.
+/// </summary>
+public sealed record CatalogVersionInventory
+{
+    public CatalogProvider Provider { get; init; }
+    public CatalogLoadState State { get; init; }
+    public IReadOnlyList<CatalogGameVersion> Versions { get; init; } = [];
+    public string Detail { get; init; } = "";
+    public string FailedStage { get; init; } = "";
+    public DateTimeOffset? RetrievedAt { get; init; }
+    public bool FromCache { get; init; }
+    public bool Stale { get; init; }
+}
+
+public sealed record CatalogVersionInventoryRequest(
+    CatalogProvider Provider,
+    bool CacheOnly = false);
 
 public sealed record LoaderInstallPlan
 {

@@ -11,7 +11,4 @@
     <PackageReference Include="Microsoft.Extensions.Hosting" />
     <PackageReference Include="Microsoft.Extensions.Logging.Console" />
   </ItemGroup>
-  <ItemGroup>
-    <Content Include="..\..\assets\ChunkPilot.ico" Link="ChunkPilot.ico" CopyToOutputDirectory="PreserveNewest" />
-  </ItemGroup>
 </Project>

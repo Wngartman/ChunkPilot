@@ -8,7 +8,7 @@ It is not part of the ChunkPilot desktop application, is never contacted unless 
 **Check from outside**, and ChunkPilot is fully usable without it.
 
 The security invariant, the API contract, the privacy model and the manual deployment steps live in
-[`docs/EXTERNAL-REACHABILITY-PROBE.md`](../../docs/EXTERNAL-REACHABILITY-PROBE.md).
+[`docs/security/EXTERNAL-REACHABILITY-PROBE.md`](../../docs/security/EXTERNAL-REACHABILITY-PROBE.md).
 
 ```bash
 npm install

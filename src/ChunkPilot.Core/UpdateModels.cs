@@ -202,7 +202,19 @@ public sealed record VersionSnapshotManifest
     public DateTimeOffset CreatedAt { get; init; }
     public bool IncludesWorldData { get; init; }
     public IReadOnlyList<BackupManifestEntry> Files { get; init; } = [];
+    public IReadOnlyList<VersionSnapshotContentObject> ContentObjects { get; init; } = [];
 }
+
+/// <summary>
+/// A snapshot file whose bytes live in the server's hash-addressed snapshot object store. The
+/// object key is relative to the snapshot directory; rollback never trusts or follows an absolute
+/// path from a manifest.
+/// </summary>
+public sealed record VersionSnapshotContentObject(
+    string RelativePath,
+    string ObjectKey,
+    long SizeBytes,
+    string Sha256);
 
 public sealed record PackFileChange
 {

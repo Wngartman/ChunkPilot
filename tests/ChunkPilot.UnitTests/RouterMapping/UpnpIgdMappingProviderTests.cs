@@ -298,20 +298,16 @@ public sealed class UpnpIgdMappingProviderTests
     public async Task A_gateway_that_stops_answering_times_out_and_says_so()
     {
         await using var gateway = new FakeUpnpGateway();
-        // Prove discovery with the fixture's normal response window first. The short timeout below
-        // belongs only to the deliberately stalled control call; using it for discovery lets a busy
-        // hosted runner misclassify a delayed loopback response as unsupported.
-        var discoveryProvider = gateway.Provider();
-        var discovery = await discoveryProvider.DiscoverAsync(gateway.Binding(), CancellationToken.None);
         var options = new RouterMappingOptions
         {
             SsdpMaximumWait = TimeSpan.FromMilliseconds(200),
-            HttpTimeout = TimeSpan.FromSeconds(1)
+            HttpTimeout = TimeSpan.FromMilliseconds(400)
         };
-        var timeoutProvider = gateway.Provider(options: options);
+        var provider = gateway.Provider(options: options);
+        var discovery = await provider.DiscoverAsync(gateway.Binding(), CancellationToken.None);
         gateway.ResponseDelay = TimeSpan.FromSeconds(5);
 
-        var outcome = await timeoutProvider.CreateAsync(gateway.Binding(), discovery, Request(), CancellationToken.None);
+        var outcome = await provider.CreateAsync(gateway.Binding(), discovery, Request(), CancellationToken.None);
 
         Assert.False(outcome.Success);
         Assert.Equal(RouterMappingFailure.NetworkFailure, outcome.Failure);

@@ -224,9 +224,7 @@ public sealed class GatewayEpochContinuityTests
                 ? Pcp.AnnounceReply(epochSeconds: epoch)
                 : Pcp.MapReply(request, resultCode, 3600, Pcp.SuggestedExternalPort(request), "203.0.113.9",
                     epochSeconds: epoch));
-        // Keep the protocol assertion deterministic on busy CI hosts: a delayed loopback UDP
-        // baseline must not make the later, valid reboot observation look continuity-unknown.
-        var provider = new PcpMappingProvider(new UdpGatewayDatagramChannel(), gateway.Options(attempts: 3),
+        var provider = new PcpMappingProvider(new UdpGatewayDatagramChannel(), gateway.Options(attempts: 1),
             new FixtureClock());
         var discovery = await provider.DiscoverAsync(gateway.Binding(), CancellationToken.None);
         var created = await provider.CreateAsync(gateway.Binding(), discovery, Request(), CancellationToken.None);
@@ -433,7 +431,7 @@ public sealed class GatewayEpochContinuityTests
         ushort resultCode = 0;
         await using var gateway = FakeDatagramGateway.Start(_ =>
             NatPmp.AddressReply(resultCode, "203.0.113.7", epoch));
-        var provider = new NatPmpMappingProvider(new UdpGatewayDatagramChannel(), gateway.Options(attempts: 3),
+        var provider = new NatPmpMappingProvider(new UdpGatewayDatagramChannel(), gateway.Options(attempts: 1),
             new FixtureClock(), new InstantRebootDelay());
         _ = await provider.DiscoverAsync(gateway.Binding(), CancellationToken.None);
 

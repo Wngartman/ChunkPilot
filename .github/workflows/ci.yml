@@ -1,4 +1,4 @@
-name: CI
+name: Feature Validation
 
 on:
   pull_request:
@@ -8,53 +8,72 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: feature-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   validate:
-    name: Windows release validation
+    name: Path-aware Windows validation
     runs-on: windows-latest
-    timeout-minutes: 60
-
+    timeout-minutes: 75
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
+      - name: Classify changed paths
+        id: scope
+        shell: pwsh
+        run: |
+          if ('${{ github.event_name }}' -eq 'pull_request') {
+            git fetch origin '${{ github.base_ref }}' --depth=1
+            $files = @(git diff --name-only "origin/${{ github.base_ref }}...HEAD")
+          } else { $files = @(git ls-files) }
+          $frontend = @($files | Where-Object { $_ -like 'src/ChunkPilot.WebUi/*' }).Count -gt 0
+          $dotnet = @($files | Where-Object { $_ -match '^(src|tests)/.*\.(cs|csproj|xaml)$|^Directory\.|^ChunkPilot\.sln$' }).Count -gt 0
+          $highRisk = @($files | Where-Object {
+            $_ -match 'Lifecycle|ManagedServer|ProcessIdentity|Backup|Restore|Deletion|Networking|Router|Firewall|Migration|Installer|AgentPipe|ChunkPilotStore|\.github/workflows/release|scripts/(publish|package-release|test-installer)'
+          }).Count -gt 0
+          "frontend=$($frontend.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          "dotnet=$($dotnet.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          "highrisk=$($highRisk.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+
       - name: Set up .NET
+        if: steps.scope.outputs.dotnet == 'true'
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           global-json-file: global.json
-
       - name: Set up Node.js
+        if: steps.scope.outputs.frontend == 'true'
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24.x
           cache: npm
           cache-dependency-path: src/ChunkPilot.WebUi/package-lock.json
-
       - name: Build and test WebUI
+        if: steps.scope.outputs.frontend == 'true'
         shell: pwsh
         run: ./scripts/build-webui.ps1
-
-      - name: Restore .NET dependencies
+      - name: Restore and build .NET solution
+        if: steps.scope.outputs.dotnet == 'true'
         shell: pwsh
-        run: dotnet restore ./ChunkPilot.sln
-
-      - name: Build Release solution
+        run: |
+          dotnet restore ./ChunkPilot.sln
+          dotnet build ./ChunkPilot.sln -c Release --no-restore
+      - name: Run unit and migration tests
+        if: steps.scope.outputs.dotnet == 'true'
         shell: pwsh
-        run: dotnet build ./ChunkPilot.sln -c Release --no-restore
-
-      - name: Run .NET unit, integration, and migration tests
+        run: dotnet test ./tests/ChunkPilot.UnitTests/ChunkPilot.UnitTests.csproj -c Release --no-build -m:1 --logger "console;verbosity=minimal"
+      - name: Run high-risk integration suite
+        if: steps.scope.outputs.highrisk == 'true'
         shell: pwsh
-        run: dotnet test ./ChunkPilot.sln -c Release --no-build -m:1 --logger "console;verbosity=minimal"
-
-      - name: Audit public source and history
+        run: dotnet test ./tests/ChunkPilot.IntegrationTests/ChunkPilot.IntegrationTests.csproj -c Release --no-build -m:1 --logger "console;verbosity=minimal"
+      - name: Audit public source, docs, and history
         shell: pwsh
-        run: ./scripts/audit-publication.ps1
-
+        run: |
+          ./scripts/test-public-docs.ps1
+          ./scripts/audit-publication.ps1
       - name: Check patch whitespace
         shell: pwsh
         run: |

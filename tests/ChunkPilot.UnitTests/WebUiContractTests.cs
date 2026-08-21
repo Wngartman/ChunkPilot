@@ -89,18 +89,10 @@ public sealed class WebUiContractTests
     }
 
     [Fact]
-    public void PreviewArgumentIsExplicitAndDoesNotMatchNormalStartup()
-    {
-        Assert.True(WebUiPreviewOptions.IsRequested(["--webui-preview"]));
-        Assert.True(WebUiPreviewOptions.IsRequested(["--WEBUI-PREVIEW"]));
-        Assert.False(WebUiPreviewOptions.IsRequested([]));
-        Assert.False(WebUiPreviewOptions.IsRequested(["--create-server-v2-preview"]));
-    }
-
-    [Fact]
     public void MethodPolicyIsAnExplicitAllowlist()
     {
         Assert.True(WebUiMethodPolicy.IsAllowed("servers.start"));
+        Assert.True(WebUiMethodPolicy.IsAllowed("servers.createManagedCopy"));
         Assert.True(WebUiMethodPolicy.IsAllowed("bridge.cancel"));
         Assert.True(WebUiMethodPolicy.IsAllowed("creation.begin"));
         Assert.True(WebUiMethodPolicy.IsAllowed("creation.operations"));
@@ -119,12 +111,15 @@ public sealed class WebUiContractTests
         Assert.True(WebUiMethodPolicy.IsAllowed("modpacks.search"));
         Assert.True(WebUiMethodPolicy.IsAllowed("modpacks.cache"));
         Assert.True(WebUiMethodPolicy.IsAllowed("modpacks.providers"));
+        Assert.True(WebUiMethodPolicy.IsAllowed("modpacks.versions"));
+        Assert.True(WebUiMethodPolicy.IsAllowed("modpacks.resolveLink"));
         Assert.True(WebUiMethodPolicy.IsAllowed("modpacks.image"));
         Assert.True(WebUiMethodPolicy.IsAllowed("modpacks.chooseLocal"));
         Assert.True(WebUiMethodPolicy.IsAllowed("creation.chooseLegacyArtifact"));
-        Assert.True(WebUiMethodPolicy.IsAllowed("settings.curseforge.status"));
-        Assert.True(WebUiMethodPolicy.IsAllowed("settings.curseforge.save"));
-        Assert.True(WebUiMethodPolicy.IsAllowed("settings.curseforge.disconnect"));
+        Assert.False(WebUiMethodPolicy.IsAllowed("settings.curseforge.status"));
+        Assert.False(WebUiMethodPolicy.IsAllowed("settings.curseforge.save"));
+        Assert.False(WebUiMethodPolicy.IsAllowed("settings.curseforge.disconnect"));
+        Assert.False(WebUiMethodPolicy.IsAllowed("settings.curseforge.openConsole"));
         Assert.True(WebUiMethodPolicy.IsAllowed("versions.install"));
         Assert.True(WebUiMethodPolicy.IsAllowed("versions.rollback"));
         Assert.True(WebUiMethodPolicy.IsAllowed("versions.verify"));
@@ -159,7 +154,9 @@ public sealed class WebUiContractTests
         Assert.True(WebUiWindow.IsDeferredLifecycleMethod("servers.restart"));
         Assert.False(WebUiWindow.IsDeferredLifecycleMethod("backups.create"));
         Assert.True(WebUiWindow.IsDeferredOperationMethod("servers.delete"));
+        Assert.True(WebUiWindow.IsDeferredOperationMethod("servers.createManagedCopy"));
         Assert.True(WebUiWindow.IsDeferredOperationMethod("servers.start"));
+        Assert.True(WebUiWindow.IsDeferredOperationMethod("versions.install"));
         Assert.False(WebUiWindow.IsDeferredOperationMethod("backups.create"));
     }
 
@@ -286,9 +283,9 @@ public sealed class WebUiContractTests
     }
 
     [Fact]
-    public void FixtureLauncherAndPreviewLauncherRemainSeparateDevelopmentRoutes()
+    public void FixtureLauncherRemainsAnExplicitDevelopmentRoute()
     {
-        Assert.False(WebUiPreviewOptions.IsRequested([WebUiFixtureLauncher.FixtureArgument, "running"]));
+        Assert.Equal("--webui-fixture", WebUiFixtureLauncher.FixtureArgument);
         Assert.Equal("--render", WebUiFixtureLauncher.RenderArgument);
     }
 

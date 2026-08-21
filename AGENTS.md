@@ -116,15 +116,16 @@ Permanent invariant:
 > and exits the Agent after bounded cleanup. Minimize/tray keeps hosting. Durable exact firewall
 > configuration may remain; it is not proof of an active listener or public route.
 
-See `docs/NETWORKING.md` and `docs/WINDOWS-FIREWALL-ACCESS.md`.
+See `docs/operations/NETWORKING.md` and `docs/security/WINDOWS-FIREWALL-ACCESS.md`.
 
 Manual server stop must suppress crash recovery and stale scheduled restart. Safe Restart permits exactly one intentional restart. Process reattachment must verify PID, start time, executable, working directory, and command signature; PID alone is never sufficient.
 
 ## UX rules
-Use the existing dark WPF design system unless a dedicated design milestone says otherwise.
+Use the current dark React/WebUI design system. WPF remains only the native window, WebView2 host,
+recovery surface, and narrowly required native dialogs; never add a second product interface.
 - Professional purple and blue-black appearance derived from the ChunkPilot icon.
 - Consistent themed controls, popups, context menus, tooltips, icons, spacing, focus states, and accessibility.
-- No white default WPF dropdowns.
+- No browser-default or white native dropdowns.
 - Plain language first; technical details under **Advanced** or **More details**.
 - Common actions use clear icon-and-text labels.
 - Preserve the user’s place, most recently selected server and tab, and active operation.
@@ -141,7 +142,7 @@ Support capability-driven handling for:
 - Vanilla, Paper, Purpur, Spigot or Bukkit, Fabric, Quilt, Forge, NeoForge, supported hybrids, Bedrock Dedicated Server, and custom scripts.
 - Managed Java runtimes without changing system `PATH` or uninstalling system Java.
 - Official provider metadata and APIs only; never scrape websites.
-- Modrinth, CurseForge with a user key, GitHub Releases, Mojang, Paper, Purpur, official loader metadata, direct manifests, local packages, and future provider adapters.
+- Modrinth, approved application-level CurseForge access, GitHub Releases, Mojang, Paper, Purpur, official loader metadata, direct manifests, local packages, and future provider adapters. Never ask an ordinary user for a CurseForge API key.
 - Exact version selection, release channels, hashes, dependency, loader, game-version, Java, and client/server environment checks.
 - Dynmap and BlueMap integration rather than building a costly map renderer. An optional lazy-loaded WebView2 map surface is allowed only for local detected map URLs, with browser fallback.
 - Connection methods as interchangeable adapters: LAN, direct port forwarding, public tunnel, private network, and future providers. ChunkPilot must remain useful without them.
@@ -214,7 +215,8 @@ Use:
 - Failure injection for interrupted downloads, locked files, bad hashes, low disk, provider outage, failed startup, stale operations, crash loops, and PID reuse.
 - UI or ViewModel tests for command enablement, close behavior, progress, validation, accessibility states, and duplicate-operation prevention.
 
-Release gates:
+Release gates apply only to an explicit release, frozen milestone, or high-risk change that requires
+the full distribution evidence:
 1. `dotnet restore`
 2. Release build with zero errors; do not introduce warnings.
 3. All unit, integration, and migration tests pass.
@@ -226,7 +228,23 @@ Release gates:
 9. Working tree is clean.
 10. Limitations are reported honestly.
 
-A feature is not complete because it compiles or renders. It is complete when the real workflow works, failure paths are safe, tests pass, documentation is updated, and installer artifacts exist.
+A feature is not complete because it compiles or renders. It is complete when the real workflow works,
+failure paths are safe, and proportionate tests pass. Installer artifacts are required only for a
+release or installer-affecting milestone.
+
+## Proportionate development workflow
+- **Quick:** CSS, layout, copy, icons, and bounded React behavior. Run affected frontend tests,
+  typecheck, lint, the frontend build, and a relevant packaged fixture/smoke.
+- **Feature:** ordinary provider, bridge, or non-destructive settings work. Add targeted unit tests,
+  the relevant integration slice, affected Release builds, and packaged smoke.
+- **High risk:** lifecycle, process ownership, deletion, backup/restore, world mutation, networking
+  ownership, schema, installer, or secrets. Run the broader failure/recovery and integration evidence.
+- **Release:** run the immutable full distribution gate once only when explicitly requested or when a
+  milestone is frozen.
+
+Use `scripts/dev-build.ps1` for normal development. It creates an ignored recovery patch, runs the
+selected tier, writes `artifacts/dev-current`, and prints the full launch command. Do not push or run
+release automation for an ordinary fix unless explicitly requested.
 
 ## Git, versioning, and release discipline
 - Use one branch per bounded milestone.
@@ -268,48 +286,21 @@ When uncertain, choose in this order:
 8. Add polish without weakening any rule above.
 
 ## UI design system foundation
-The permanent design-system foundation lives in `src/ChunkPilot.App/Themes` (tokens, shared control
-styles, accessibility overlays, temporary compatibility aliases) and `src/ChunkPilot.App/DesignSystem`
-(semantic icons, layout/motion/accessibility attached properties, `AppTheme`, the lookless composite
-components, and the development-only Design Gallery). It is documented by
-`docs/UI-DESIGN-SYSTEM.md`, `docs/UI-COMPONENT-CATALOG.md`, and `docs/UI-RESPONSIVE-RULES.md`, and
-enforced by `DesignSystemContractTests`.
+The permanent product design system lives in `src/ChunkPilot.WebUi/src/design-system`, shared CSS
+tokens, scoped component styles, and the fixture gallery. It is documented by
+`docs/architecture/WEBUI-DESIGN-SYSTEM.md` and enforced by frontend and contract tests.
 
-All UI work extends this foundation. It is never worked around.
+All product UI work extends this foundation. Reuse shared primitives before inventing page-local
+controls. Keep visual values in central CSS custom properties; use Lucide as the one functional icon
+family; use semantic HTML and accessible primitives for dialogs, menus, popovers, tabs, and selects.
 
-**Reuse first.** Search `docs/UI-COMPONENT-CATALOG.md` before creating anything. If a component
-exists, or is one variant away, use or extend it. A genuinely new control is added to the shared
-system, documented in the catalog with its anatomy and required states, and shown in the Design
-Gallery **before** any page uses it. Adding a token means updating the token file, the high-contrast
-overlay where applicable, and the design-system document in the same change.
+The shell owns navigation, server switching, global state, focus restoration, notifications, and
+native-window coordination. Pages own presentation and request typed authoritative bridge commands.
+Empty, loading, unavailable, failed, and destructive states must be explicit and truthful. Reduced
+Motion, forced colors, keyboard use, broad Unicode, and Windows scaling are first-class. Primary
+content must not acquire accidental horizontal scrolling or nested page scrollers.
 
-Required:
-- Semantic tokens only: `App…` brushes via `DynamicResource`, metrics and typography via
-  `StaticResource`.
-- `ds:AppIcon` and `ds:AppButton.Icon` with `AppIconKind`; `FluentIcons` appears in exactly one file.
-- `ds:AppLayout.Mode` triggers for responsive behaviour, `ds:AppMotion.IsEnabled` for motion.
-- Public resource keys prefixed `App…`, internal building blocks prefixed `Internal…`.
-- The merged-dictionary list in `App.xaml` stays flat and in step with `AppTheme.ThemeDictionaries`;
-  nesting theme dictionaries breaks deferred `StaticResource` and `Style.BasedOn` resolution.
-- `Themes/Compatibility/LegacyAliases.xaml` only ever shrinks. Never add to it.
-
-Prohibited in any page or view: page-local colours, hex literals, font families, font sizes, radii,
-shadows or motion values; a second button, input or card template; unexplained one-off styling;
-emoji, raw glyph strings, private-use characters or icon-font references; `TabControl` navigation; a
-scroll region nested inside the primary page scroller; horizontal scrolling of primary content; and a
-default `MessageBox` for a product error.
-
-## Complete UI design system rules
-The complete native WPF UI overhaul is presentation-only: preserve Agent ownership, named-pipe transport, lifecycle intent/state separation, operation queues, bounded console capture, provider boundaries, persistence compatibility, and every data-safety rule above.
-
-- Use semantic destinations and commands, not numeric tab indexes or page-specific service calls.
-- Keep all visual values in shared token dictionaries; page XAML may compose components but must not invent colors, typography, radii, shadows, icon glyphs, or motion.
-- Use FluentIcons.Wpf through the app's semantic icon abstraction. Do not use emoji, raw Segoe glyph strings, or page-local icon mappings.
-- The shell owns navigation, server switching, global status, toasts, command palette, responsive mode, focus restoration, and close/crash behavior. Pages own presentation and bind to existing ViewModel commands.
-- Wide, Standard, and Compact layouts must remain usable at Windows scaling settings and must not introduce horizontal page scrolling or nested scroll viewers for the primary workspace.
-- Empty, loading, unavailable, failed, and destructive states must be explicit and truthful. Never fill a view with invented metrics or fake actions.
-- Reduced Motion and high-contrast behavior are first-class states. Motion is brief, centralized, cancellable, and never required to understand a state change.
-- Every UI change requires resource/build validation and a synthetic fixture smoke path. Real server folders, alternate worktrees, AppData, ProgramData, registry, services, firewall, installed instances, and externally managed processes are out of scope.
-- Review visual changes in the Design Gallery. `ChunkPilot.exe --design-gallery` opens it; `--design-gallery --render <directory>` rasterises it at the Wide, Standard and Compact widths. The gallery is development-only, uses invented hard-coded data, takes no single-instance lock, shows no tray icon, and never contacts the agent. No product control may open it.
-- Review the Create Server v2 wizard with `ChunkPilot.exe --create-server-v2-preview`; `--create-server-v2-preview --render <directory>` rasterises every reviewable state. It runs on the same terms as the gallery — development-only, invented data, no single-instance lock, no tray icon, no agent, no database, no installation — and no product control may open it. The production **Create server** commands continue to open `InstallServerWindow` until a later milestone retires it.
-- `ChunkPilot.exe --create-server-v2-live-vanilla` opens the same wizard connected to the real Agent, for Vanilla only. Because it is explicitly requested, it raises itself to the front once when first rendered — a topmost toggle that restores the previous value, never a permanent Topmost, never repeated. Windows may still refuse activation when another application owns the foreground; the taskbar button flashes in that case. It is the opposite kind of switch from the preview and must not be confused with it: normal startup runs first — single-instance lock, tray icon, agent, database, shell — and the wizard then opens over it, because a wizard that genuinely creates a server needs the agent that owns the work and the navigation the finished server is opened through. It downloads Mojang's server, obtains a managed Java runtime, writes `eula.txt` only after deliberate acceptance, and registers a real server. Development-gated: no button, menu item or command reaches it, and without the switch none of it runs. Review it against an isolated `CHUNKPILOT_DATA_ROOT` **and** `CHUNKPILOT_MANAGED_SERVERS_ROOT`; `scripts/review-create-server-v2-live-vanilla.ps1` does exactly that.
+WPF styles under `src/ChunkPilot.App` are retained only for the native host, WebView2 recovery window,
+and narrow native dialogs. Do not add product pages, legacy fallbacks, or a second navigation shell.
+Development-only fixture/render arguments must use invented isolated data, take no product ownership,
+and never contact the Agent unless the argument explicitly identifies a live isolated review path.

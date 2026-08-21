@@ -170,7 +170,7 @@
     <sys:Double x:Key="AppMeasureContent">1280</sys:Double>
 
     <!-- ============ Responsive breakpoints (device-independent pixels) ============
-         Consumed by DesignSystem/AppLayout.cs. Documented in docs/UI-RESPONSIVE-RULES.md. -->
+         Consumed by DesignSystem/AppLayout.cs. Documented in docs/architecture/UI-RESPONSIVE-RULES.md. -->
     <sys:Double x:Key="AppBreakpointStandard">900</sys:Double>
     <sys:Double x:Key="AppBreakpointWide">1280</sys:Double>
 </ResourceDictionary>

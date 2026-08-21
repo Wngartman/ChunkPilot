@@ -19,6 +19,21 @@ $portableTestOutput = Join-Path $artifactsRoot "portable-test"
 $releaseSupportOutput = Join-Path $artifactsRoot "release-support"
 $env:DOTNET_CLI_TELEMETRY_OPTOUT = "1"
 $env:DOTNET_NOLOGO = "1"
+$sourceCommit = (& git -C $repoRoot rev-parse HEAD).Trim()
+if ($LASTEXITCODE -ne 0 -or $sourceCommit -notmatch '^[0-9a-f]{40}$') { throw 'Could not resolve the source commit.' }
+$buildTimestamp = [DateTimeOffset]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
+$effectiveReleaseTag = if ($ReleaseTag) { $ReleaseTag } else { 'v1.3.0-alpha.4' }
+$identityProperties = @(
+    "-p:ChunkPilotGitSha=$sourceCommit",
+    "-p:ChunkPilotReleaseTag=$effectiveReleaseTag",
+    "-p:ChunkPilotBuildTimestampUtc=$buildTimestamp"
+)
+$singleFileProperties = @(
+    '-p:PublishSingleFile=true',
+    '-p:IncludeNativeLibrariesForSelfExtract=true',
+    '-p:DebugType=None',
+    '-p:DebugSymbols=false'
+)
 
 & (Join-Path $repoRoot "scripts\build-webui.ps1")
 if ($LASTEXITCODE -ne 0) { throw "WebUI build failed with exit code $LASTEXITCODE." }
@@ -44,25 +59,39 @@ if ($LASTEXITCODE -ne 0) { throw "dotnet restore failed with exit code $LASTEXIT
 if ($LASTEXITCODE -ne 0) { throw "Tests failed; publish was stopped." }
 
 Reset-OutputDirectory $frameworkOutput
-& $dotnet publish (Join-Path $repoRoot "src\ChunkPilot.App\ChunkPilot.App.csproj") -c $Configuration --no-restore --self-contained false -o $frameworkOutput
+& $dotnet publish (Join-Path $repoRoot "src\ChunkPilot.App\ChunkPilot.App.csproj") -c $Configuration --no-restore --self-contained false -o $frameworkOutput @identityProperties
 if ($LASTEXITCODE -ne 0) { throw "Framework-dependent app publish failed." }
-& $dotnet publish (Join-Path $repoRoot "src\ChunkPilot.FirewallHelper\ChunkPilot.FirewallHelper.csproj") -c $Configuration --no-restore --self-contained false -o $frameworkOutput
+& $dotnet publish (Join-Path $repoRoot "src\ChunkPilot.FirewallHelper\ChunkPilot.FirewallHelper.csproj") -c $Configuration --no-restore --self-contained false -o $frameworkOutput @identityProperties
 if ($LASTEXITCODE -ne 0) { throw "Framework-dependent firewall helper publish failed." }
-& $dotnet publish (Join-Path $repoRoot "src\ChunkPilot.Agent\ChunkPilot.Agent.csproj") -c $Configuration --no-restore --self-contained false -o (Join-Path $frameworkOutput "Agent")
+& $dotnet publish (Join-Path $repoRoot "src\ChunkPilot.Agent\ChunkPilot.Agent.csproj") -c $Configuration --no-restore --self-contained false -o (Join-Path $frameworkOutput "Agent") @identityProperties
 if ($LASTEXITCODE -ne 0) { throw "Framework-dependent agent publish failed." }
 
 Reset-OutputDirectory $selfContainedOutput
-& $dotnet publish (Join-Path $repoRoot "src\ChunkPilot.App\ChunkPilot.App.csproj") -c $Configuration -r win-x64 --self-contained true -o $selfContainedOutput
+& $dotnet publish (Join-Path $repoRoot "src\ChunkPilot.App\ChunkPilot.App.csproj") -c $Configuration -r win-x64 --self-contained true -o $selfContainedOutput @identityProperties @singleFileProperties
 if ($LASTEXITCODE -ne 0) { throw "Self-contained app publish failed." }
-& $dotnet publish (Join-Path $repoRoot "src\ChunkPilot.FirewallHelper\ChunkPilot.FirewallHelper.csproj") -c $Configuration -r win-x64 --self-contained true -o $selfContainedOutput
+& $dotnet publish (Join-Path $repoRoot "src\ChunkPilot.FirewallHelper\ChunkPilot.FirewallHelper.csproj") -c $Configuration -r win-x64 --self-contained true -o $selfContainedOutput @identityProperties @singleFileProperties
 if ($LASTEXITCODE -ne 0) { throw "Self-contained firewall helper publish failed." }
-& $dotnet publish (Join-Path $repoRoot "src\ChunkPilot.Agent\ChunkPilot.Agent.csproj") -c $Configuration -r win-x64 --self-contained true -o (Join-Path $selfContainedOutput "Agent")
+& $dotnet publish (Join-Path $repoRoot "src\ChunkPilot.Agent\ChunkPilot.Agent.csproj") -c $Configuration -r win-x64 --self-contained true -o (Join-Path $selfContainedOutput "Agent") @identityProperties @singleFileProperties
 if ($LASTEXITCODE -ne 0) { throw "Self-contained agent publish failed." }
 
 # Consumer packages intentionally exclude symbols. Keep any developer symbols in intermediate
 # build output rather than placing them beside the binaries installed by ordinary users.
 Get-ChildItem -LiteralPath $selfContainedOutput -Filter '*.pdb' -File -Recurse |
     Remove-Item -Force
+Get-ChildItem -LiteralPath $selfContainedOutput -Filter 'Microsoft.Web.WebView2.*.xml' -File -Recurse |
+    Remove-Item -Force
+
+$firstPartyBinaries = @(
+    (Join-Path $selfContainedOutput 'ChunkPilot.exe'),
+    (Join-Path $selfContainedOutput 'ChunkPilot.FirewallHelper.exe'),
+    (Join-Path $selfContainedOutput 'Agent\ChunkPilot.Agent.exe')
+)
+$signingConfigured = -not [string]::IsNullOrWhiteSpace($env:CHUNKPILOT_SIGNING_CERT_THUMBPRINT)
+if ($signingConfigured) {
+    & (Join-Path $repoRoot 'scripts\sign-release.ps1') -Path $firstPartyBinaries -Required
+}
+& (Join-Path $repoRoot 'scripts\verify-release-signatures.ps1') -Path $firstPartyBinaries `
+    -RequireSigned:$signingConfigured | Format-Table -AutoSize | Out-Host
 
 & (Join-Path $repoRoot 'scripts\generate-third-party-notices.ps1') -OutputPath (Join-Path $releaseSupportOutput 'THIRD-PARTY-NOTICES.txt') | Out-Host
 Copy-Item -LiteralPath (Join-Path $releaseSupportOutput 'THIRD-PARTY-NOTICES.txt') -Destination (Join-Path $selfContainedOutput 'THIRD-PARTY-NOTICES.txt') -Force
@@ -85,6 +114,12 @@ if ($BuildInstaller) {
     }
     & $iscc "/DMyReleaseTag=$ReleaseTag" (Join-Path $repoRoot "installer\ChunkPilot.iss")
     if ($LASTEXITCODE -ne 0) { throw "Inno Setup compiler failed with exit code $LASTEXITCODE." }
+    $installerPath = Join-Path $repoRoot "installer\output\ChunkPilot-Setup-$ReleaseTag.exe"
+    if ($signingConfigured) {
+        & (Join-Path $repoRoot 'scripts\sign-release.ps1') -Path $installerPath -Required
+    }
+    & (Join-Path $repoRoot 'scripts\verify-release-signatures.ps1') -Path $installerPath `
+        -RequireSigned:$signingConfigured | Format-Table -AutoSize | Out-Host
 }
 
 Write-Host "Framework-dependent publish: $frameworkOutput"

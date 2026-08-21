@@ -20,7 +20,7 @@
     <PackageReference Include="SixLabors.ImageSharp" />
   </ItemGroup>
   <ItemGroup>
-    <Content Include="..\..\assets\ChunkPilot.ico" Link="Assets\ChunkPilot.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Resource Include="..\..\assets\ChunkPilot.ico" Link="Assets\ChunkPilot.ico" />
     <!-- Two frames, not one. The splash draws the mark large and uses the 256; the navigation
          rail draws it at 32 DIP and uses the 64, which still has headroom at 150% scaling.
          Scaling the 256 down to 32 at runtime is the defect the brand rework exists to remove. -->

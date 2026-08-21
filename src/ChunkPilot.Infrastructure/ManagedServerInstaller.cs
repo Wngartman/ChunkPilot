@@ -520,7 +520,7 @@ public sealed class ManagedServerInstaller
             if (!Directory.Exists(source))
                 throw new DirectoryNotFoundException(source);
             await CopyDirectoryAsync(source, stagingPath, cancellationToken).ConfigureAwait(false);
-            var jar = FindLaunchJar(stagingPath, "");
+            var jar = FindLaunchJar(stagingPath, request.LaunchRelativePath);
             return new StagedPayload(Path.GetRelativePath(stagingPath, jar), request.MinecraftVersion, request.Build,
                 source, Sha256(jar), false, ServerEcosystem.Custom, request.InstallerVersion);
         }
@@ -553,7 +553,7 @@ public sealed class ManagedServerInstaller
                 Report(progress, request.OperationId, InstallState.Extracting, CreationStage.PreparingServerFiles,
                     "Extracting reviewed ZIP package", 55, 0, null, 0, localSource, logPath);
                 await ExtractZipSafeAsync(localSource, stagingPath, cancellationToken).ConfigureAwait(false);
-                var jar = FindLaunchJar(stagingPath, "");
+                var jar = FindLaunchJar(stagingPath, request.LaunchRelativePath);
                 return new StagedPayload(Path.GetRelativePath(stagingPath, jar), request.MinecraftVersion, request.Build,
                     "user-supplied:" + Sha256(localSource), Sha256(localSource), false,
                     request.SourceType == InstallSourceType.LocalServerJar ? ServerEcosystem.Vanilla : ServerEcosystem.Custom,
@@ -582,27 +582,8 @@ public sealed class ManagedServerInstaller
         string archivePath,
         string destinationPath,
         CancellationToken cancellationToken = default)
-    {
-        var destination = Path.GetFullPath(destinationPath);
-        Directory.CreateDirectory(destination);
-        using var archive = ZipFile.OpenRead(archivePath);
-        foreach (var entry in archive.Entries)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var target = Path.GetFullPath(Path.Combine(destination, entry.FullName.Replace('/', Path.DirectorySeparatorChar)));
-            EnsureChildPath(destination, target);
-            if (entry.FullName.EndsWith('/') || entry.FullName.EndsWith('\\'))
-            {
-                Directory.CreateDirectory(target);
-                continue;
-            }
-            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
-            await using var source = entry.Open();
-            await using var output = new FileStream(target, FileMode.CreateNew, FileAccess.Write, FileShare.None,
-                128 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
-            await source.CopyToAsync(output, cancellationToken).ConfigureAwait(false);
-        }
-    }
+        => await ServerImportInspectionService.ExtractAsync(archivePath, destinationPath, cancellationToken)
+            .ConfigureAwait(false);
 
     public static void VerifyHash(
         string filePath,
@@ -851,23 +832,46 @@ public sealed class ManagedServerInstaller
     private static async Task CopyDirectoryAsync(string source, string destination, CancellationToken cancellationToken)
     {
         var sourceRoot = Path.GetFullPath(source);
-        foreach (var directory in Directory.EnumerateDirectories(sourceRoot, "*", SearchOption.AllDirectories))
+        var destinationRoot = Path.GetFullPath(destination);
+        var pending = new Queue<string>();
+        pending.Enqueue(sourceRoot);
+        var fileCount = 0;
+        long totalBytes = 0;
+        while (pending.Count > 0)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (File.GetAttributes(directory).HasFlag(FileAttributes.ReparsePoint))
-                throw new IOException($"Reparse points are not copied into managed instances: {directory}");
-            Directory.CreateDirectory(Path.Combine(destination, Path.GetRelativePath(sourceRoot, directory)));
-        }
-        foreach (var file in Directory.EnumerateFiles(sourceRoot, "*", SearchOption.AllDirectories))
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (File.GetAttributes(file).HasFlag(FileAttributes.ReparsePoint))
-                throw new IOException($"Reparse points are not copied into managed instances: {file}");
-            var target = Path.Combine(destination, Path.GetRelativePath(sourceRoot, file));
-            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
-            await using var input = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read, 128 * 1024, true);
-            await using var output = new FileStream(target, FileMode.CreateNew, FileAccess.Write, FileShare.None, 128 * 1024, true);
-            await input.CopyToAsync(output, cancellationToken).ConfigureAwait(false);
+            var directory = pending.Dequeue();
+            foreach (var child in Directory.EnumerateDirectories(directory))
+            {
+                if (File.GetAttributes(child).HasFlag(FileAttributes.ReparsePoint))
+                    throw new IOException($"Reparse points are not copied into managed instances: {child}");
+                var childTarget = Path.GetFullPath(Path.Combine(destinationRoot, Path.GetRelativePath(sourceRoot, child)));
+                EnsureChildPath(destinationRoot, childTarget);
+                Directory.CreateDirectory(childTarget);
+                pending.Enqueue(child);
+            }
+            foreach (var file in Directory.EnumerateFiles(directory))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (++fileCount > ServerImportInspectionService.MaximumEntries)
+                    throw new InvalidDataException($"The server folder exceeds the {ServerImportInspectionService.MaximumEntries:N0}-file managed-copy limit.");
+                var info = new FileInfo(file);
+                if (info.Attributes.HasFlag(FileAttributes.ReparsePoint))
+                    throw new IOException($"Reparse points are not copied into managed instances: {file}");
+                totalBytes = checked(totalBytes + info.Length);
+                if (totalBytes > ServerImportInspectionService.MaximumExpandedBytes)
+                    throw new InvalidDataException("The server folder exceeds the 16 GB managed-copy limit.");
+                var target = Path.GetFullPath(Path.Combine(destinationRoot, Path.GetRelativePath(sourceRoot, file)));
+                EnsureChildPath(destinationRoot, target);
+                Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+                await using var input = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read, 128 * 1024,
+                    FileOptions.Asynchronous | FileOptions.SequentialScan);
+                await using var output = new FileStream(target, FileMode.CreateNew, FileAccess.Write, FileShare.None,
+                    128 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
+                await input.CopyToAsync(output, cancellationToken).ConfigureAwait(false);
+                if (output.Length != info.Length)
+                    throw new IOException($"The source changed while ChunkPilot copied {Path.GetRelativePath(sourceRoot, file)}.");
+            }
         }
     }
 

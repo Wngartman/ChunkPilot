@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+## 1.3.0-alpha.4 - 2026-08-20
+
+### Current product synchronization
+
+- Synchronized the public snapshot with the current React/WebView2 product while retaining the Alpha
+  3 lifecycle ownership fix: no inferred reboot autostart, bounded manual Stop, exact process identity,
+  and authoritative reconnect state.
+- Made the WebUI the only shipped interface. Normal startup needs no preview argument, the obsolete WPF
+  product shell and shortcut are excluded, and WebView2 failure uses a minimal native recovery window.
+- Replaced end-user CurseForge key onboarding with a developer/application credential gate. Public
+  CurseForge access remains disabled until the production credential model is approved.
+- Added direct Modrinth provider-link resolution and native-token import for server ZIPs, `.mrpack`,
+  JARs, and folders with bounded archive validation, TOCTOU reinspection, staging, journaling, and rollback.
+- Reorganized public documentation and release assets, added build identity and signing-ready scripts,
+  reduced portable loose-file clutter with single-file first-party binaries, and introduced Quick,
+  Feature, HighRisk, and immutable Release validation tiers.
+
 ### Alpha 3 lifecycle ownership hotfix
 
 - Stopped treating a server's last observed running state, crash-recovery state, or stale restart
@@ -177,8 +194,8 @@ unchanged.
   types, overlay coverage, duplicate keys, catalogue/theme/gallery agreement, icon uniqueness, and
   bans on page-local colours, typography literals, glyph literals, tab navigation, nested scroll
   regions and stray message boxes.
-- Rewrote `docs/UI-DESIGN-SYSTEM.md`, `docs/UI-COMPONENT-CATALOG.md` and
-  `docs/UI-RESPONSIVE-RULES.md`, and added an always-loaded reuse-first UI steering rule.
+- Rewrote `docs/architecture/UI-DESIGN-SYSTEM.md`, `docs/architecture/UI-COMPONENT-CATALOG.md` and
+  `docs/architecture/UI-RESPONSIVE-RULES.md`, and added an always-loaded reuse-first UI steering rule.
 
 Product pages, dialogs and workflows are unchanged in this phase; they still use a temporary
 compatibility alias layer that later phases delete.

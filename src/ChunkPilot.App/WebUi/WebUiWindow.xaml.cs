@@ -29,7 +29,7 @@ public partial class WebUiWindow : Window
     internal static bool IsDeferredLifecycleMethod(string method) =>
         method is "servers.start" or "servers.stop" or "servers.restart";
     internal static bool IsDeferredOperationMethod(string method) =>
-        IsDeferredLifecycleMethod(method) || method == "servers.delete";
+        IsDeferredLifecycleMethod(method) || method is "servers.delete" or "servers.createManagedCopy" or "versions.install";
     internal static bool ShouldRetryRendererFailure(
         bool isClosed,
         bool retryUsed,
@@ -64,6 +64,7 @@ public partial class WebUiWindow : Window
     private readonly Dictionary<Guid, LifecycleWebUiOperation> lifecycleOperations = [];
     private readonly Dictionary<Guid, CreationWebUiOperation> creationOperations = [];
     private readonly HashSet<Guid> observedContentOperations = [];
+    private readonly HashSet<Guid> observedUpdateOperations = [];
     private readonly Dictionary<string, CatalogItem> modpackCatalog = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> modpackImageCache = new(StringComparer.Ordinal);
     private Guid sessionId;
@@ -75,7 +76,7 @@ public partial class WebUiWindow : Window
     private DateTimeOffset lastHeartbeatAt;
     private DateTimeOffset lastPresentationRefreshAt;
     private readonly WebUiLocalPluginTokenStore localPluginTokens = new();
-    private readonly WebUiLocalPluginTokenStore localPackTokens = new();
+    private readonly WebUiServerImportTokenStore localImportTokens = new();
     private readonly WebUiLegacyArtifactTokenStore legacyArtifactTokens = new();
     private readonly HttpClient modpackImages = new() { Timeout = TimeSpan.FromSeconds(20) };
 
@@ -127,7 +128,7 @@ public partial class WebUiWindow : Window
             var root = string.IsNullOrWhiteSpace(dataRoot)
                 ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ChunkPilot")
                 : Path.GetFullPath(dataRoot);
-            var profile = Path.Combine(root, "WebView2", "PreviewProfile");
+            var profile = Path.Combine(root, "WebView2", "CurrentProfile");
             Directory.CreateDirectory(profile);
             var environmentOptions = CreateEnvironmentOptions();
             var environment = await CoreWebView2Environment.CreateAsync(userDataFolder: profile, options: environmentOptions).ConfigureAwait(true);
@@ -144,7 +145,7 @@ public partial class WebUiWindow : Window
         }
         catch (WebView2RuntimeNotFoundException)
         {
-            ShowFailure("Microsoft Edge WebView2 Runtime is required for this preview. ChunkPilot did not download or open anything automatically. Install the Evergreen WebView2 Runtime, then try again.");
+            ShowFailure("Microsoft Edge WebView2 Runtime is required. ChunkPilot did not download or open anything automatically. Repair or install the Evergreen WebView2 Runtime, then retry.");
         }
         catch (Exception exception)
         {
@@ -212,12 +213,12 @@ public partial class WebUiWindow : Window
                 }
                 catch (Exception exception) when (exception is InvalidOperationException or COMException)
                 {
-                    ShowFailure("The WebUI renderer could not be recovered. Managed servers remain owned by the ChunkPilot Agent. Close ChunkPilot safely, then reopen the preview.");
+                    ShowFailure("The interface renderer could not be recovered. Managed servers remain owned by the ChunkPilot Agent. Exit ChunkPilot safely, then reopen it.");
                 }
             }, DispatcherPriority.Background);
             return;
         }
-        ShowFailure("The WebUI renderer stopped unexpectedly. Managed servers remain owned by the ChunkPilot Agent. Try reloading the interface or close ChunkPilot safely.");
+        ShowFailure("The interface renderer stopped unexpectedly. Managed servers remain owned by the ChunkPilot Agent. Retry the interface or exit ChunkPilot safely.");
     }
 
     private static void OpenExternalHttps(string value)
@@ -239,8 +240,10 @@ public partial class WebUiWindow : Window
         JsonObject parameters,
         CancellationToken cancellationToken) => method switch
         {
+            "modpacks.versions" => LoadModpackVersionsAsync(parameters, cancellationToken),
             "modpacks.cache" => SearchModpacksAsync(parameters, cacheOnly: true, cancellationToken),
             "modpacks.search" => SearchModpacksAsync(parameters, cacheOnly: false, cancellationToken),
+            "modpacks.resolveLink" => ResolveModpackLinkAsync(parameters, cancellationToken),
             _ => DispatchAsync(method, parameters)
         };
 
@@ -324,6 +327,15 @@ public partial class WebUiWindow : Window
                     parameters["acknowledgeWorldDeletion"]?.GetValue<bool?>() ?? false,
                     parameters["acknowledgeManagedBackupDeletion"]?.GetValue<bool?>() ?? false));
             }
+            case "servers.createManagedCopy":
+            {
+                var server = RequireServer(parameters);
+                var tokenText = RequiredString(parameters, "preflightToken", 64);
+                if (!Guid.TryParse(tokenText, out var token))
+                    throw new ArgumentException("Ownership review token is invalid.");
+                return BeginManagedCopyOperation(server,
+                    new ManagedCopyConversionRequest(server.Definition.Id, token));
+            }
             case "plugins.openFolder":
             case "mods.openFolder":
             {
@@ -347,34 +359,20 @@ public partial class WebUiWindow : Window
                         "CatalogProviderStatuses").ConfigureAwait(true))
                     .Where(status => status.Provider is CatalogProvider.Modrinth or CatalogProvider.CurseForge),
                     WebUiProtocol.Json);
+            case "modpacks.versions":
+                return await LoadModpackVersionsAsync(parameters, CancellationToken.None).ConfigureAwait(true);
             case "modpacks.cache":
                 return await SearchModpacksAsync(parameters, cacheOnly: true, CancellationToken.None).ConfigureAwait(true);
             case "modpacks.search":
                 return await SearchModpacksAsync(parameters, cacheOnly: false, CancellationToken.None).ConfigureAwait(true);
+            case "modpacks.resolveLink":
+                return await ResolveModpackLinkAsync(parameters, CancellationToken.None).ConfigureAwait(true);
             case "modpacks.image":
                 return await LoadModpackImageAsync(parameters).ConfigureAwait(true);
             case "modpacks.chooseLocal":
-                return await ChooseLocalModpackAsync().ConfigureAwait(true);
+                return await ChooseLocalServerImportAsync(parameters).ConfigureAwait(true);
             case "creation.chooseLegacyArtifact":
                 return await ChooseLegacyServerArtifactAsync(parameters).ConfigureAwait(true);
-            case "settings.curseforge.status":
-            {
-                var state = await client.SendAsync<TextResponse>("HasCurseForgeApiKey").ConfigureAwait(true);
-                return JsonSerializer.SerializeToNode(new { configured = state.Value == "configured" }, WebUiProtocol.Json);
-            }
-            case "settings.curseforge.save":
-            {
-                var apiKey = RequiredString(parameters, "apiKey", 512);
-                if (apiKey.Any(char.IsWhiteSpace))
-                    throw new ArgumentException("The CurseForge API key cannot contain spaces.");
-                var result = await client.SendAsync<OperationResult>("SetCurseForgeApiKey",
-                    new SettingsValueRequest("curseforge-api-key", apiKey)).ConfigureAwait(true);
-                return JsonSerializer.SerializeToNode(result, WebUiProtocol.Json);
-            }
-            case "settings.curseforge.disconnect":
-                return JsonSerializer.SerializeToNode(
-                    await client.SendAsync<OperationResult>("RemoveCurseForgeApiKey").ConfigureAwait(true),
-                    WebUiProtocol.Json);
             case "plugins.chooseLocal":
             case "mods.chooseLocal":
                 return await ChooseLocalAddonAsync(parameters).ConfigureAwait(true);
@@ -673,8 +671,7 @@ public partial class WebUiWindow : Window
                 Select(parameters);
                 if (viewModel.CurrentUpdateCheck?.LatestVersion is null)
                     throw new InvalidOperationException("No installable update has been confirmed for this server.");
-                await viewModel.InstallAvailableUpdateCommand.ExecuteAsync(null).ConfigureAwait(true);
-                break;
+                return await BeginUpdateOperationAsync(parameters).ConfigureAwait(true);
             case "versions.rollback":
                 Select(parameters);
                 SelectVersion(parameters, requireRollbackReady: true);
@@ -715,8 +712,8 @@ public partial class WebUiWindow : Window
             case "connectivity.setMode":
                 Select(parameters);
                 if (!Enum.TryParse<NetworkMode>(RequiredString(parameters, "mode", 40), true, out var networkMode) ||
-                    networkMode == NetworkMode.OfficialTunnel)
-                    throw new ArgumentException("Choose Local only, LAN, Internet hosting, or Configure later.");
+                    networkMode is not (NetworkMode.HomeNetwork or NetworkMode.PortForwarding))
+                    throw new ArgumentException("Choose LAN or Internet hosting.");
                 viewModel.SelectedNetworkMode = networkMode;
                 await viewModel.SaveNetworkModeCommand.ExecuteAsync(null).ConfigureAwait(true);
                 break;
@@ -871,6 +868,30 @@ public partial class WebUiWindow : Window
         }, WebUiProtocol.Json);
     }
 
+    private JsonNode? BeginManagedCopyOperation(ServerSnapshot server, ManagedCopyConversionRequest request)
+    {
+        const string method = "servers.createManagedCopy";
+        var serverId = server.Definition.Id;
+        if (lifecycleOperations.TryGetValue(serverId, out var active) && !active.Task.IsCompleted)
+        {
+            if (!string.Equals(active.Method, method, StringComparison.Ordinal))
+                throw new InvalidOperationException($"{active.Method.Replace("servers.", "", StringComparison.OrdinalIgnoreCase)} is already in progress for this server.");
+            return JsonSerializer.SerializeToNode(new
+            {
+                accepted = true, operationId = active.OperationId, method, duplicate = true
+            }, WebUiProtocol.Json);
+        }
+
+        var operationId = Guid.NewGuid();
+        var task = client.SendAsync<ManagedCopyConversionReceipt>("CreateManagedCopy", request);
+        lifecycleOperations[serverId] = new(operationId, method, task);
+        _ = ObserveLifecycleOperationAsync(serverId, operationId, method, task);
+        return JsonSerializer.SerializeToNode(new
+        {
+            accepted = true, operationId, method, duplicate = false
+        }, WebUiProtocol.Json);
+    }
+
     private async Task ObserveLifecycleOperationAsync(Guid serverId, Guid operationId, string method, Task task)
     {
         string? error = null;
@@ -946,6 +967,95 @@ public partial class WebUiWindow : Window
     }
 
     private sealed record LifecycleWebUiOperation(Guid OperationId, string Method, Task Task);
+
+    private async Task<JsonNode?> BeginUpdateOperationAsync(JsonObject parameters)
+    {
+        const string method = "versions.install";
+        var server = viewModel.SelectedServer ??
+                     throw new InvalidOperationException("No server is selected.");
+        var check = viewModel.CurrentUpdateCheck ??
+                    throw new InvalidOperationException("No authoritative update check is available.");
+        var target = check.LatestVersion ??
+                     throw new InvalidOperationException("No installable update has been confirmed for this server.");
+        if (check.Compatibility is UpdateCompatibility.Incompatible or UpdateCompatibility.Unknown)
+            throw new InvalidOperationException(check.CompatibilityReasons.Count == 0
+                ? "This update is not compatible with the selected server."
+                : string.Join(Environment.NewLine, check.CompatibilityReasons));
+
+        var requestedOperationId = parameters["operationId"]?.GetValue<Guid?>() ?? Guid.NewGuid();
+        var started = await client.SendAsync<UpdateOperationRequest>("BeginPackUpdate", new UpdateInstallRequest
+        {
+            OperationId = requestedOperationId,
+            ServerId = server.Definition.Id,
+            TargetVersion = target,
+            PlayerCountdownSeconds = server.State == ServerState.Running ? 30 : 0,
+            StartForValidation = true
+        }).ConfigureAwait(true);
+        EnsureUpdateOperationObserver(started.OperationId, server.Definition.Id);
+        return JsonSerializer.SerializeToNode(new
+        {
+            accepted = true,
+            operationId = started.OperationId,
+            method
+        }, WebUiProtocol.Json);
+    }
+
+    private void EnsureUpdateOperationObserver(Guid operationId, Guid serverId)
+    {
+        if (!observedUpdateOperations.Add(operationId))
+            return;
+        _ = ObserveUpdateOperationAsync(operationId, serverId);
+    }
+
+    private async Task ObserveUpdateOperationAsync(Guid operationId, Guid serverId)
+    {
+        UpdateOperationSnapshot? terminal = null;
+        string? observerError = null;
+        try
+        {
+            while (!closed)
+            {
+                var current = await client.SendAsync<UpdateOperationSnapshot>("GetPackUpdate",
+                    new UpdateOperationRequest(operationId)).ConfigureAwait(true);
+                viewModel.CurrentUpdateOperation = current;
+                if (bridge is { } currentBridge)
+                    await currentBridge.PublishSnapshotAsync().ConfigureAwait(true);
+                if (current.IsTerminal)
+                {
+                    terminal = current;
+                    break;
+                }
+                await Task.Delay(TimeSpan.FromMilliseconds(500)).ConfigureAwait(true);
+            }
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            observerError = SecretRedactor.Redact(exception.Message);
+        }
+        finally
+        {
+            observedUpdateOperations.Remove(operationId);
+        }
+
+        if (closed)
+            return;
+        try
+        {
+            await viewModel.RefreshCommand.ExecuteAsync(null).ConfigureAwait(true);
+            await viewModel.LoadUpdateDetailsAsync().ConfigureAwait(true);
+            if (bridge is not { } currentBridge)
+                return;
+            await currentBridge.PublishSnapshotAsync().ConfigureAwait(true);
+            currentBridge.PublishOperationCompleted(operationId, "versions.install", serverId,
+                terminal?.Success is true && observerError is null,
+                observerError ?? (terminal?.Success is false ? terminal.Error : null));
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            bridge?.PublishOperationCompleted(operationId, "versions.install", serverId, false,
+                SecretRedactor.Redact(observerError ?? exception.Message));
+        }
+    }
 
     private void EnsureContentOperationObserver(ManagedContentOperationSnapshot operation)
     {
@@ -1192,6 +1302,38 @@ public partial class WebUiWindow : Window
         viewModel.BackupBeforeRestart = parameters["backupBeforeRestart"]?.GetValue<bool?>() ?? false;
     }
 
+    private async Task<JsonNode?> LoadModpackVersionsAsync(
+        JsonObject parameters,
+        CancellationToken cancellationToken)
+    {
+        if (!Enum.TryParse<CatalogProvider>(RequiredString(parameters, "provider", 32), true,
+                out var provider) || provider is not (CatalogProvider.Modrinth or CatalogProvider.CurseForge))
+            throw new ArgumentException("The modpack provider is invalid.");
+        var result = await client.SendAsync<CatalogVersionInventory>(
+            "CatalogProviderVersions",
+            new CatalogVersionInventoryRequest(
+                provider,
+                parameters["cacheOnly"]?.GetValue<bool?>() ?? false),
+            cancellationToken).ConfigureAwait(true);
+        return JsonSerializer.SerializeToNode(new
+        {
+            provider = result.Provider.ToString(),
+            state = result.State.ToString(),
+            versions = result.Versions.Select(version => new
+            {
+                versionId = version.VersionId,
+                kind = version.Kind.ToString(),
+                version.PublishedAt,
+                version.IsMajor
+            }).ToArray(),
+            result.Detail,
+            result.FailedStage,
+            result.RetrievedAt,
+            result.FromCache,
+            result.Stale
+        }, WebUiProtocol.Json);
+    }
+
     private async Task<JsonNode?> SearchModpacksAsync(
         JsonObject parameters,
         bool cacheOnly,
@@ -1239,6 +1381,58 @@ public partial class WebUiWindow : Window
         }, WebUiProtocol.Json);
     }
 
+    private async Task<JsonNode?> ResolveModpackLinkAsync(
+        JsonObject parameters,
+        CancellationToken cancellationToken)
+    {
+        var reference = ProviderLinkParser.Parse(RequiredString(parameters, "url", 2048));
+        if (reference.Provider == CatalogProvider.CurseForge)
+            throw new InvalidOperationException(
+                "CurseForge integration is being activated for ChunkPilot. Modrinth links and local pack imports are available now.");
+
+        var query = new CatalogQuery
+        {
+            Provider = reference.Provider,
+            Search = reference.ProjectReference,
+            MaximumChannel = reference.Kind == ProviderLinkKind.ExactRelease
+                ? ReleaseChannel.Alpha
+                : ReleaseChannel.Stable,
+            ServerPackRequired = true,
+            ExcludeClientOnly = true,
+            Limit = 20,
+            Sort = CatalogSort.Relevance
+        };
+        var result = await client.SendAsync<CatalogBrowseResult>(
+            "BrowseCatalogDetailed", query, cancellationToken).ConfigureAwait(true);
+        if (result.State is CatalogLoadState.AuthenticationRequired or CatalogLoadState.RateLimited or CatalogLoadState.Failed)
+            throw new InvalidOperationException(result.Detail);
+
+        var item = result.Items.FirstOrDefault(candidate =>
+                       candidate.ProjectId.Equals(reference.ProjectReference, StringComparison.OrdinalIgnoreCase) ||
+                       candidate.Slug.Equals(reference.ProjectReference, StringComparison.OrdinalIgnoreCase))
+                   ?? throw new InvalidOperationException("The provider project could not be resolved from that link.");
+        var release = reference.ReleaseReference is { } exact
+            ? item.Versions.FirstOrDefault(candidate =>
+                candidate.VersionId.Equals(exact, StringComparison.OrdinalIgnoreCase))
+            : CatalogPolicy.SelectDefaultVersion(item, query);
+        if (release is null)
+            throw new InvalidOperationException(reference.Kind == ProviderLinkKind.ExactRelease
+                ? "That exact provider release is not a server-capable pack release."
+                : "The project has no stable server-capable release that ChunkPilot can install.");
+
+        modpackCatalog[CatalogKey(item.Provider, item.ProjectId)] = item;
+        return JsonSerializer.SerializeToNode(new
+        {
+            reference.CanonicalUrl,
+            exactRelease = reference.Kind == ProviderLinkKind.ExactRelease,
+            project = ToWebModpackProject(item),
+            release = ToWebModpackRelease(item, release),
+            detail = reference.Kind == ProviderLinkKind.ExactRelease
+                ? "Resolved the exact release from the provider link."
+                : "Selected the newest stable server-capable release."
+        }, WebUiProtocol.Json);
+    }
+
     private static object ToWebModpackProject(CatalogItem item) => new
         {
             provider = item.Provider.ToString(),
@@ -1254,34 +1448,36 @@ public partial class WebUiWindow : Window
             serverSupport = item.InstallationSupport.ToString(),
             clientRequirement = item.ClientRequirement.ToString(),
             trend = new { available = false, detail = "No local period snapshot history exists yet." },
-            versions = item.Versions.Select(version =>
-            {
-                var canCreate = item.Provider == CatalogProvider.Modrinth &&
-                                version.HasServerPackage && version.Sha1.Length == 40 &&
-                                version.Sha512.Length == 128 && version.SizeBytes is > 0;
-                var limitation = canCreate ? "" : item.Provider == CatalogProvider.CurseForge
-                    ? "This exact CurseForge server pack is available for inspection, but ChunkPilot cannot safely materialize CurseForge server-pack archives yet. Import a supported local .mrpack or use Modrinth."
-                    : !version.HasServerPackage
-                        ? "This release does not expose a dedicated server package."
-                        : "This release is missing the complete integrity metadata required for managed creation.";
-                return new
-                {
-                    version.VersionId,
-                    version.VersionName,
-                    version.MinecraftVersion,
-                    version.Loader,
-                    releaseChannel = version.ReleaseChannel.ToString(),
-                    version.PublishedAt,
-                    version.SizeBytes,
-                    version.Changelog,
-                    version.RequiredJavaMajor,
-                    hasIntegrity = version.Sha1.Length == 40 &&
-                                   (item.Provider == CatalogProvider.CurseForge || version.Sha512.Length == 128),
-                    canCreate,
-                    limitation
-                };
-            }).ToArray()
+            versions = item.Versions.Select(version => ToWebModpackRelease(item, version)).ToArray()
         };
+
+    private static object ToWebModpackRelease(CatalogItem item, CatalogVersion version)
+    {
+        var canCreate = item.Provider == CatalogProvider.Modrinth &&
+                        version.HasServerPackage && version.Sha1.Length == 40 &&
+                        version.Sha512.Length == 128 && version.SizeBytes is > 0;
+        var limitation = canCreate ? "" : item.Provider == CatalogProvider.CurseForge
+            ? "CurseForge integration is being activated for ChunkPilot. Import a local server pack or use Modrinth for now."
+            : !version.HasServerPackage
+                ? "This release does not expose a dedicated server package."
+                : "This release is missing the complete integrity metadata required for managed creation.";
+        return new
+        {
+            version.VersionId,
+            version.VersionName,
+            version.MinecraftVersion,
+            version.Loader,
+            releaseChannel = version.ReleaseChannel.ToString(),
+            version.PublishedAt,
+            version.SizeBytes,
+            version.Changelog,
+            version.RequiredJavaMajor,
+            hasIntegrity = version.Sha1.Length == 40 &&
+                           (item.Provider == CatalogProvider.CurseForge || version.Sha512.Length == 128),
+            canCreate,
+            limitation
+        };
+    }
 
     private static string CatalogKey(CatalogProvider provider, string projectId) =>
         $"{provider}:{projectId}";
@@ -1343,20 +1539,32 @@ public partial class WebUiWindow : Window
         return JsonSerializer.SerializeToNode(new { dataUrl }, WebUiProtocol.Json);
     }
 
-    private async Task<JsonNode?> ChooseLocalModpackAsync()
+    private async Task<JsonNode?> ChooseLocalServerImportAsync(JsonObject parameters)
     {
-        var dialog = new Microsoft.Win32.OpenFileDialog
+        var requestedKind = OptionalString(parameters, "kind", 16);
+        string selectedPath;
+        if (requestedKind.Equals("folder", StringComparison.OrdinalIgnoreCase))
         {
-            Title = "Choose a Modrinth server pack",
-            Filter = "Modrinth packs (*.mrpack)|*.mrpack",
-            CheckFileExists = true,
-            Multiselect = false
-        };
-        if (dialog.ShowDialog(this) != true)
-            return JsonSerializer.SerializeToNode(new { cancelled = true }, WebUiProtocol.Json);
-        var inspection = await client.SendAsync<ModrinthPackInspection>("InspectModrinthPack",
-            new ModrinthPackInspectRequest(dialog.FileName)).ConfigureAwait(true);
-        var token = localPackTokens.Issue(Guid.Empty, dialog.FileName);
+            selectedPath = new DialogService().SelectFolder("Choose a complete Minecraft server folder") ?? "";
+            if (string.IsNullOrWhiteSpace(selectedPath))
+                return JsonSerializer.SerializeToNode(new { cancelled = true }, WebUiProtocol.Json);
+        }
+        else
+        {
+            var dialog = new Microsoft.Win32.OpenFileDialog
+            {
+                Title = "Choose a server ZIP, modpack, or server JAR",
+                Filter = "Supported server packages (*.zip;*.mrpack;*.jar)|*.zip;*.mrpack;*.jar|Server ZIP (*.zip)|*.zip|Modrinth packs (*.mrpack)|*.mrpack|Server JAR (*.jar)|*.jar",
+                CheckFileExists = true,
+                Multiselect = false
+            };
+            if (dialog.ShowDialog(this) != true)
+                return JsonSerializer.SerializeToNode(new { cancelled = true }, WebUiProtocol.Json);
+            selectedPath = dialog.FileName;
+        }
+        var inspection = await client.SendAsync<ServerImportInspection>("InspectServerImport",
+            new ServerImportInspectRequest(selectedPath)).ConfigureAwait(true);
+        var token = localImportTokens.Issue(selectedPath, inspection);
         return JsonSerializer.SerializeToNode(new
         {
             cancelled = false,
@@ -1365,18 +1573,29 @@ public partial class WebUiWindow : Window
             token.ExpiresAt,
             inspection = new
             {
-                inspection.Name,
-                inspection.VersionName,
-                inspection.Summary,
+                sourceKind = inspection.SourceKind.ToString(),
+                name = inspection.DisplayName,
+                summary = inspection.SourceKind == ServerImportSourceKind.ServerFolder
+                    ? "Complete server folder reviewed without modifying its files."
+                    : "Local package reviewed without executing any included code.",
                 inspection.MinecraftVersion,
-                inspection.Loader,
+                loader = inspection.Platform,
                 inspection.LoaderVersion,
                 inspection.RequiredJavaMajor,
-                inspection.RequiredServerFiles,
-                inspection.OptionalServerFiles,
-                inspection.ExcludedClientFiles,
-                inspection.IndexedServerBytes,
-                inspection.CanCreate,
+                requiredServerFiles = inspection.FileCount,
+                optionalServerFiles = 0,
+                excludedClientFiles = 0,
+                indexedServerBytes = inspection.ExpandedSizeBytes,
+                inspection.SourceSizeBytes,
+                inspection.ExpandedSizeBytes,
+                inspection.FileCount,
+                inspection.ModCount,
+                inspection.PluginCount,
+                inspection.ContainsWorld,
+                inspection.ServerRoot,
+                inspection.LaunchCandidates,
+                inspection.CanReference,
+                canCreate = inspection.CanInstall,
                 inspection.Limitation
             }
         }, WebUiProtocol.Json);
@@ -1797,15 +2016,59 @@ public partial class WebUiWindow : Window
         var localToken = OptionalString(parameters, "localPackToken", 128);
         if (!string.IsNullOrWhiteSpace(localToken))
         {
-            var archivePath = localPackTokens.Consume(Guid.Empty, localToken);
+            var selected = localImportTokens.Consume(localToken);
+            var reviewed = await client.SendAsync<ServerImportInspection>("InspectServerImport",
+                new ServerImportInspectRequest(selected.Path), cancellationToken).ConfigureAwait(true);
+            if (!reviewed.CanInstall)
+                throw new ArgumentException(reviewed.Limitation);
+            if (reviewed.SourceKind != selected.Inspection.SourceKind ||
+                reviewed.SourceSizeBytes != selected.Inspection.SourceSizeBytes ||
+                !reviewed.Sha256.Equals(selected.Inspection.Sha256, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("The selected local server source changed after review. Choose it again.");
+            if (reviewed.SourceKind != ServerImportSourceKind.ModrinthPack)
+            {
+                var management = Enum.TryParse<ServerImportManagementMode>(
+                    OptionalString(parameters, "importManagementMode", 32), true, out var parsedManagement)
+                    ? parsedManagement : ServerImportManagementMode.ManagedCopy;
+                var launch = OptionalString(parameters, "importLaunchCandidate", 768);
+                if (string.IsNullOrWhiteSpace(launch) && reviewed.LaunchCandidates.Count == 1)
+                    launch = reviewed.LaunchCandidates[0];
+                var importPlan = new ServerImportCreationPlan
+                {
+                    OperationId = Guid.Parse(RequiredString(parameters, "operationId", 64)),
+                    NativePath = selected.Path,
+                    Inspection = reviewed,
+                    ManagementMode = management,
+                    LaunchRelativePath = launch,
+                    ServerName = RequiredString(parameters, "name", 80),
+                    Eula = new VanillaEulaAcceptance
+                    {
+                        Accepted = true,
+                        AcceptedAtUtc = DateTimeOffset.UtcNow,
+                        SourceUrl = VanillaEulaAcceptance.OfficialSourceUrl
+                    },
+                    MinimumRamMb = RequiredInt(parameters, "minimumRamMb", 512, 24 * 1024),
+                    MaximumRamMb = RequiredInt(parameters, "maximumRamMb", 1024, 24 * 1024),
+                    Port = RequiredInt(parameters, "port", 1, 65535),
+                    MaxPlayers = RequiredInt(parameters, "maxPlayers", 1, 1000, 10),
+                    InstanceRoot = OptionalString(parameters, "instanceRoot", 1024),
+                    NetworkingPreference = Enum.TryParse<VanillaNetworkingPreference>(
+                        OptionalString(parameters, "networking", 60), true, out var importPreference)
+                            ? importPreference : VanillaNetworkingPreference.DecideLater
+                };
+                var importProblems = importPlan.Problems();
+                if (importProblems.Count > 0) throw new ArgumentException(string.Join(" ", importProblems));
+                var importStarted = await client.SendAsync<InstallOperationRequest>("BeginServerImport",
+                    new BeginServerImportRequest(importPlan), cancellationToken).ConfigureAwait(true);
+                return importStarted.OperationId;
+            }
             var inspection = await client.SendAsync<ModrinthPackInspection>("InspectModrinthPack",
-                new ModrinthPackInspectRequest(archivePath), cancellationToken).ConfigureAwait(true);
-            if (!inspection.CanCreate)
-                throw new ArgumentException(inspection.Limitation);
+                new ModrinthPackInspectRequest(selected.Path), cancellationToken).ConfigureAwait(true);
+            if (!inspection.CanCreate) throw new ArgumentException(inspection.Limitation);
             plan = CommonPlan(new ModpackCreationPlan
             {
                 SourceKind = ModpackCreationSource.LocalMrpack,
-                Source = archivePath,
+                Source = selected.Path,
                 Provider = UpdateProvider.LocalPackageHistory,
                 ProjectName = inspection.Name,
                 VersionId = inspection.VersionName,
@@ -2081,9 +2344,10 @@ public partial class WebUiWindow : Window
         var paper = client.SendAsync<PaperCreationsResult>("PaperCreations");
         var loaders = client.SendAsync<ManagedLoaderCreationsResult>("ManagedLoaderCreations");
         var modpacks = client.SendAsync<ModpackCreationsResult>("ModpackCreations");
-        await Task.WhenAll(vanilla, paper, loaders, modpacks).ConfigureAwait(true);
+        var imports = client.SendAsync<ServerImportOperationsResult>("ServerImportOperations");
+        await Task.WhenAll(vanilla, paper, loaders, modpacks, imports).ConfigureAwait(true);
         var operations = vanilla.Result.Operations.Concat(paper.Result.Operations)
-            .Concat(loaders.Result.Operations).Concat(modpacks.Result.Operations)
+            .Concat(loaders.Result.Operations).Concat(modpacks.Result.Operations).Concat(imports.Result.Operations)
             .GroupBy(operation => operation.OperationId)
             .Select(group => group.OrderByDescending(operation => operation.Revision).First())
             .OrderByDescending(operation => operation.UpdatedAtUtc)
@@ -2386,6 +2650,12 @@ public partial class WebUiWindow : Window
 
     private async void RetryButton_OnClick(object sender, RoutedEventArgs e) => await InitializeWebViewAsync().ConfigureAwait(true);
 
+    private void RepairWebViewButton_OnClick(object sender, RoutedEventArgs e) =>
+        OpenExternalHttps("https://developer.microsoft.com/microsoft-edge/webview2/");
+
+    private void OpenDiagnosticsButton_OnClick(object sender, RoutedEventArgs e) =>
+        viewModel.OpenLogsFolderCommand.Execute(null);
+
     private void CloseButton_OnClick(object sender, RoutedEventArgs e) => Close();
 
     private void OnClosing(object? sender, CancelEventArgs e)
@@ -2407,7 +2677,7 @@ public partial class WebUiWindow : Window
             operation.Cancellation.Dispose();
         creationOperations.Clear();
         localPluginTokens.Clear();
-        localPackTokens.Clear();
+        localImportTokens.Clear();
         legacyArtifactTokens.Clear();
         modpackImageCache.Clear();
         modpackImages.Dispose();

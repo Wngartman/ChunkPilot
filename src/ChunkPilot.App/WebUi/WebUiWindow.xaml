@@ -15,12 +15,14 @@
         <wv2:WebView2 x:Name="Browser" />
         <Border x:Name="FailureSurface" Visibility="Collapsed" Background="{DynamicResource AppSurfaceCanvas}" Padding="48">
             <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="560">
-                <TextBlock Text="ChunkPilot WebUI could not start" Style="{StaticResource AppTitleLargeText}" Margin="0,0,0,12" />
+                <TextBlock Text="ChunkPilot could not start" Style="{StaticResource AppTitleLargeText}" Margin="0,0,0,12" />
                 <TextBlock x:Name="FailureDetail" Style="{StaticResource AppSecondaryText}" />
-                <StackPanel Orientation="Horizontal" Margin="0,24,0,0">
-                    <Button x:Name="RetryButton" Content="Try again" Click="RetryButton_OnClick" Style="{StaticResource AppPrimaryButton}" Margin="0,0,10,0" />
-                    <Button Content="Close" Click="CloseButton_OnClick" Padding="18,9" />
-                </StackPanel>
+                <WrapPanel Margin="0,24,0,0">
+                    <Button x:Name="RetryButton" Content="Retry" Click="RetryButton_OnClick" Style="{StaticResource AppPrimaryButton}" Margin="0,0,10,10" />
+                    <Button Content="Repair or install WebView2" Click="RepairWebViewButton_OnClick" Margin="0,0,10,10" Padding="18,9" />
+                    <Button Content="Open diagnostics" Click="OpenDiagnosticsButton_OnClick" Margin="0,0,10,10" Padding="18,9" />
+                    <Button Content="Exit" Click="CloseButton_OnClick" Margin="0,0,0,10" Padding="18,9" />
+                </WrapPanel>
             </StackPanel>
         </Border>
     </Grid>

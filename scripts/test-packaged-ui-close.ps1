@@ -1,19 +1,16 @@
 [CmdletBinding()]
-param(
-    [string]$PortableRoot,
-    [switch]$WebUiPreview
-)
+param([string]$PortableRoot)
 
 $ErrorActionPreference = "Stop"
 # A clean hosted runner pays WebView2 profile creation plus antivirus scanning on
-# its first preview launch. Keep the gate bounded, but allow that cold-start work.
+# its first launch. Keep the gate bounded, but allow that cold-start work.
 $script:AppStartupTimeoutMilliseconds = 45000
 $script:AgentStartupTimeoutMilliseconds = 10000
 $script:UiExitTimeoutMilliseconds = 3000
 $script:AgentShutdownTimeoutMilliseconds = 10000
 $script:PollIntervalMilliseconds = 100
 $script:Result = [ordered]@{
-    Mode = if ($WebUiPreview) { "WebUI preview" } else { "accepted UI" }
+    Mode = "WebUI"
     AppLaunched = $false
     MainWindowDetected = $false
     WmCloseSent = $false
@@ -165,7 +162,6 @@ try {
     $appInfo.FileName = $appPath
     $appInfo.WorkingDirectory = Split-Path -Parent $appPath
     $appInfo.UseShellExecute = $false
-    if ($WebUiPreview) { $appInfo.Arguments = "--webui-preview" }
     $appInfo.Environment["CHUNKPILOT_DATA_ROOT"] = $targetRoot
     $appInfo.Environment["CHUNKPILOT_INSTANCE_ID"] = $targetInstanceId
     $app = [Diagnostics.Process]::Start($appInfo)

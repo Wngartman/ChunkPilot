@@ -1,7 +1,7 @@
 <!--
     Design Gallery content. DEVELOPMENT ONLY.
 
-    Every component in docs/UI-COMPONENT-CATALOG.md appears here with its states. This is where a
+    Every component in docs/architecture/UI-COMPONENT-CATALOG.md appears here with its states. This is where a
     change to the design system is reviewed before it reaches a product page, and where a new
     component must be shown before any page is allowed to use it.
 
@@ -26,7 +26,7 @@
                 </components:AppPageHeader.StatusContent>
                 <components:AppPageHeader.SecondaryContent>
                     <Button Content="Component catalog" ds:AppButton.Icon="Document" IsEnabled="False"
-                            ToolTip="Documented in docs/UI-COMPONENT-CATALOG.md" />
+                            ToolTip="Documented in docs/architecture/UI-COMPONENT-CATALOG.md" />
                 </components:AppPageHeader.SecondaryContent>
                 <Button Style="{StaticResource AppPrimaryButton}" Content="Primary action"
                         ds:AppButton.Icon="Play" />

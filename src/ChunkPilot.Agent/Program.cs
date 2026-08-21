@@ -126,6 +126,7 @@ services.AddSingleton<ExternalReachabilityCoordinator>();
 services.AddSingleton<PublicConnectivityCoordinator>();
 services.AddSingleton<RouterMappingWorker>();
 services.AddSingleton<ServerSupervisor>();
+services.AddSingleton<ManagedInstanceCopyService>();
 services.AddSingleton<ServerDeletionCoordinator>();
 services.AddSingleton<ManagedContentOperationCoordinator>();
 services.AddSingleton<InstallationCoordinator>();
@@ -158,6 +159,14 @@ if (creationReports.Count > 0)
 var supervisor = provider.GetRequiredService<ServerSupervisor>();
 await supervisor.InitializeAsync().ConfigureAwait(false);
 var deletionRecovery = provider.GetRequiredService<ServerDeletionCoordinator>();
+var ownershipReports = await deletionRecovery.ReconcileManagedOwnershipAsync().ConfigureAwait(false);
+if (ownershipReports.Count > 0)
+{
+    var ownershipLog = provider.GetRequiredService<ILoggerFactory>().CreateLogger("ManagedOwnershipReconciliation");
+    if (ownershipLog.IsEnabled(LogLevel.Information))
+        foreach (var report in ownershipReports)
+            ownershipLog.LogInformation("{Report}", report);
+}
 var deletionReports = await deletionRecovery.RecoverInterruptedAsync().ConfigureAwait(false);
 if (deletionReports.Count > 0)
 {

@@ -75,7 +75,7 @@
 .chartLegend span { color: var(--cp-text-muted); font-size: 11px; }
 .progress { height: 5px; border-radius: 4px; background: var(--cp-input); overflow: hidden; }
 .progress > span { display: block; height: 100%; background: var(--cp-accent); border-radius: inherit; }
-.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(285px, 1fr)); gap: 12px; }
+.cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .serverCard { min-width: 0; border: 1px solid var(--cp-border); border-radius: var(--cp-radius-lg); background: var(--cp-surface); overflow: hidden; transition: border var(--cp-fast), transform var(--cp-fast); }
 .serverCard:hover { border-color: var(--cp-border-strong); transform: translateY(-1px); }
 .serverCardTop { padding: 16px; display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
@@ -99,5 +99,5 @@
 .scheduleForm select:focus { border-color: var(--cp-accent); outline: 2px solid var(--cp-focus-ring); }
 @media (max-width: 1180px) { .grid2, .gridEven { grid-template-columns: 1fr; } .metricStrip { grid-template-columns: repeat(2, 1fr); } .metricStrip > *:nth-child(3) { border-top: 1px solid var(--cp-border); border-left: 0; } .metricStrip > *:nth-child(4) { border-top: 1px solid var(--cp-border); } }
 @media (max-width: 1180px) { .workbenchGrid { grid-template-columns: 1fr; } .workbenchRail { grid-template-columns: repeat(2, minmax(0, 1fr)); } .workbenchRail > :last-child { grid-column: 1 / -1; } }
-@media (max-width: 900px) { .onboardingGrid { grid-template-columns: 1fr; } .onboardingLead { border-right: 0; border-bottom: 1px solid var(--cp-border); } .readiness { display: none; } .serverRosterRow { grid-template-columns: minmax(170px, 1fr) 90px auto auto; } .serverRosterRow > :nth-child(3), .serverRosterRow > :nth-child(4) { display: none; } }
+@media (max-width: 900px) { .onboardingGrid, .cards { grid-template-columns: 1fr; } .onboardingLead { border-right: 0; border-bottom: 1px solid var(--cp-border); } .readiness { display: none; } .serverRosterRow { grid-template-columns: minmax(170px, 1fr) 90px auto auto; } .serverRosterRow > :nth-child(3), .serverRosterRow > :nth-child(4) { display: none; } }
 @media (max-width: 760px) { .pageWrap { padding: 18px 16px 32px; } .pageHeader { align-items: stretch; flex-direction: column; } .toolbar { grid-template-columns: 1fr; } .row { grid-template-columns: minmax(160px, 1fr) auto; } .row > *:nth-child(n+3):not(:last-child), .rowHeader { display: none; } .settingsRow { grid-template-columns: 1fr; gap: 10px; } .toggle { justify-self: start; } }

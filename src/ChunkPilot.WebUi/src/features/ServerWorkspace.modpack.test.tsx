@@ -39,4 +39,30 @@ describe('installed modpack workspace', () => {
     await waitFor(() => expect(calls).toContainEqual({ method: 'versions.check', params: { serverId: server.id } }));
     expect(calls.some(call => call.method.startsWith('mods.install'))).toBe(false);
   });
+
+  it('confirms an update in the WebUI and keeps native execution deferred', async () => {
+    const snapshot = structuredClone(fixtures.modpack);
+    snapshot.update = {
+      ...snapshot.update!,
+      status: 'Update available',
+      detail: 'A compatible exact provider release is available.',
+      latestVersionName: '2.5.0',
+      targetVersionId: 'release-2.5.0',
+      targetPublishedAt: '2026-08-20T12:00:00Z',
+      downloadSizeBytes: 31_457_280,
+      compatibilityReasons: ['Exact Minecraft and loader versions match.'],
+      canInstall: true
+    };
+    useAppStore.setState({ snapshot });
+    const server = snapshot.servers[0];
+    render(<NavigationGuardProvider><ServerWorkspace serverId={server.id} /></NavigationGuardProvider>);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Install pack 2.5.0' }));
+    expect(screen.getByRole('dialog', { name: 'Install 2.5.0?' })).toBeTruthy();
+    expect(screen.getByText('Exact Minecraft and loader versions match.')).toBeTruthy();
+    expect(calls.some(call => call.method === 'versions.install')).toBe(false);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Install update' }));
+    await waitFor(() => expect(calls.some(call => call.method === 'versions.install' && call.params.serverId === server.id)).toBe(true));
+  });
 });

@@ -1,4 +1,4 @@
-name: Publish hotfix prerelease
+name: Release
 
 on:
   workflow_dispatch:
@@ -21,7 +21,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: hotfix-release-${{ inputs.tag }}
+  group: release-${{ inputs.tag }}
   cancel-in-progress: false
 
 jobs:
@@ -33,6 +33,7 @@ jobs:
       RELEASE_TAG: ${{ inputs.tag }}
       RELEASE_COMMIT: ${{ inputs.release_commit }}
       SUPERSEDES_TAG: ${{ inputs.supersedes }}
+      CHUNKPILOT_SIGNING_CERT_THUMBPRINT: ${{ secrets.CHUNKPILOT_SIGNING_CERT_THUMBPRINT }}
 
     steps:
       - name: Validate release request
@@ -128,11 +129,7 @@ jobs:
         shell: pwsh
         run: ./scripts/test-packaged-ui-close.ps1 -PortableRoot ./artifacts/portable-test
 
-      - name: Test packaged WebUI preview close
-        shell: pwsh
-        run: ./scripts/test-packaged-ui-close.ps1 -PortableRoot ./artifacts/portable-test -WebUiPreview
-
-      - name: Assemble checksums, SBOM, notices, notes, and release manifest
+      - name: Assemble checksums, metadata, notes, and release manifest
         shell: pwsh
         run: ./scripts/package-release.ps1 -ReleaseTag $env:RELEASE_TAG
 
@@ -140,13 +137,34 @@ jobs:
         shell: pwsh
         run: ./scripts/test-portable-package.ps1 -PortableZip "./artifacts/release/$env:RELEASE_TAG/ChunkPilot-Portable-$env:RELEASE_TAG-win-x64.zip"
 
-      - name: Test clean install, reinstall, uninstall, and data preservation
+      - name: Download previous prerelease installer for upgrade testing
+        if: inputs.supersedes != ''
         shell: pwsh
-        run: ./scripts/test-installer.ps1 -InstallerPath "./artifacts/release/$env:RELEASE_TAG/ChunkPilot-Setup-$env:RELEASE_TAG.exe"
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          New-Item -ItemType Directory -Path previous-release | Out-Null
+          gh release download $env:SUPERSEDES_TAG --repo '${{ github.repository }}' `
+            --pattern "ChunkPilot-Setup-$env:SUPERSEDES_TAG.exe" --dir previous-release
+          if ($LASTEXITCODE -ne 0) { throw 'Could not download the previous prerelease installer.' }
+
+      - name: Test clean install, prior-release upgrade, reinstall, uninstall, and data preservation
+        shell: pwsh
+        run: |
+          $arguments = @{
+            InstallerPath = "./artifacts/release/$env:RELEASE_TAG/ChunkPilot-Setup-$env:RELEASE_TAG.exe"
+          }
+          $previous = "./previous-release/ChunkPilot-Setup-$env:SUPERSEDES_TAG.exe"
+          if ($env:SUPERSEDES_TAG -and (Test-Path -LiteralPath $previous)) {
+            $arguments.PreviousInstallerPath = $previous
+          }
+          ./scripts/test-installer.ps1 @arguments
 
       - name: Audit exact publication tree
         shell: pwsh
-        run: ./scripts/audit-publication.ps1
+        run: |
+          ./scripts/test-public-docs.ps1
+          ./scripts/audit-publication.ps1
 
       - name: Verify clean source tree and whitespace
         shell: pwsh
@@ -196,8 +214,8 @@ jobs:
           $expected = @(
             "ChunkPilot-Setup-$env:RELEASE_TAG.exe",
             "ChunkPilot-Portable-$env:RELEASE_TAG-win-x64.zip",
-            'SHA256SUMS.txt', 'ChunkPilot-SBOM.spdx.json', 'THIRD-PARTY-NOTICES.txt',
-            'RELEASE_NOTES.md', 'release-manifest.json'
+            "ChunkPilot-Release-Metadata-$env:RELEASE_TAG.zip",
+            'SHA256SUMS.txt', 'RELEASE_NOTES.md', 'release-manifest.json'
           )
           foreach ($asset in $expected) {
             if (-not (Test-Path -LiteralPath (Join-Path release $asset))) {
@@ -256,9 +274,8 @@ jobs:
           $assets = @(
             "release/ChunkPilot-Setup-$env:RELEASE_TAG.exe",
             "release/ChunkPilot-Portable-$env:RELEASE_TAG-win-x64.zip",
-            'release/SHA256SUMS.txt', 'release/ChunkPilot-SBOM.spdx.json',
-            'release/THIRD-PARTY-NOTICES.txt', 'release/RELEASE_NOTES.md',
-            'release/release-manifest.json'
+            "release/ChunkPilot-Release-Metadata-$env:RELEASE_TAG.zip",
+            'release/SHA256SUMS.txt'
           )
           gh release create $env:RELEASE_TAG @assets --repo '${{ github.repository }}' --verify-tag `
             --prerelease --title $title --notes-file release/RELEASE_NOTES.md
@@ -275,8 +292,7 @@ jobs:
           }
           $expected = @(
             "ChunkPilot-Setup-$env:RELEASE_TAG.exe", "ChunkPilot-Portable-$env:RELEASE_TAG-win-x64.zip",
-            'SHA256SUMS.txt', 'ChunkPilot-SBOM.spdx.json', 'THIRD-PARTY-NOTICES.txt',
-            'RELEASE_NOTES.md', 'release-manifest.json'
+            "ChunkPilot-Release-Metadata-$env:RELEASE_TAG.zip", 'SHA256SUMS.txt'
           )
           $actual = @($release.assets | ForEach-Object name)
           if (@($expected | Where-Object { $_ -notin $actual }).Count -ne 0) {
@@ -292,9 +308,11 @@ jobs:
             $hash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
             if ($hash -ne $matches[1]) { throw "Redownloaded asset hash mismatch: $($matches[2])" }
           }
-          $manifest = Get-Content -LiteralPath downloaded/release-manifest.json -Raw | ConvertFrom-Json
-          if ($manifest.Tag -ne $env:RELEASE_TAG -or $manifest.Commit -ne $env:RELEASE_COMMIT) {
-            throw 'Public release manifest does not identify the exact tested commit.'
+          $metadata = "downloaded/ChunkPilot-Release-Metadata-$env:RELEASE_TAG.zip"
+          Expand-Archive -LiteralPath $metadata -DestinationPath downloaded/metadata
+          $build = Get-Content -LiteralPath downloaded/metadata/build-manifest.json -Raw | ConvertFrom-Json
+          if ($build.ReleaseTag -ne $env:RELEASE_TAG -or $build.GitSha -ne $env:RELEASE_COMMIT) {
+            throw 'Public release metadata does not identify the exact tested commit.'
           }
           "RELEASE_URL=$($release.html_url)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           Write-Host "Verified public prerelease: $($release.html_url)"
@@ -319,17 +337,19 @@ jobs:
       - name: Record immutable release baseline
         shell: pwsh
         run: |
-          $manifest = Get-Content -LiteralPath downloaded/release-manifest.json -Raw | ConvertFrom-Json
-          $installer = $manifest.Assets | Where-Object Name -eq "ChunkPilot-Setup-$env:RELEASE_TAG.exe"
-          $portable = $manifest.Assets | Where-Object Name -eq "ChunkPilot-Portable-$env:RELEASE_TAG-win-x64.zip"
+          $build = Get-Content -LiteralPath downloaded/metadata/build-manifest.json -Raw | ConvertFrom-Json
+          $sums = @{}
+          foreach ($line in Get-Content downloaded/SHA256SUMS.txt) {
+            if ($line -match '^([0-9a-f]{64})  (.+)$') { $sums[$matches[2]] = $matches[1] }
+          }
           @"
           ## Published hotfix baseline
 
           - Tag: ``$env:RELEASE_TAG``
           - Commit: ``$env:RELEASE_COMMIT``
-          - Product: ``$($manifest.ProductVersion)``
-          - Installer SHA-256: ``$($installer.Sha256)``
-          - Portable SHA-256: ``$($portable.Sha256)``
+          - Product: ``$($build.ProductVersion)``
+          - Installer SHA-256: ``$($sums["ChunkPilot-Setup-$env:RELEASE_TAG.exe"])``
+          - Portable SHA-256: ``$($sums["ChunkPilot-Portable-$env:RELEASE_TAG-win-x64.zip"])``
           - Release: $env:RELEASE_URL
           - Workflow: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           "@ | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append

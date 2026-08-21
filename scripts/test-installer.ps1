@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)]
-    [string]$InstallerPath
+    [string]$InstallerPath,
+    [string]$PreviousInstallerPath = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -19,14 +20,17 @@ $startMenuRoot = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\C
 $installerLog = Join-Path $env:RUNNER_TEMP 'chunkpilot-installer.log'
 $reinstallLog = Join-Path $env:RUNNER_TEMP 'chunkpilot-reinstall.log'
 $uninstallLog = Join-Path $env:RUNNER_TEMP 'chunkpilot-uninstall.log'
+$previousInstallLog = Join-Path $env:RUNNER_TEMP 'chunkpilot-previous-install.log'
+$upgradeLog = Join-Path $env:RUNNER_TEMP 'chunkpilot-upgrade.log'
+$upgradeUninstallLog = Join-Path $env:RUNNER_TEMP 'chunkpilot-upgrade-uninstall.log'
 
 if (Test-Path -LiteralPath $installRoot) {
     throw "The disposable runner is not clean; the install directory already exists: $installRoot"
 }
 
-function Invoke-Setup([string]$LogPath) {
+function Invoke-Setup([string]$SetupPath, [string]$LogPath) {
     $arguments = @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', '/TASKS=', "/LOG=$LogPath")
-    $process = Start-Process -FilePath $installer -ArgumentList $arguments -WindowStyle Hidden -Wait -PassThru
+    $process = Start-Process -FilePath $SetupPath -ArgumentList $arguments -WindowStyle Hidden -Wait -PassThru
     if ($process.ExitCode -notin @(0, 3010)) {
         throw "ChunkPilot setup failed with exit code $($process.ExitCode). Log: $LogPath"
     }
@@ -78,7 +82,7 @@ function Invoke-AgentRequest([string]$PipeName, [string]$Operation, [object]$Pay
     }
 }
 
-Invoke-Setup $installerLog
+Invoke-Setup $installer $installerLog
 
 $app = Join-Path $installRoot 'ChunkPilot.exe'
 $agent = Join-Path $installRoot 'Agent\ChunkPilot.Agent.exe'
@@ -102,27 +106,18 @@ if (-not ($displayNameMatches -and $displayVersionMatches -and $installLocationM
 }
 
 $normalShortcutPath = Join-Path $startMenuRoot 'ChunkPilot.lnk'
-$previewShortcutPath = Join-Path $startMenuRoot 'ChunkPilot WebUI Preview.lnk'
 $normalShortcut = Get-Shortcut $normalShortcutPath
-$previewShortcut = Get-Shortcut $previewShortcutPath
 if ([IO.Path]::GetFullPath($normalShortcut.TargetPath) -ne [IO.Path]::GetFullPath($app) -or
     -not [string]::IsNullOrWhiteSpace($normalShortcut.Arguments)) {
     throw 'The normal Start Menu shortcut target or arguments are incorrect.'
 }
-if ([IO.Path]::GetFullPath($previewShortcut.TargetPath) -ne [IO.Path]::GetFullPath($app) -or
-    $previewShortcut.Arguments -ne '--webui-preview') {
-    throw 'The WebUI Preview Start Menu shortcut target or arguments are incorrect.'
-}
-
 $defaultSmoke = (& (Join-Path $repoRoot 'scripts\test-packaged-ui-close.ps1') -PortableRoot $installRoot) | ConvertFrom-Json
-if (-not $defaultSmoke.OverallPass) { throw "Installed default-UI launch/close smoke failed: $($defaultSmoke.Failures -join '; ')" }
-$previewSmoke = (& (Join-Path $repoRoot 'scripts\test-packaged-ui-close.ps1') -PortableRoot $installRoot -WebUiPreview) | ConvertFrom-Json
-if (-not $previewSmoke.OverallPass) { throw "Installed WebUI-preview launch/close smoke failed: $($previewSmoke.Failures -join '; ')" }
+if (-not $defaultSmoke.OverallPass) { throw "Installed WebUI launch/close smoke failed: $($defaultSmoke.Failures -join '; ')" }
 
-# Same-version reinstall/repair must remain non-destructive and leave both entry points intact.
-Invoke-Setup $reinstallLog
-if (-not (Test-Path -LiteralPath $normalShortcutPath) -or -not (Test-Path -LiteralPath $previewShortcutPath)) {
-    throw 'Same-version reinstall did not preserve both Start Menu shortcuts.'
+# Same-version reinstall/repair must remain non-destructive and leave the current entry point intact.
+Invoke-Setup $installer $reinstallLog
+if (-not (Test-Path -LiteralPath $normalShortcutPath)) {
+    throw 'Same-version reinstall did not preserve the Start Menu shortcut.'
 }
 
 # Create a valid schema-v6 database with one fake registered server, plus world, backup, settings,
@@ -201,7 +196,7 @@ if ($uninstallProcess.ExitCode -notin @(0, 3010)) {
 }
 
 if ((Test-Path -LiteralPath $app) -or (Test-Path -LiteralPath $agent)) { throw 'Uninstall left application binaries behind.' }
-if ((Test-Path -LiteralPath $normalShortcutPath) -or (Test-Path -LiteralPath $previewShortcutPath)) { throw 'Uninstall left Start Menu shortcuts behind.' }
+if (Test-Path -LiteralPath $normalShortcutPath) { throw 'Uninstall left the Start Menu shortcut behind.' }
 if (Get-ChunkPilotUninstallEntry) { throw 'Uninstall registration remains after uninstall.' }
 $orphans = @(Get-CimInstance Win32_Process | Where-Object {
     $_.ExecutablePath -and $_.ExecutablePath.StartsWith($installRoot, [StringComparison]::OrdinalIgnoreCase)
@@ -221,12 +216,49 @@ if (-not $webViewVersion) {
 }
 if (-not $webViewVersion -or $webViewVersion -eq '0.0.0.0') { throw 'WebView2 Runtime is not installed after setup.' }
 
+$previousUpgrade = $false
+if (-not [string]::IsNullOrWhiteSpace($PreviousInstallerPath)) {
+    $previousInstaller = [IO.Path]::GetFullPath($PreviousInstallerPath)
+    if (-not (Test-Path -LiteralPath $previousInstaller -PathType Leaf)) {
+        throw "Previous installer was not found: $previousInstaller"
+    }
+    $upgradeBefore = @{}
+    foreach ($path in $fixtures) { $upgradeBefore[$path] = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash }
+    Invoke-Setup $previousInstaller $previousInstallLog
+    if (-not (Test-Path -LiteralPath $app)) { throw 'Previous prerelease did not install before upgrade.' }
+    Invoke-Setup $installer $upgradeLog
+    $upgradedVersion = [Diagnostics.FileVersionInfo]::GetVersionInfo($app).ProductVersion
+    if (-not $upgradedVersion.StartsWith('1.3.0-alpha.4+', [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Prior-release upgrade did not install Alpha 4 binaries: $upgradedVersion"
+    }
+    if (Test-Path -LiteralPath (Join-Path $startMenuRoot 'ChunkPilot WebUI Preview.lnk')) {
+        throw 'Prior-release upgrade left the obsolete WebUI Preview shortcut behind.'
+    }
+    foreach ($path in $fixtures) {
+        if ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -ne $upgradeBefore[$path]) {
+            throw "Prior-release upgrade changed persistent fixture data: $path"
+        }
+    }
+    $upgradeUninstaller = Join-Path $installRoot 'unins000.exe'
+    $upgradeUninstall = Start-Process -FilePath $upgradeUninstaller -ArgumentList @(
+        '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/LOG=$upgradeUninstallLog") `
+        -WindowStyle Hidden -Wait -PassThru
+    if ($upgradeUninstall.ExitCode -notin @(0, 3010)) { throw 'Uninstall after prior-release upgrade failed.' }
+    foreach ($path in $fixtures) {
+        if (-not (Test-Path -LiteralPath $path) -or
+            (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -ne $upgradeBefore[$path]) {
+            throw "Uninstall after prior-release upgrade changed persistent fixture data: $path"
+        }
+    }
+    $previousUpgrade = $true
+}
+
 [PSCustomObject]@{
     CleanInstall = $true
     DefaultLaunch = $defaultSmoke
-    WebUiPreviewLaunch = $previewSmoke
     Reinstall = $true
     Uninstall = $true
+    PreviousReleaseUpgrade = $previousUpgrade
     PersistentFixtureCount = $fixtures.Count
     PersistentDataUnchanged = $true
     WebView2Version = $webViewVersion

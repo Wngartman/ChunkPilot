@@ -33,6 +33,20 @@
 .input::placeholder { color: var(--cp-text-muted); }
 .select { appearance: none; padding-right: 34px; background-image: linear-gradient(45deg, transparent 50%, var(--cp-text-muted) 50%), linear-gradient(135deg, var(--cp-text-muted) 50%, transparent 50%); background-position: calc(100% - 16px) 50%, calc(100% - 11px) 50%; background-size: 5px 5px, 5px 5px; background-repeat: no-repeat; }
 .select option { background: var(--cp-surface-raised); color: var(--cp-text); }
+.comboboxTrigger { min-width: 0; display: inline-flex; align-items: center; justify-content: space-between; gap: 10px; text-align: left; cursor: pointer; }
+.comboboxTrigger > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.comboboxChevron { width: 7px; height: 7px; flex: 0 0 auto; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: translateY(-2px) rotate(45deg); color: var(--cp-text-muted); }
+.comboboxPopover { position: fixed; z-index: 1800; min-height: 0; display: flex; flex-direction: column; padding: 5px; border: 1px solid var(--cp-border-strong); border-radius: var(--cp-radius-md); background: var(--cp-surface-raised); box-shadow: var(--cp-shadow); animation: menu-in var(--cp-fast) ease-out; }
+.comboboxSearch { min-height: 34px; margin-bottom: 4px; flex: 0 0 auto; }
+.comboboxList { min-height: 0; overflow: auto; }
+.comboboxOption { width: 100%; min-height: 34px; display: grid; grid-template-columns: minmax(0, 1fr) 18px; align-items: center; gap: 8px; border: 0; border-radius: var(--cp-radius-sm); padding: 6px 9px; background: transparent; color: var(--cp-text); font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
+.comboboxOption > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.comboboxOption:hover, .comboboxOption[data-active="true"] { background: var(--cp-surface-hover); }
+.comboboxOption:focus-visible { outline: 2px solid var(--cp-focus); outline-offset: -2px; }
+.comboboxOption[aria-selected="true"] { color: var(--cp-accent-text); background: var(--cp-accent-soft); }
+.comboboxOption:disabled { color: var(--cp-text-muted); cursor: default; opacity: .58; }
+.comboboxCheck { justify-self: end; font-weight: 700; }
+.comboboxEmpty { padding: 14px 9px; color: var(--cp-text-muted); font-size: 12px; text-align: center; }
 .empty { min-height: 240px; display: grid; place-items: center; text-align: center; padding: 36px; color: var(--cp-text-secondary); }
 .emptyIcon { display: grid; place-items: center; width: 54px; height: 54px; margin: 0 auto 16px; border: 1px solid var(--cp-border); border-radius: 50%; color: var(--cp-accent); background: var(--cp-surface-raised); }
 .empty h2 { margin: 0 0 8px; color: var(--cp-text); font-size: 20px; }

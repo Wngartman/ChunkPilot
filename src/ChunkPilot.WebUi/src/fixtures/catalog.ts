@@ -124,6 +124,7 @@ function snapshot(servers: ServerSummary[]): WebUiSnapshot {
     capturedAt: now,
     agentConnected: true,
     appVersion: '1.3.0',
+    build: { productVersion: '1.3.0-alpha.4+fixture', releaseTag: 'v1.3.0-alpha.4', gitSha: 'fixture', buildTimestampUtc: '2026-08-20T00:00:00Z', schemaVersion: '6', architecture: 'x64', defaultUi: 'WebUI' },
     selectedServerId: selected?.id ?? null,
     operation: null,
     statusMessage: null,
@@ -228,6 +229,7 @@ export const fixtures: Record<string, WebUiSnapshot> = {
 export class FixtureBridge implements BridgeAdapter {
   private listeners = new Set<(event: BridgeEvent) => void>();
   private current: WebUiSnapshot;
+  private curseForgeConfigured = false;
   constructor(name = 'several') {
     this.current = structuredClone(fixtures[name] ?? fixtures.several);
     const mode = new URLSearchParams(window.location.search).get('mode');
@@ -267,7 +269,7 @@ export class FixtureBridge implements BridgeAdapter {
 
   async request<T>(method: BridgeMethod, params: Record<string, unknown> = {}): Promise<T> {
     if (method === 'snapshot.get' || method === 'renderer.ready') return (method === 'snapshot.get' ? this.current : { ready: true }) as T;
-    if (method === 'creation.catalog' && params.platform === 'Paper') return { platform: 'Paper', available: true, message: 'Deterministic PaperMC fixture inventory.', retrievedAt: now, fromCache: true, stale: false, manifestLatestReleaseId: '', manifestLatestSnapshotId: '', latestVerifiedReleaseId: '', versions: fixtureCatalogVersions.filter(version => version.releaseKind === 'Release').slice(0, 18).map(version => ({ ...version, support: 'Experimental', supportReason: 'Exact build metadata is available, but this Paper version is not runtime-certified.', selectable: true, hasServerArtifact: false, hasIntegrityMetadata: false, launchProfile: { ...version.launchProfile, kind: 'PaperNogui', arguments: '--nogui' }, provenance: 'Official PaperMC Fill v3 fixture' })) } as T;
+    if (method === 'creation.catalog' && params.platform === 'Paper') return { platform: 'Paper', available: true, message: 'Deterministic PaperMC fixture inventory.', retrievedAt: now, fromCache: true, stale: false, manifestLatestReleaseId: '', manifestLatestSnapshotId: '', latestVerifiedReleaseId: '', versions: fixtureCatalogVersions.filter(version => version.releaseKind === 'Release').slice(0, 18).map(version => ({ ...version, support: 'Experimental', supportReason: 'Exact build metadata is available, but this Paper version is not runtime-certified.', selectable: true, hasServerArtifact: false, hasIntegrityMetadata: false, launchProfile: { ...version.launchProfile, kind: 'PaperNogui', arguments: '--nogui' }, certification: { level: 'MetadataValidated', runtimeLaunched: false, readinessConfirmed: false, cleanShutdownConfirmed: false, runtimeValidatedAt: null, limitations: ['This exact Paper version has not been isolated-runtime certified by this ChunkPilot build.'] }, provenance: 'Official PaperMC Fill v3 fixture' })) } as T;
     if (method === 'creation.catalog') return { available: true, message: 'Deterministic 906-entry fixture inventory for local performance and visual review.', retrievedAt: now, fromCache: true, stale: false, manifestLatestReleaseId: '1.21.8', manifestLatestSnapshotId: '26w33a', latestVerifiedReleaseId: '1.21.8', versions: fixtureCatalogVersions } as T;
     if (method === 'creation.paperBuilds') return { available: true, message: '', retrievedAt: now, fromCache: true, stale: false, minecraftVersion: String(params.versionId), builds: [132, 131, 130, 129].map(id => ({ id, label: `Build ${id}`, channel: 'Stable', publishedAt: now, sizeBytes: 54846016, selectable: true, supportReason: 'Exact stable PaperMC build.', provenance: 'Official PaperMC Fill v3 fixture' })) } as T;
     if (method === 'creation.loaderBuilds') {
@@ -295,7 +297,10 @@ export class FixtureBridge implements BridgeAdapter {
       platform: this.current.servers.find(item => item.id === params.serverId)?.ecosystem ?? 'Vanilla',
       version: this.current.servers.find(item => item.id === params.serverId)?.minecraftVersion ?? '1.21.8',
       state: this.current.servers.find(item => item.id === params.serverId)?.state ?? 'Stopped',
-      isManaged: true, ownershipProven: true,
+      isManaged: true, ownershipProven: true, ownershipStatus: 'ProvenMarker',
+      ownershipDetail: 'Persistent marker proven (CreationTransaction).',
+      ownershipEvidence: [{ code: 'persistent-marker', satisfied: true, detail: 'Persistent marker proven.' }],
+      canCreateManagedCopy: false, reviewFingerprint: 'fixture-fingerprint',
       managedRoot: 'C:\\Users\\Example\\ChunkPilot\\Servers\\Copper-Valley',
       worldLocation: 'C:\\Users\\Example\\ChunkPilot\\Servers\\Copper-Valley\\world',
       backupCount: 3,
@@ -305,6 +310,7 @@ export class FixtureBridge implements BridgeAdapter {
       expiresAt: new Date(Date.now() + 300_000).toISOString()
     } as T;
     if (method === 'servers.delete') return { accepted: true, operationId: 'fixture-delete-operation' } as T;
+    if (method === 'servers.createManagedCopy') return { accepted: true, operationId: 'fixture-copy-operation' } as T;
     if (method === 'appearance.chooseIcon') return { cancelled: false, sourceUrl: './fixtures/icon-source.png', width: 256, height: 256, fileName: 'ChunkPilot-256.png' } as T;
     if (method === 'plugins.providers') return [
       { provider: 'Modrinth', available: true, detail: 'Official API available.' },
@@ -315,15 +321,30 @@ export class FixtureBridge implements BridgeAdapter {
     if (method === 'plugins.plan') return { canInstall: true, problems: [], releases: [] } as T;
     if (method === 'mods.providers') return [{ provider: 'Modrinth', available: true, detail: 'Official API available.' }] as T;
     if (method === 'mods.search') return [{ provider: 'Modrinth', kind: 'Mod', projectId: 'lithium', slug: 'lithium', name: 'Lithium', author: 'CaffeineMC', summary: 'Server performance improvements with exact loader filtering.', downloads: 22_400_000, updatedAt: now, serverSide: 'required', clientSide: 'optional', clientRequirement: 'ClientOptional' }] as T;
-    if (method === 'modpacks.providers') return [{ provider: 'Modrinth', available: true, detail: 'Official Modrinth API is available.' }, { provider: 'CurseForge', available: false, detail: 'Connect an API key in Content sources.' }] as T;
-    if (method === 'settings.curseforge.status') return { configured: false } as T;
-    if (method === 'settings.curseforge.save') return { success: true, message: 'CurseForge is connected for this fixture session.' } as T;
-    if (method === 'settings.curseforge.disconnect') return { success: true, message: 'CurseForge is disconnected.' } as T;
+    if (method === 'modpacks.providers') return [{ provider: 'Modrinth', available: true, detail: 'Official Modrinth API is available.' }, { provider: 'CurseForge', available: this.curseForgeConfigured, detail: this.curseForgeConfigured ? 'Approved fixture access is active.' : 'CurseForge integration is being activated for ChunkPilot.' }] as T;
+    if (method === 'modpacks.versions') {
+      const provider = params.provider === 'CurseForge' ? 'CurseForge' : 'Modrinth';
+      if (provider === 'CurseForge' && !this.curseForgeConfigured) return { provider, state: 'AuthenticationRequired', versions: [], detail: 'CurseForge integration is being activated for ChunkPilot.', failedStage: 'activation', retrievedAt: null, fromCache: false, stale: false } as T;
+      return { provider, state: 'Ready', versions: [
+        { versionId: '1.21.8', kind: 'Release', publishedAt: now, isMajor: true },
+        { versionId: '1.20.1', kind: 'Release', publishedAt: '2023-06-12T00:00:00Z', isMajor: false },
+        { versionId: '26w33a', kind: 'Snapshot', publishedAt: '2026-08-13T12:00:00Z', isMajor: false },
+        { versionId: 'b1.8.1', kind: 'Beta', publishedAt: '2011-09-19T00:00:00Z', isMajor: false },
+        { versionId: 'a1.2.6', kind: 'Alpha', publishedAt: '2010-12-03T00:00:00Z', isMajor: false }
+      ], detail: 'Fixture official provider inventory.', failedStage: '', retrievedAt: now, fromCache: params.cacheOnly === true, stale: false } as T;
+    }
     if (method === 'modpacks.cache' || method === 'modpacks.search') {
       const provider = params.provider === 'CurseForge' ? 'CurseForge' : 'Modrinth';
       const item = { provider, projectId: 'fixture-pack', slug: 'fixture-pack', name: 'Copper Trails', author: 'ChunkPilot fixture', summary: 'A deterministic server-capable fixture pack for visual review.', downloadCount: 1_240_000, updatedAt: now, categories: ['fabric', 'adventure'], hasImage: false, serverSupport: 'AutomatedWithReview', clientRequirement: 'MatchingPackRequired', trend: { available: false, detail: 'No local period snapshot history exists yet.' }, versions: [{ versionId: 'fixture-pack-4', versionName: '4.2.0', minecraftVersion: '1.21.8', loader: 'fabric', releaseChannel: 'Stable', publishedAt: now, sizeBytes: 1_240_000, changelog: 'Fixture release.', requiredJavaMajor: 21, hasIntegrity: true, canCreate: true }] };
-      if (provider === 'CurseForge') return { provider, state: 'AuthenticationRequired', items: [], detail: 'Connect an API key in Content sources.', failedStage: 'authentication', retrievedAt: null, fromCache: false, stale: false } as T;
+      if (provider === 'CurseForge' && !this.curseForgeConfigured) return { provider, state: 'AuthenticationRequired', items: [], detail: 'CurseForge integration is being activated for ChunkPilot.', failedStage: 'activation', retrievedAt: null, fromCache: false, stale: false } as T;
       return { provider, state: 'Ready', items: [item], detail: 'Fixture catalog ready.', failedStage: '', retrievedAt: now, fromCache: method === 'modpacks.cache', stale: false } as T;
+    }
+    if (method === 'modpacks.resolveLink') {
+      const url = String(params.url ?? '');
+      if (url.includes('curseforge.com')) throw new Error('CurseForge integration is being activated for ChunkPilot. Modrinth links and local pack imports are available now.');
+      const release = { versionId: 'fixture-pack-4', versionName: '4.2.0', minecraftVersion: '1.21.8', loader: 'fabric', releaseChannel: 'Stable', publishedAt: now, sizeBytes: 1_240_000, changelog: 'Fixture release.', requiredJavaMajor: 21, hasIntegrity: true, canCreate: true };
+      const project = { provider: 'Modrinth', projectId: 'fixture-pack', slug: 'fixture-pack', name: 'Copper Trails', author: 'ChunkPilot fixture', summary: 'A deterministic server-capable fixture pack for visual review.', downloadCount: 1_240_000, updatedAt: now, categories: ['fabric', 'adventure'], hasImage: false, serverSupport: 'AutomatedWithReview', clientRequirement: 'MatchingPackRequired', trend: { available: false, detail: 'No local period snapshot history exists yet.' }, versions: [release] };
+      return { canonicalUrl: `${'https:'}//modrinth.com/modpack/fixture-pack`, exactRelease: url.includes('/version/'), project, release, detail: url.includes('/version/') ? 'Resolved the exact release from the provider link.' : 'Selected the newest stable server-capable release.' } as T;
     }
     if (method === 'modpacks.image') return { dataUrl: null } as T;
     if (method === 'modpacks.chooseLocal') return { cancelled: true } as T;

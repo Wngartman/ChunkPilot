@@ -788,6 +788,26 @@ public sealed class ChunkPilotStore : IAsyncDisposable
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
+    public async Task<ManagedInstallEvidence?> GetManagedInstallEvidenceAsync(
+        Guid serverId,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = await OpenAsync(cancellationToken).ConfigureAwait(false);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT timestamp_utc, source, sha256, detail
+            FROM instance_history
+            WHERE server_id=$server AND action='Installed'
+            ORDER BY id DESC LIMIT 1
+            """;
+        command.Parameters.AddWithValue("$server", serverId.ToString("D"));
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) return null;
+        return new ManagedInstallEvidence(
+            DateTimeOffset.Parse(reader.GetString(0), System.Globalization.CultureInfo.InvariantCulture),
+            reader.GetString(1), reader.GetString(2), reader.GetString(3));
+    }
+
     public async Task RecordHourlyStatisticsAsync(Guid serverId, StatisticsSample sample, CancellationToken cancellationToken = default)
     {
         var hour = new DateTimeOffset(sample.Timestamp.Year, sample.Timestamp.Month, sample.Timestamp.Day,

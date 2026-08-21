@@ -44,14 +44,14 @@ describe('server connectivity presentation', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
-  it('offers plain-language connection modes and persists the selected mode', () => {
+  it('offers exactly the ordinary LAN and Internet modes and persists the selected mode', () => {
     window.history.replaceState({}, '', '/?tab=settings&settings=Connectivity');
     const server = workspace();
-    expect(screen.getByRole('button', { name: /Local only/ })).toBeTruthy();
     expect(screen.getByRole('button', { name: /LAN/ }).getAttribute('data-selected')).toBe('true');
-    expect(screen.getByRole('button', { name: /Internet hosting/ })).toBeTruthy();
-    expect(screen.getByRole('button', { name: /Configure later/ })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: /Internet hosting/ }));
+    expect(screen.getByRole('button', { name: /^Internet Friends/ })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Local only/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Configure later/ })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /^Internet Friends/ }));
     expect(calls).toContainEqual({ method: 'connectivity.setMode', params: { serverId: server.id, mode: 'PortForwarding' } });
   });
 
@@ -113,7 +113,7 @@ describe('server connectivity presentation', () => {
     expect(within(progress).getByText('Windows Firewall')).toBeTruthy();
     expect(within(progress).getByText('Automatic router setup')).toBeTruthy();
     expect(within(progress).getByText('Internet verification')).toBeTruthy();
-    await screen.findByRole('button', { name: 'Verify now' });
+    expect(screen.queryByRole('button', { name: 'Verify now' })).toBeNull();
     expect(calls).toContainEqual({ method: 'connectivity.external.check', params: { serverId: server.id } });
   });
 });

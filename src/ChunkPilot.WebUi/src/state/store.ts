@@ -50,7 +50,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     let keepPending = false;
     try {
       const result = await bridge.request<T>(method, params, signal);
-      if (method === 'servers.start' || method === 'servers.stop' || method === 'servers.restart' || method === 'servers.delete') {
+      if (method === 'servers.start' || method === 'servers.stop' || method === 'servers.restart' || method === 'servers.delete' || method === 'servers.createManagedCopy' || method === 'versions.install') {
         const accepted = result as { accepted?: boolean; operationId?: string };
         if (accepted?.accepted === true && accepted.operationId) {
           const completedEarly = get().completedOperations.has(accepted.operationId);

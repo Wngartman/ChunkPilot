@@ -11,6 +11,7 @@ public sealed class InstallationCoordinator
     private readonly ChunkPilotStore store;
     private readonly ManagedJavaRuntimeService? javaRuntimes;
     private readonly AppDataPaths? paths;
+    private readonly ServerDetectionService? detector;
     private readonly ConcurrentDictionary<Guid, OperationState> operations = new();
 
     /// <summary>
@@ -25,19 +26,22 @@ public sealed class InstallationCoordinator
     private readonly ConcurrentQueue<Guid> paperOperations = new();
     private readonly ConcurrentQueue<Guid> managedLoaderOperations = new();
     private readonly ConcurrentQueue<Guid> modpackOperations = new();
+    private readonly ConcurrentQueue<Guid> importOperations = new();
 
     public InstallationCoordinator(
         ManagedServerInstaller installer,
         ServerSupervisor supervisor,
         ChunkPilotStore store,
         ManagedJavaRuntimeService? javaRuntimes = null,
-        AppDataPaths? paths = null)
+        AppDataPaths? paths = null,
+        ServerDetectionService? detector = null)
     {
         this.installer = installer;
         this.supervisor = supervisor;
         this.store = store;
         this.javaRuntimes = javaRuntimes;
         this.paths = paths;
+        this.detector = detector;
     }
 
     public Guid Begin(ServerInstallRequest request)
@@ -138,6 +142,22 @@ public sealed class InstallationCoordinator
         return operationId;
     }
 
+    /// <summary>Begins a reviewed local ZIP, JAR, or folder import under the same owned operation model.</summary>
+    public Guid BeginImport(ServerImportCreationPlan plan)
+    {
+        ArgumentNullException.ThrowIfNull(plan);
+        var problems = plan.Problems();
+        if (problems.Count > 0)
+            throw new InvalidOperationException("This local import cannot be carried out. " + string.Join(" ", problems));
+        var operationId = plan.OperationId == Guid.Empty ? Guid.NewGuid() : plan.OperationId;
+        var state = new OperationState(operationId);
+        if (!operations.TryAdd(operationId, state))
+            throw new InvalidOperationException($"This import has already been started. Operation {operationId} is already running.");
+        importOperations.Enqueue(operationId);
+        state.Task = RunImportAsync(plan with { OperationId = operationId }, state);
+        return operationId;
+    }
+
     /// <summary>
     /// Every Vanilla creation this Agent knows about, newest first.
     /// </summary>
@@ -183,6 +203,18 @@ public sealed class InstallationCoordinator
 
     public IReadOnlyList<InstallOperationSnapshot> ModpackOperations() =>
         modpackOperations
+            .Reverse()
+            .Select(id => operations.TryGetValue(id, out var state) ? state : null)
+            .Where(state => state is not null)
+            .Select(state =>
+            {
+                lock (state!.Gate)
+                    return state.Snapshot;
+            })
+            .ToArray();
+
+    public IReadOnlyList<InstallOperationSnapshot> ImportOperations() =>
+        importOperations
             .Reverse()
             .Select(id => operations.TryGetValue(id, out var state) ? state : null)
             .Where(state => state is not null)
@@ -836,6 +868,123 @@ public sealed class InstallationCoordinator
                         CurrentStep = exception is OperationCanceledException
                             ? "Creation cancelled; nothing was activated"
                             : "The modpack was not activated"
+                    }
+                };
+        }
+    }
+
+    private async Task RunImportAsync(ServerImportCreationPlan plan, OperationState state)
+    {
+        try
+        {
+            Report(state, InstallState.Planned, CreationPhase.Requested, CreationStage.Preparing,
+                "Preparing the reviewed local server source", 1);
+            if (plan.ManagementMode == ServerImportManagementMode.ByReference)
+            {
+                if (detector is null)
+                    throw new InvalidOperationException("No read-only server detector is available in this Agent.");
+                var detected = await detector.DetectAsync(plan.NativePath, state.Cancellation.Token).ConfigureAwait(false);
+                var candidate = detected.Candidates.SingleOrDefault(item =>
+                    Path.GetRelativePath(detected.RootPath, item.SourcePath).Replace('\\', '/')
+                        .Equals(plan.LaunchRelativePath, StringComparison.OrdinalIgnoreCase));
+                candidate ??= detected.Candidates.Count == 1 ? detected.Candidates[0] : null;
+                if (candidate is null)
+                    throw new InvalidOperationException("The reviewed server launcher is no longer available.");
+                Report(state, InstallState.Validating, CreationPhase.VerifyingCandidate,
+                    CreationStage.FinalSafetyCheck, "Validating the by-reference server folder", 60);
+                var definition = new ServerDefinition
+                {
+                    Name = plan.ServerName.Trim(),
+                    RootPath = detected.RootPath,
+                    Executable = candidate.Executable,
+                    Arguments = ServerLaunchPolicy.EnsureNoGui(candidate.Arguments, detected.Ecosystem, true),
+                    WorkingDirectory = candidate.WorkingDirectory,
+                    ReadinessPattern = @"Done \(.+?\)!|For help, type",
+                    ShutdownTimeoutSeconds = detected.Ecosystem is ServerEcosystem.Forge or ServerEcosystem.NeoForge ? 120 : 60,
+                    Ecosystem = detected.Ecosystem,
+                    MinecraftVersion = detected.MinecraftVersion,
+                    LoaderVersion = detected.LoaderVersion,
+                    Port = plan.Port,
+                    MinimumRamMb = plan.MinimumRamMb,
+                    MaximumRamMb = plan.MaximumRamMb,
+                    RunInBackground = true,
+                    IsManaged = false
+                };
+                await supervisor.ImportAsync(definition, state.Cancellation.Token).ConfigureAwait(false);
+                lock (state.Gate)
+                    state.Snapshot = state.Snapshot with
+                    {
+                        IsTerminal = true,
+                        Success = true,
+                        Outcome = CreationOutcome.Completed,
+                        Result = new InstallationResult { Definition = definition, Outcome = CreationOutcome.Completed },
+                        Progress = state.Snapshot.Progress with
+                        {
+                            State = InstallState.Completed,
+                            Phase = CreationPhase.Completed,
+                            Stage = CreationStage.Completed,
+                            CurrentStep = "Server folder added by reference",
+                            OverallPercent = 100
+                        }
+                    };
+                return;
+            }
+
+            var javaMajor = plan.Inspection.RequiredJavaMajor > 0 ? plan.Inspection.RequiredJavaMajor : 21;
+            var java = await PrepareRuntimeAsync(javaMajor,
+                $"Imported {plan.Inspection.Platform} server for Minecraft {plan.Inspection.MinecraftVersion}", state)
+                .ConfigureAwait(false);
+            var request = new ServerInstallRequest
+            {
+                OperationId = plan.OperationId,
+                SourceType = plan.Inspection.SourceKind switch
+                {
+                    ServerImportSourceKind.ServerJar => InstallSourceType.LocalServerJar,
+                    ServerImportSourceKind.ServerFolder => InstallSourceType.ExistingPackageFolder,
+                    _ => InstallSourceType.LocalZip
+                },
+                Source = plan.NativePath,
+                MinecraftVersion = plan.Inspection.MinecraftVersion,
+                Build = plan.Inspection.LoaderVersion,
+                LaunchRelativePath = plan.LaunchRelativePath,
+                ServerName = plan.ServerName,
+                InstanceRoot = plan.InstanceRoot,
+                JavaPath = java.JavaPath,
+                MinimumRamMb = plan.MinimumRamMb,
+                MaximumRamMb = plan.MaximumRamMb,
+                Port = plan.Port,
+                CreationNetworkingPreference = plan.NetworkingPreference,
+                MaxPlayers = plan.MaxPlayers,
+                EulaAccepted = plan.Eula.Accepted,
+                EulaAcceptedAt = plan.Eula.AcceptedAtUtc,
+                ExpectedSha256 = plan.Inspection.Sha256,
+                ExpectedSizeBytes = plan.Inspection.SourceKind == ServerImportSourceKind.ServerFolder
+                    ? null : plan.Inspection.SourceSizeBytes
+            };
+            await RunAsync(request, state).ConfigureAwait(false);
+            InstallOperationSnapshot snapshot;
+            lock (state.Gate) snapshot = state.Snapshot;
+            if (snapshot.Success == true && snapshot.Result is { } result)
+                await store.SetJavaAssignmentAsync(result.Definition.Id, java.Id, java.JavaPath,
+                    $"Managed runtime selected for imported {plan.Inspection.Platform} server",
+                    CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            lock (state.Gate)
+                state.Snapshot = state.Snapshot with
+                {
+                    IsTerminal = true,
+                    Success = false,
+                    Error = SecretRedactor.Redact(exception.Message),
+                    Outcome = CreationOutcome.NothingActivated,
+                    Progress = state.Snapshot.Progress with
+                    {
+                        State = exception is OperationCanceledException ? InstallState.Cancelled : InstallState.Failed,
+                        Phase = exception is OperationCanceledException ? CreationPhase.Cancelling : CreationPhase.Failed,
+                        Stage = exception is OperationCanceledException ? CreationStage.Cancelled : CreationStage.FailedNothingChanged,
+                        CurrentStep = exception is OperationCanceledException
+                            ? "Import cancelled; nothing was activated" : "The local server source was not activated"
                     }
                 };
         }

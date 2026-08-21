@@ -1,8 +1,5 @@
-- A stale prior-running, crash-recovery, or restart-journal observation can no longer start a server
-  after Windows login, App startup, or Agent startup. Only explicit autostart policy or a due
-  user-created schedule authorizes startup.
-- Manual **Stop server** now suppresses a pending automatic restart immediately and cancels the owned
-  operation before waiting for the server's serialized operation queue.
-- Stop reconciles the exact owned process and persisted running state before reporting completion. A
-  non-cooperative operation produces an actionable bounded failure instead of an indefinite
-  `Stopping` state.
+- Synchronizes the public application with the current React/WebView2 product, including guided server creation, connectivity, recovery, content management, and the Alpha 3 lifecycle ownership fixes.
+- Makes the WebUI the only shipped product interface and adds a native WebView2 recovery surface.
+- Adds direct Modrinth provider-link resolution plus safe ZIP, `.mrpack`, JAR, and folder import with native opaque tokens and transactional installation.
+- Removes every end-user CurseForge API-key prompt. CurseForge production access remains truthfully gated while its application credential model is approved.
+- Organizes the public source, documentation, development workflow, portable package, build identity, and immutable release automation.

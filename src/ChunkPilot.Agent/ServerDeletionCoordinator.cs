@@ -1,4 +1,6 @@
 using System.Collections.Concurrent;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using ChunkPilot.Core;
 using ChunkPilot.Infrastructure;
@@ -11,7 +13,8 @@ public sealed class ServerDeletionCoordinator(
     ChunkPilotStore store,
     AppDataPaths paths,
     RouterMappingCoordinator routerMappings,
-    WindowsFirewallCoordinator firewallAccess)
+    WindowsFirewallCoordinator firewallAccess,
+    ManagedInstanceCopyService managedCopies)
 {
     private readonly ConcurrentDictionary<Guid, ServerDeletionPreflight> preflights = new();
 
@@ -21,12 +24,9 @@ public sealed class ServerDeletionCoordinator(
         var server = supervisor.Get(serverId);
         var definition = server.Definition;
         var root = Canonical(definition.RootPath);
-        var managedRoot = Canonical(paths.ManagedServers);
-        var rootInsideManaged = IsUnder(managedRoot, root) && !SamePath(managedRoot, root);
-        var ownership = definition.IsManaged && rootInsideManaged &&
-                        SamePath(definition.ManagedInstanceRoot, paths.ManagedServers) &&
-                        !HasReparsePoint(root, stopAt: managedRoot) &&
-                        ManagedInstanceOwnershipMarker.Proves(root, serverId);
+        var ownershipAssessment = await AssessOwnershipAsync(definition, reconcileExactCreationEvidence: true,
+            cancellationToken).ConfigureAwait(false);
+        var ownership = ownershipAssessment.Proven;
         var backups = await store.GetBackupsAsync(serverId, cancellationToken).ConfigureAwait(false);
         var managedBackups = backups.SelectMany(item => new[] { item.ArchivePath, item.ManifestPath })
             .Where(File.Exists).Where(path => IsUnder(Canonical(paths.Backups), Canonical(path)))
@@ -46,7 +46,7 @@ public sealed class ServerDeletionCoordinator(
         if (server.State is ServerState.BackingUp or ServerState.Restoring or ServerState.Saving or ServerState.Restarting)
             blockers.Add($"Wait for the current {server.State.ToString().ToLowerInvariant()} operation to finish.");
         if (definition.IsManaged && !ownership)
-            blockers.Add("ChunkPilot cannot prove durable ownership of this managed folder. Data deletion is disabled; removal from ChunkPilot remains available.");
+            blockers.Add("ChunkPilot cannot prove durable ownership of this folder. Data deletion is disabled. Remove the registration or create a verified managed copy; the original remains untouched.");
         if (firewall is { Configured: true } or { RemovalPending: true })
             blockers.Add("Remove this server's ChunkPilot-owned Windows Firewall rule before deleting its registration or data.");
 
@@ -59,6 +59,10 @@ public sealed class ServerDeletionCoordinator(
             State = server.State,
             IsManaged = definition.IsManaged,
             OwnershipProven = ownership,
+            OwnershipStatus = ownershipAssessment.Status,
+            OwnershipDetail = ownershipAssessment.Detail,
+            OwnershipEvidence = ownershipAssessment.Evidence,
+            CanCreateManagedCopy = !ownership && CanCreateManagedCopy(definition, server.State, root),
             ManagedRoot = root,
             WorldLocation = world,
             BackupCount = backups.Count,
@@ -69,6 +73,7 @@ public sealed class ServerDeletionCoordinator(
             FirewallRemovalRequired = firewall is { Configured: true } or { RemovalPending: true },
             Blockers = blockers
         };
+        result = result with { ReviewFingerprint = Fingerprint(result) };
         preflights[result.Token] = result;
         RemoveExpired();
         return result;
@@ -82,8 +87,7 @@ public sealed class ServerDeletionCoordinator(
             throw new InvalidOperationException("Deletion preflight expired. Review the current server state again.");
         var current = await PreflightAsync(request.ServerId, cancellationToken).ConfigureAwait(false);
         preflights.TryRemove(current.Token, out _);
-        if (!string.Equals(current.ServerName, prior.ServerName, StringComparison.Ordinal) || current.State != prior.State ||
-            current.OwnershipProven != prior.OwnershipProven)
+        if (!string.Equals(current.ReviewFingerprint, prior.ReviewFingerprint, StringComparison.Ordinal))
             throw new InvalidOperationException("The server changed after deletion was reviewed. Review it again.");
 
         var server = supervisor.Get(request.ServerId);
@@ -187,6 +191,104 @@ public sealed class ServerDeletionCoordinator(
         };
     }
 
+    public async Task<ManagedCopyConversionReceipt> CreateManagedCopyAsync(
+        ManagedCopyConversionRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        if (!preflights.TryRemove(request.PreflightToken, out var prior) ||
+            prior.ServerId != request.ServerId || prior.ExpiresAt <= DateTimeOffset.UtcNow)
+            throw new InvalidOperationException("Ownership review expired. Review the current server state again.");
+        var current = await PreflightAsync(request.ServerId, cancellationToken).ConfigureAwait(false);
+        preflights.TryRemove(current.Token, out _);
+        if (!string.Equals(current.ReviewFingerprint, prior.ReviewFingerprint, StringComparison.Ordinal))
+            throw new InvalidOperationException("The server changed after ownership was reviewed. Review it again.");
+        if (!current.IsManaged || current.OwnershipProven || !current.CanCreateManagedCopy)
+            throw new InvalidOperationException("This server does not need, or cannot safely create, a verified managed copy.");
+
+        var server = supervisor.Get(request.ServerId);
+        if (server.State is not ServerState.Stopped and not ServerState.Crashed)
+            throw new InvalidOperationException("Stop the server before creating a managed copy.");
+        var original = server.Definition;
+        var originalRoot = Canonical(original.RootPath);
+        var operationId = Guid.NewGuid();
+        var destination = UniqueManagedRoot(original.Name, original.Id);
+        var staging = Path.Combine(paths.ManagedServers, ".chunkpilot-staging", operationId.ToString("N"));
+        var journal = new ManagedCopyJournal(original, originalRoot, staging, destination, false,
+            "Preparing a verified managed copy. The original is read-only and remains untouched.");
+        await WriteManagedCopyJournalAsync(operationId, InstallState.Staging, journal, cancellationToken)
+            .ConfigureAwait(false);
+
+        ManagedInstanceCopyResult copied;
+        try
+        {
+            copied = await managedCopies.MaterializeAsync(originalRoot, staging, destination, operationId,
+                original.Id, cancellationToken).ConfigureAwait(false);
+            Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+            Directory.Move(staging, destination);
+            journal = journal with { Activated = true, DisplayDetail = "The verified copy is being registered." };
+            await WriteManagedCopyJournalAsync(operationId, InstallState.Registering, journal, CancellationToken.None)
+                .ConfigureAwait(false);
+
+            var updated = RewriteDefinitionForCopy(original, originalRoot, destination);
+            await supervisor.ImportAsync(updated, cancellationToken).ConfigureAwait(false);
+            await store.RecordInstanceHistoryAsync(original.Id, "ManagedCopy", originalRoot, copied.Sha256,
+                $"Verified {copied.FileCount:N0} files ({copied.ByteCount:N0} bytes) for managed-copy destination {destination}. The source remained unchanged.",
+                cancellationToken).ConfigureAwait(false);
+            await store.CompleteOperationAsync(operationId, CancellationToken.None).ConfigureAwait(false);
+            try { File.Delete(CreationOwnershipMarker.PathIn(destination)); }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
+            return new ManagedCopyConversionReceipt
+            {
+                ServerId = original.Id,
+                OriginalRoot = originalRoot,
+                ManagedRoot = destination,
+                CopiedBytes = copied.ByteCount,
+                CopiedFiles = copied.FileCount,
+                Detail = "ChunkPilot now manages the verified copy. The original folder was not modified and remains outside ChunkPilot ownership."
+            };
+        }
+        catch (Exception failure)
+        {
+            try
+            {
+                var registered = (await store.GetServersAsync(CancellationToken.None).ConfigureAwait(false))
+                    .SingleOrDefault(item => item.Id == original.Id);
+                if (registered is not null && SamePath(registered.RootPath, destination))
+                    await supervisor.ImportAsync(original, CancellationToken.None).ConfigureAwait(false);
+                if (Directory.Exists(destination))
+                    ManagedInstanceCopyService.DeleteOperationOwnedCandidate(destination, operationId, original.Id);
+                if (Directory.Exists(staging))
+                    ManagedInstanceCopyService.DeleteOperationOwnedCandidate(staging, operationId, original.Id);
+                await store.CompleteOperationAsync(operationId, CancellationToken.None).ConfigureAwait(false);
+            }
+            catch (Exception rollback)
+            {
+                await store.UpsertOperationAsync(operationId, "ManagedOwnershipCopy", InstallState.RecoveryRequired,
+                    destination, staging, JsonSerializer.Serialize(journal with
+                    {
+                        DisplayDetail = $"Managed-copy rollback needs recovery: {rollback.Message}"
+                    }, ProtocolJson.Options), CancellationToken.None).ConfigureAwait(false);
+                throw new AggregateException("Managed copy failed and automatic rollback could not be proven complete.", failure, rollback);
+            }
+            throw;
+        }
+    }
+
+    public async Task<IReadOnlyList<string>> ReconcileManagedOwnershipAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var reports = new List<string>();
+        foreach (var definition in supervisor.Definitions.Where(item => item.IsManaged))
+        {
+            var before = ManagedInstanceOwnershipMarker.Inspect(definition.RootPath, definition.Id);
+            var assessment = await AssessOwnershipAsync(definition, reconcileExactCreationEvidence: true,
+                cancellationToken).ConfigureAwait(false);
+            if (!before.Proven && assessment.Status == ManagedOwnershipStatus.ReconciledCreationEvidence)
+                reports.Add($"Reconciled exact creation ownership for {definition.Name} ({definition.Id:D}).");
+        }
+        return reports;
+    }
+
     /// <summary>
     /// Reconciles only deletion operations created by this coordinator. If the registration still
     /// exists, data is restored to its original paths. If metadata was already removed, Recovery is
@@ -195,8 +297,53 @@ public sealed class ServerDeletionCoordinator(
     public async Task<IReadOnlyList<string>> RecoverInterruptedAsync(CancellationToken cancellationToken = default)
     {
         var reports = new List<string>();
-        var registered = (await store.GetServersAsync(cancellationToken).ConfigureAwait(false))
-            .Select(item => item.Id).ToHashSet();
+        var definitions = (await store.GetServersAsync(cancellationToken).ConfigureAwait(false))
+            .ToDictionary(item => item.Id);
+        foreach (var operation in (await store.GetInterruptedOperationsAsync(cancellationToken).ConfigureAwait(false))
+                     .Where(item => item.Type.Equals("ManagedOwnershipCopy", StringComparison.Ordinal)))
+        {
+            ManagedCopyJournal? journal;
+            try { journal = JsonSerializer.Deserialize<ManagedCopyJournal>(operation.Detail, ProtocolJson.Options); }
+            catch (JsonException) { journal = null; }
+            if (journal is null || journal.OriginalDefinition.Id == Guid.Empty)
+            {
+                reports.Add($"Managed copy {operation.Id:D} needs manual recovery because its journal is unreadable.");
+                continue;
+            }
+            if (definitions.TryGetValue(journal.OriginalDefinition.Id, out var registered) &&
+                SamePath(registered.RootPath, journal.Destination) &&
+                ManagedInstanceOwnershipMarker.Proves(journal.Destination, registered.Id))
+            {
+                await store.CompleteOperationAsync(operation.Id, cancellationToken).ConfigureAwait(false);
+                try { File.Delete(CreationOwnershipMarker.PathIn(journal.Destination)); }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
+                reports.Add($"Finished registration of the interrupted managed copy for {registered.Name}.");
+                continue;
+            }
+            if (definitions.TryGetValue(journal.OriginalDefinition.Id, out registered) &&
+                SamePath(registered.RootPath, journal.OriginalRoot))
+            {
+                try
+                {
+                    if (Directory.Exists(journal.Destination))
+                        ManagedInstanceCopyService.DeleteOperationOwnedCandidate(journal.Destination, operation.Id, registered.Id);
+                    if (Directory.Exists(journal.Staging))
+                        ManagedInstanceCopyService.DeleteOperationOwnedCandidate(journal.Staging, operation.Id, registered.Id);
+                    await store.CompleteOperationAsync(operation.Id, cancellationToken).ConfigureAwait(false);
+                    reports.Add($"Rolled back the interrupted managed copy for {registered.Name}; its source was untouched.");
+                    continue;
+                }
+                catch (Exception exception)
+                {
+                    await store.UpsertOperationAsync(operation.Id, "ManagedOwnershipCopy", InstallState.RecoveryRequired,
+                        journal.Destination, journal.Staging, JsonSerializer.Serialize(journal with
+                        { DisplayDetail = exception.Message }, ProtocolJson.Options), cancellationToken).ConfigureAwait(false);
+                }
+            }
+            reports.Add($"Managed copy {operation.Id:D} needs manual recovery; no ownership-uncertain path was changed.");
+        }
+
+        var registeredIds = definitions.Keys.ToHashSet();
         foreach (var operation in (await store.GetInterruptedOperationsAsync(cancellationToken).ConfigureAwait(false))
                      .Where(item => item.Type.Equals("ServerDeletion", StringComparison.Ordinal)))
         {
@@ -212,7 +359,7 @@ public sealed class ServerDeletionCoordinator(
                 continue;
             }
 
-            if (registered.Contains(journal.ServerId))
+            if (registeredIds.Contains(journal.ServerId))
             {
                 foreach (var moved in journal.MovedBackups.Reverse())
                     if (File.Exists(moved.Staged) && !File.Exists(moved.Original))
@@ -246,6 +393,72 @@ public sealed class ServerDeletionCoordinator(
             await store.CompleteOperationAsync(operation.Id, cancellationToken).ConfigureAwait(false);
         }
         return reports;
+    }
+
+    private async Task<OwnershipAssessment> AssessOwnershipAsync(ServerDefinition definition,
+        bool reconcileExactCreationEvidence, CancellationToken cancellationToken)
+    {
+        var evidence = new List<ManagedOwnershipEvidence>();
+        if (!definition.IsManaged)
+            return new(false, ManagedOwnershipStatus.External, "Imported/by-reference data is not owned by ChunkPilot.",
+                [new("managed-registration", false, "The server is registered by reference, not as managed data.")]);
+        var root = Canonical(definition.RootPath);
+        var declaredRoot = string.IsNullOrWhiteSpace(definition.ManagedInstanceRoot)
+            ? "" : Canonical(definition.ManagedInstanceRoot);
+        var rootExists = Directory.Exists(root);
+        var insideDeclared = rootExists && !string.IsNullOrWhiteSpace(declaredRoot) &&
+                             IsUnder(declaredRoot, root) && !SamePath(declaredRoot, root);
+        var unique = supervisor.Definitions.Count(item => SamePath(item.RootPath, root)) == 1;
+        var noReparse = rootExists && insideDeclared && !HasReparsePoint(root, declaredRoot);
+        evidence.Add(new("managed-registration", true, "The registration identifies this server as managed."));
+        evidence.Add(new("registered-root", insideDeclared, insideDeclared
+            ? "The exact registered root is a child of its declared managed-instance root."
+            : "The registered root does not exactly agree with its declared managed-instance root."));
+        evidence.Add(new("unique-root", unique, unique
+            ? "No other registered server uses this root." : "Another registered server uses this root."));
+        evidence.Add(new("closed-boundary", noReparse, noReparse
+            ? "The root ancestry has no reparse-point boundary." : "The root boundary is missing or ownership-uncertain."));
+        var marker = ManagedInstanceOwnershipMarker.Inspect(root, definition.Id);
+        evidence.Add(new("persistent-marker", marker.Proven, marker.Detail));
+        if (insideDeclared && unique && noReparse && marker.Proven)
+        {
+            var status = marker.Marker?.OwnershipSource.Equals("ReconciledCreationEvidence", StringComparison.Ordinal) == true
+                ? ManagedOwnershipStatus.ReconciledCreationEvidence : ManagedOwnershipStatus.ProvenMarker;
+            return new(true, status, marker.Detail, evidence);
+        }
+
+        var install = await store.GetManagedInstallEvidenceAsync(definition.Id, cancellationToken).ConfigureAwait(false);
+        var exactHistory = install is not null && install.Sha256.Length == 64 &&
+                           install.Sha256.All(Uri.IsHexDigit) && !string.IsNullOrWhiteSpace(install.Source);
+        evidence.Add(new("creation-transaction", exactHistory, exactHistory
+            ? $"A successful install transaction recorded exact artifact SHA-256 {install!.Sha256}."
+            : "No successful creation transaction with exact artifact integrity is recorded."));
+        var inDefaultRoot = insideDeclared && SamePath(declaredRoot, paths.ManagedServers);
+        if (reconcileExactCreationEvidence && ManagedOwnershipReconciliationPolicy.CanRestoreMissingMarker(
+                definition.IsManaged, inDefaultRoot, unique, noReparse, marker.MarkerPresent, exactHistory))
+        {
+            await ManagedInstanceOwnershipMarker.WriteAsync(root, definition.Id, cancellationToken,
+                "ReconciledCreationEvidence", install!.Sha256).ConfigureAwait(false);
+            evidence[3] = new("persistent-marker", true,
+                "A marker was restored from exact creation, registration, path, and integrity evidence.");
+            return new(true, ManagedOwnershipStatus.ReconciledCreationEvidence,
+                "Persistent ownership was restored from exact successful-creation evidence.", evidence);
+        }
+        return new(false, ManagedOwnershipStatus.Ambiguous,
+            marker.MarkerPresent
+                ? marker.Detail
+                : "No exact marker or complete creation evidence proves ChunkPilot owns this folder.", evidence);
+    }
+
+    private bool CanCreateManagedCopy(ServerDefinition definition, ServerState state, string sourceRoot)
+    {
+        if (!definition.IsManaged || state is not ServerState.Stopped and not ServerState.Crashed ||
+            !Directory.Exists(sourceRoot) || SamePath(sourceRoot, paths.ManagedServers) ||
+            SamePath(sourceRoot, paths.Root) || IsUnder(sourceRoot, paths.ManagedServers) ||
+            IsUnder(sourceRoot, paths.Root))
+            return false;
+        return !supervisor.Definitions.Any(item => item.Id != definition.Id &&
+            (SamePath(sourceRoot, item.RootPath) || IsUnder(sourceRoot, item.RootPath)));
     }
 
     private void RemoveExpired()
@@ -314,6 +527,65 @@ public sealed class ServerDeletionCoordinator(
         operationId, "ServerDeletion", state, journal.OriginalRoot, journal.StagedServer,
         JsonSerializer.Serialize(journal with { DisplayDetail = displayDetail }, ProtocolJson.Options), cancellationToken);
 
+    private Task WriteManagedCopyJournalAsync(Guid operationId, InstallState state,
+        ManagedCopyJournal journal, CancellationToken cancellationToken) => store.UpsertOperationAsync(
+        operationId, "ManagedOwnershipCopy", state, journal.Destination, journal.Staging,
+        JsonSerializer.Serialize(journal, ProtocolJson.Options), cancellationToken);
+
+    private string UniqueManagedRoot(string name, Guid serverId)
+    {
+        var invalid = Path.GetInvalidFileNameChars().ToHashSet();
+        var slug = new string(name.Trim().Select(character => invalid.Contains(character) ? '-' : character).ToArray());
+        slug = string.Join('-', slug.Split([' ', '-'], StringSplitOptions.RemoveEmptyEntries)).Trim('-');
+        if (string.IsNullOrWhiteSpace(slug)) slug = "Managed-Server";
+        if (slug.Length > 48) slug = slug[..48].TrimEnd();
+        var prefix = $"{slug}-{serverId:N}"[..Math.Min(slug.Length + 9, slug.Length + 33)];
+        var candidate = Path.Combine(paths.ManagedServers, prefix);
+        while (Directory.Exists(candidate) || File.Exists(candidate))
+            candidate = Path.Combine(paths.ManagedServers, $"{slug}-{Guid.NewGuid():N}"[..Math.Min(slug.Length + 9, slug.Length + 33)]);
+        return Canonical(candidate);
+    }
+
+    private static ServerDefinition RewriteDefinitionForCopy(ServerDefinition definition, string source, string destination)
+    {
+        string Remap(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return value;
+            try
+            {
+                var canonical = Path.IsPathRooted(value) ? Canonical(value) : value;
+                if (Path.IsPathRooted(value) && (SamePath(canonical, source) || IsUnder(source, canonical)))
+                    return Path.Combine(destination, Path.GetRelativePath(source, canonical));
+            }
+            catch (Exception exception) when (exception is ArgumentException or NotSupportedException) { }
+            return value.Replace(source, destination, StringComparison.OrdinalIgnoreCase);
+        }
+
+        return definition with
+        {
+            RootPath = destination,
+            WorkingDirectory = Remap(definition.WorkingDirectory),
+            Executable = Remap(definition.Executable),
+            Arguments = definition.Arguments.Replace(source, destination, StringComparison.OrdinalIgnoreCase),
+            Environment = definition.Environment.ToDictionary(item => item.Key, item => Remap(item.Value),
+                StringComparer.OrdinalIgnoreCase),
+            IsManaged = true,
+            ManagedInstanceRoot = Path.GetDirectoryName(destination)!
+        };
+    }
+
+    private static string Fingerprint(ServerDeletionPreflight value)
+    {
+        var canonical = JsonSerializer.Serialize(new
+        {
+            value.ServerId, value.ServerName, value.State, value.IsManaged, value.OwnershipProven,
+            value.OwnershipStatus, value.ManagedRoot, value.WorldLocation, value.BackupCount,
+            value.ManagedBackupPaths, value.ProtectedExternalPaths, value.ActiveScheduleCount,
+            value.InternetSharingConfigured, value.FirewallRemovalRequired, value.Blockers
+        }, ProtocolJson.Options);
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical))).ToLowerInvariant();
+    }
+
     private static bool HasReparsePoint(string path, string stopAt)
     {
         for (var current = new DirectoryInfo(path); current is not null && !SamePath(current.FullName, stopAt); current = current.Parent)
@@ -339,6 +611,20 @@ public sealed class ServerDeletionCoordinator(
         string RecoveryRoot,
         IReadOnlyList<MovedPath> MovedBackups,
         string DisplayDetail = "");
+
+    private sealed record ManagedCopyJournal(
+        ServerDefinition OriginalDefinition,
+        string OriginalRoot,
+        string Staging,
+        string Destination,
+        bool Activated,
+        string DisplayDetail);
+
+    private sealed record OwnershipAssessment(
+        bool Proven,
+        ManagedOwnershipStatus Status,
+        string Detail,
+        IReadOnlyList<ManagedOwnershipEvidence> Evidence);
 
     private sealed record MovedPath(string Original, string Staged);
 }

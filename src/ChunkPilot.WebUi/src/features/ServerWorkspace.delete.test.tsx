@@ -10,13 +10,18 @@ import { ServerWorkspace } from './ServerWorkspace';
 
 const calls: { method: BridgeMethod; params: Record<string, unknown> }[] = [];
 let ownershipProven = true;
+let canCreateManagedCopy = false;
 const bridge: BridgeAdapter = {
   request: async <T,>(method: BridgeMethod, params: Record<string, unknown> = {}) => {
     calls.push({ method, params });
     if (method === 'servers.deletePreflight') return {
       token: 'fixture', serverId: params.serverId,
       serverName: 'Copper Valley', platform: 'Vanilla', version: '1.21.8', state: 'Stopped',
-      isManaged: ownershipProven, ownershipProven,
+      isManaged: true, ownershipProven,
+      ownershipStatus: ownershipProven ? 'ProvenMarker' : 'Ambiguous',
+      ownershipDetail: ownershipProven ? 'Persistent marker proven.' : 'No exact ownership marker is present.',
+      ownershipEvidence: [{ code: 'persistent-marker', satisfied: ownershipProven, detail: ownershipProven ? 'Marker proven.' : 'Marker missing.' }],
+      canCreateManagedCopy, reviewFingerprint: 'fixture-fingerprint',
       managedRoot: 'C:\\Fixture\\Servers\\Copper Valley',
       worldLocation: 'C:\\Fixture\\Servers\\Copper Valley\\world', backupCount: 2,
       managedBackupPaths: ['C:\\Fixture\\Backups\\one.cpb'], protectedExternalPaths: [],
@@ -30,7 +35,7 @@ const bridge: BridgeAdapter = {
 };
 
 beforeEach(() => {
-  calls.length = 0; ownershipProven = true;
+  calls.length = 0; ownershipProven = true; canCreateManagedCopy = false;
   window.history.replaceState({}, '', '/?mode=delete');
   const current = structuredClone(fixtures.running);
   current.servers[0].state = 'Stopped';
@@ -78,5 +83,18 @@ describe('server deletion', () => {
     expect((within(dialog).getByRole('radio', { name: /Move to Recovery/ }) as HTMLButtonElement).disabled).toBe(true);
     expect((within(dialog).getByRole('radio', { name: /Permanently delete/ }) as HTMLButtonElement).disabled).toBe(true);
     await waitFor(() => expect(within(dialog).getByRole('radio', { name: /Remove from ChunkPilot/ }).getAttribute('aria-checked')).toBe('true'));
+  });
+
+  it('offers a verified managed copy without enabling deletion of the ambiguous source', async () => {
+    ownershipProven = false;
+    canCreateManagedCopy = true;
+    const server = renderWorkspace();
+    const dialog = await screen.findByRole('dialog', { name: `Delete ${server.name}?` });
+    expect((within(dialog).getByRole('radio', { name: /Permanently delete/ }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create managed copy' }));
+    expect(calls).toContainEqual({
+      method: 'servers.createManagedCopy',
+      params: { serverId: server.id, preflightToken: 'fixture' }
+    });
   });
 });

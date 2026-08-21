@@ -216,10 +216,7 @@ public sealed partial class ManagedLoaderCatalogService
     private async Task<ManagedLoaderVersionCatalog> RefreshOrnitheVersionsAsync(
         CancellationToken cancellationToken)
     {
-        using var generations = await GetJsonAsync(OrnitheGenerationUrl, cancellationToken).ConfigureAwait(false);
-        if (!generations.RootElement.TryGetProperty("stableIntermediaryGeneration", out var stableValue) ||
-            !stableValue.TryGetInt32(out var generation) || generation <= 0)
-            throw new InvalidDataException("Ornithe did not identify a stable intermediary generation.");
+        var generation = await StableOrnitheGenerationAsync(cancellationToken).ConfigureAwait(false);
         using var document = await GetJsonAsync(
             $"https://meta.ornithemc.net/v3/versions/gen{generation}/intermediary", cancellationToken)
             .ConfigureAwait(false);
@@ -237,14 +234,15 @@ public sealed partial class ManagedLoaderCatalogService
             {
                 var canonical = CanonicalOrnitheMinecraftVersion(item.ProviderId);
                 var userSupplied = RequiresUserSuppliedHistoricJar(canonical);
-                var stableMinecraftRelease = item.Stable &&
-                    Regex.IsMatch(canonical, @"^\d+(?:\.\d+){1,2}$", RegexOptions.CultureInvariant);
-                return Version(ManagedLoaderPlatform.Ornithe, canonical, stableMinecraftRelease,
+                var exactTarget = OrnitheHistoricalVersionPolicy.IsExactTarget(canonical);
+                return Version(ManagedLoaderPlatform.Ornithe, canonical, item.Stable,
                     $"Official Ornithe Meta v3 stable intermediary generation {generation}",
                     providerId: item.ProviderId,
-                    javaOverride: userSupplied ? 8 : null,
+                    javaOverride: exactTarget ? 8 : null,
                     requiresUserSuppliedMinecraftServerJar: userSupplied,
-                    unavailableReason: userSupplied ? OrnitheHistoricUnavailable : strategy.CreationUnavailableReason);
+                    unavailableReason: exactTarget
+                        ? userSupplied ? OrnitheHistoricUnavailable : strategy.CreationUnavailableReason
+                        : strategy.CreationUnavailableReason);
             })
             .OrderByDescending(item => MinecraftVersionClassification.NumericVersion(item.MinecraftVersion))
             .ThenByDescending(item => item.MinecraftVersion, StringComparer.OrdinalIgnoreCase)

@@ -3,7 +3,7 @@
 
     Naming: App<Role><Variant>. A role describes intent (surface, stroke, text, accent,
     status), never a literal colour. Adding a token is a design-system change: update
-    docs/UI-DESIGN-SYSTEM.md and Themes/Overlays/HighContrast.xaml in the same change.
+    docs/architecture/UI-DESIGN-SYSTEM.md and Themes/Overlays/HighContrast.xaml in the same change.
 
     Brushes are referenced with DynamicResource from control styles so the high-contrast
     overlay can replace them at runtime.

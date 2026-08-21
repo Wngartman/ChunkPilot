@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, type ReactNode } from 'react';
 import { Activity, History as CalendarClock, Gauge, Minus, Plus, Server, Settings, Square, X } from '../design-system/Icons';
 import type { BridgeMethod, ServerSummary } from '../bridge/types';
 import { useAppStore } from '../state/store';
@@ -33,6 +33,11 @@ export function Shell({ route, activeServerId, onRoute, onOpenServer, onOpenLibr
     window.scrollTo(0, 0);
     workspace.current?.scrollTo(0, 0);
   }, [route]);
+  useEffect(() => {
+    if (!error || /recovery required|rollback failed|data loss|could not stop|ownership/i.test(error)) return;
+    const timer = window.setTimeout(clearError, 8_000);
+    return () => window.clearTimeout(timer);
+  }, [clearError, error]);
   const selectedServer = snapshot?.servers.find(server => server.id === activeServerId);
   const title = selectedServer && route === 'servers' ? selectedServer.name : route === 'create' ? 'Create server' : route === 'gallery' ? 'Design gallery' : nav.find(item => item.id === route)?.label ?? 'ChunkPilot';
   return <div className={styles.shell}>
