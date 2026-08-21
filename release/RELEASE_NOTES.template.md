@@ -2,14 +2,14 @@
 
 ChunkPilot is a local-first Windows x64 launcher and manager for Minecraft servers. This first public prerelease freezes the current 1.3.0 application as a reproducible baseline for later installer and updater testing.
 
-- Release tag: `v1.3.0-alpha.1`
+- Release tag: `v1.3.0-alpha.2`
 - Release commit: `{{RELEASE_COMMIT}}`
 - Product version: `{{PRODUCT_VERSION}}`
 - Build completed: `{{BUILD_TIME_UTC}}`
 
 ## Install
 
-Download `ChunkPilot-Setup-v1.3.0-alpha.1.exe`. It is a per-user, self-contained Windows x64 installer, so a separate .NET installation is not required. The installer adds **ChunkPilot** and **ChunkPilot WebUI Preview** shortcuts. The preview remains explicitly opt-in.
+Download `ChunkPilot-Setup-v1.3.0-alpha.2.exe`. It is a per-user, self-contained Windows x64 installer, so a separate .NET installation is not required. The installer adds **ChunkPilot** and **ChunkPilot WebUI Preview** shortcuts. The preview remains explicitly opt-in.
 
 If Microsoft Edge WebView2 Evergreen Runtime is missing, setup runs the Microsoft-signed Evergreen bootstrapper included in the installer. The portable package can run the default WPF interface without Node.js or an installer; its WebUI preview still requires WebView2.
 

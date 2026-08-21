@@ -129,8 +129,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view '${{ inputs.tag }}' --repo '${{ github.repository }}' *> $null
-          if ($LASTEXITCODE -eq 0) { throw 'This tag already has a GitHub release; immutable assets will not be replaced.' }
+          $result = gh api "repos/${{ github.repository }}/releases/tags/${{ inputs.tag }}" 2>&1
+          $exitCode = $LASTEXITCODE
+          if ($exitCode -eq 0) {
+            throw 'This tag already has a GitHub release; immutable assets will not be replaced.'
+          }
+          if (($result -join "`n") -notmatch '\(HTTP 404\)') {
+            throw "Could not prove that the release tag is unused: $($result -join ' ')"
+          }
+          $global:LASTEXITCODE = 0
 
       - name: Publish prerelease
         shell: pwsh

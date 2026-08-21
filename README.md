@@ -6,15 +6,15 @@
 
 ChunkPilot is a local-first Windows app for creating and managing Minecraft servers without making users learn Java installations, JAR layouts, launch scripts, or router terminology. The native desktop app talks to a separate per-user Agent over a current-user-only named pipe; that Agent owns server processes, console streams, lifecycle operations, transactional installs and updates, managed Java, backups, schedules, and recovery.
 
-> **Pre-alpha:** `v1.3.0-alpha.1` is the first public snapshot. It is a frozen upgrade-test baseline, not a stable or beta release.
+> **Pre-alpha:** `v1.3.0-alpha.2` is the first public snapshot. It is a frozen upgrade-test baseline, not a stable or beta release.
 
-[Download the Windows prerelease](https://github.com/Wngartman/ChunkPilot/releases/tag/v1.3.0-alpha.1) · [Report a bug](https://github.com/Wngartman/ChunkPilot/issues/new?template=bug_report.yml) · [Security policy](SECURITY.md)
+[Download the Windows prerelease](https://github.com/Wngartman/ChunkPilot/releases/tag/v1.3.0-alpha.2) · [Report a bug](https://github.com/Wngartman/ChunkPilot/issues/new?template=bug_report.yml) · [Security policy](SECURITY.md)
 
 ## Download and install
 
 ChunkPilot currently targets 64-bit Windows 10 and Windows 11.
 
-For a normal install, open [Releases](https://github.com/Wngartman/ChunkPilot/releases) and download **`ChunkPilot-Setup-v1.3.0-alpha.1.exe`**. It is a per-user installer for `%LOCALAPPDATA%\Programs\ChunkPilot` and includes the .NET 10 runtime; users do not need to install .NET or Node.js. If WebView2 is absent, setup runs the bundled Microsoft-signed Evergreen bootstrapper.
+For a normal install, open [Releases](https://github.com/Wngartman/ChunkPilot/releases) and download **`ChunkPilot-Setup-v1.3.0-alpha.2.exe`**. It is a per-user installer for `%LOCALAPPDATA%\Programs\ChunkPilot` and includes the .NET 10 runtime; users do not need to install .NET or Node.js. If WebView2 is absent, setup runs the bundled Microsoft-signed Evergreen bootstrapper.
 
 The Start Menu contains two explicit entries:
 
@@ -25,7 +25,7 @@ The installer and application binaries are currently unsigned. Windows SmartScre
 
 ### Portable
 
-Download **`ChunkPilot-Portable-v1.3.0-alpha.1-win-x64.zip`**, verify it against `SHA256SUMS.txt`, extract the entire archive, and run `ChunkPilot.exe`. Keep the `Agent` directory beside the executable. To open the preview interface:
+Download **`ChunkPilot-Portable-v1.3.0-alpha.2-win-x64.zip`**, verify it against `SHA256SUMS.txt`, extract the entire archive, and run `ChunkPilot.exe`. Keep the `Agent` directory beside the executable. To open the preview interface:
 
 ```powershell
 .\ChunkPilot.exe --webui-preview
@@ -130,8 +130,8 @@ The repository pins .NET SDK 10.0.302 and will use `.tools\dotnet\dotnet.exe` wh
 .\scripts\build.ps1
 .\scripts\test.ps1
 .\scripts\publish.ps1
-.\scripts\publish.ps1 -BuildInstaller -ReleaseTag v1.3.0-alpha.1
-.\scripts\package-release.ps1 -ReleaseTag v1.3.0-alpha.1
+.\scripts\publish.ps1 -BuildInstaller -ReleaseTag v1.3.0-alpha.2
+.\scripts\package-release.ps1 -ReleaseTag v1.3.0-alpha.2
 .\scripts\test-packaged-ui-close.ps1 -PortableRoot .\artifacts\portable-test
 ```
 

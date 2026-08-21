@@ -8,12 +8,12 @@ From a clean release branch:
 
 ```powershell
 .\scripts\audit-publication.ps1
-.\scripts\publish.ps1 -BuildInstaller -ReleaseTag v1.3.0-alpha.1
+.\scripts\publish.ps1 -BuildInstaller -ReleaseTag v1.3.0-alpha.2
 .\scripts\smoke-portable.ps1 -PortableRoot .\artifacts\portable-test
 .\scripts\test-packaged-ui-close.ps1 -PortableRoot .\artifacts\portable-test
 .\scripts\test-packaged-ui-close.ps1 -PortableRoot .\artifacts\portable-test -WebUiPreview
-.\scripts\package-release.ps1 -ReleaseTag v1.3.0-alpha.1
-.\scripts\test-portable-package.ps1 -PortableZip .\artifacts\release\v1.3.0-alpha.1\ChunkPilot-Portable-v1.3.0-alpha.1-win-x64.zip
+.\scripts\package-release.ps1 -ReleaseTag v1.3.0-alpha.2
+.\scripts\test-portable-package.ps1 -PortableZip .\artifacts\release\v1.3.0-alpha.2\ChunkPilot-Portable-v1.3.0-alpha.2-win-x64.zip
 git diff --check
 ```
 
