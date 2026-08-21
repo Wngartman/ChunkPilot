@@ -100,6 +100,15 @@ export function CreateServerPage({ onDone, onOpenProviderSettings }: { onDone: (
     const applyCatalog = (result: MinecraftVersionCatalog) => {
       if (!active) return;
       setCatalog(result);
+      setVersionId(current => {
+        if (current && result.versions.some(version => version.id === current)) return current;
+        return result.versions.find(version => version.id === result.latestVerifiedReleaseId && version.selectable)?.id
+          ?? result.versions.find(version => version.id === result.manifestLatestReleaseId && version.selectable)?.id
+          ?? result.versions.find(version => version.support === 'Recommended' && version.selectable)?.id
+          ?? result.versions.find(version => version.releaseKind === 'Release' && version.selectable)?.id
+          ?? result.versions.find(version => version.selectable)?.id
+          ?? '';
+      });
       setCatalogError(result.available ? '' : result.message || 'Version catalog unavailable.');
     };
     void command<MinecraftVersionCatalog>('creation.catalog', { platform, includeSnapshots: true, forceRefresh: catalogRequest > 0 })
@@ -114,17 +123,6 @@ export function CreateServerPage({ onDone, onOpenProviderSettings }: { onDone: (
       .catch(error => { if (active) setCatalogError(error instanceof Error ? error.message : 'Version catalog unavailable.'); });
     return () => { active = false; };
   }, [command, catalogRequest, platform]);
-  useEffect(() => {
-    if (!catalog || versionId) return;
-    const preferred = catalog.versions.find(version =>
-      version.id === catalog.latestVerifiedReleaseId && version.selectable)
-      ?? catalog.versions.find(version =>
-        version.id === catalog.manifestLatestReleaseId && version.selectable)
-      ?? catalog.versions.find(version => version.support === 'Recommended' && version.selectable)
-      ?? catalog.versions.find(version => version.releaseKind === 'Release' && version.selectable)
-      ?? catalog.versions.find(version => version.selectable);
-    if (preferred) setVersionId(preferred.id);
-  }, [catalog, versionId]);
   useEffect(() => {
     if (platform !== 'Paper' || !versionId) { setPaperBuildCatalog(null); setPaperBuildId(null); setPaperBuildError(''); return; }
     let active = true;
