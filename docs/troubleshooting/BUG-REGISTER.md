@@ -6,6 +6,24 @@ become the durable record and the entry can leave this active register.
 
 ---
 
+## CP-2026-034 — Repository-local installer prerequisites fail on their default invocation
+
+| Field | Value |
+|---|---|
+| Date | 2026-08-21 |
+| Severity | Medium — a clean packaging machine cannot acquire the pinned local compiler or WebView2 bootstrapper with the documented command |
+| Area | Release tooling / prerequisite acquisition |
+| Status | **Fixed locally** — defaults are resolved after script binding and Inno's documented help exit is handled explicitly |
+| Validation | Both scripts invoked without path overrides; compiler identity, pinned installer hash/signature, and Microsoft bootstrapper identity verified; distribution contracts |
+
+PowerShell evaluates parameter defaults before `$PSScriptRoot` is available in this invocation path, so
+both acquisition scripts attempted `Split-Path` on an empty value. A fresh Inno acquisition then treated
+the compiler's expected nonzero help-banner exit as a terminating native error. Defaults now resolve from
+the already established repository root inside the script body, and only help exit codes 0 or 1 are
+accepted before normalizing the successful result.
+
+---
+
 ## CP-2026-033 — Normal Internet setup waits on an automatic outside-in probe
 
 | Field | Value |
@@ -31,12 +49,12 @@ Advanced diagnostic and is still the only basis for the distinct **Connection co
 | Severity | Medium — taskbar, window chrome and shortcuts can show generic or inconsistent identity |
 | Area | WPF / publish / installer identity |
 | Status | **Fixed locally** — one embedded and published multi-frame ICO plus stable AppUserModelID |
-| Validation | Distribution contract, Release build, publish-output icon inspection, installer declaration inspection |
+| Validation | Distribution contract, Release build, explicit post-publish copy, matching source/output SHA-256, nine ICO frames, associated executable icon, and successful installer compilation |
 
 The executable embedded `assets/ChunkPilot.ico`, but the installer shortcut pointed at
-`{app}\Assets\ChunkPilot.ico` even though publish did not copy that file. The desktop shortcut also lacked
+`{app}\Assets\ChunkPilot.ico` even though the original item metadata did not actually copy that file. The desktop shortcut also lacked
 the Start-menu AppUserModelID and the borderless WebUI window had no explicit icon. The project now copies
-the same ICO to publish, the process/window/shortcuts share `ChunkPilot.Desktop`, and no alternate icon was
+the same ICO through an explicit post-publish target, the process/window/shortcuts share `ChunkPilot.Desktop`, and no alternate icon was
 introduced.
 
 ---

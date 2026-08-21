@@ -1,12 +1,15 @@
 [CmdletBinding()]
 param(
-    [string]$Destination = (Join-Path (Split-Path -Parent $PSScriptRoot) 'installer\prerequisites\MicrosoftEdgeWebview2Setup.exe')
+    [string]$Destination
 )
 
 $ErrorActionPreference = 'Stop'
 $downloadUrl = 'https://go.microsoft.com/fwlink/p/?LinkId=2124703'
-$destinationFull = [IO.Path]::GetFullPath($Destination)
 $repoRoot = [IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
+if ([string]::IsNullOrWhiteSpace($Destination)) {
+    $Destination = Join-Path $repoRoot 'installer\prerequisites\MicrosoftEdgeWebview2Setup.exe'
+}
+$destinationFull = [IO.Path]::GetFullPath($Destination)
 $allowedRoot = [IO.Path]::GetFullPath((Join-Path $repoRoot 'installer\prerequisites')) + [IO.Path]::DirectorySeparatorChar
 if (-not ($destinationFull + [IO.Path]::DirectorySeparatorChar).StartsWith($allowedRoot, [StringComparison]::OrdinalIgnoreCase) -and
     -not $destinationFull.StartsWith($allowedRoot, [StringComparison]::OrdinalIgnoreCase)) {

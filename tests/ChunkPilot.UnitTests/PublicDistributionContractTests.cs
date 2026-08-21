@@ -136,6 +136,8 @@ public sealed class PublicDistributionContractTests
     {
         var source = File.ReadAllText(Path.Combine(Root, "scripts", "install-inno-setup.ps1"));
         Assert.Contains("$global:LASTEXITCODE = 0", source, StringComparison.Ordinal);
+        Assert.Contains("$helpExitCode -notin @(0, 1)", source, StringComparison.Ordinal);
+        Assert.Contains("IsNullOrWhiteSpace($InstallDirectory)", source, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -148,6 +150,7 @@ public sealed class PublicDistributionContractTests
         Assert.Contains("MicrosoftEdgeUpdateSetup.exe", source, StringComparison.Ordinal);
         Assert.Contains("Get-FileHash", source, StringComparison.Ordinal);
         Assert.DoesNotContain("$expectedSha256", source, StringComparison.Ordinal);
+        Assert.Contains("IsNullOrWhiteSpace($Destination)", source, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -204,6 +207,8 @@ public sealed class PublicDistributionContractTests
         var installer = File.ReadAllText(Path.Combine(Root, "installer", "ChunkPilot.iss"));
 
         Assert.Contains("CopyToPublishDirectory=\"PreserveNewest\"", project, StringComparison.Ordinal);
+        Assert.Contains("Name=\"CopyPackagedApplicationIcon\"", project, StringComparison.Ordinal);
+        Assert.Contains("DestinationFiles=\"$(PublishDir)Assets\\ChunkPilot.ico\"", project, StringComparison.Ordinal);
         Assert.Contains("Icon=\"pack://application:,,,/Assets/ChunkPilot.ico\"", window, StringComparison.Ordinal);
         Assert.Contains("SetCurrentProcessExplicitAppUserModelID", app, StringComparison.Ordinal);
         Assert.Equal(2, installer.Split("AppUserModelID: \"ChunkPilot.Desktop\"", StringSplitOptions.None).Length - 1);

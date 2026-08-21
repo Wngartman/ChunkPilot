@@ -40,4 +40,10 @@
           Condition="'$(Configuration)' == 'Release' and !Exists('..\ChunkPilot.WebUi\dist\index.html')">
     <Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\..\..\scripts\build-webui.ps1&quot; -SkipTests" />
   </Target>
+  <Target Name="CopyPackagedApplicationIcon" AfterTargets="Publish">
+    <MakeDir Directories="$(PublishDir)Assets" />
+    <Copy SourceFiles="$(MSBuildProjectDirectory)\..\..\assets\ChunkPilot.ico"
+          DestinationFiles="$(PublishDir)Assets\ChunkPilot.ico"
+          SkipUnchangedFiles="true" />
+  </Target>
 </Project>
