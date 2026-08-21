@@ -11,7 +11,7 @@
   Preview shortcut, official Microsoft WebView2 Evergreen prerequisite handling, and default uninstall
   preservation of settings, servers, worlds, backups, credentials, and history.
 - Added a public README, deterministic fixture screenshots, security and issue-reporting paths,
-  generated third-party notices, release instructions, and a frozen `v1.3.0-alpha.1` baseline record.
+  generated third-party notices, release instructions, and a frozen `v1.3.0-alpha.2` baseline record.
 - Removed a development-machine-specific import-folder probe and private local path references from the
   public snapshot. No product capability milestone or application version bump was introduced.
 

@@ -99,7 +99,7 @@ jobs:
 
       - name: Build installer and portable layouts
         shell: pwsh
-        run: ./scripts/publish.ps1 -BuildInstaller -ReleaseTag v1.3.0-alpha.1
+        run: ./scripts/publish.ps1 -BuildInstaller -ReleaseTag v1.3.0-alpha.2
 
       - name: Test packaged Agent and both UI launch modes
         shell: pwsh
@@ -111,12 +111,12 @@ jobs:
       - name: Assemble and test portable release
         shell: pwsh
         run: |
-          ./scripts/package-release.ps1 -ReleaseTag v1.3.0-alpha.1
-          ./scripts/test-portable-package.ps1 -PortableZip ./artifacts/release/v1.3.0-alpha.1/ChunkPilot-Portable-v1.3.0-alpha.1-win-x64.zip
+          ./scripts/package-release.ps1 -ReleaseTag v1.3.0-alpha.2
+          ./scripts/test-portable-package.ps1 -PortableZip ./artifacts/release/v1.3.0-alpha.2/ChunkPilot-Portable-v1.3.0-alpha.2-win-x64.zip
 
       - name: Test clean install, reinstall, uninstall, and data preservation
         shell: pwsh
-        run: ./scripts/test-installer.ps1 -InstallerPath ./artifacts/release/v1.3.0-alpha.1/ChunkPilot-Setup-v1.3.0-alpha.1.exe
+        run: ./scripts/test-installer.ps1 -InstallerPath ./artifacts/release/v1.3.0-alpha.2/ChunkPilot-Setup-v1.3.0-alpha.2.exe
 
       - name: Recheck publication tree and source cleanliness
         shell: pwsh

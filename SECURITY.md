@@ -2,7 +2,7 @@
 
 ## Supported release
 
-Security fixes are evaluated against the newest public ChunkPilot prerelease. The current public baseline is `v1.3.0-alpha.1`; pre-alpha status means APIs and file formats may still change, but world/data preservation remains a release requirement.
+Security fixes are evaluated against the newest public ChunkPilot prerelease. The current public baseline is `v1.3.0-alpha.2`; pre-alpha status means APIs and file formats may still change, but world/data preservation remains a release requirement.
 
 ## Report a vulnerability privately
 

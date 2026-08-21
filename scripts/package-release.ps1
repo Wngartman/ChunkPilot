@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [ValidatePattern('^v1\.3\.0-alpha\.[1-9][0-9]*$')]
-    [string]$ReleaseTag = 'v1.3.0-alpha.1'
+    [string]$ReleaseTag = 'v1.3.0-alpha.2'
 )
 
 $ErrorActionPreference = 'Stop'
