@@ -32,8 +32,17 @@ function Invoke-GitSingleLine([Parameter(ValueFromRemainingArguments)][string[]]
 }
 
 function Assert-GitHubReleaseUnused([string]$ReleaseTag) {
-    $result = @(& gh api "repos/$Repository/releases/tags/$ReleaseTag" 2>&1)
-    $exitCode = $LASTEXITCODE
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        # Windows PowerShell 5.1 turns native stderr into an ErrorRecord. The expected 404 must be
+        # captured and inspected without weakening stop-on-error behavior for the rest of the script.
+        $ErrorActionPreference = 'Continue'
+        $result = @(& gh api "repos/$Repository/releases/tags/$ReleaseTag" 2>&1)
+        $exitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
     if ($exitCode -eq 0) { throw "$ReleaseTag already has a GitHub release." }
     if (($result -join "`n") -notmatch '\(HTTP 404\)') {
         throw "Could not prove that $ReleaseTag is unused: $($result -join ' ')"

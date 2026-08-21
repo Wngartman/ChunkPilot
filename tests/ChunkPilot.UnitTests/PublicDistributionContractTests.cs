@@ -78,6 +78,8 @@ public sealed class PublicDistributionContractTests
         Assert.Contains("git -C $repoRoot", source, StringComparison.Ordinal);
         Assert.Contains("function Invoke-GitSingleLine", source, StringComparison.Ordinal);
         Assert.DoesNotContain(")[0].Trim()", source, StringComparison.Ordinal);
+        Assert.Contains("$previousErrorActionPreference = $ErrorActionPreference", source, StringComparison.Ordinal);
+        Assert.Contains("$ErrorActionPreference = 'Continue'", source, StringComparison.Ordinal);
         Assert.Contains("status --porcelain", source, StringComparison.Ordinal);
         Assert.Contains("branch --show-current", source, StringComparison.Ordinal);
         Assert.Contains("ls-remote origin refs/heads/main", source, StringComparison.Ordinal);
