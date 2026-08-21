@@ -46,3 +46,23 @@ public sealed class LifecycleStateMachine
         }
     }
 }
+
+/// <summary>
+/// Decides whether Agent startup has explicit authority to launch a server.
+/// Runtime evidence from a previous Windows session is deliberately not launch intent.
+/// </summary>
+public static class StartupRestorationPolicy
+{
+    public static bool IsAuthorized(ServerDefinition definition, ServerRunningState? state) =>
+        definition.AutoStart ||
+        state?.AutostartMode is AutostartMode.AgentStart or AutostartMode.WindowsLoginWithDelay;
+
+    public static AutostartMode EffectiveMode(ServerDefinition definition, ServerRunningState? state)
+    {
+        if (definition.AutoStart)
+            return AutostartMode.AgentStart;
+        return state?.AutostartMode is AutostartMode.AgentStart or AutostartMode.WindowsLoginWithDelay
+            ? state.AutostartMode
+            : AutostartMode.Never;
+    }
+}

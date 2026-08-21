@@ -828,15 +828,9 @@ public partial class WebUiWindow : Window
         }
 
         var operationId = Guid.NewGuid();
-        var task = method switch
-        {
-            "servers.start" => viewModel.StartServerCommand.ExecuteAsync(server),
-            "servers.stop" => viewModel.StopServerCommand.ExecuteAsync(server),
-            "servers.restart" => viewModel.RestartServerCommand.ExecuteAsync(server),
-            _ => throw new ArgumentException("Unsupported lifecycle operation.", nameof(method))
-        };
+        var task = viewModel.RunWebUiLifecycleAsync(method, server);
         lifecycleOperations[serverId] = new(operationId, method, task);
-        _ = ObserveLifecycleOperationAsync(serverId, operationId, method, task);
+        _ = ObserveLifecycleResultAsync(serverId, operationId, method, task);
         _ = bridge?.PublishSnapshotAsync();
         return JsonSerializer.SerializeToNode(new
         {
@@ -899,6 +893,45 @@ public partial class WebUiWindow : Window
             await viewModel.RefreshCommand.ExecuteAsync(null).ConfigureAwait(true);
             if (error is null && method == "servers.delete")
                 viewModel.NavigateCommand.Execute("Servers");
+            if (bridge is { } current)
+            {
+                await current.PublishSnapshotAsync().ConfigureAwait(true);
+                current.PublishOperationCompleted(operationId, method, serverId, error is null, error);
+            }
+        }
+        catch (Exception exception)
+        {
+            bridge?.PublishOperationCompleted(operationId, method, serverId, false,
+                SecretRedactor.Redact(error ?? exception.Message));
+        }
+    }
+
+    private async Task ObserveLifecycleResultAsync(
+        Guid serverId,
+        Guid operationId,
+        string method,
+        Task<OperationResult> task)
+    {
+        string? error = null;
+        try
+        {
+            var result = await task.ConfigureAwait(true);
+            if (!result.Success)
+                error = SecretRedactor.Redact(result.Message);
+        }
+        catch (Exception exception)
+        {
+            error = SecretRedactor.Redact(exception.Message);
+        }
+        finally
+        {
+            if (lifecycleOperations.TryGetValue(serverId, out var active) && active.OperationId == operationId)
+                lifecycleOperations.Remove(serverId);
+        }
+
+        try
+        {
+            await viewModel.RefreshCommand.ExecuteAsync(null).ConfigureAwait(true);
             if (bridge is { } current)
             {
                 await current.PublishSnapshotAsync().ConfigureAwait(true);

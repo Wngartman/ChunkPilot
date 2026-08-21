@@ -40,8 +40,15 @@ public sealed class ServerSupervisor : IAsyncDisposable
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
         await store.InitializeAsync(cancellationToken).ConfigureAwait(false);
-        foreach (var definition in await store.GetServersAsync(cancellationToken).ConfigureAwait(false))
-            servers[definition.Id] = CreateManaged(definition);
+        var definitions = await store.GetServersAsync(cancellationToken).ConfigureAwait(false);
+        var runningStates = (await store.GetRunningStatesAsync(cancellationToken).ConfigureAwait(false))
+            .ToDictionary(state => state.ServerId);
+        foreach (var definition in definitions)
+        {
+            runningStates.TryGetValue(definition.Id, out var runningState);
+            servers[definition.Id] = CreateManaged(
+                definition, StartupRestorationPolicy.EffectiveMode(definition, runningState));
+        }
         foreach (var server in servers.Values)
         {
             server.RestoreCrashAnalysis(await store.GetLatestCrashAnalysisAsync(
@@ -56,8 +63,16 @@ public sealed class ServerSupervisor : IAsyncDisposable
             else
                 await store.RemoveProcessIdentityAsync(server.Definition.Id, cancellationToken).ConfigureAwait(false);
         }
-        pendingRestorations = (await store.GetRunningStatesAsync(cancellationToken).ConfigureAwait(false))
-            .Where(ShouldRestore)
+        pendingRestorations = definitions
+            .Where(definition =>
+            {
+                runningStates.TryGetValue(definition.Id, out var state);
+                return StartupRestorationPolicy.IsAuthorized(definition, state);
+            })
+            .Select(definition => runningStates.TryGetValue(definition.Id, out var state)
+                ? state with { AutostartMode = StartupRestorationPolicy.EffectiveMode(definition, state) }
+                : new ServerRunningState(definition.Id, AutostartMode.AgentStart, false,
+                    LifecycleIntentKind.None, DateTimeOffset.MinValue))
             .ToArray();
     }
 
@@ -94,15 +109,6 @@ public sealed class ServerSupervisor : IAsyncDisposable
         servers.TryGetValue(id, out var server)
             ? server
             : throw new KeyNotFoundException($"Server {id} is not imported.");
-
-    private static bool ShouldRestore(ServerRunningState state) =>
-        state.AutostartMode == AutostartMode.AgentStart ||
-        state.AutostartMode == AutostartMode.WindowsLoginWithDelay ||
-        state.AutostartMode == AutostartMode.RestorePreviousRunningState &&
-        state.WasRunning &&
-        state.LastIntent is not LifecycleIntentKind.ManualStop and
-            not LifecycleIntentKind.ApplicationExit and
-            not LifecycleIntentKind.WindowsShutdown;
 
     private static PersistedProcessObservation ObservePersistedProcess(ProcessIdentity identity)
     {
@@ -365,9 +371,11 @@ public sealed class ServerSupervisor : IAsyncDisposable
             }, cancellationToken).ConfigureAwait(false);
     }
 
-    private ManagedServer CreateManaged(ServerDefinition definition) =>
+    private ManagedServer CreateManaged(
+        ServerDefinition definition,
+        AutostartMode autostartMode = AutostartMode.Never) =>
         new(definition, statistics, statusClient, store, paths, loggerFactory.CreateLogger<ManagedServer>(),
-            jarInventory: jarInventory);
+            jarInventory: jarInventory, autostartMode: autostartMode);
 
     public async ValueTask DisposeAsync()
     {

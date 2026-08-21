@@ -311,6 +311,44 @@ public sealed class Release13GuidedPlatformTests : IDisposable
         Assert.Equal(0, LifecycleIntentPolicy.IntendedRestartAllowance(LifecycleIntentKind.ManualStop));
     }
 
+    [Theory]
+    [InlineData(LifecycleIntentKind.None)]
+    [InlineData(LifecycleIntentKind.ManualStart)]
+    [InlineData(LifecycleIntentKind.CrashRecovery)]
+    [InlineData(LifecycleIntentKind.SafeRestart)]
+    [InlineData(LifecycleIntentKind.ScheduledRestart)]
+    public void Previous_running_evidence_never_authorizes_startup(LifecycleIntentKind intent)
+    {
+        var definition = new ServerDefinition { AutoStart = false };
+        var stale = new ServerRunningState(definition.Id, AutostartMode.RestorePreviousRunningState,
+            true, intent, DateTimeOffset.UtcNow);
+
+        Assert.False(StartupRestorationPolicy.IsAuthorized(definition, stale));
+        Assert.Equal(AutostartMode.Never, StartupRestorationPolicy.EffectiveMode(definition, stale));
+    }
+
+    [Theory]
+    [InlineData(AutostartMode.AgentStart)]
+    [InlineData(AutostartMode.WindowsLoginWithDelay)]
+    public void Explicit_autostart_modes_authorize_startup(AutostartMode mode)
+    {
+        var definition = new ServerDefinition { AutoStart = false };
+        var policy = new ServerRunningState(definition.Id, mode, false,
+            LifecycleIntentKind.ManualStop, DateTimeOffset.UtcNow);
+
+        Assert.True(StartupRestorationPolicy.IsAuthorized(definition, policy));
+        Assert.Equal(mode, StartupRestorationPolicy.EffectiveMode(definition, policy));
+    }
+
+    [Fact]
+    public void Server_autostart_setting_is_explicit_startup_authority_without_runtime_evidence()
+    {
+        var definition = new ServerDefinition { AutoStart = true };
+
+        Assert.True(StartupRestorationPolicy.IsAuthorized(definition, null));
+        Assert.Equal(AutostartMode.AgentStart, StartupRestorationPolicy.EffectiveMode(definition, null));
+    }
+
     [Fact]
     public void Process_identity_rejects_PID_reuse()
     {

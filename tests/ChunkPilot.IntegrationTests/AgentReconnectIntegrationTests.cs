@@ -12,6 +12,239 @@ namespace ChunkPilot.IntegrationTests;
 public sealed class AgentReconnectIntegrationTests
 {
     [Fact(Timeout = 30_000)]
+    public async Task Agent_start_does_not_restore_stale_previous_running_state_without_autostart_policy()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "ChunkPilot-no-stale-restore-" + Guid.NewGuid().ToString("N"));
+        var instanceId = Guid.NewGuid().ToString("N");
+        var pipeName = ChunkPilotConstants.PipeNameFor(instanceId);
+        var port = TestPortAllocator.Reserve();
+        var definition = await CreateStoredFakeServerAsync(root, "normal", port);
+        await using (var store = new ChunkPilotStore(new AppDataPaths(root)))
+        {
+            await store.InitializeAsync();
+            await store.SetRunningStateAsync(definition.Id, AutostartMode.RestorePreviousRunningState,
+                wasRunning: true, LifecycleIntentKind.CrashRecovery);
+        }
+
+        using var agent = StartAgent(root, instanceId);
+        try
+        {
+            await WaitForAgentAsync(pipeName);
+            await Task.Delay(750);
+            var server = Assert.Single((await SendAsync<DashboardSnapshot>(pipeName, "Dashboard")).Servers);
+            Assert.Equal(ServerState.Stopped, server.State);
+            Assert.False(IsPortListening(port));
+            Assert.True((await SendAsync<OperationResult>(pipeName, "ShutdownAgent")).Success);
+            await agent.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        }
+        finally
+        {
+            if (!agent.HasExited)
+            {
+                agent.Kill(entireProcessTree: true);
+                await agent.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+            }
+            await DeleteFixtureRootAsync(root);
+        }
+    }
+
+    [Fact(Timeout = 30_000)]
+    public async Task Explicit_autostart_policy_starts_the_server_on_agent_start()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "ChunkPilot-explicit-autostart-" + Guid.NewGuid().ToString("N"));
+        var instanceId = Guid.NewGuid().ToString("N");
+        var pipeName = ChunkPilotConstants.PipeNameFor(instanceId);
+        var port = TestPortAllocator.Reserve();
+        var definition = (await CreateStoredFakeServerAsync(root, "normal", port)) with { AutoStart = true };
+        await using (var store = new ChunkPilotStore(new AppDataPaths(root)))
+        {
+            await store.InitializeAsync();
+            await store.UpsertServerAsync(definition);
+        }
+
+        using var agent = StartAgent(root, instanceId);
+        try
+        {
+            await WaitForAgentAsync(pipeName);
+            var deadline = DateTimeOffset.UtcNow.AddSeconds(10);
+            ServerSnapshot? server = null;
+            while (DateTimeOffset.UtcNow < deadline)
+            {
+                server = Assert.Single((await SendAsync<DashboardSnapshot>(pipeName, "Dashboard")).Servers);
+                if (server.State == ServerState.Running)
+                    break;
+                await Task.Delay(100);
+            }
+            Assert.Equal(ServerState.Running, server?.State);
+            Assert.True(IsPortListening(port));
+            var session = await RegisterCurrentUiAsync(pipeName);
+            Assert.True((await SendAsync<OperationResult>(pipeName, "Stop",
+                AuthorizedStopRequest(definition.Id, session))).Success);
+            Assert.True((await SendAsync<OperationResult>(pipeName, "ShutdownAgent")).Success);
+            await agent.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        }
+        finally
+        {
+            if (!agent.HasExited)
+            {
+                agent.Kill(entireProcessTree: true);
+                await agent.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+            }
+            await DeleteFixtureRootAsync(root);
+        }
+    }
+
+    [Fact(Timeout = 40_000)]
+    public async Task Explicit_due_start_schedule_authorizes_startup_after_agent_launch()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "ChunkPilot-explicit-scheduled-start-" + Guid.NewGuid().ToString("N"));
+        var instanceId = Guid.NewGuid().ToString("N");
+        var pipeName = ChunkPilotConstants.PipeNameFor(instanceId);
+        var port = TestPortAllocator.Reserve();
+        var definition = await CreateStoredFakeServerAsync(root, "normal", port);
+        await using (var store = new ChunkPilotStore(new AppDataPaths(root)))
+        {
+            await store.InitializeAsync();
+            await store.UpsertScheduleAsync(new ScheduleEntry
+            {
+                ServerId = definition.Id,
+                Name = "Explicit fixture start",
+                Action = ScheduledAction.Start,
+                Kind = ScheduleKind.OneTime,
+                OneTimeAt = DateTimeOffset.Now.AddSeconds(1),
+                Enabled = true
+            });
+        }
+
+        using var agent = StartAgent(root, instanceId);
+        try
+        {
+            await WaitForAgentAsync(pipeName);
+            var deadline = DateTimeOffset.UtcNow.AddSeconds(22);
+            ServerSnapshot? server = null;
+            while (DateTimeOffset.UtcNow < deadline)
+            {
+                server = Assert.Single((await SendAsync<DashboardSnapshot>(pipeName, "Dashboard")).Servers);
+                if (server.State == ServerState.Running)
+                    break;
+                await Task.Delay(250);
+            }
+            Assert.Equal(ServerState.Running, server?.State);
+            Assert.True(IsPortListening(port));
+
+            var session = await RegisterCurrentUiAsync(pipeName);
+            Assert.True((await SendAsync<OperationResult>(pipeName, "Stop",
+                AuthorizedStopRequest(definition.Id, session))).Success);
+            Assert.True((await SendAsync<OperationResult>(pipeName, "ShutdownAgent")).Success);
+            await agent.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        }
+        finally
+        {
+            if (!agent.HasExited)
+            {
+                agent.Kill(entireProcessTree: true);
+                await agent.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+            }
+            await DeleteFixtureRootAsync(root);
+        }
+    }
+
+    [Fact(Timeout = 30_000)]
+    public async Task Manual_stop_preempts_a_start_waiting_for_readiness()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "ChunkPilot-stop-startup-" + Guid.NewGuid().ToString("N"));
+        var instanceId = Guid.NewGuid().ToString("N");
+        var pipeName = ChunkPilotConstants.PipeNameFor(instanceId);
+        var definition = await CreateStoredFakeServerAsync(root, "no-readiness", TestPortAllocator.Reserve());
+        using var agent = StartAgent(root, instanceId);
+        try
+        {
+            await WaitForAgentAsync(pipeName);
+            var session = await RegisterCurrentUiAsync(pipeName);
+            var start = SendAsync<OperationResult>(pipeName, "Start",
+                AuthorizedServerRequest(definition.Id, session, PublicConnectivityOperation.StartServer));
+
+            var identityDeadline = DateTimeOffset.UtcNow.AddSeconds(5);
+            while (DateTimeOffset.UtcNow < identityDeadline)
+            {
+                await using var store = new ChunkPilotStore(new AppDataPaths(root));
+                await store.InitializeAsync();
+                if (await store.GetProcessIdentityAsync(definition.Id) is not null)
+                    break;
+                await Task.Delay(50);
+            }
+
+            var timer = Stopwatch.StartNew();
+            var stop = await SendAsync<OperationResult>(pipeName, "Stop",
+                    AuthorizedStopRequest(definition.Id, session))
+                .WaitAsync(TimeSpan.FromSeconds(3));
+            timer.Stop();
+
+            Assert.True(stop.Success, stop.Message);
+            Assert.True(timer.Elapsed < TimeSpan.FromSeconds(3), $"Stop took {timer.Elapsed}.");
+            var server = Assert.Single((await SendAsync<DashboardSnapshot>(pipeName, "Dashboard")).Servers);
+            Assert.Equal(ServerState.Stopped, server.State);
+            await Assert.ThrowsAnyAsync<Exception>(async () => await start);
+            Assert.True((await SendAsync<OperationResult>(pipeName, "ShutdownAgent")).Success);
+            await agent.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        }
+        finally
+        {
+            if (!agent.HasExited)
+            {
+                agent.Kill(entireProcessTree: true);
+                await agent.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+            }
+            await DeleteFixtureRootAsync(root);
+        }
+    }
+
+    [Fact(Timeout = 30_000)]
+    public async Task A_new_App_connection_reconciles_authoritative_state_while_stop_is_in_progress()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "ChunkPilot-reconnect-stop-" + Guid.NewGuid().ToString("N"));
+        var instanceId = Guid.NewGuid().ToString("N");
+        var pipeName = ChunkPilotConstants.PipeNameFor(instanceId);
+        var definition = await CreateStoredFakeServerAsync(root, "slow-stop", TestPortAllocator.Reserve());
+        using var agent = StartAgent(root, instanceId);
+        try
+        {
+            await WaitForAgentAsync(pipeName);
+            var session = await RegisterCurrentUiAsync(pipeName);
+            Assert.True((await SendAsync<OperationResult>(pipeName, "Start",
+                AuthorizedServerRequest(definition.Id, session, PublicConnectivityOperation.StartServer))).Success);
+
+            var stop = SendAsync<OperationResult>(pipeName, "Stop", AuthorizedStopRequest(definition.Id, session));
+            var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
+            ServerSnapshot? duringStop = null;
+            while (DateTimeOffset.UtcNow < deadline)
+            {
+                duringStop = Assert.Single((await SendAsync<DashboardSnapshot>(pipeName, "Dashboard")).Servers);
+                if (duringStop.State == ServerState.Stopping)
+                    break;
+                await Task.Delay(50);
+            }
+            Assert.Equal(ServerState.Stopping, duringStop?.State);
+            var stopResult = await stop;
+            Assert.True(stopResult.Success, stopResult.Message);
+
+            var reconciled = Assert.Single((await SendAsync<DashboardSnapshot>(pipeName, "Dashboard")).Servers);
+            Assert.Equal(ServerState.Stopped, reconciled.State);
+            Assert.True((await SendAsync<OperationResult>(pipeName, "ShutdownAgent")).Success);
+            await agent.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        }
+        finally
+        {
+            if (!agent.HasExited)
+            {
+                agent.Kill(entireProcessTree: true);
+                await agent.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+            }
+            await DeleteFixtureRootAsync(root);
+        }
+    }
+
+    [Fact(Timeout = 30_000)]
     public async Task Agent_accepts_multiple_sequential_ui_connections_and_shuts_down_cleanly()
     {
         var root = Path.Combine(Path.GetTempPath(), "ChunkPilot-agent-" + Guid.NewGuid().ToString("N"));
@@ -524,6 +757,23 @@ public sealed class AgentReconnectIntegrationTests
             throw new InvalidOperationException(response.Error);
         return response.Payload!.Value.Deserialize<T>(ProtocolJson.Options)
                ?? throw new IOException("Invalid payload.");
+    }
+
+    private static async Task DeleteFixtureRootAsync(string root)
+    {
+        for (var attempt = 0; attempt < 10; attempt++)
+        {
+            try
+            {
+                if (Directory.Exists(root))
+                    Directory.Delete(root, recursive: true);
+                return;
+            }
+            catch (IOException) when (attempt < 9)
+            {
+                await Task.Delay(100);
+            }
+        }
     }
 
     private static string RepositoryRoot()

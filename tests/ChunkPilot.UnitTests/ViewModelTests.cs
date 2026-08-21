@@ -92,6 +92,25 @@ public sealed class ViewModelTests
         Assert.False(viewModel.HasOperationNotice);
     }
 
+    [Fact]
+    public async Task WebUi_lifecycle_completion_preserves_a_failed_authoritative_stop_result()
+    {
+        var client = new FakeAgentClient(Snapshot(ServerState.Running))
+        {
+            StopResult = OperationResult.Fail(
+                "Stop could not take control because Backup did not cancel.")
+        };
+        var viewModel = new MainViewModel(client, new FakeDialogs());
+        await viewModel.InitializeAsync();
+        var server = Assert.Single(viewModel.Servers);
+
+        var result = await viewModel.RunWebUiLifecycleAsync("servers.stop", server);
+
+        Assert.False(result.Success);
+        Assert.Contains("did not cancel", result.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(ServerState.Running, Assert.Single(viewModel.Servers).State);
+    }
+
     private static ServerSnapshot Snapshot(ServerState state, string name = "Server", string rootPath = @"C:\fixture", Guid? id = null) => new()
     {
         Definition = new ServerDefinition
@@ -278,6 +297,7 @@ public sealed class ViewModelTests
         public HostSnapshot Host { get; set; } = new();
         public bool BlockStart { get; set; }
         public string StartError { get; set; } = "";
+        public OperationResult StopResult { get; set; } = OperationResult.Ok("stopped");
         public int StartCalls { get; private set; }
         public TaskCompletionSource StartEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource ReleaseStart { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -298,6 +318,7 @@ public sealed class ViewModelTests
                 "Inventory" => Array.Empty<ModPluginEntry>(),
                 "Diagnostics" => Array.Empty<DiagnosticFinding>(),
                 "GetSetting" => new TextResponse(""),
+                "Stop" => StopResult,
                 _ => OperationResult.Ok("ok")
             };
             if (operation == "Start")
