@@ -30,7 +30,7 @@ public sealed class PublicDistributionContractTests
     }
 
     [Fact]
-    public void Release_publication_is_manual_and_write_permission_is_isolated()
+    public void Hotfix_publication_builds_once_then_tags_and_publishes_the_exact_payload()
     {
         var release = File.ReadAllText(Path.Combine(Root, ".github", "workflows", "release.yml"));
         var ci = File.ReadAllText(Path.Combine(Root, ".github", "workflows", "ci.yml"));
@@ -39,12 +39,60 @@ public sealed class PublicDistributionContractTests
         Assert.Contains("permissions:\n  contents: read", release.Replace("\r\n", "\n"), StringComparison.Ordinal);
         Assert.Contains("contents: write", release, StringComparison.Ordinal);
         Assert.Contains("needs: build-and-test", release, StringComparison.Ordinal);
+        Assert.Contains("release_commit:", release, StringComparison.Ordinal);
+        Assert.Contains("supersedes:", release, StringComparison.Ordinal);
+        Assert.Contains("ref: ${{ inputs.release_commit }}", release, StringComparison.Ordinal);
+        Assert.Contains("Build, test, publish, and compile installer once", release, StringComparison.Ordinal);
+        Assert.Contains("Upload the one verified release payload", release, StringComparison.Ordinal);
+        Assert.Contains("Create or prove exact annotated tag", release, StringComparison.Ordinal);
+        Assert.Contains("git tag -a", release, StringComparison.Ordinal);
+        Assert.Contains("release-manifest.json", release, StringComparison.Ordinal);
         Assert.Contains("Redownload and verify public assets", release, StringComparison.Ordinal);
-        Assert.Contains("push:", ci, StringComparison.Ordinal);
+        Assert.Contains("hotfix-release-${{ inputs.tag }}", release, StringComparison.Ordinal);
+        Assert.Equal(1, release.Split("scripts/publish.ps1", StringSplitOptions.None).Length - 1);
+        Assert.True(
+            release.IndexOf("Build, test, publish, and compile installer once", StringComparison.Ordinal) <
+            release.IndexOf("Create or prove exact annotated tag", StringComparison.Ordinal));
+        Assert.True(
+            release.IndexOf("Create or prove exact annotated tag", StringComparison.Ordinal) <
+            release.IndexOf("Publish prerelease", StringComparison.Ordinal));
+        Assert.DoesNotContain("push:", ci, StringComparison.Ordinal);
         Assert.Contains("pull_request:", ci, StringComparison.Ordinal);
         Assert.Contains("workflow_dispatch:", ci, StringComparison.Ordinal);
-        Assert.Contains("distribution:", ci, StringComparison.Ordinal);
-        Assert.Contains("test-installer.ps1", ci, StringComparison.Ordinal);
+        Assert.DoesNotContain("test-installer.ps1", ci, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Hotfix_command_refuses_ambiguous_state_and_watches_one_exact_workflow_run()
+    {
+        var source = File.ReadAllText(Path.Combine(Root, "scripts", "publish-hotfix.ps1"));
+        var docs = File.ReadAllText(Path.Combine(Root, "docs", "RELEASING.md"));
+        Assert.Contains("git -C $repoRoot", source, StringComparison.Ordinal);
+        Assert.Contains("status --porcelain", source, StringComparison.Ordinal);
+        Assert.Contains("branch --show-current", source, StringComparison.Ordinal);
+        Assert.Contains("ls-remote origin refs/heads/main", source, StringComparison.Ordinal);
+        Assert.Contains("tags are immutable", source, StringComparison.Ordinal);
+        Assert.Contains("gh workflow run release.yml", source, StringComparison.Ordinal);
+        Assert.Contains("gh run watch $runId", source, StringComparison.Ordinal);
+        Assert.Contains("release-manifest.json", source, StringComparison.Ordinal);
+        Assert.Contains("-Version 1.3.0-alpha.4", docs, StringComparison.Ordinal);
+        Assert.Contains("builds and tests the WebUI and .NET solution once", docs, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Release_notes_are_version_neutral_and_require_explicit_hotfix_content()
+    {
+        var template = File.ReadAllText(Path.Combine(Root, "release", "RELEASE_NOTES.template.md"));
+        var package = File.ReadAllText(Path.Combine(Root, "scripts", "package-release.ps1"));
+        Assert.Contains("{{RELEASE_TITLE}}", template, StringComparison.Ordinal);
+        Assert.Contains("{{RELEASE_TAG}}", template, StringComparison.Ordinal);
+        Assert.Contains("{{INSTALLER_NAME}}", template, StringComparison.Ordinal);
+        Assert.Contains("{{HOTFIX_NOTES}}", template, StringComparison.Ordinal);
+        Assert.DoesNotContain("v1.3.0-alpha.3", template, StringComparison.Ordinal);
+        Assert.Contains("release\\HOTFIX_NOTES.md", package, StringComparison.Ordinal);
+        Assert.Contains("ProductVersion $productVersion is not bound to release commit $commit", package,
+            StringComparison.Ordinal);
+        Assert.Contains("unresolved placeholder", package, StringComparison.Ordinal);
     }
 
     [Fact]

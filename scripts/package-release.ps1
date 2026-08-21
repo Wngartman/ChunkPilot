@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
+    [Parameter(Mandatory)]
     [ValidatePattern('^v1\.3\.0-alpha\.[1-9][0-9]*$')]
-    [string]$ReleaseTag = 'v1.3.0-alpha.3'
+    [string]$ReleaseTag
 )
 
 $ErrorActionPreference = 'Stop'
@@ -117,11 +118,25 @@ $hashLines = foreach ($path in $hashTargets) {
 [IO.File]::WriteAllLines($checksums, $hashLines, [Text.UTF8Encoding]::new($false))
 
 $productVersion = [Diagnostics.FileVersionInfo]::GetVersionInfo((Join-Path $selfContained 'ChunkPilot.exe')).ProductVersion
+if (-not $productVersion.EndsWith($commit, [StringComparison]::OrdinalIgnoreCase)) {
+    throw "Packaged ProductVersion $productVersion is not bound to release commit $commit."
+}
 $notes = Get-Content -LiteralPath (Join-Path $repoRoot 'release\RELEASE_NOTES.template.md') -Raw
+$hotfixNotes = Get-Content -LiteralPath (Join-Path $repoRoot 'release\HOTFIX_NOTES.md') -Raw
+if ([string]::IsNullOrWhiteSpace($hotfixNotes)) { throw 'release/HOTFIX_NOTES.md is empty.' }
+if ($ReleaseTag -notmatch '^v(?<version>\d+\.\d+\.\d+)-alpha\.(?<alpha>[1-9][0-9]*)$') {
+    throw "Could not derive release metadata from $ReleaseTag."
+}
+$releaseTitle = "ChunkPilot $($matches.version) Alpha $($matches.alpha)"
 $notes = $notes.Replace('{{RELEASE_COMMIT}}', $commit)
 $notes = $notes.Replace('{{PRODUCT_VERSION}}', $productVersion)
 $notes = $notes.Replace('{{BUILD_TIME_UTC}}', [DateTimeOffset]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ'))
 $notes = $notes.Replace('{{SHA256_SUMS}}', ($hashLines -join "`n"))
+$notes = $notes.Replace('{{RELEASE_TITLE}}', $releaseTitle)
+$notes = $notes.Replace('{{RELEASE_TAG}}', $ReleaseTag)
+$notes = $notes.Replace('{{INSTALLER_NAME}}', $installerName)
+$notes = $notes.Replace('{{HOTFIX_NOTES}}', $hotfixNotes.Trim())
+if ($notes -match '\{\{[A-Z0-9_]+\}\}') { throw "Release notes contain an unresolved placeholder: $($matches[0])" }
 [IO.File]::WriteAllText($releaseNotes, $notes, [Text.UTF8Encoding]::new($false))
 
 $assetReport = foreach ($path in @($installer, $portable, $checksums, $sbom, $notices, $releaseNotes)) {

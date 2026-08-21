@@ -1,50 +1,104 @@
-name: Publish prerelease
+name: Publish hotfix prerelease
 
 on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing annotated prerelease tag to build and publish
+        description: New prerelease tag, for example v1.3.0-alpha.4
         required: true
+        type: string
+      release_commit:
+        description: Exact public main commit to test, tag, and publish
+        required: true
+        type: string
+      supersedes:
+        description: Optional existing prerelease tag to mark superseded
+        required: false
+        default: ''
         type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-${{ inputs.tag }}
+  group: hotfix-release-${{ inputs.tag }}
   cancel-in-progress: false
 
 jobs:
   build-and-test:
-    name: Build and test exact tag
+    name: Build and test exact public commit
     runs-on: windows-latest
     timeout-minutes: 120
+    env:
+      RELEASE_TAG: ${{ inputs.tag }}
+      RELEASE_COMMIT: ${{ inputs.release_commit }}
+      SUPERSEDES_TAG: ${{ inputs.supersedes }}
 
     steps:
-      - name: Validate tag input
+      - name: Validate release request
         shell: pwsh
         run: |
-          if ('${{ inputs.tag }}' -notmatch '^v1\.3\.0-alpha\.[1-9][0-9]*$') {
-            throw 'Release input must be a ChunkPilot 1.3.0 alpha tag.'
+          if ($env:RELEASE_TAG -notmatch '^v1\.3\.0-alpha\.[1-9][0-9]*$') {
+            throw 'Release tag must be a ChunkPilot 1.3.0 alpha tag.'
+          }
+          if ($env:RELEASE_COMMIT -notmatch '^[0-9a-f]{40}$') {
+            throw 'release_commit must be a full lowercase Git commit SHA.'
+          }
+          if ($env:SUPERSEDES_TAG -and
+              $env:SUPERSEDES_TAG -notmatch '^v1\.3\.0-alpha\.[1-9][0-9]*$') {
+            throw 'supersedes must be empty or an existing ChunkPilot 1.3.0 alpha tag.'
+          }
+          if ($env:SUPERSEDES_TAG -eq $env:RELEASE_TAG) {
+            throw 'A release cannot supersede itself.'
           }
 
-      - name: Check out exact tag
+      - name: Check out exact release commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.tag }}
+          ref: ${{ inputs.release_commit }}
           fetch-depth: 0
 
-      - name: Prove annotated tag identity
+      - name: Prove public main and immutable release identity
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          $tag = '${{ inputs.tag }}'
-          $kind = (git cat-file -t "refs/tags/$tag").Trim()
-          if ($kind -ne 'tag') { throw "$tag is not an annotated tag." }
-          $tagCommit = (git rev-list -n 1 $tag).Trim()
           $head = (git rev-parse HEAD).Trim()
-          if ($tagCommit -ne $head) { throw "Checked-out HEAD $head is not tag target $tagCommit." }
-          "RELEASE_COMMIT=$head" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          if ($head -ne $env:RELEASE_COMMIT) {
+            throw "Checked-out HEAD $head differs from requested commit $env:RELEASE_COMMIT."
+          }
+          $mainRow = @(git ls-remote origin refs/heads/main)
+          if ($LASTEXITCODE -ne 0 -or $mainRow.Count -ne 1) {
+            throw 'Could not resolve the exact public main commit.'
+          }
+          $publicMain = ($mainRow[0] -split '\s+')[0]
+          if ($publicMain -ne $env:RELEASE_COMMIT) {
+            throw "Public main advanced to $publicMain; refusing to release stale commit $env:RELEASE_COMMIT."
+          }
+
+          $releaseResult = gh api "repos/${{ github.repository }}/releases/tags/$env:RELEASE_TAG" 2>&1
+          $releaseExit = $LASTEXITCODE
+          if ($releaseExit -eq 0) {
+            throw 'This tag already has a GitHub release; immutable assets will not be replaced.'
+          }
+          if (($releaseResult -join "`n") -notmatch '\(HTTP 404\)') {
+            throw "Could not prove that the release is unused: $($releaseResult -join ' ')"
+          }
+          $global:LASTEXITCODE = 0
+
+          $tagRows = @(git ls-remote --tags origin "refs/tags/$env:RELEASE_TAG" "refs/tags/$env:RELEASE_TAG^{}")
+          if ($LASTEXITCODE -ne 0) { throw 'Could not inspect the remote release tag.' }
+          if ($tagRows.Count -gt 0) {
+            $peeled = @($tagRows | Where-Object { $_ -match '\^\{\}$' })
+            if ($peeled.Count -ne 1 -or (($peeled[0] -split '\s+')[0]) -ne $env:RELEASE_COMMIT) {
+              throw 'An existing tag is lightweight, ambiguous, or targets a different commit.'
+            }
+            git fetch --force origin "refs/tags/$env:RELEASE_TAG:refs/tags/$env:RELEASE_TAG"
+            if ($LASTEXITCODE -ne 0 -or (git cat-file -t "refs/tags/$env:RELEASE_TAG").Trim() -ne 'tag') {
+              throw 'The existing remote tag is not an annotated tag.'
+            }
+            Write-Host 'Reusing an exact annotated tag left by an earlier publish-stage interruption.'
+          }
 
       - name: Set up .NET
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
@@ -62,9 +116,9 @@ jobs:
         shell: pwsh
         run: ./scripts/install-inno-setup.ps1
 
-      - name: Build, test, publish, and compile installer
+      - name: Build, test, publish, and compile installer once
         shell: pwsh
-        run: ./scripts/publish.ps1 -BuildInstaller -ReleaseTag '${{ inputs.tag }}'
+        run: ./scripts/publish.ps1 -BuildInstaller -ReleaseTag $env:RELEASE_TAG
 
       - name: Test packaged Agent
         shell: pwsh
@@ -78,17 +132,17 @@ jobs:
         shell: pwsh
         run: ./scripts/test-packaged-ui-close.ps1 -PortableRoot ./artifacts/portable-test -WebUiPreview
 
-      - name: Assemble checksums, SBOM, notices, and release notes
+      - name: Assemble checksums, SBOM, notices, notes, and release manifest
         shell: pwsh
-        run: ./scripts/package-release.ps1 -ReleaseTag '${{ inputs.tag }}'
+        run: ./scripts/package-release.ps1 -ReleaseTag $env:RELEASE_TAG
 
       - name: Test portable ZIP from a clean extraction
         shell: pwsh
-        run: ./scripts/test-portable-package.ps1 -PortableZip "./artifacts/release/${{ inputs.tag }}/ChunkPilot-Portable-${{ inputs.tag }}-win-x64.zip"
+        run: ./scripts/test-portable-package.ps1 -PortableZip "./artifacts/release/$env:RELEASE_TAG/ChunkPilot-Portable-$env:RELEASE_TAG-win-x64.zip"
 
       - name: Test clean install, reinstall, uninstall, and data preservation
         shell: pwsh
-        run: ./scripts/test-installer.ps1 -InstallerPath "./artifacts/release/${{ inputs.tag }}/ChunkPilot-Setup-${{ inputs.tag }}.exe"
+        run: ./scripts/test-installer.ps1 -InstallerPath "./artifacts/release/$env:RELEASE_TAG/ChunkPilot-Setup-$env:RELEASE_TAG.exe"
 
       - name: Audit exact publication tree
         shell: pwsh
@@ -101,61 +155,113 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'git diff --check failed.' }
           if (git status --porcelain) { throw 'Release build changed tracked source files.' }
 
-      - name: Upload verified release payload
+      - name: Upload the one verified release payload
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: chunkpilot-${{ inputs.tag }}
+          name: chunkpilot-${{ inputs.tag }}-${{ inputs.release_commit }}
           path: artifacts/release/${{ inputs.tag }}/*
           if-no-files-found: error
           retention-days: 30
 
   publish:
-    name: Publish immutable GitHub prerelease
+    name: Tag and publish the verified payload
     needs: build-and-test
     runs-on: windows-latest
     timeout-minutes: 20
     permissions:
       contents: write
+    env:
+      RELEASE_TAG: ${{ inputs.tag }}
+      RELEASE_COMMIT: ${{ inputs.release_commit }}
+      SUPERSEDES_TAG: ${{ inputs.supersedes }}
 
     steps:
+      - name: Check out exact release commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.release_commit }}
+          fetch-depth: 0
+
       - name: Download verified release payload
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: chunkpilot-${{ inputs.tag }}
+          name: chunkpilot-${{ inputs.tag }}-${{ inputs.release_commit }}
           path: release
 
-      - name: Refuse to replace an existing release
+      - name: Validate payload and recheck public main
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $result = gh api "repos/${{ github.repository }}/releases/tags/${{ inputs.tag }}" 2>&1
-          $exitCode = $LASTEXITCODE
-          if ($exitCode -eq 0) {
-            throw 'This tag already has a GitHub release; immutable assets will not be replaced.'
+          $expected = @(
+            "ChunkPilot-Setup-$env:RELEASE_TAG.exe",
+            "ChunkPilot-Portable-$env:RELEASE_TAG-win-x64.zip",
+            'SHA256SUMS.txt', 'ChunkPilot-SBOM.spdx.json', 'THIRD-PARTY-NOTICES.txt',
+            'RELEASE_NOTES.md', 'release-manifest.json'
+          )
+          foreach ($asset in $expected) {
+            if (-not (Test-Path -LiteralPath (Join-Path release $asset))) {
+              throw "Missing verified asset: $asset"
+            }
           }
-          if (($result -join "`n") -notmatch '\(HTTP 404\)') {
-            throw "Could not prove that the release tag is unused: $($result -join ' ')"
+          $manifest = Get-Content -LiteralPath release/release-manifest.json -Raw | ConvertFrom-Json
+          if ($manifest.Tag -ne $env:RELEASE_TAG -or $manifest.Commit -ne $env:RELEASE_COMMIT) {
+            throw 'Verified payload manifest is not bound to the requested tag and commit.'
+          }
+
+          $mainRow = @(git ls-remote origin refs/heads/main)
+          if ($LASTEXITCODE -ne 0 -or $mainRow.Count -ne 1) { throw 'Could not recheck public main.' }
+          $publicMain = ($mainRow[0] -split '\s+')[0]
+          if ($publicMain -ne $env:RELEASE_COMMIT) {
+            throw "Public main advanced to $publicMain after testing; no tag or release was created."
+          }
+
+          $releaseResult = gh api "repos/${{ github.repository }}/releases/tags/$env:RELEASE_TAG" 2>&1
+          $releaseExit = $LASTEXITCODE
+          if ($releaseExit -eq 0) { throw 'The target release already exists.' }
+          if (($releaseResult -join "`n") -notmatch '\(HTTP 404\)') {
+            throw "Could not prove that the release is unused: $($releaseResult -join ' ')"
           }
           $global:LASTEXITCODE = 0
+
+      - name: Create or prove exact annotated tag
+        shell: pwsh
+        run: |
+          $tagRows = @(git ls-remote --tags origin "refs/tags/$env:RELEASE_TAG" "refs/tags/$env:RELEASE_TAG^{}")
+          if ($LASTEXITCODE -ne 0) { throw 'Could not inspect the remote release tag.' }
+          if ($tagRows.Count -eq 0) {
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git tag -a $env:RELEASE_TAG $env:RELEASE_COMMIT -m "ChunkPilot $env:RELEASE_TAG"
+            if ($LASTEXITCODE -ne 0) { throw 'Annotated tag creation failed.' }
+            git push origin "refs/tags/$env:RELEASE_TAG"
+            if ($LASTEXITCODE -ne 0) { throw 'Annotated tag publication failed.' }
+          }
+          else {
+            $peeled = @($tagRows | Where-Object { $_ -match '\^\{\}$' })
+            if ($peeled.Count -ne 1 -or (($peeled[0] -split '\s+')[0]) -ne $env:RELEASE_COMMIT) {
+              throw 'The existing tag is not the exact annotated tag expected for this release.'
+            }
+          }
 
       - name: Publish prerelease
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $tag = '${{ inputs.tag }}'
+          if ($env:RELEASE_TAG -notmatch '^v(?<version>\d+\.\d+\.\d+)-alpha\.(?<alpha>[1-9][0-9]*)$') {
+            throw 'Could not derive the public release title.'
+          }
+          $title = "ChunkPilot $($matches.version) Alpha $($matches.alpha)"
           $assets = @(
-            "release/ChunkPilot-Setup-$tag.exe",
-            "release/ChunkPilot-Portable-$tag-win-x64.zip",
-            'release/SHA256SUMS.txt',
-            'release/ChunkPilot-SBOM.spdx.json',
-            'release/THIRD-PARTY-NOTICES.txt',
-            'release/RELEASE_NOTES.md'
+            "release/ChunkPilot-Setup-$env:RELEASE_TAG.exe",
+            "release/ChunkPilot-Portable-$env:RELEASE_TAG-win-x64.zip",
+            'release/SHA256SUMS.txt', 'release/ChunkPilot-SBOM.spdx.json',
+            'release/THIRD-PARTY-NOTICES.txt', 'release/RELEASE_NOTES.md',
+            'release/release-manifest.json'
           )
-          foreach ($asset in $assets) { if (-not (Test-Path -LiteralPath $asset)) { throw "Missing verified asset: $asset" } }
-          gh release create $tag @assets --repo '${{ github.repository }}' --verify-tag --prerelease `
-            --title 'ChunkPilot 1.3.0 Alpha Snapshot' --notes-file release/RELEASE_NOTES.md
+          gh release create $env:RELEASE_TAG @assets --repo '${{ github.repository }}' --verify-tag `
+            --prerelease --title $title --notes-file release/RELEASE_NOTES.md
           if ($LASTEXITCODE -ne 0) { throw 'GitHub prerelease publication failed.' }
 
       - name: Redownload and verify public assets
@@ -163,24 +269,67 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $tag = '${{ inputs.tag }}'
-          $release = gh api "repos/${{ github.repository }}/releases/tags/$tag" | ConvertFrom-Json
-          if (-not $release.prerelease -or $release.draft) { throw 'Published release state is not a visible prerelease.' }
+          $release = gh api "repos/${{ github.repository }}/releases/tags/$env:RELEASE_TAG" | ConvertFrom-Json
+          if (-not $release.prerelease -or $release.draft) {
+            throw 'Published release state is not a visible prerelease.'
+          }
           $expected = @(
-            "ChunkPilot-Setup-$tag.exe", "ChunkPilot-Portable-$tag-win-x64.zip", 'SHA256SUMS.txt',
-            'ChunkPilot-SBOM.spdx.json', 'THIRD-PARTY-NOTICES.txt', 'RELEASE_NOTES.md'
+            "ChunkPilot-Setup-$env:RELEASE_TAG.exe", "ChunkPilot-Portable-$env:RELEASE_TAG-win-x64.zip",
+            'SHA256SUMS.txt', 'ChunkPilot-SBOM.spdx.json', 'THIRD-PARTY-NOTICES.txt',
+            'RELEASE_NOTES.md', 'release-manifest.json'
           )
           $actual = @($release.assets | ForEach-Object name)
-          if (@($expected | Where-Object { $_ -notin $actual }).Count -ne 0) { throw 'One or more release assets are missing.' }
+          if (@($expected | Where-Object { $_ -notin $actual }).Count -ne 0) {
+            throw 'One or more public release assets are missing.'
+          }
           New-Item -ItemType Directory -Path downloaded | Out-Null
-          gh release download $tag --repo '${{ github.repository }}' --dir downloaded
-          $sumLines = Get-Content downloaded/SHA256SUMS.txt
-          foreach ($line in $sumLines) {
+          gh release download $env:RELEASE_TAG --repo '${{ github.repository }}' --dir downloaded
+          if ($LASTEXITCODE -ne 0) { throw 'Public asset redownload failed.' }
+          foreach ($line in Get-Content downloaded/SHA256SUMS.txt) {
             if ($line -notmatch '^([0-9a-f]{64})  (.+)$') { throw "Invalid SHA256SUMS line: $line" }
             $path = Join-Path downloaded $matches[2]
-            if (-not (Test-Path -LiteralPath $path)) { throw "Checksum target was not downloaded: $($matches[2])" }
+            if (-not (Test-Path -LiteralPath $path)) { throw "Missing checksum target: $($matches[2])" }
             $hash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
             if ($hash -ne $matches[1]) { throw "Redownloaded asset hash mismatch: $($matches[2])" }
           }
+          $manifest = Get-Content -LiteralPath downloaded/release-manifest.json -Raw | ConvertFrom-Json
+          if ($manifest.Tag -ne $env:RELEASE_TAG -or $manifest.Commit -ne $env:RELEASE_COMMIT) {
+            throw 'Public release manifest does not identify the exact tested commit.'
+          }
           "RELEASE_URL=$($release.html_url)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           Write-Host "Verified public prerelease: $($release.html_url)"
+
+      - name: Mark the previous prerelease superseded
+        if: inputs.supersedes != ''
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $previous = gh api "repos/${{ github.repository }}/releases/tags/$env:SUPERSEDES_TAG" | ConvertFrom-Json
+          if (-not $previous -or $previous.draft) { throw 'The superseded release is missing or not public.' }
+          $notice = "**Superseded by $env:RELEASE_TAG.**`n`nThis prerelease has been superseded by [$env:RELEASE_TAG]($env:RELEASE_URL). New users should install $env:RELEASE_TAG instead."
+          $oldBody = [string]$previous.body
+          if (-not $oldBody.StartsWith($notice, [StringComparison]::Ordinal)) {
+            [IO.File]::WriteAllText('superseded-notes.md', $notice + "`n`n" + $oldBody,
+              [Text.UTF8Encoding]::new($false))
+            gh release edit $env:SUPERSEDES_TAG --repo '${{ github.repository }}' --notes-file superseded-notes.md
+            if ($LASTEXITCODE -ne 0) { throw 'Could not mark the previous prerelease superseded.' }
+          }
+
+      - name: Record immutable release baseline
+        shell: pwsh
+        run: |
+          $manifest = Get-Content -LiteralPath downloaded/release-manifest.json -Raw | ConvertFrom-Json
+          $installer = $manifest.Assets | Where-Object Name -eq "ChunkPilot-Setup-$env:RELEASE_TAG.exe"
+          $portable = $manifest.Assets | Where-Object Name -eq "ChunkPilot-Portable-$env:RELEASE_TAG-win-x64.zip"
+          @"
+          ## Published hotfix baseline
+
+          - Tag: ``$env:RELEASE_TAG``
+          - Commit: ``$env:RELEASE_COMMIT``
+          - Product: ``$($manifest.ProductVersion)``
+          - Installer SHA-256: ``$($installer.Sha256)``
+          - Portable SHA-256: ``$($portable.Sha256)``
+          - Release: $env:RELEASE_URL
+          - Workflow: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          "@ | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append

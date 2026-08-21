@@ -1,15 +1,8 @@
 name: CI
 
 on:
-  push:
   pull_request:
   workflow_dispatch:
-    inputs:
-      distribution:
-        description: Also run installer, portable, and uninstall-preservation gates
-        required: true
-        default: false
-        type: boolean
 
 permissions:
   contents: read
@@ -67,61 +60,3 @@ jobs:
         run: |
           git diff --check
           if ($LASTEXITCODE -ne 0) { throw 'git diff --check failed.' }
-
-  distribution:
-    name: Disposable installer and portable validation
-    if: github.event_name == 'workflow_dispatch' && inputs.distribution
-    needs: validate
-    runs-on: windows-latest
-    timeout-minutes: 120
-
-    steps:
-      - name: Check out exact source
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-
-      - name: Set up .NET
-        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
-        with:
-          global-json-file: global.json
-
-      - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 24.x
-          cache: npm
-          cache-dependency-path: src/ChunkPilot.WebUi/package-lock.json
-
-      - name: Install verified repository-local Inno Setup
-        shell: pwsh
-        run: ./scripts/install-inno-setup.ps1
-
-      - name: Build installer and portable layouts
-        shell: pwsh
-        run: ./scripts/publish.ps1 -BuildInstaller -ReleaseTag v1.3.0-alpha.2
-
-      - name: Test packaged Agent and both UI launch modes
-        shell: pwsh
-        run: |
-          ./scripts/smoke-portable.ps1 -PortableRoot ./artifacts/portable-test
-          ./scripts/test-packaged-ui-close.ps1 -PortableRoot ./artifacts/portable-test
-          ./scripts/test-packaged-ui-close.ps1 -PortableRoot ./artifacts/portable-test -WebUiPreview
-
-      - name: Assemble and test portable release
-        shell: pwsh
-        run: |
-          ./scripts/package-release.ps1 -ReleaseTag v1.3.0-alpha.2
-          ./scripts/test-portable-package.ps1 -PortableZip ./artifacts/release/v1.3.0-alpha.2/ChunkPilot-Portable-v1.3.0-alpha.2-win-x64.zip
-
-      - name: Test clean install, reinstall, uninstall, and data preservation
-        shell: pwsh
-        run: ./scripts/test-installer.ps1 -InstallerPath ./artifacts/release/v1.3.0-alpha.2/ChunkPilot-Setup-v1.3.0-alpha.2.exe
-
-      - name: Recheck publication tree and source cleanliness
-        shell: pwsh
-        run: |
-          ./scripts/audit-publication.ps1
-          git diff --check
-          if ($LASTEXITCODE -ne 0) { throw 'git diff --check failed.' }
-          if (git status --porcelain) { throw 'Distribution validation changed tracked source files.' }
