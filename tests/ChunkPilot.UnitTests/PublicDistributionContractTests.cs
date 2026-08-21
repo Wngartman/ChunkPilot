@@ -52,6 +52,8 @@ public sealed class PublicDistributionContractTests
         Assert.Contains("Redownload and verify public assets", release, StringComparison.Ordinal);
         Assert.Contains("release-${{ inputs.tag }}", release, StringComparison.Ordinal);
         Assert.Contains("ChunkPilot-Release-Metadata-$env:RELEASE_TAG.zip", release, StringComparison.Ordinal);
+        Assert.Contains("artifacts/previous-release", release, StringComparison.Ordinal);
+        Assert.DoesNotContain("-Path previous-release", release, StringComparison.Ordinal);
         Assert.Equal(1, release.Split("scripts/publish.ps1", StringSplitOptions.None).Length - 1);
         Assert.True(
             release.IndexOf("Build, test, publish, and compile installer once", StringComparison.Ordinal) <
