@@ -135,8 +135,39 @@ export interface ModpackProviderStatus { provider: ModpackProvider; available: b
 export type CatalogGameVersionKind = 'Release' | 'Snapshot' | 'Beta' | 'Alpha' | 'Unknown';
 export interface ModpackGameVersion { versionId: string; kind: CatalogGameVersionKind; publishedAt: string | null; isMajor: boolean; }
 export interface ModpackVersionInventory { provider: ModpackProvider; state: ModpackCatalogLoadState; versions: ModpackGameVersion[]; detail: string; failedStage: string; retrievedAt: string | null; fromCache: boolean; stale: boolean; }
-export interface CurseForgeSourceStatus { configured: boolean; readyToBrowse: boolean; detail: string; }
-export interface LocalModpackSelection { cancelled: boolean; token?: string; fileName?: string; expiresAt?: string; inspection?: { name: string; versionName: string; summary: string; minecraftVersion: string; loader: string; loaderVersion: string; requiredJavaMajor: number; requiredServerFiles: number; optionalServerFiles: number; excludedClientFiles: number; indexedServerBytes: number; canCreate: boolean; limitation: string; }; }
+export interface ResolvedModpackLink { canonicalUrl: string; exactRelease: boolean; project: ModpackProject; release: ModpackRelease; detail: string; }
+export interface LocalModpackSelection {
+  cancelled: boolean;
+  token?: string;
+  fileName?: string;
+  expiresAt?: string;
+  managementMode?: 'ManagedCopy' | 'ByReference';
+  launchRelativePath?: string;
+  inspection?: {
+    sourceKind: 'ModrinthPack' | 'CurseForgePack' | 'ServerArchive' | 'ServerJar' | 'ServerFolder';
+    name: string;
+    summary: string;
+    minecraftVersion: string;
+    loader: string;
+    loaderVersion: string;
+    requiredJavaMajor: number;
+    requiredServerFiles: number;
+    optionalServerFiles: number;
+    excludedClientFiles: number;
+    indexedServerBytes: number;
+    sourceSizeBytes: number;
+    expandedSizeBytes: number;
+    fileCount: number;
+    modCount: number;
+    pluginCount: number;
+    containsWorld: boolean;
+    serverRoot: string;
+    launchCandidates: string[];
+    canReference: boolean;
+    canCreate: boolean;
+    limitation: string;
+  };
+}
 export interface TextFileContent { relativePath: string; content: string; encodingName: string; hasBom: boolean; lineEnding: string; loadedSha256: string; loadedLastWriteAt: string | null; }
 export interface ScheduleEntry { id: string; serverId: string; name: string; action: string; kind: string; intervalMinutes: number; at: string; cron: string; command: string; enabled: boolean; nextRunAt: string | null; lastRunAt: string | null; backupBeforeRestart: boolean; restartCountdownSeconds: number; }
 export interface BackupEntry { id: string; createdAt: string; description: string; sizeBytes: number; verified: boolean; source: string; }
@@ -295,11 +326,10 @@ export type BridgeMethod =
   | 'mods.openFolder' | 'mods.chooseLocal' | 'mods.installLocal' | 'mods.providers' | 'mods.search' | 'mods.release'
   | 'mods.install' | 'mods.plan' | 'mods.installPlan' | 'mods.setEnabled' | 'mods.remove' | 'mods.configFiles' | 'mods.saveConfig'
   | 'content.operations' | 'content.cancel'
-  | 'modpacks.providers' | 'modpacks.versions' | 'modpacks.cache' | 'modpacks.search' | 'modpacks.image' | 'modpacks.chooseLocal'
+  | 'modpacks.providers' | 'modpacks.versions' | 'modpacks.cache' | 'modpacks.search' | 'modpacks.resolveLink' | 'modpacks.image' | 'modpacks.chooseLocal'
   | 'console.send' | 'workspace.load' | 'files.openFolder' | 'files.navigate' | 'files.read' | 'files.write'
   | 'backups.create' | 'backups.restore' | 'backups.verify'
   | 'players.moderate' | 'schedules.upsert' | 'schedules.delete' | 'settings.saveGlobal' | 'settings.saveServer'
-  | 'settings.curseforge.status' | 'settings.curseforge.save' | 'settings.curseforge.disconnect' | 'settings.curseforge.openConsole'
   | 'connectivity.copyAddress' | 'connectivity.open' | 'connectivity.setMode'
   | 'connectivity.router.check' | 'connectivity.router.confirm' | 'connectivity.router.cancelConsent' | 'connectivity.router.stop' | 'connectivity.router.cancel' | 'connectivity.router.retry'
   | 'connectivity.external.check' | 'connectivity.external.cancel'

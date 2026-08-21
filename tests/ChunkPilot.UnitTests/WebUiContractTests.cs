@@ -121,13 +121,14 @@ public sealed class WebUiContractTests
         Assert.True(WebUiMethodPolicy.IsAllowed("modpacks.cache"));
         Assert.True(WebUiMethodPolicy.IsAllowed("modpacks.providers"));
         Assert.True(WebUiMethodPolicy.IsAllowed("modpacks.versions"));
+        Assert.True(WebUiMethodPolicy.IsAllowed("modpacks.resolveLink"));
         Assert.True(WebUiMethodPolicy.IsAllowed("modpacks.image"));
         Assert.True(WebUiMethodPolicy.IsAllowed("modpacks.chooseLocal"));
         Assert.True(WebUiMethodPolicy.IsAllowed("creation.chooseLegacyArtifact"));
-        Assert.True(WebUiMethodPolicy.IsAllowed("settings.curseforge.status"));
-        Assert.True(WebUiMethodPolicy.IsAllowed("settings.curseforge.save"));
-        Assert.True(WebUiMethodPolicy.IsAllowed("settings.curseforge.disconnect"));
-        Assert.True(WebUiMethodPolicy.IsAllowed("settings.curseforge.openConsole"));
+        Assert.False(WebUiMethodPolicy.IsAllowed("settings.curseforge.status"));
+        Assert.False(WebUiMethodPolicy.IsAllowed("settings.curseforge.save"));
+        Assert.False(WebUiMethodPolicy.IsAllowed("settings.curseforge.disconnect"));
+        Assert.False(WebUiMethodPolicy.IsAllowed("settings.curseforge.openConsole"));
         Assert.True(WebUiMethodPolicy.IsAllowed("versions.install"));
         Assert.True(WebUiMethodPolicy.IsAllowed("versions.rollback"));
         Assert.True(WebUiMethodPolicy.IsAllowed("versions.verify"));

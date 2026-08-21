@@ -26,7 +26,7 @@ export default function App() {
 function AppContent() {
   const [route, setRoute] = useState<GlobalRoute>(() => (new URLSearchParams(window.location.search).get('page') as GlobalRoute | null) ?? 'dashboard');
   const [serverRouteId, setServerRouteId] = useState<string | null | undefined>(undefined);
-  const [settingsCategory, setSettingsCategory] = useState(() => {
+  const [settingsCategory] = useState(() => {
     const query = new URLSearchParams(window.location.search);
     return query.get('category') ?? query.get('settings') ?? 'General';
   });
@@ -94,7 +94,6 @@ function AppContent() {
     : route === 'automation' ? <AutomationPage />
     : route === 'settings' ? <SettingsPage initialCategory={settingsCategory} />
     : route === 'gallery' ? <DesignGalleryPage />
-    : <CreateServerPage onDone={() => { setServerRouteId(undefined); setRoute('servers'); }}
-      onOpenProviderSettings={() => { setSettingsCategory('Content sources'); setRoute('settings'); }} />;
+    : <CreateServerPage onDone={() => { setServerRouteId(undefined); setRoute('servers'); }} />;
   return <Shell route={route} activeServerId={activeServerId} onRoute={next => navigate(() => runMeasuredNavigation(next, () => setRoute(next)))} onOpenServer={openServer} onOpenLibrary={openLibrary}><Suspense fallback={<div className={styles.routeLoading}>Loading view…</div>}>{content}</Suspense></Shell>;
 }

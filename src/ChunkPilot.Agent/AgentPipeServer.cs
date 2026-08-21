@@ -45,6 +45,7 @@ public sealed class AgentPipeServer
     private readonly ISecretStore secrets;
     private readonly AppDataPaths paths;
     private readonly ServerDeletionCoordinator deletions;
+    private readonly ServerImportInspectionService importInspection = new();
     private readonly ILogger<AgentPipeServer> logger;
     private readonly SemaphoreSlim handlerLimit = new(16, 16);
     private readonly ConcurrentDictionary<int, Task> handlers = new();
@@ -376,6 +377,13 @@ public sealed class AgentPipeServer
                         .ConfigureAwait(false),
                     ProtocolJson.Options);
             }
+            case "InspectServerImport":
+            {
+                var input = Deserialize<ServerImportInspectRequest>(request);
+                return JsonSerializer.SerializeToElement(
+                    await InspectServerImportAsync(input.NativePath, cancellationToken).ConfigureAwait(false),
+                    ProtocolJson.Options);
+            }
             case "BeginModpackCreation":
             {
                 var input = Deserialize<BeginModpackCreationRequest>(request);
@@ -386,6 +394,17 @@ public sealed class AgentPipeServer
             {
                 return JsonSerializer.SerializeToElement(
                     new ModpackCreationsResult(installations.ModpackOperations()), ProtocolJson.Options);
+            }
+            case "BeginServerImport":
+            {
+                var input = Deserialize<BeginServerImportRequest>(request);
+                return JsonSerializer.SerializeToElement(
+                    new InstallOperationRequest(installations.BeginImport(input.Plan)), ProtocolJson.Options);
+            }
+            case "ServerImportOperations":
+            {
+                return JsonSerializer.SerializeToElement(
+                    new ServerImportOperationsResult(installations.ImportOperations()), ProtocolJson.Options);
             }
             case "InstallVersions":
             {
@@ -2145,6 +2164,74 @@ public sealed class AgentPipeServer
         return (await store.GetBackupsAsync(cancellationToken: cancellationToken).ConfigureAwait(false))
             .SingleOrDefault(record => record.Id == id)
             ?? throw new KeyNotFoundException($"Backup {id} was not found.");
+    }
+
+    private async Task<ServerImportInspection> InspectServerImportAsync(
+        string nativePath,
+        CancellationToken cancellationToken)
+    {
+        if (File.Exists(nativePath))
+            return await importInspection.InspectFileAsync(nativePath, cancellationToken).ConfigureAwait(false);
+        if (!Directory.Exists(nativePath))
+            throw new FileNotFoundException("The selected server file or folder no longer exists.");
+        var result = await detector.DetectAsync(nativePath, cancellationToken).ConfigureAwait(false);
+        var relativeCandidates = result.Candidates.Select(candidate => Path.GetRelativePath(result.RootPath,
+            candidate.SourcePath).Replace('\\', '/')).ToArray();
+        var files = EnumerateImportFiles(result.RootPath).ToArray();
+        long size = 0;
+        foreach (var file in files)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (File.GetAttributes(file).HasFlag(FileAttributes.ReparsePoint))
+                throw new InvalidDataException("The selected server folder contains a link or reparse point and cannot be copied safely.");
+            size = checked(size + new FileInfo(file).Length);
+            if (size > ServerImportInspectionService.MaximumExpandedBytes)
+                throw new InvalidDataException("The selected folder exceeds ChunkPilot's 16 GB managed-copy review limit.");
+        }
+        return new ServerImportInspection
+        {
+            SourceKind = ServerImportSourceKind.ServerFolder,
+            DisplayName = result.SuggestedName,
+            Platform = result.Ecosystem.ToString(),
+            MinecraftVersion = result.MinecraftVersion,
+            LoaderVersion = result.LoaderVersion,
+            RequiredJavaMajor = JavaRuntimePolicy.TryRequiredMajorForMinecraft(result.MinecraftVersion) ?? 21,
+            SourceSizeBytes = size,
+            ExpandedSizeBytes = size,
+            FileCount = files.Length,
+            ModCount = files.Count(file => Path.GetDirectoryName(file)?.Contains($"{Path.DirectorySeparatorChar}mods", StringComparison.OrdinalIgnoreCase) == true),
+            PluginCount = files.Count(file => Path.GetDirectoryName(file)?.Contains($"{Path.DirectorySeparatorChar}plugins", StringComparison.OrdinalIgnoreCase) == true),
+            ContainsWorld = files.Any(file => Path.GetFileName(file).Equals("level.dat", StringComparison.OrdinalIgnoreCase)),
+            ServerRoot = ".",
+            LaunchCandidates = relativeCandidates,
+            CanInstall = relativeCandidates.Length > 0,
+            CanReference = relativeCandidates.Length > 0,
+            Limitation = relativeCandidates.Length > 0 ? "" : "No safe server launcher was found in the selected folder.",
+            Warnings = ["By-reference keeps every source file in place. Managed copy leaves the source unchanged."]
+        };
+    }
+
+    private static IEnumerable<string> EnumerateImportFiles(string root)
+    {
+        var pending = new Queue<string>();
+        pending.Enqueue(Path.GetFullPath(root));
+        var count = 0;
+        while (pending.Count > 0)
+        {
+            var directory = pending.Dequeue();
+            foreach (var child in Directory.EnumerateDirectories(directory))
+            {
+                if (File.GetAttributes(child).HasFlag(FileAttributes.ReparsePoint))
+                    throw new InvalidDataException("The selected server folder contains a directory link or reparse point and cannot be copied safely.");
+                pending.Enqueue(child);
+            }
+            foreach (var file in Directory.EnumerateFiles(directory))
+            {
+                if (++count > 200_000)
+                    throw new InvalidDataException("The selected folder exceeds ChunkPilot's 200,000-file import review limit.");
+                yield return file;
+            }
+        }
     }
 
     private static T Deserialize<T>(AgentRequest request) =>

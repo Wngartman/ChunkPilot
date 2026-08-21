@@ -320,10 +320,10 @@ export class FixtureBridge implements BridgeAdapter {
     if (method === 'plugins.plan') return { canInstall: true, problems: [], releases: [] } as T;
     if (method === 'mods.providers') return [{ provider: 'Modrinth', available: true, detail: 'Official API available.' }] as T;
     if (method === 'mods.search') return [{ provider: 'Modrinth', kind: 'Mod', projectId: 'lithium', slug: 'lithium', name: 'Lithium', author: 'CaffeineMC', summary: 'Server performance improvements with exact loader filtering.', downloads: 22_400_000, updatedAt: now, serverSide: 'required', clientSide: 'optional', clientRequirement: 'ClientOptional' }] as T;
-    if (method === 'modpacks.providers') return [{ provider: 'Modrinth', available: true, detail: 'Official Modrinth API is available.' }, { provider: 'CurseForge', available: this.curseForgeConfigured, detail: this.curseForgeConfigured ? 'A fixture key is saved; the first browse validates it.' : 'Save a key in Content sources to enable browsing.' }] as T;
+    if (method === 'modpacks.providers') return [{ provider: 'Modrinth', available: true, detail: 'Official Modrinth API is available.' }, { provider: 'CurseForge', available: this.curseForgeConfigured, detail: this.curseForgeConfigured ? 'Approved fixture access is active.' : 'CurseForge integration is being activated for ChunkPilot.' }] as T;
     if (method === 'modpacks.versions') {
       const provider = params.provider === 'CurseForge' ? 'CurseForge' : 'Modrinth';
-      if (provider === 'CurseForge' && !this.curseForgeConfigured) return { provider, state: 'AuthenticationRequired', versions: [], detail: 'Save a CurseForge API key in Content sources.', failedStage: 'authentication', retrievedAt: null, fromCache: false, stale: false } as T;
+      if (provider === 'CurseForge' && !this.curseForgeConfigured) return { provider, state: 'AuthenticationRequired', versions: [], detail: 'CurseForge integration is being activated for ChunkPilot.', failedStage: 'activation', retrievedAt: null, fromCache: false, stale: false } as T;
       return { provider, state: 'Ready', versions: [
         { versionId: '1.21.8', kind: 'Release', publishedAt: now, isMajor: true },
         { versionId: '1.20.1', kind: 'Release', publishedAt: '2023-06-12T00:00:00Z', isMajor: false },
@@ -332,15 +332,18 @@ export class FixtureBridge implements BridgeAdapter {
         { versionId: 'a1.2.6', kind: 'Alpha', publishedAt: '2010-12-03T00:00:00Z', isMajor: false }
       ], detail: 'Fixture official provider inventory.', failedStage: '', retrievedAt: now, fromCache: params.cacheOnly === true, stale: false } as T;
     }
-    if (method === 'settings.curseforge.status') return { configured: this.curseForgeConfigured, readyToBrowse: this.curseForgeConfigured, detail: this.curseForgeConfigured ? 'A fixture API key is saved.' : 'No API key is saved.' } as T;
-    if (method === 'settings.curseforge.save') { this.curseForgeConfigured = true; return { success: true, message: 'The fixture API key is saved.' } as T; }
-    if (method === 'settings.curseforge.disconnect') { this.curseForgeConfigured = false; return { success: true, message: 'The fixture API key was removed.' } as T; }
-    if (method === 'settings.curseforge.openConsole') return { accepted: true } as T;
     if (method === 'modpacks.cache' || method === 'modpacks.search') {
       const provider = params.provider === 'CurseForge' ? 'CurseForge' : 'Modrinth';
       const item = { provider, projectId: 'fixture-pack', slug: 'fixture-pack', name: 'Copper Trails', author: 'ChunkPilot fixture', summary: 'A deterministic server-capable fixture pack for visual review.', downloadCount: 1_240_000, updatedAt: now, categories: ['fabric', 'adventure'], hasImage: false, serverSupport: 'AutomatedWithReview', clientRequirement: 'MatchingPackRequired', trend: { available: false, detail: 'No local period snapshot history exists yet.' }, versions: [{ versionId: 'fixture-pack-4', versionName: '4.2.0', minecraftVersion: '1.21.8', loader: 'fabric', releaseChannel: 'Stable', publishedAt: now, sizeBytes: 1_240_000, changelog: 'Fixture release.', requiredJavaMajor: 21, hasIntegrity: true, canCreate: true }] };
-      if (provider === 'CurseForge' && !this.curseForgeConfigured) return { provider, state: 'AuthenticationRequired', items: [], detail: 'Save an API key in Content sources.', failedStage: 'authentication', retrievedAt: null, fromCache: false, stale: false } as T;
+      if (provider === 'CurseForge' && !this.curseForgeConfigured) return { provider, state: 'AuthenticationRequired', items: [], detail: 'CurseForge integration is being activated for ChunkPilot.', failedStage: 'activation', retrievedAt: null, fromCache: false, stale: false } as T;
       return { provider, state: 'Ready', items: [item], detail: 'Fixture catalog ready.', failedStage: '', retrievedAt: now, fromCache: method === 'modpacks.cache', stale: false } as T;
+    }
+    if (method === 'modpacks.resolveLink') {
+      const url = String(params.url ?? '');
+      if (url.includes('curseforge.com')) throw new Error('CurseForge integration is being activated for ChunkPilot. Modrinth links and local pack imports are available now.');
+      const release = { versionId: 'fixture-pack-4', versionName: '4.2.0', minecraftVersion: '1.21.8', loader: 'fabric', releaseChannel: 'Stable', publishedAt: now, sizeBytes: 1_240_000, changelog: 'Fixture release.', requiredJavaMajor: 21, hasIntegrity: true, canCreate: true };
+      const project = { provider: 'Modrinth', projectId: 'fixture-pack', slug: 'fixture-pack', name: 'Copper Trails', author: 'ChunkPilot fixture', summary: 'A deterministic server-capable fixture pack for visual review.', downloadCount: 1_240_000, updatedAt: now, categories: ['fabric', 'adventure'], hasImage: false, serverSupport: 'AutomatedWithReview', clientRequirement: 'MatchingPackRequired', trend: { available: false, detail: 'No local period snapshot history exists yet.' }, versions: [release] };
+      return { canonicalUrl: `${'https:'}//modrinth.com/modpack/fixture-pack`, exactRelease: url.includes('/version/'), project, release, detail: url.includes('/version/') ? 'Resolved the exact release from the provider link.' : 'Selected the newest stable server-capable release.' } as T;
     }
     if (method === 'modpacks.image') return { dataUrl: null } as T;
     if (method === 'modpacks.chooseLocal') return { cancelled: true } as T;

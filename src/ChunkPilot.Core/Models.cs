@@ -482,6 +482,8 @@ public sealed record ServerInstallRequest
     public string MinecraftVersion { get; init; } = "";
     public string Build { get; init; } = "";
     public string InstallerVersion { get; init; } = "";
+    /// <summary>A reviewed relative launcher inside a local ZIP/folder; never an arbitrary native path.</summary>
+    public string LaunchRelativePath { get; init; } = "";
     public string ServerName { get; init; } = "";
     public string InstanceRoot { get; init; } = "";
     public string JavaPath { get; init; } = "";

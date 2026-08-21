@@ -62,14 +62,69 @@ describe('modpack provider browser', () => {
     expect(container.querySelector('img')?.getAttribute('src')).toBe('data:image/png;base64,AA==');
   });
 
-  it('shows a connected-settings action instead of an empty CurseForge catalog', async () => {
-    let opened = false;
-    render(<ModpackPicker value={null} onChange={() => undefined} onOpenProviderSettings={() => { opened = true; }} />);
+  it('shows the application activation boundary instead of asking an end user for a key', async () => {
+    render(<ModpackPicker value={null} onChange={() => undefined} />);
     fireEvent.click(await screen.findByRole('tab', { name: /CurseForge/ }));
-    expect(await screen.findByText('Connect CurseForge')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Open Content sources' }));
-    expect(opened).toBe(true);
+    expect(await screen.findByText('CurseForge activation in progress')).toBeTruthy();
+    expect(screen.getAllByText(/being activated for ChunkPilot/).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/API key/i)).toBeNull();
     expect(screen.queryByText('No matching server pack')).toBeNull();
+  });
+
+  it('resolves a pasted Modrinth project link in place and preserves the exact reviewed release', async () => {
+    let selected: ModpackSelection | null = null;
+    const { rerender } = render(<ModpackPicker initialMode="Link" value={selected} onChange={value => {
+      selected = value;
+      rerender(<ModpackPicker initialMode="Link" value={selected} onChange={next => { selected = next; }} />);
+    }} />);
+    const url = `${'https:'}//modrinth.com/modpack/fixture-pack/version/fixture-pack-4`;
+    fireEvent.change(screen.getByRole('textbox', { name: 'Provider project link' }), { target: { value: url } });
+    fireEvent.click(screen.getByRole('button', { name: 'Resolve' }));
+
+    expect(await screen.findByText('Ready for review')).toBeTruthy();
+    expect(calls).toContainEqual({ method: 'modpacks.resolveLink', params: { url } });
+    const resolved = selected as unknown as Extract<ModpackSelection, { kind: 'remote' }>;
+    expect(resolved.release.versionId).toBe('fixture-pack-4');
+    expect(screen.getByText('Resolved the exact release from the provider link.')).toBeTruthy();
+  });
+
+  it('recognizes CurseForge links but exposes no user credential prompt while activation is external', async () => {
+    render(<ModpackPicker initialMode="Link" value={null} onChange={() => undefined} />);
+    fireEvent.change(screen.getByRole('textbox', { name: 'Provider project link' }), {
+      target: { value: `${'https:'}//www.curseforge.com/minecraft/modpacks/statech-industry-2` }
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Resolve' }));
+
+    expect(await screen.findByText(/CurseForge integration is being activated/)).toBeTruthy();
+    expect(screen.queryByText(/API key/i)).toBeNull();
+  });
+
+  it('reviews a native folder token and keeps copy versus by-reference explicit', async () => {
+    const fixture = new FixtureBridge('running');
+    useAppStore.setState({ bridge: {
+      request: async <T,>(method: BridgeMethod, params: Record<string, unknown> = {}) => {
+        calls.push({ method, params });
+        if (method === 'modpacks.chooseLocal') return {
+          cancelled: false, token: 'opaque-import-token', fileName: 'Existing server', expiresAt: '2026-08-21T00:05:00Z',
+          inspection: { sourceKind: 'ServerFolder', name: 'Existing server', summary: 'Reviewed.', minecraftVersion: '1.20.1', loader: 'Forge', loaderVersion: '47.3.0', requiredJavaMajor: 17, requiredServerFiles: 42, optionalServerFiles: 0, excludedClientFiles: 0, indexedServerBytes: 2_000_000, sourceSizeBytes: 2_000_000, expandedSizeBytes: 2_000_000, fileCount: 42, modCount: 7, pluginCount: 0, containsWorld: true, serverRoot: '.', launchCandidates: ['run/server.jar'], canReference: true, canCreate: true, limitation: '' }
+        } as T;
+        return fixture.request<T>(method, params);
+      },
+      subscribe: listener => fixture.subscribe(listener), dispose: () => fixture.dispose()
+    } });
+    let selected: ModpackSelection | null = null;
+    const { rerender } = render(<ModpackPicker initialMode="Import" value={selected} onChange={value => {
+      selected = value;
+      rerender(<ModpackPicker initialMode="Import" value={selected} onChange={next => { selected = next; }} />);
+    }} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Import server folder' }));
+    expect(await screen.findByText('42 files · 1.9 MB')).toBeTruthy();
+    expect(screen.getByText('Present — preserved')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /By reference/ }));
+    const local = selected as unknown as Extract<ModpackSelection, { kind: 'local' }>;
+    expect(local.local.managementMode).toBe('ByReference');
+    expect(local.local.launchRelativePath).toBe('run/server.jar');
+    expect(calls).toContainEqual({ method: 'modpacks.chooseLocal', params: { kind: 'folder' } });
   });
 
   it('cancels a superseded provider request and ignores its late response', async () => {

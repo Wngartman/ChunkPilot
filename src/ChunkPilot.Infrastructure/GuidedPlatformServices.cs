@@ -948,6 +948,7 @@ public sealed class ModrinthCatalogProvider : HttpCatalogProvider, IGuidedCatalo
 
 public sealed class CurseForgeCatalogProvider : HttpCatalogProvider, IGuidedCatalogProvider
 {
+    public const string DeveloperModeEnvironmentVariable = "CHUNKPILOT_CURSEFORGE_DEVELOPER_MODE";
     private readonly ISecretStore secrets;
 
     public CurseForgeCatalogProvider(ISecretStore secrets, HttpClient? httpClient = null) : base(httpClient)
@@ -956,10 +957,12 @@ public sealed class CurseForgeCatalogProvider : HttpCatalogProvider, IGuidedCata
     }
 
     public CatalogProvider Provider => CatalogProvider.CurseForge;
-    public bool IsAvailable => secrets.Contains(CurseForgeUpdateProvider.ApiKeyName);
+    public bool IsAvailable =>
+        Environment.GetEnvironmentVariable(DeveloperModeEnvironmentVariable) == "1" &&
+        secrets.Contains(CurseForgeUpdateProvider.ApiKeyName);
     public string AvailabilityDetail => IsAvailable
-        ? "User-provided API key is configured."
-        : "Browsing is hidden until a user-provided CurseForge API key is encrypted with DPAPI.";
+        ? "Approved CurseForge developer integration is active for this local development session."
+        : "CurseForge integration is being activated for ChunkPilot.";
 
     public async Task<IReadOnlyList<CatalogGameVersion>> GetGameVersionsAsync(
         CancellationToken cancellationToken = default)

@@ -27,6 +27,7 @@ export { default as History } from 'lucide-react/dist/esm/icons/history.mjs';
 export { default as Info } from 'lucide-react/dist/esm/icons/info.mjs';
 export { default as Image } from 'lucide-react/dist/esm/icons/image.mjs';
 export { default as Italic } from 'lucide-react/dist/esm/icons/italic.mjs';
+export { default as Link } from 'lucide-react/dist/esm/icons/link.mjs';
 export { default as Minus } from 'lucide-react/dist/esm/icons/minus.mjs';
 export { default as Monitor } from 'lucide-react/dist/esm/icons/monitor.mjs';
 export { default as MoreHorizontal } from 'lucide-react/dist/esm/icons/more-horizontal.mjs';
