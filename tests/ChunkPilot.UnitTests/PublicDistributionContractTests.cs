@@ -25,6 +25,7 @@ public sealed class PublicDistributionContractTests
         Assert.Contains("RemoveManagedCheck.Checked := False", source, StringComparison.Ordinal);
         Assert.Contains("RemoveBackupsCheck.Checked := False", source, StringComparison.Ordinal);
         Assert.Contains("procedure InitializeUninstallProgressForm;", source, StringComparison.Ordinal);
+        Assert.Contains("if UninstallSilent then", source, StringComparison.Ordinal);
         Assert.DoesNotContain("function InitializeUninstall(): Boolean;", source, StringComparison.Ordinal);
     }
 
@@ -58,6 +59,7 @@ public sealed class PublicDistributionContractTests
         Assert.Contains("TrimEnd(", source, StringComparison.Ordinal);
         Assert.Contains("PersistentDataUnchanged", source, StringComparison.Ordinal);
         Assert.Contains("WebUiPreviewLaunch", source, StringComparison.Ordinal);
+        Assert.Contains("Get-Content -LiteralPath $uninstallLog -Tail 250", source, StringComparison.Ordinal);
     }
 
     [Fact]

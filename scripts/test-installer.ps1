@@ -191,7 +191,14 @@ foreach ($path in $fixtures) {
 $uninstaller = Join-Path $installRoot 'unins000.exe'
 if (-not (Test-Path -LiteralPath $uninstaller)) { throw 'Installed uninstaller is missing.' }
 $uninstallProcess = Start-Process -FilePath $uninstaller -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/LOG=$uninstallLog") -WindowStyle Hidden -Wait -PassThru
-if ($uninstallProcess.ExitCode -notin @(0, 3010)) { throw "Uninstall failed with exit code $($uninstallProcess.ExitCode)." }
+if ($uninstallProcess.ExitCode -notin @(0, 3010)) {
+    if (Test-Path -LiteralPath $uninstallLog) {
+        Write-Host '--- Inno uninstall log (last 250 lines) ---'
+        Get-Content -LiteralPath $uninstallLog -Tail 250 | ForEach-Object { Write-Host $_ }
+        Write-Host '--- End Inno uninstall log ---'
+    }
+    throw "Uninstall failed with exit code $($uninstallProcess.ExitCode)."
+}
 
 if ((Test-Path -LiteralPath $app) -or (Test-Path -LiteralPath $agent)) { throw 'Uninstall left application binaries behind.' }
 if ((Test-Path -LiteralPath $normalShortcutPath) -or (Test-Path -LiteralPath $previewShortcutPath)) { throw 'Uninstall left Start Menu shortcuts behind.' }
