@@ -24,6 +24,10 @@ export function TextInput(props: InputHTMLAttributes<HTMLInputElement>) { return
 
 export function SelectInput(props: SelectHTMLAttributes<HTMLSelectElement>) { return <select className={`${styles.input} ${styles.select}`} {...props} />; }
 
+export function Switch({ checked, label, ...props }: Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'children' | 'role'> & { checked: boolean; label: string }) {
+  return <button type="button" className={styles.switch} data-checked={checked} role="switch" aria-checked={checked} aria-label={label} {...props}><span aria-hidden="true" /></button>;
+}
+
 export interface ComboboxOption { value: string; label: string; disabled?: boolean; }
 
 /** Select-only, portal-hosted combobox for WebView-safe provider/version/filter menus. */

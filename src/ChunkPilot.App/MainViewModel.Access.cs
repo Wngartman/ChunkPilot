@@ -513,7 +513,7 @@ public sealed partial class MainViewModel
     }
 
     /// <summary>Turns the whitelist on or off, then re-reads the resulting state.</summary>
-    private async Task SetWhitelistEnabledAsync(bool enabled)
+    internal async Task SetWhitelistEnabledAsync(bool enabled)
     {
         if (SelectedServer is null)
             return;

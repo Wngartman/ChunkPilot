@@ -486,7 +486,7 @@ public sealed class DesignSystemContractTests
     public void Views_awaiting_rebuild_are_exactly_the_documented_set()
     {
         // Pinned so the escape hatch cannot grow. Each later phase deletes an entry.
-        Assert.Equal(2, DesignSystemFiles.LegacyViewsAwaitingRebuild.Count);
+        Assert.Single(DesignSystemFiles.LegacyViewsAwaitingRebuild);
         Assert.All(DesignSystemFiles.LegacyViewsAwaitingRebuild, name =>
             Assert.True(
                 File.Exists(Path.Combine(DesignSystemFiles.AppProjectDirectory, name)),

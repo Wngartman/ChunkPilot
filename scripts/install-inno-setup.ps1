@@ -1,10 +1,13 @@
 [CmdletBinding()]
 param(
-    [string]$InstallDirectory = (Join-Path (Split-Path -Parent $PSScriptRoot) '.tools\InnoSetup')
+    [string]$InstallDirectory
 )
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = [IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
+if ([string]::IsNullOrWhiteSpace($InstallDirectory)) {
+    $InstallDirectory = Join-Path $repoRoot '.tools\InnoSetup'
+}
 $installFull = [IO.Path]::GetFullPath($InstallDirectory)
 $toolsRoot = [IO.Path]::GetFullPath((Join-Path $repoRoot '.tools')) + [IO.Path]::DirectorySeparatorChar
 if (-not $installFull.StartsWith($toolsRoot, [StringComparison]::OrdinalIgnoreCase)) {
@@ -45,7 +48,14 @@ if ($process.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $compiler)) {
     throw "Inno Setup $version installation failed with exit code $($process.ExitCode)."
 }
 
+$previousErrorActionPreference = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
 $help = & $compiler /? 2>&1 | Out-String
+$helpExitCode = $LASTEXITCODE
+$ErrorActionPreference = $previousErrorActionPreference
+if ($helpExitCode -notin @(0, 1)) {
+    throw "Inno Setup compiler help failed with exit code $helpExitCode."
+}
 if ($help -notmatch 'Inno Setup 7 Command-Line Compiler') {
     throw 'The repository-local Inno Setup compiler did not identify itself as Inno Setup 7.'
 }

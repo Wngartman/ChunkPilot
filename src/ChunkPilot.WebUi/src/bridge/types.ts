@@ -30,6 +30,7 @@ export interface ServerSummary {
   id: string;
   name: string;
   state: ServerState;
+  gameKind: 'Minecraft' | 'Terraria';
   ecosystem: string;
   minecraftVersion: string;
   loaderVersion?: string;
@@ -51,7 +52,10 @@ export interface ServerSummary {
   maximumMemoryBytes: number;
   localAddress: string;
   lanAddress: string | null;
+  connectionMode: 'HomeNetwork' | 'PortForwarding';
   publicAddress: string | null;
+  publicAddressKind: 'verified' | 'router' | 'last' | null;
+  publicAddressObservedAt: string | null;
   publicReachability: 'confirmed' | 'not-confirmed' | 'unavailable';
   lastBackupAt: string | null;
   lastError: string | null;
@@ -98,7 +102,22 @@ export interface ServerDeletionPreflight {
 }
 
 export interface ConsoleEntry { sequence: number; timestamp: string; stream: string; text: string; }
-export interface PlayerEntry { name: string; online: boolean; allowlisted: boolean; operator: boolean; banned: boolean; }
+export interface PlayerEntry { name: string; uuid: string | null; online: boolean; allowlisted: boolean; operator: boolean; banned: boolean; }
+export interface ServerHealthIssue {
+  issueId: string;
+  serverId: string;
+  articleId: string;
+  category: 'startup' | 'runtime' | 'networking' | 'performance' | 'content';
+  severity: 'warning' | 'error';
+  title: string;
+  summary: string;
+  evidenceSummary: string;
+  firstObservedAt: string;
+  lastObservedAt: string;
+  evidenceFingerprint: string;
+  primaryAction: 'openConsole' | 'openConnectivity' | 'openHelp';
+  dismissible: boolean;
+}
 export interface FileEntry { name: string; relativePath: string; kind: 'folder' | 'editable' | 'binary' | 'too-large'; sizeBytes: number | null; modifiedAt: string | null; }
 export type ContentDependencyKind = 'Required' | 'Optional' | 'LoadBefore' | 'Incompatible' | 'Embedded' | 'Unknown';
 export interface ContentDependency { id: string; kind: ContentDependencyKind; }
@@ -190,6 +209,8 @@ export interface ConnectivitySnapshot {
     publicVerified: string | null;
     routerReported: string | null;
     publicVerifiedAt: string | null;
+    lastKnownPublic: string | null;
+    lastKnownPublicAt: string | null;
   };
   router: {
     phase: string;
@@ -291,6 +312,18 @@ export interface WebUiSnapshot {
   };
   servers: ServerSummary[];
   connectivity: ConnectivitySnapshot | null;
+  playerAccess: {
+    serverId: string;
+    serverRunning: boolean;
+    whitelistEnabled: boolean;
+    supportsAllowlist: boolean;
+    supportsOperators: boolean;
+    supportsPlayerBans: boolean;
+    supportsIpBans: boolean;
+    capabilityKnown: boolean;
+    error: string | null;
+  } | null;
+  issues: ServerHealthIssue[];
   console: ConsoleEntry[];
   players: PlayerEntry[];
   files: FileEntry[];
@@ -308,6 +341,7 @@ export interface WebUiSnapshot {
     reducedMotion: boolean;
   };
   serverSettings: {
+    serverId: string;
     name: string;
     motd: string;
     port: number;
@@ -328,6 +362,7 @@ export type BridgeMethod =
   | 'servers.start' | 'servers.stop' | 'servers.restart' | 'servers.openFolder'
   | 'servers.deletePreflight' | 'servers.delete' | 'servers.createManagedCopy'
   | 'diagnostics.openLogs' | 'diagnostics.bundle'
+  | 'help.openExternal'
   | 'servers.import' | 'servers.rename' | 'servers.changeIcon'
   | 'appearance.chooseIcon'
   | 'plugins.openFolder' | 'plugins.chooseLocal' | 'plugins.installLocal' | 'plugins.providers' | 'plugins.search' | 'plugins.release'
@@ -338,13 +373,13 @@ export type BridgeMethod =
   | 'modpacks.providers' | 'modpacks.versions' | 'modpacks.cache' | 'modpacks.search' | 'modpacks.resolveLink' | 'modpacks.image' | 'modpacks.chooseLocal'
   | 'console.send' | 'workspace.load' | 'files.openFolder' | 'files.navigate' | 'files.read' | 'files.write'
   | 'backups.create' | 'backups.restore' | 'backups.verify'
-  | 'players.moderate' | 'schedules.upsert' | 'schedules.delete' | 'settings.saveGlobal' | 'settings.saveServer'
+  | 'players.moderate' | 'players.addAllowlist' | 'players.setWhitelist' | 'players.head' | 'schedules.upsert' | 'schedules.delete' | 'settings.saveGlobal' | 'settings.saveServer'
   | 'connectivity.copyAddress' | 'connectivity.open' | 'connectivity.setMode'
   | 'connectivity.router.check' | 'connectivity.router.confirm' | 'connectivity.router.cancelConsent' | 'connectivity.router.stop' | 'connectivity.router.cancel' | 'connectivity.router.retry'
   | 'connectivity.external.check' | 'connectivity.external.cancel'
   | 'connectivity.firewall.primary' | 'connectivity.firewall.secondary' | 'connectivity.firewall.confirm' | 'connectivity.firewall.cancelConsent' | 'connectivity.firewall.remove' | 'connectivity.firewall.cancel'
   | 'versions.check' | 'versions.install' | 'versions.rollback' | 'versions.verify' | 'versions.cancel'
-  | 'creation.catalog' | 'creation.paperBuilds' | 'creation.loaderBuilds' | 'creation.previewDestination' | 'creation.chooseFolder' | 'creation.chooseLegacyArtifact' | 'creation.begin' | 'creation.operations' | 'creation.progress' | 'creation.cancel';
+  | 'creation.catalog' | 'creation.paperBuilds' | 'creation.loaderBuilds' | 'creation.previewDestination' | 'creation.chooseFolder' | 'creation.chooseWorld' | 'creation.chooseLegacyArtifact' | 'creation.begin' | 'creation.operations' | 'creation.progress' | 'creation.cancel';
 
 export interface BridgeRequest {
   protocolVersion: typeof protocolVersion;

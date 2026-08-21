@@ -83,7 +83,7 @@ public sealed class PublicDistributionContractTests
         Assert.Contains("gh workflow run release.yml", source, StringComparison.Ordinal);
         Assert.Contains("gh run watch $runId", source, StringComparison.Ordinal);
         Assert.Contains("build-manifest.json", source, StringComparison.Ordinal);
-        Assert.Contains("-Version 1.3.0-alpha.4", docs, StringComparison.Ordinal);
+        Assert.Contains("-Version 1.3.0-alpha.5", docs, StringComparison.Ordinal);
         Assert.Contains("builds once and tests the exact artifacts", docs, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -136,6 +136,8 @@ public sealed class PublicDistributionContractTests
     {
         var source = File.ReadAllText(Path.Combine(Root, "scripts", "install-inno-setup.ps1"));
         Assert.Contains("$global:LASTEXITCODE = 0", source, StringComparison.Ordinal);
+        Assert.Contains("$helpExitCode -notin @(0, 1)", source, StringComparison.Ordinal);
+        Assert.Contains("IsNullOrWhiteSpace($InstallDirectory)", source, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -148,6 +150,7 @@ public sealed class PublicDistributionContractTests
         Assert.Contains("MicrosoftEdgeUpdateSetup.exe", source, StringComparison.Ordinal);
         Assert.Contains("Get-FileHash", source, StringComparison.Ordinal);
         Assert.DoesNotContain("$expectedSha256", source, StringComparison.Ordinal);
+        Assert.Contains("IsNullOrWhiteSpace($Destination)", source, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -193,6 +196,22 @@ public sealed class PublicDistributionContractTests
         Assert.DoesNotContain("<Content Include=\"..\\..\\assets\\ChunkPilot.ico\"", project, StringComparison.Ordinal);
         Assert.Contains("pack://application:,,,/Assets/ChunkPilot.ico", app, StringComparison.Ordinal);
         Assert.DoesNotContain("AppContext.BaseDirectory, \"Assets\", \"ChunkPilot.ico\"", app, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Published_and_installed_windows_share_one_explicit_app_identity()
+    {
+        var project = File.ReadAllText(Path.Combine(Root, "src", "ChunkPilot.App", "ChunkPilot.App.csproj"));
+        var window = File.ReadAllText(Path.Combine(Root, "src", "ChunkPilot.App", "WebUi", "WebUiWindow.xaml"));
+        var app = File.ReadAllText(Path.Combine(Root, "src", "ChunkPilot.App", "App.xaml.cs"));
+        var installer = File.ReadAllText(Path.Combine(Root, "installer", "ChunkPilot.iss"));
+
+        Assert.Contains("CopyToPublishDirectory=\"PreserveNewest\"", project, StringComparison.Ordinal);
+        Assert.Contains("Name=\"CopyPackagedApplicationIcon\"", project, StringComparison.Ordinal);
+        Assert.Contains("DestinationFiles=\"$(PublishDir)Assets\\ChunkPilot.ico\"", project, StringComparison.Ordinal);
+        Assert.Contains("Icon=\"pack://application:,,,/Assets/ChunkPilot.ico\"", window, StringComparison.Ordinal);
+        Assert.Contains("SetCurrentProcessExplicitAppUserModelID", app, StringComparison.Ordinal);
+        Assert.Equal(2, installer.Split("AppUserModelID: \"ChunkPilot.Desktop\"", StringSplitOptions.None).Length - 1);
     }
 
     private static string RepositoryRoot()

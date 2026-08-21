@@ -1,10 +1,97 @@
 # Bug register
 
-Verified defects and limitations that are known, reproducible and **not yet fixed**. An entry leaves
-this file only when the behaviour is corrected and covered by a regression test.
+Verified defects and limitations with evidence sufficient to track. A fix awaiting manual acceptance
+may remain here as **Fixed locally** with its regression evidence; after acceptance, the commit and test
+become the durable record and the entry can leave this active register.
 
-Fixed issues are not recorded here — they live in the commit that fixed them and in the test that keeps
-them fixed.
+---
+
+## CP-2026-034 — Repository-local installer prerequisites fail on their default invocation
+
+| Field | Value |
+|---|---|
+| Date | 2026-08-21 |
+| Severity | Medium — a clean packaging machine cannot acquire the pinned local compiler or WebView2 bootstrapper with the documented command |
+| Area | Release tooling / prerequisite acquisition |
+| Status | **Fixed locally** — defaults are resolved after script binding and Inno's documented help exit is handled explicitly |
+| Validation | Both scripts invoked without path overrides; compiler identity, pinned installer hash/signature, and Microsoft bootstrapper identity verified; distribution contracts |
+
+PowerShell evaluates parameter defaults before `$PSScriptRoot` is available in this invocation path, so
+both acquisition scripts attempted `Split-Path` on an empty value. A fresh Inno acquisition then treated
+the compiler's expected nonzero help-banner exit as a terminating native error. Defaults now resolve from
+the already established repository root inside the script body, and only help exit codes 0 or 1 are
+accepted before normalizing the successful result.
+
+---
+
+## CP-2026-033 — Normal Internet setup waits on an automatic outside-in probe
+
+| Field | Value |
+|---|---|
+| Date | 2026-08-21 |
+| Severity | High — working owned setup can look incomplete and repeatedly depend on an optional external service |
+| Area | WebUI / Internet sharing presentation |
+| Status | **Fixed locally** — three-step owned-state setup; outside-in is Advanced and explicit |
+| Validation | React running/stopped/setup/failure assertions, no-auto-request regression, native connectivity mapping, fixture review |
+
+The ordinary Connectivity flow treated an external probe as step four, started it from a React effect,
+and used its result as the durable setup label. Normal status now follows the exact Windows rule, router
+mapping, and server lifecycle evidence. Optional outside-in testing remains available as a point-in-time
+Advanced diagnostic and is still the only basis for the distinct **Connection confirmed** label.
+
+---
+
+## CP-2026-032 — Published shortcuts reference an icon file that is not packaged
+
+| Field | Value |
+|---|---|
+| Date | 2026-08-21 |
+| Severity | Medium — taskbar, window chrome and shortcuts can show generic or inconsistent identity |
+| Area | WPF / publish / installer identity |
+| Status | **Fixed locally** — one embedded and published multi-frame ICO plus stable AppUserModelID |
+| Validation | Distribution contract, Release build, explicit post-publish copy, matching source/output SHA-256, nine ICO frames, associated executable icon, and successful installer compilation |
+
+The executable embedded `assets/ChunkPilot.ico`, but the installer shortcut pointed at
+`{app}\Assets\ChunkPilot.ico` even though the original item metadata did not actually copy that file. The desktop shortcut also lacked
+the Start-menu AppUserModelID and the borderless WebUI window had no explicit icon. The project now copies
+the same ICO through an explicit post-publish target, the process/window/shortcuts share `ChunkPilot.Desktop`, and no alternate icon was
+introduced.
+
+---
+
+## CP-2026-031 — WebUI drops authoritative player UUIDs and cannot show player heads
+
+| Field | Value |
+|---|---|
+| Date | 2026-08-21 |
+| Severity | Medium — player identity is harder to distinguish and differs from the native player surface |
+| Area | Player snapshot / native image bridge / WebUI |
+| Status | **Fixed locally** — UUID-bound official Mojang skin path with bounded cache and local fallback |
+| Validation | Official/cached/invalid-host/offline native tests; React rendered/fallback/selected-server tests |
+
+The access model already carried authoritative UUIDs and the WPF control already knew the official Mojang
+profile route, but `WebUiSnapshotMapper` omitted UUIDs. The renderer now requests a head only for a UUID in
+the selected server's current rows. Native code allowlists Mojang hosts, bounds downloads/cache size,
+composites the face and hat layers, and returns no broken URL on failure.
+
+---
+
+## CP-2026-030 — Server settings and MOTD draft can cross a rapid server selection
+
+| Field | Value |
+|---|---|
+| Date | 2026-08-21 |
+| Severity | Stop-the-line — a draft or late read can be shown or saved against the wrong server |
+| Area | WebUI server settings / native async property load |
+| Status | **Fixed locally** — immutable server identity on snapshots, remount boundary, stale-response guards |
+| Validation | A-to-B dirty draft regression, late authoritative snapshot regression, native stale-load/build contracts |
+
+`serverSettings` had no server ID, React retained one component state while `serverId` changed, and the
+native property read applied its response without rechecking selection after `await`. Settings snapshots
+now name their immutable owner, a server change remounts the editor behind the existing unsaved-change
+guard, mismatched snapshots render unavailable rather than old values, and native late responses are
+dropped before mutating selected state. Save requests keep the captured server ID and abort later memory
+work if selection changed, so a newly selected server is never the fallback target.
 
 ---
 
@@ -311,9 +398,11 @@ location chooser and completion navigator, and reuses the existing live wizard i
 The retained development switch calls that same shell route. The Dashboard and Servers presentations
 all bind the semantic command; **Add existing server** continues to use its by-reference import path.
 
-The old `InstallServerWindow` implementation remains in source only because it contains broader
-Advanced/custom fields that have not yet been migrated. No normal beginner Vanilla path constructs
-it or exposes unfinished server types.
+The later WebUI product cutover migrated the broader version, platform, memory, storage, and
+networking fields into the single shipped Create server flow. The now-unreachable
+`InstallServerWindow`, its view model, its dead presentation event, and three review scripts for the
+removed `--create-server-v2-live-vanilla` switch were deleted rather than left as misleading product
+scaffolding. The synthetic `--create-server-v2-preview` remains isolated for native design review.
 
 ---
 

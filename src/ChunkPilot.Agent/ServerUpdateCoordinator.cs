@@ -107,6 +107,22 @@ public sealed class ServerUpdateCoordinator
             var preferences = await store.GetUpdatePreferencesAsync(serverId, cancellationToken).ConfigureAwait(false);
             var available = await providers.Get(source.Provider)
                 .GetVersionsAsync(source, preferences, cancellationToken).ConfigureAwait(false);
+            if (source.Provider == UpdateProvider.LocalPackageHistory)
+            {
+                var exactLocalPackage = available.FirstOrDefault(version =>
+                    version.VersionId.Equals(source.InstalledVersionId, StringComparison.OrdinalIgnoreCase));
+                if (exactLocalPackage is not null &&
+                    (!source.InstalledVersionName.Equals(exactLocalPackage.VersionName, StringComparison.Ordinal) ||
+                     !source.InstalledFileId.Equals(exactLocalPackage.Sha256, StringComparison.OrdinalIgnoreCase)))
+                {
+                    source = source with
+                    {
+                        InstalledVersionName = exactLocalPackage.VersionName,
+                        InstalledFileId = exactLocalPackage.Sha256
+                    };
+                    await store.UpsertUpdateSourceAsync(source, cancellationToken).ConfigureAwait(false);
+                }
+            }
             var installed = new PackVersionInfo
             {
                 PackId = source.ProjectId,

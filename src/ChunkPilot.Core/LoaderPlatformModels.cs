@@ -297,6 +297,7 @@ public sealed record ManagedLoaderCreationPlan
     public DateTimeOffset? MetadataRetrievedUtc { get; init; }
     public bool MetadataFromCache { get; init; }
     public bool ExperimentalRuntimeRiskAccepted { get; init; }
+    public CreationWorldSource? InitialWorld { get; init; }
 
     public IReadOnlyList<string> Problems()
     {
@@ -322,6 +323,7 @@ public sealed record ManagedLoaderCreationPlan
         if (memory is not null) problems.Add(memory);
         var port = ServerPortPolicy.Validate(Port);
         if (port is not null) problems.Add(port);
+        if (InitialWorld is { } world) problems.AddRange(world.Problems());
         return problems.Distinct(StringComparer.Ordinal).ToArray();
     }
 }

@@ -58,6 +58,51 @@ public sealed class WebUiContractTests
     }
 
     [Fact]
+    public void Pack_install_action_requires_an_authoritative_update_available_state()
+    {
+        var latest = new PackVersionInfo { VersionId = "release-2", VersionName = "Release 2" };
+        var check = new UpdateCheckResult
+        {
+            Status = ServerUpdateStatus.UpToDate,
+            LatestVersion = latest,
+            Compatibility = UpdateCompatibility.Compatible
+        };
+
+        Assert.False(WebUiSnapshotMapper.IsInstallableUpdate(check));
+        Assert.True(WebUiSnapshotMapper.IsInstallableUpdate(check with { Status = ServerUpdateStatus.UpdateAvailable }));
+        Assert.False(WebUiSnapshotMapper.IsInstallableUpdate(check with
+        {
+            Status = ServerUpdateStatus.UpdateAvailable,
+            Compatibility = UpdateCompatibility.Incompatible
+        }));
+        Assert.False(WebUiSnapshotMapper.IsInstallableUpdate(check with
+        {
+            Status = ServerUpdateStatus.UpdateAvailable,
+            LatestVersion = null
+        }));
+    }
+
+    [Fact]
+    public void Players_workspace_follows_game_kind_not_detected_minecraft_ecosystem()
+    {
+        Assert.True(WebUiSnapshotMapper.HasPlayersWorkspace(new ServerDefinition
+        {
+            GameKind = ServerGameKind.Minecraft,
+            Ecosystem = ServerEcosystem.Custom
+        }));
+        Assert.True(WebUiSnapshotMapper.HasPlayersWorkspace(new ServerDefinition
+        {
+            GameKind = ServerGameKind.Minecraft,
+            Ecosystem = ServerEcosystem.Unknown
+        }));
+        Assert.False(WebUiSnapshotMapper.HasPlayersWorkspace(new ServerDefinition
+        {
+            GameKind = ServerGameKind.Terraria,
+            Ecosystem = ServerEcosystem.Custom
+        }));
+    }
+
+    [Fact]
     public void PresentationRefreshIsAdaptiveWithoutWeakeningActiveServerUpdates()
     {
         Assert.Equal(TimeSpan.FromSeconds(1), WebUiWindow.ActivePresentationRefreshInterval);
@@ -102,6 +147,10 @@ public sealed class WebUiContractTests
         Assert.True(WebUiMethodPolicy.IsAllowed("schedules.upsert"));
         Assert.True(WebUiMethodPolicy.IsAllowed("schedules.delete"));
         Assert.True(WebUiMethodPolicy.IsAllowed("appearance.chooseIcon"));
+        Assert.True(WebUiMethodPolicy.IsAllowed("players.addAllowlist"));
+        Assert.True(WebUiMethodPolicy.IsAllowed("players.setWhitelist"));
+        Assert.True(WebUiMethodPolicy.IsAllowed("players.head"));
+        Assert.True(WebUiMethodPolicy.IsAllowed("help.openExternal"));
         Assert.True(WebUiMethodPolicy.IsAllowed("plugins.openFolder"));
         Assert.True(WebUiMethodPolicy.IsAllowed("plugins.configFiles"));
         Assert.True(WebUiMethodPolicy.IsAllowed("plugins.saveConfig"));
@@ -116,6 +165,7 @@ public sealed class WebUiContractTests
         Assert.True(WebUiMethodPolicy.IsAllowed("modpacks.image"));
         Assert.True(WebUiMethodPolicy.IsAllowed("modpacks.chooseLocal"));
         Assert.True(WebUiMethodPolicy.IsAllowed("creation.chooseLegacyArtifact"));
+        Assert.True(WebUiMethodPolicy.IsAllowed("creation.chooseWorld"));
         Assert.False(WebUiMethodPolicy.IsAllowed("settings.curseforge.status"));
         Assert.False(WebUiMethodPolicy.IsAllowed("settings.curseforge.save"));
         Assert.False(WebUiMethodPolicy.IsAllowed("settings.curseforge.disconnect"));
@@ -141,6 +191,11 @@ public sealed class WebUiContractTests
     {
         Assert.False(WebUiWindow.RequiresFullPresentationRefresh("workspace.load"));
         Assert.False(WebUiWindow.RequiresFullPresentationRefresh("connectivity.external.check"));
+        Assert.False(WebUiWindow.RequiresFullPresentationRefresh("players.head"));
+        Assert.False(WebUiWindow.RequiresFullPresentationRefresh("help.openExternal"));
+        Assert.Equal("docs.papermc.io", WebUiWindow.RequireAllowedHelpSource("https://docs.papermc.io/paper/basic-troubleshooting/").Host);
+        Assert.Throws<ArgumentException>(() => WebUiWindow.RequireAllowedHelpSource("http://docs.papermc.io/"));
+        Assert.Throws<ArgumentException>(() => WebUiWindow.RequireAllowedHelpSource("https://example.com/help"));
         Assert.False(WebUiWindow.RequiresFullPresentationRefresh("connectivity.setMode"));
         Assert.True(WebUiWindow.RequiresFullPresentationRefresh("servers.start"));
         Assert.True(WebUiWindow.RequiresFullPresentationRefresh("backups.create"));

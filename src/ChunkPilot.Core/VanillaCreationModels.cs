@@ -570,6 +570,9 @@ public sealed record VanillaCreationPlan
 
     public bool MetadataFromCache { get; init; }
 
+    /// <summary>Optional existing world copied into the managed creation transaction.</summary>
+    public CreationWorldSource? InitialWorld { get; init; }
+
     /// <summary>
     /// Native-only selection of a user-owned historical dedicated-server JAR. The renderer receives
     /// only a short-lived opaque token; the App consumes and re-hashes it before this plan crosses the
@@ -609,6 +612,8 @@ public sealed record VanillaCreationPlan
         var portProblem = ServerPortPolicy.Validate(Port);
         if (portProblem is not null)
             problems.Add(portProblem);
+        if (InitialWorld is { } world)
+            problems.AddRange(world.Problems());
         return problems;
     }
 

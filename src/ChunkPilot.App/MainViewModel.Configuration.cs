@@ -205,6 +205,8 @@ public sealed partial class MainViewModel
             return;
         var response = await client.SendAsync<ServerPropertiesResponse>("GetServerProperties",
             new ServerIdRequest(selected.Definition.Id)).ConfigureAwait(true);
+        if (SelectedServer?.Definition.Id != selected.Definition.Id)
+            return;
         PropertyMotd = Value(response, "motd", "A Minecraft Server");
         PropertyPort = IntValue(response, "server-port", 25_565);
         PropertyMaxPlayers = IntValue(response, "max-players", 20);

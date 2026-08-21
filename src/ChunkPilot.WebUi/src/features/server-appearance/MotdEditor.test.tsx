@@ -59,6 +59,57 @@ describe('MOTD visual editor', () => {
     expect(changed).toHaveBeenLastCalledWith(expect.stringContaining('§n'));
   });
 
+  it('preserves focus, selection, and the chosen color through repeated formatting and replacement typing', () => {
+    const changed = vi.fn();
+    render(<MotdEditor serverName="Test" serverIconUrl={null} savedRaw={'Color target'} resetToken={0} onChange={changed} />);
+    const originalEditor = screen.getByRole('textbox', { name: 'Message of the day' });
+    const text = originalEditor.firstChild?.firstChild;
+    expect(text).toBeTruthy();
+    originalEditor.focus();
+    const selection = window.getSelection()!;
+    const selectTarget = () => {
+      const currentText = screen.getByRole('textbox', { name: 'Message of the day' }).firstChild?.firstChild;
+      const range = document.createRange();
+      range.setStart(currentText!, 0); range.setEnd(currentText!, 5);
+      selection.removeAllRanges(); selection.addRange(range);
+      fireEvent.mouseUp(screen.getByRole('textbox', { name: 'Message of the day' }));
+    };
+    selectTarget();
+
+    for (const color of ['Red', 'Blue', 'Green', 'Aqua']) {
+      const button = screen.getByRole('button', { name: color });
+      fireEvent.mouseDown(button);
+      fireEvent.click(button);
+      expect(screen.getByRole('textbox', { name: 'Message of the day' })).toBe(originalEditor);
+      expect(document.activeElement).toBe(originalEditor);
+    }
+
+    fireEvent(originalEditor, new InputEvent('beforeinput', {
+      bubbles: true, cancelable: true, inputType: 'insertText', data: 'Fresh'
+    }));
+
+    const latest = changed.mock.calls.at(-1)?.[0] as string;
+    const parsed = parseMotd(latest);
+    expect(parsed.runs.map(run => run.text).join('')).toBe('Fresh target');
+    expect(parsed.runs.find(run => run.text === 'Fresh')?.color).toBe('b');
+    expect(document.activeElement).toBe(originalEditor);
+
+    const yellow = screen.getByRole('button', { name: 'Yellow' });
+    fireEvent.mouseDown(yellow);
+    fireEvent.click(yellow);
+    fireEvent(originalEditor, new InputEvent('beforeinput', {
+      bubbles: true, cancelable: true, inputType: 'insertText', data: '!'
+    }));
+    const continued = parseMotd(changed.mock.calls.at(-1)?.[0] as string);
+    expect(continued.runs.map(run => run.text).join('')).toBe('Fresh! target');
+    expect(continued.runs.find(run => run.text === '!')?.color).toBe('e');
+
+    selectTarget();
+    fireEvent.mouseDown(yellow);
+    fireEvent.click(yellow);
+    expect(screen.getByRole('button', { name: 'Yellow' }).getAttribute('aria-pressed')).toBe('true');
+  });
+
   it('renders all legacy color controls visibly with accessible selected state', () => {
     render(<MotdEditor serverName="Test" serverIconUrl={null} savedRaw={'Color'} resetToken={0} onChange={() => undefined} />);
     const colors = ['Black', 'Dark blue', 'Dark green', 'Dark aqua', 'Dark red', 'Dark purple', 'Gold', 'Gray', 'Dark gray', 'Blue', 'Green', 'Aqua', 'Red', 'Light purple', 'Yellow', 'White'];

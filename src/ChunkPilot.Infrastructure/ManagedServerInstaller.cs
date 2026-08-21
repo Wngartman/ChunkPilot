@@ -199,6 +199,7 @@ public sealed class ManagedServerInstaller
     private readonly LoaderInstallationService? loaderInstaller;
     private readonly ModrinthPackServerService packInstaller;
     private readonly ServerCreationTransaction transaction;
+    private readonly CreationWorldSourceService worldSources;
     private readonly HttpClient http;
 
     public ManagedServerInstaller(
@@ -208,7 +209,8 @@ public sealed class ManagedServerInstaller
         HttpClient? httpClient = null,
         LoaderInstallationService? loaderInstaller = null,
         ServerCreationTransaction? transaction = null,
-        ModrinthPackServerService? packInstaller = null)
+        ModrinthPackServerService? packInstaller = null,
+        CreationWorldSourceService? worldSources = null)
     {
         this.paths = paths;
         this.store = store;
@@ -216,6 +218,7 @@ public sealed class ManagedServerInstaller
         this.loaderInstaller = loaderInstaller;
         this.packInstaller = packInstaller ?? new ModrinthPackServerService(loaderInstaller: loaderInstaller);
         this.transaction = transaction ?? new ServerCreationTransaction(store);
+        this.worldSources = worldSources ?? new CreationWorldSourceService();
         http = httpClient ?? new HttpClient { Timeout = TimeSpan.FromMinutes(30) };
         if (http.DefaultRequestHeaders.UserAgent.Count == 0)
             http.DefaultRequestHeaders.UserAgent.ParseAdd("ChunkPilot/1.3.0 (local Windows server manager)");
@@ -293,6 +296,31 @@ public sealed class ManagedServerInstaller
                 var payload = await StagePayloadAsync(request, installerJava, context.StagingPath, progress, context.LogPath, token)
                     .ConfigureAwait(false);
                 staged = payload;
+                if (request.InitialWorld is { } initialWorld)
+                {
+                    Report(progress, request.OperationId, InstallState.Extracting,
+                        CreationStage.PreparingServerFiles, $"Copying existing world {initialWorld.WorldName}",
+                        78, 0, initialWorld.ExpandedSizeBytes, 0, initialWorld.WorldName, context.LogPath);
+                    var worldProgress = new CallbackProgress<CreationWorldCopyProgress>(update =>
+                    {
+                        var fraction = update.TotalBytes > 0
+                            ? Math.Clamp((double)update.CopiedBytes / update.TotalBytes, 0, 1)
+                            : update.TotalFiles > 0
+                                ? Math.Clamp((double)update.CopiedFiles / update.TotalFiles, 0, 1)
+                                : 0;
+                        Report(progress, request.OperationId, InstallState.Extracting,
+                            CreationStage.PreparingServerFiles,
+                            $"Copying existing world ({update.CopiedFiles}/{update.TotalFiles} files)",
+                            78 + fraction * 4,
+                            update.CopiedBytes,
+                            update.TotalBytes,
+                            0,
+                            update.CurrentFile,
+                            context.LogPath);
+                    });
+                    await worldSources.MaterializeAsync(initialWorld, context.StagingPath, worldProgress, token)
+                        .ConfigureAwait(false);
+                }
                 await WriteInitialPropertiesAsync(context.StagingPath, request, token).ConfigureAwait(false);
                 if (!request.EulaAccepted || request.EulaAcceptedAt is null)
                     throw new InvalidOperationException(
@@ -667,6 +695,12 @@ public sealed class ManagedServerInstaller
         if (request.SourceType == InstallSourceType.ModrinthPack &&
             !Uri.TryCreate(request.Source, UriKind.Absolute, out _) && !File.Exists(request.Source))
             throw new FileNotFoundException("The selected local Modrinth pack was not found.", request.Source);
+        if (request.InitialWorld is { } world)
+        {
+            var problems = world.Problems();
+            if (problems.Count > 0)
+                throw new InvalidDataException(string.Join(" ", problems));
+        }
     }
 
     private static Uri ValidateDownloadUri(string source, bool allowHttp)
@@ -675,17 +709,6 @@ public sealed class ManagedServerInstaller
             (uri.Scheme != Uri.UriSchemeHttps && (!allowHttp || uri.Scheme != Uri.UriSchemeHttp)))
             throw new ArgumentException("Use an HTTPS download URL. HTTP requires the explicit advanced warning option.", nameof(source));
         return uri;
-    }
-
-    private static string BuildProperties(ServerInstallRequest request)
-    {
-        var document = ServerPropertiesDocument.Parse(
-            $"# Created by ChunkPilot after explicit EULA acceptance\r\n" +
-            $"server-port={request.Port}\r\nmax-players={request.MaxPlayers}\r\n" +
-            "gamemode=survival\r\ndifficulty=normal\r\nonline-mode=true\r\nwhite-list=false\r\n");
-        foreach (var property in request.InitialProperties)
-            document.Set(property.Key, property.Value);
-        return document.ToString();
     }
 
     private static async Task WriteInitialPropertiesAsync(
@@ -698,11 +721,14 @@ public sealed class ManagedServerInstaller
             ? ServerPropertiesDocument.Parse(await File.ReadAllTextAsync(path, cancellationToken).ConfigureAwait(false))
             : ServerPropertiesDocument.Parse(
                 "# Created by ChunkPilot after explicit EULA acceptance\r\n" +
-                "gamemode=survival\r\ndifficulty=normal\r\nonline-mode=true\r\nwhite-list=false\r\n");
+                "gamemode=survival\r\ndifficulty=normal\r\nonline-mode=true\r\nwhite-list=true\r\n");
         document.Set("server-port", request.Port.ToString(System.Globalization.CultureInfo.InvariantCulture));
         document.Set("max-players", request.MaxPlayers.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        document.Set("white-list", "true");
         foreach (var property in request.InitialProperties)
             document.Set(property.Key, property.Value);
+        if (request.InitialWorld is { } initialWorld)
+            document.Set("level-name", initialWorld.WorldName);
         await File.WriteAllTextAsync(path, document.ToString(), new UTF8Encoding(false), cancellationToken)
             .ConfigureAwait(false);
     }

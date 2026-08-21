@@ -22,6 +22,8 @@ tested, documented, independently reviewed where required, and accepted in the r
 | [CP-FRICTION-008](#cp-friction-008--full-minecraft-version-history) | Full Minecraft version history | High (equal) | **Implemented** — 907-entry inventory with terminal exact certification evidence | — |
 | [CP-FRICTION-009](#cp-friction-009--modpack-creation--discovery) | Modpack creation / discovery | High (equal) | **In progress** | — |
 | [CP-FRICTION-010](#cp-friction-010--ui-exit-network-safety) | UI-exit network safety | High (equal) | **In progress** | [CP-2026-020](BUG-REGISTER.md#cp-2026-020--chunkpilot-managed-network-exposure-survives-ui-process-death) |
+| [CP-FRICTION-011](#cp-friction-011--evidence-based-server-health) | Evidence-based server health | High (equal) | **Implemented locally; awaiting acceptance** | — |
+| [CP-FRICTION-012](#cp-friction-012--offline-help-and-troubleshooting) | Offline help and troubleshooting | High (equal) | **Implemented locally; awaiting acceptance** | — |
 
 ---
 
@@ -141,14 +143,18 @@ interface, and policy evidence should remain progressively disclosed.
 **Acceptance outcome.** Current networking state and its primary action are easy to find while every
 truthfulness rule in [Networking](../operations/NETWORKING.md) remains intact.
 
-The server hero keeps **Share** visible and states Local only, LAN, Internet setup, verified
-joinability, or attention in plain language. Overview points directly to **Manage connectivity**. The
-WebUI Connectivity category starts with beginner Local only, LAN, Internet hosting, and Configure later choices while retaining private/internal state under advanced recovery paths, plus separate local, LAN, router-reported,
-and verified-public evidence; router, firewall and diagnostic internals remain progressively disclosed.
-This change does not alter lease ownership, consent, router operations, firewall operations or public
-verification. When Internet is selected but not verified, Overview shows **Set up Internet access**
-instead of substituting localhost. The guided action reuses the authoritative firewall, router, and
-outside-in commands and retains each consent boundary.
+The server hero keeps **Share** visible and states LAN, Internet setup, confirmed joinability, or
+attention in plain language. Overview points directly to **Manage connectivity**. The WebUI
+Connectivity category exposes only the ordinary **LAN** and **Internet** choices while retaining
+private/internal migration states under advanced recovery paths. A shared connection summary explains
+who should use the local, LAN, current Internet, or last-known Internet address. Router, firewall and
+diagnostic internals remain progressively disclosed.
+This change does not alter lease ownership, consent, router operations or firewall operations. When
+Internet is selected, ordinary status follows the authoritative exact firewall rule, exact router mapping,
+and running server. A router-reported address remains copyable as **Internet sharing configured** only
+when those owned prerequisites are present; this is explicitly not a universal reachability guarantee.
+Outside-in verification is an optional Advanced diagnostic and only its current evidence produces the
+distinct **Connection confirmed** label. No automatic renderer polling is used.
 
 ---
 
@@ -269,3 +275,44 @@ acceptance remain. [CP-2026-020](BUG-REGISTER.md) stays Open until those gates a
 **Known limits.** Simultaneous App-and-Agent termination, machine power loss, and an unreachable router
 cannot promise immediate cleanup. Router failure retains truthful `RemovalPending` evidence and finite
 router leases expire without renewal. No other friction item is implemented by this branch.
+
+---
+
+## CP-FRICTION-011 — Evidence-based server health
+
+| Field | Value |
+|---|---|
+| Date | 2026-08-21 |
+| Priority | High (equal) |
+| Status | **Implemented locally; awaiting acceptance** |
+| Area | Native snapshot / Overview / troubleshooting routing |
+
+Current server problems should appear where the server is managed, using evidence ChunkPilot actually
+has rather than generic advice or a permanent “healthy” banner.
+
+**Acceptance outcome.** Native code maps selected-server crash/watchdog/Java/port and owned-network
+evidence into typed, deduplicated issues. Overview shows at most two compact notices with evidence,
+safe deep links, and per-server/per-fingerprint dismissal. Resolved issues disappear with the
+authoritative snapshot and a genuinely new occurrence returns. Deliberate stops and missing
+outside-in diagnostics do not create warnings.
+
+---
+
+## CP-FRICTION-012 — Offline help and troubleshooting
+
+| Field | Value |
+|---|---|
+| Date | 2026-08-21 |
+| Priority | High (equal) |
+| Status | **Implemented locally; awaiting acceptance** |
+| Area | Settings / Help & troubleshooting |
+
+Operators need one calm, searchable place for Minecraft server symptoms without sending private logs,
+server state, or search terms to a cloud service.
+
+**Acceptance outcome.** The bundled Help Center currently contains 28 structured articles across
+startup, Java, networking, players, performance, worlds, plugins, mods/modpacks, and recovery. Search
+matches plain language, aliases, and exact console signatures; filters, no-results, related articles,
+safe steps, stop conditions, server deep links, and reviewed primary sources work offline. External
+documentation opens only through an HTTPS host allowlist after a user chooses it. Sources and volatile
+claims are registered in `docs/research/MINECRAFT-SERVER-HELP-SOURCES.md`.

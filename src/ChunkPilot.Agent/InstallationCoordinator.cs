@@ -311,6 +311,7 @@ public sealed class InstallationCoordinator
                 Port = plan.Port,
                 CreationNetworkingPreference = plan.NetworkingPreference,
                 MaxPlayers = plan.MaxPlayers,
+                InitialWorld = plan.InitialWorld,
                 EulaAccepted = plan.Eula.Accepted,
                 EulaAcceptedAt = plan.Eula.AcceptedAtUtc,
                 // The hash the user reviewed is carried through, so an artifact that changed between
@@ -462,6 +463,7 @@ public sealed class InstallationCoordinator
                 Port = plan.Port,
                 CreationNetworkingPreference = plan.NetworkingPreference,
                 MaxPlayers = plan.MaxPlayers,
+                InitialWorld = plan.InitialWorld,
                 EulaAccepted = plan.Eula.Accepted,
                 EulaAcceptedAt = plan.Eula.AcceptedAtUtc,
                 ExpectedSha256 = plan.Build.ServerSha256
@@ -651,6 +653,7 @@ public sealed class InstallationCoordinator
                 Port = plan.Port,
                 CreationNetworkingPreference = plan.NetworkingPreference,
                 MaxPlayers = plan.MaxPlayers,
+                InitialWorld = plan.InitialWorld,
                 EulaAccepted = plan.Eula.Accepted,
                 EulaAcceptedAt = plan.Eula.AcceptedAtUtc,
                 ExpectedSha1 = plan.Build.ArtifactSha1,
@@ -809,6 +812,7 @@ public sealed class InstallationCoordinator
                 Port = plan.Port,
                 CreationNetworkingPreference = plan.NetworkingPreference,
                 MaxPlayers = plan.MaxPlayers,
+                InitialWorld = plan.InitialWorld,
                 EulaAccepted = plan.Eula.Accepted,
                 EulaAcceptedAt = plan.Eula.AcceptedAtUtc,
                 ExpectedSha1 = plan.ExpectedSha1,
@@ -1128,8 +1132,7 @@ public sealed class InstallationCoordinator
                     ProjectName = request.ServerName.Trim(),
                     ProjectId = ManagedServerInstaller.MakeSafeInstanceName(request.ServerName),
                     InstalledVersionId = result.Sha256,
-                    InstalledVersionName = string.IsNullOrWhiteSpace(request.Build)
-                        ? result.Definition.MinecraftVersion : request.Build,
+                    InstalledVersionName = Path.GetFileNameWithoutExtension(request.Source),
                     InstalledFileId = result.Sha256,
                     MinecraftVersion = result.Definition.MinecraftVersion,
                     Loader = result.Definition.Ecosystem.ToString(),

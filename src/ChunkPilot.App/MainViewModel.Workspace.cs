@@ -699,6 +699,8 @@ public sealed partial class MainViewModel
                 RestoreLoadedMemory();
                 return;
             }
+            if (SelectedServer?.Definition.Id != serverId)
+                return;
             MarkMemoryLoaded(MinimumRamMb, MaximumRamMb);
             MemorySavedNotice = "Memory allocation saved.";
             memoryRestartPending = wasRunning && !restart;

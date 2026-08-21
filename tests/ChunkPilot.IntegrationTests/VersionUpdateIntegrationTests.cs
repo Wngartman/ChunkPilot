@@ -72,6 +72,37 @@ public sealed class VersionUpdateIntegrationTests : IAsyncLifetime
             Path.Combine(definition.RootPath, "notes", "mine.txt")));
     }
 
+    [Fact(Timeout = 30_000)]
+    public async Task Exact_local_archive_is_up_to_date_and_repairs_legacy_pack_display_name()
+    {
+        var definition = await CreateOldServerAsync();
+        await store.UpsertServerAsync(definition);
+        var package = CreateUpdatePackage("StaTech Industry-2.0.0-rc4-serverpack.zip", "normal");
+        var archiveHash = Convert.ToHexString(SHA256.HashData(await File.ReadAllBytesAsync(package)))
+            .ToLowerInvariant();
+        await store.UpsertUpdateSourceAsync(Source(definition.Id) with
+        {
+            InstalledVersionId = archiveHash,
+            InstalledVersionName = "6.0.2",
+            InstalledFileId = "",
+            SourceUrl = package
+        });
+        await using var supervisor = new ServerSupervisor(store, paths, new ProcessStatisticsProvider(),
+            new MinecraftStatusClient(), new BackupService(paths, store), loggerFactory);
+        await supervisor.InitializeAsync();
+        var snapshots = new VersionSnapshotService(paths, store);
+        var coordinator = new ServerUpdateCoordinator(store, supervisor, new UpdateSourceDetector(),
+            new UpdateProviderRegistry([new LocalPackageHistoryUpdateProvider()]),
+            new PackUpdateCompatibilityService(), CreateUpdateService(), snapshots);
+
+        var result = await coordinator.CheckAsync(definition.Id);
+
+        Assert.Equal(ServerUpdateStatus.UpToDate, result.Status);
+        var repaired = Assert.IsType<UpdateSource>(await store.GetUpdateSourceAsync(definition.Id));
+        Assert.Equal("StaTech Industry-2.0.0-rc4-serverpack", repaired.InstalledVersionName);
+        Assert.Equal(archiveHash, repaired.InstalledFileId);
+    }
+
     [Fact(Timeout = 90_000)]
     public async Task Failed_updated_server_automatically_restores_and_restarts_previous_version()
     {

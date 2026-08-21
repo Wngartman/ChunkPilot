@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type MouseEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from 'react';
 import { Bold, Clipboard, Code2, Italic, Redo2, RotateCcw, Strikethrough, Underline, Undo2 } from '../../design-system/Icons';
 import { Button } from '../../design-system/Primitives';
 import {
@@ -112,6 +112,7 @@ export function MotdEditor({ serverName, serverIconUrl, savedRaw, resetToken, on
   const semanticSelection = useRef<MotdSelection>({ anchor: 0, focus: 0 });
   const pendingSelection = useRef<MotdSelection | null>(null);
   const typingStyle = useRef<MotdStyle>(defaultMotdStyle());
+  const explicitTypingSelection = useRef<MotdSelection | null>(null);
   const history = useRef<string[]>([savedRaw]);
   const historyIndex = useRef(0);
   const parsed = useMemo(() => parseMotd(raw), [raw]);
@@ -120,14 +121,21 @@ export function MotdEditor({ serverName, serverIconUrl, savedRaw, resetToken, on
   useEffect(() => {
     const next = parseMotd(savedRaw);
     setRaw(savedRaw); setRuns(next.runs); setMode(next.visualSafe ? 'visual' : 'raw'); setRenderVersion(value => value + 1);
-    semanticSelection.current = { anchor: 0, focus: 0 }; typingStyle.current = defaultMotdStyle(); setActiveStyle(defaultMotdStyle());
+    semanticSelection.current = { anchor: 0, focus: 0 }; typingStyle.current = defaultMotdStyle(); explicitTypingSelection.current = null; setActiveStyle(defaultMotdStyle());
     history.current = [savedRaw]; historyIndex.current = 0;
   }, [savedRaw, resetToken]);
 
   const rememberSelection = useCallback(() => {
+    if (pendingSelection.current) return;
     const next = captureSelection(editor.current);
     if (!next) return;
     semanticSelection.current = next;
+    const explicit = explicitTypingSelection.current;
+    if (explicit && explicit.anchor === next.anchor && explicit.focus === next.focus) {
+      setActiveStyle(typingStyle.current);
+      return;
+    }
+    explicitTypingSelection.current = null;
     const ordered = orderedSelection(next); const style = styleAt(runs, ordered.start);
     typingStyle.current = style; setActiveStyle(style);
   }, [runs]);
@@ -141,14 +149,17 @@ export function MotdEditor({ serverName, serverIconUrl, savedRaw, resetToken, on
   useLayoutEffect(() => {
     if (!pendingSelection.current) return;
     restoreSelection(editor.current, pendingSelection.current);
+    editor.current?.focus({ preventScroll: true });
     pendingSelection.current = null;
   }, [renderVersion, runs]);
 
-  const publish = useCallback((nextRuns: MotdRun[], nextSelection: MotdSelection, addHistory = true) => {
+  const publish = useCallback((nextRuns: MotdRun[], nextSelection: MotdSelection, addHistory = true, nextTypingStyle?: MotdStyle) => {
     const nextRaw = serializeMotd(nextRuns);
     setRuns(nextRuns); setRaw(nextRaw); onChange(nextRaw);
     semanticSelection.current = nextSelection; pendingSelection.current = nextSelection; setRenderVersion(value => value + 1);
-    typingStyle.current = styleAt(nextRuns, nextSelection.focus); setActiveStyle(typingStyle.current);
+    typingStyle.current = nextTypingStyle ?? styleAt(nextRuns, nextSelection.focus);
+    explicitTypingSelection.current = nextTypingStyle ? nextSelection : null;
+    setActiveStyle(typingStyle.current);
     if (addHistory && history.current[historyIndex.current] !== nextRaw) {
       history.current = [...history.current.slice(0, historyIndex.current + 1), nextRaw].slice(-100);
       historyIndex.current = history.current.length - 1;
@@ -161,37 +172,46 @@ export function MotdEditor({ serverName, serverIconUrl, savedRaw, resetToken, on
     semanticSelection.current = { anchor: 0, focus: 0 }; setRenderVersion(version => version + 1);
   };
 
-  const travelHistory = (direction: -1 | 1) => {
+  const travelHistory = useCallback((direction: -1 | 1) => {
     const nextIndex = Math.max(0, Math.min(history.current.length - 1, historyIndex.current + direction));
     if (nextIndex === historyIndex.current) return;
     historyIndex.current = nextIndex; const nextRaw = history.current[nextIndex]; const next = parseMotd(nextRaw);
     setRaw(nextRaw); setRuns(next.runs); onChange(nextRaw); setRenderVersion(value => value + 1);
-  };
+  }, [onChange]);
 
   const apply = (patch: Partial<MotdStyle> | 'clear') => {
     rememberSelection(); const selection = semanticSelection.current; const { start, end } = orderedSelection(selection);
     if (start === end) {
       const next = patch === 'clear' ? defaultMotdStyle() : { ...typingStyle.current, ...patch };
-      typingStyle.current = next; setActiveStyle(next); editor.current?.focus(); restoreSelection(editor.current, selection); return;
+      typingStyle.current = next; explicitTypingSelection.current = selection; setActiveStyle(next); editor.current?.focus(); restoreSelection(editor.current, selection); return;
     }
     const nextRuns = patch === 'clear' ? clearFormatting(runs, selection) : applyFormatting(runs, selection, patch);
-    publish(nextRuns, selection);
+    const nextTypingStyle = patch === 'clear' ? defaultMotdStyle() : { ...styleAt(runs, start), ...patch };
+    publish(nextRuns, selection, true, nextTypingStyle);
   };
 
-  const edit = (selection: MotdSelection, text: string) => {
+  const edit = useCallback((selection: MotdSelection, text: string) => {
     const replacement = replaceSelection(runs, selection, text, typingStyle.current);
-    publish(replacement.runs, replacement.selection);
-  };
+    publish(replacement.runs, replacement.selection, true, typingStyle.current);
+  }, [publish, runs]);
 
-  const beforeInput = (event: FormEvent<HTMLDivElement>) => {
-    const native = event.nativeEvent as InputEvent; const selection = captureSelection(editor.current) ?? semanticSelection.current;
-    if (native.inputType === 'historyUndo') { event.preventDefault(); travelHistory(-1); return; }
-    if (native.inputType === 'historyRedo') { event.preventDefault(); travelHistory(1); return; }
-    if (native.inputType === 'deleteContentBackward') { event.preventDefault(); edit(deleteBackwardRange(runs, selection), ''); return; }
-    if (native.inputType === 'deleteContentForward') { event.preventDefault(); edit(deleteForwardRange(runs, selection), ''); return; }
-    if (native.inputType === 'insertParagraph' || native.inputType === 'insertLineBreak') { event.preventDefault(); edit(selection, '\n'); return; }
-    if (native.inputType.startsWith('insert') && native.data != null) { event.preventDefault(); edit(selection, native.data); }
-  };
+  const beforeInput = useCallback((event: InputEvent) => {
+    const selection = captureSelection(editor.current) ?? semanticSelection.current;
+    if (event.inputType === 'historyUndo') { event.preventDefault(); travelHistory(-1); return; }
+    if (event.inputType === 'historyRedo') { event.preventDefault(); travelHistory(1); return; }
+    if (event.inputType === 'deleteContentBackward') { event.preventDefault(); edit(deleteBackwardRange(runs, selection), ''); return; }
+    if (event.inputType === 'deleteContentForward') { event.preventDefault(); edit(deleteForwardRange(runs, selection), ''); return; }
+    if (event.inputType === 'insertParagraph' || event.inputType === 'insertLineBreak') { event.preventDefault(); edit(selection, '\n'); return; }
+    if (event.inputType.startsWith('insert') && event.data != null) { event.preventDefault(); edit(selection, event.data); }
+  }, [edit, runs, travelHistory]);
+
+  useLayoutEffect(() => {
+    const root = editor.current;
+    if (!root || mode !== 'visual') return;
+    const listener = (event: Event) => beforeInput(event as InputEvent);
+    root.addEventListener('beforeinput', listener);
+    return () => root.removeEventListener('beforeinput', listener);
+  }, [beforeInput, mode]);
 
   return <div className={styles.motdEditor}>
     <div className={styles.appearanceToolbar}>
@@ -219,7 +239,6 @@ export function MotdEditor({ serverName, serverIconUrl, savedRaw, resetToken, on
         <div className={styles.previewBody}>
           {serverIconUrl ? <img src={serverIconUrl} alt="" aria-hidden="true" /> : <div className={styles.previewFallback} aria-hidden="true" />}
           <div className={styles.previewText}><strong>{serverName}</strong><div
-            key={renderVersion}
             ref={editor}
             className={styles.richEditor}
             contentEditable
@@ -228,7 +247,6 @@ export function MotdEditor({ serverName, serverIconUrl, savedRaw, resetToken, on
             aria-multiline="true"
             suppressContentEditableWarning
             spellCheck={false}
-            onBeforeInput={beforeInput}
             onPaste={event => { event.preventDefault(); edit(captureSelection(editor.current) ?? semanticSelection.current, event.clipboardData.getData('text/plain')); }}
             onKeyUp={rememberSelection}
             onMouseUp={rememberSelection}

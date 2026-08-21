@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: New prerelease tag, for example v1.3.0-alpha.4
+        description: New prerelease tag, for example v1.3.0-alpha.5
         required: true
         type: string
       release_commit:

@@ -37,6 +37,7 @@ public sealed record ModpackCreationPlan
         VanillaNetworkingPreference.HomeNetwork;
     public string InstanceRoot { get; init; } = "";
     public bool ExperimentalRuntimeRiskAccepted { get; init; }
+    public CreationWorldSource? InitialWorld { get; init; }
 
     public IReadOnlyList<string> Problems()
     {
@@ -72,6 +73,7 @@ public sealed record ModpackCreationPlan
         if (memory is not null) problems.Add(memory);
         var port = ServerPortPolicy.Validate(Port);
         if (port is not null) problems.Add(port);
+        if (InitialWorld is { } world) problems.AddRange(world.Problems());
         return problems.Distinct(StringComparer.Ordinal).ToArray();
     }
 }

@@ -21,6 +21,8 @@
   </ItemGroup>
   <ItemGroup>
     <Resource Include="..\..\assets\ChunkPilot.ico" Link="Assets\ChunkPilot.ico" />
+    <None Include="..\..\assets\ChunkPilot.ico" Link="Assets\ChunkPilot.ico"
+          CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <!-- Two frames, not one. The splash draws the mark large and uses the 256; the navigation
          rail draws it at 32 DIP and uses the 64, which still has headroom at 150% scaling.
          Scaling the 256 down to 32 at runtime is the defect the brand rework exists to remove. -->
@@ -37,5 +39,11 @@
           BeforeTargets="PrepareForBuild"
           Condition="'$(Configuration)' == 'Release' and !Exists('..\ChunkPilot.WebUi\dist\index.html')">
     <Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\..\..\scripts\build-webui.ps1&quot; -SkipTests" />
+  </Target>
+  <Target Name="CopyPackagedApplicationIcon" AfterTargets="Publish">
+    <MakeDir Directories="$(PublishDir)Assets" />
+    <Copy SourceFiles="$(MSBuildProjectDirectory)\..\..\assets\ChunkPilot.ico"
+          DestinationFiles="$(PublishDir)Assets\ChunkPilot.ico"
+          SkipUnchangedFiles="true" />
   </Target>
 </Project>

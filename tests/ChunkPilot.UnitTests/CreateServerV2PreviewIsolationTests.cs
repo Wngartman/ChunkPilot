@@ -111,11 +111,9 @@ public sealed class CreateServerV2PreviewIsolationTests
             Path.Combine(DesignSystemFiles.AppProjectDirectory, "MainViewModel.cs"));
 
         Assert.DoesNotContain("CreateServerPreview", mainViewModel, StringComparison.Ordinal);
-        Assert.Contains("VanillaCreationRequested", mainViewModel, StringComparison.Ordinal);
-        // The broad legacy implementation remains available for a future explicit advanced path;
-        // retaining its files does not make the synthetic preview or legacy installer a product route.
-        Assert.True(File.Exists(Path.Combine(DesignSystemFiles.AppProjectDirectory, "InstallServerWindow.xaml")));
-        Assert.True(File.Exists(Path.Combine(DesignSystemFiles.AppProjectDirectory, "InstallServerViewModel.cs")));
+        Assert.DoesNotContain("VanillaCreationRequested", mainViewModel, StringComparison.Ordinal);
+        Assert.False(File.Exists(Path.Combine(DesignSystemFiles.AppProjectDirectory, "InstallServerWindow.xaml")));
+        Assert.False(File.Exists(Path.Combine(DesignSystemFiles.AppProjectDirectory, "InstallServerViewModel.cs")));
     }
 
     // ------------------------------------------------------------------ no production dependencies

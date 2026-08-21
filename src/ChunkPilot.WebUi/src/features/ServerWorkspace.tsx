@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { Archive, Box, Check, CircleAlert, CircleHelp, Clipboard, CloudOff, Code2, File, Folder, FolderOpen, Globe2, History, MoreHorizontal, Play, RotateCw, Send, Server as ServerIcon, Settings, Share2, ShieldCheck, Square, Terminal, Trash2, Users, Wifi } from '../design-system/Icons';
-import type { ConnectivitySnapshot, ManagedContentOperation, PluginInstallPlan, PluginProject, PluginProviderStatus, PluginRelease, ServerDeletionMode, ServerDeletionPreflight, ServerSummary, TextFileContent, UpdateSummary } from '../bridge/types';
-import { Button, ConfirmDialog, Dialog, EmptyState, PanelTitle, SearchInput, SelectInput, Sparkline, StatusBadge, TextInput } from '../design-system/Primitives';
+import { Archive, Box, Check, CircleAlert, CircleHelp, CloudOff, Code2, File, Folder, FolderOpen, Globe2, History, MoreHorizontal, Play, RotateCw, Send, Server as ServerIcon, Settings, Share2, ShieldCheck, Square, Terminal, Trash2, Users, Wifi } from '../design-system/Icons';
+import type { ConnectivitySnapshot, ManagedContentOperation, PlayerEntry, PluginInstallPlan, PluginProject, PluginProviderStatus, PluginRelease, ServerDeletionMode, ServerDeletionPreflight, ServerHealthIssue, ServerSummary, TextFileContent, UpdateSummary } from '../bridge/types';
+import { Button, ConfirmDialog, Dialog, EmptyState, PanelTitle, SearchInput, SelectInput, Sparkline, StatusBadge, Switch, TextInput } from '../design-system/Primitives';
 import { ActionMenu } from '../design-system/ActionMenu';
 import { useAppStore } from '../state/store';
 import { lifecycleAction } from './lifecycle';
@@ -19,6 +19,7 @@ import pluginStyles from './PluginsPage.module.css';
 import { useGuardedNavigation, useUnsavedChangesGuard } from '../app/NavigationGuard';
 import { runMeasuredNavigation } from '../app/performance';
 import { PluginConfigEditor } from './plugin-config/PluginConfigEditor';
+import { ConnectionSummary, connectionChoice } from './connectivity/ConnectionSummary';
 
 type Tab = 'overview' | 'console' | 'players' | 'files' | 'content' | 'backups' | 'versions' | 'settings';
 interface PaperBuildEvidence {
@@ -72,7 +73,7 @@ const tone = (server: ServerSummary) => server.state === 'Running' ? 'success' :
 const contentLabel = (server: ServerSummary) => server.capabilities.content === 'plugins' ? 'Plugins' : server.capabilities.content === 'mods' ? 'Mods' : server.capabilities.content === 'modpack' ? 'Modpack' : server.capabilities.content === 'datapacks' ? 'Datapacks' : 'Content';
 export const measureConsoleRow = (element: Element): number => Math.max(24, Math.ceil(Math.max(element.getBoundingClientRect().height, (element as HTMLElement).scrollHeight)) + 1);
 
-export function ServerWorkspace({ serverId }: { serverId: string }) {
+export function ServerWorkspace({ serverId, onOpenHelp = () => undefined }: { serverId: string; onOpenHelp?: (articleId: string) => void }) {
   const snapshot = useAppStore(state => state.snapshot)!;
   const command = useAppStore(state => state.command);
   const busy = useAppStore(state => state.busy);
@@ -88,9 +89,8 @@ export function ServerWorkspace({ serverId }: { serverId: string }) {
   const closeShare = useCallback(() => setShareOpen(false), []);
   const navigate = useGuardedNavigation();
   const server = snapshot.servers.find(item => item.id === serverId);
-  const selectedConnectivity = server && snapshot.connectivity?.serverId === server.id ? snapshot.connectivity : null;
-  useAutomaticConnectivityVerification(server ?? null, selectedConnectivity);
-  useEffect(() => { if (server) void command('workspace.load', { serverId: server.id, destination: tab }).catch(() => undefined); }, [tab, server?.id]);
+  const scopedSnapshotReady = Boolean(server && snapshot.selectedServerId === server.id);
+  useEffect(() => { if (server && scopedSnapshotReady) void command('workspace.load', { serverId: server.id, destination: tab }).catch(() => undefined); }, [tab, server?.id, scopedSnapshotReady]);
   if (!server) return null;
   const tabs: { id: Tab; label: string; icon: typeof ServerIcon; enabled: boolean }[] = [
     { id: 'overview', label: 'Overview', icon: ServerIcon, enabled: true },
@@ -132,17 +132,19 @@ export function ServerWorkspace({ serverId }: { serverId: string }) {
       <nav className={styles.tabs} aria-label={`${server.name} navigation`}>{tabs.filter(item => item.enabled).map(item => <button className={styles.tab} key={item.id} data-selected={tab === item.id} aria-current={tab === item.id ? 'page' : undefined} onClick={() => navigate(() => runMeasuredNavigation(`server-tab-${item.id}`, () => { setMenuOpen(false); setTab(item.id); }))}><item.icon size={14} />{item.label}</button>)}</nav>
     </section>
     <div className={styles.content}>
-      {tab === 'overview' && <Overview server={server} onTab={setTab} onSettings={openSettings} />}
-      {tab === 'console' && <ConsolePage server={server} />}
-      {tab === 'players' && <PlayersPage server={server} />}
-      {tab === 'files' && <FilesPage server={server} />}
-      {tab === 'content' && <ContentPage server={server} />}
-      {tab === 'backups' && <BackupsPage server={server} />}
-      {tab === 'versions' && <VersionsPage server={server} />}
-      {tab === 'settings' && <ServerSettingsPage server={server} initialCategory={settingsCategory} />}
+      {!scopedSnapshotReady ? <section className={styles.panel} role="status"><EmptyState title={`Opening ${server.name}`} detail="Waiting for authoritative data from this server. Previous server details are not carried across the switch." /></section> : <>
+        {tab === 'overview' && <Overview server={server} onTab={setTab} onSettings={openSettings} onOpenHelp={onOpenHelp} />}
+        {tab === 'console' && <ConsolePage server={server} />}
+        {tab === 'players' && <PlayersPage server={server} />}
+        {tab === 'files' && <FilesPage server={server} />}
+        {tab === 'content' && <ContentPage server={server} />}
+        {tab === 'backups' && <BackupsPage server={server} />}
+        {tab === 'versions' && <VersionsPage server={server} />}
+        {tab === 'settings' && <ServerSettingsPage key={server.id} server={server} initialCategory={settingsCategory} />}
+      </>}
     </div>
-    <ShareDialog open={shareOpen} onClose={closeShare} server={server} connectivity={snapshot.connectivity?.serverId === server.id ? snapshot.connectivity : null} onManage={() => { closeShare(); openSettings('Connectivity'); }} />
-    <DeleteServerDialog open={deleteOpen} preflight={deletePreflight} server={server} onClose={() => setDeleteOpen(false)} />
+    {scopedSnapshotReady && <ShareDialog open={shareOpen} onClose={closeShare} server={server} connectivity={snapshot.connectivity?.serverId === server.id ? snapshot.connectivity : null} onManage={() => { closeShare(); openSettings('Connectivity'); }} />}
+    {scopedSnapshotReady && <DeleteServerDialog open={deleteOpen} preflight={deletePreflight} server={server} onClose={() => setDeleteOpen(false)} />}
   </div>;
 }
 
@@ -206,17 +208,10 @@ function DeleteServerDialog({ open, preflight, server, onClose }: {
 function ShareDialog({ open, onClose, server, connectivity, onManage }: {
   open: boolean; onClose: () => void; server: ServerSummary; connectivity: ConnectivitySnapshot | null; onManage: () => void;
 }) {
-  const command = useAppStore(state => state.command);
-  const publicVerified = connectivity?.addresses.publicVerified;
-  const routerReported = connectivity?.mode === 'PortForwarding' && connectivity.router.enabled ? connectivity.addresses.routerReported : null;
-  const recommendedKind = publicVerified ? 'public' : routerReported ? 'router' : connectivity?.mode === 'HomeNetwork' && connectivity.addresses.lan ? 'lan' : connectivity?.mode === 'PortForwarding' ? null : 'local';
-  const recommendedAddress = publicVerified ?? routerReported ?? (recommendedKind === 'lan' ? connectivity?.addresses.lan : recommendedKind === 'local' ? connectivity?.addresses.local ?? server.localAddress : null);
   return <Dialog open={open} title={`Share ${server.name}`} wide onClose={onClose} footer={<><Button onClick={onClose}>Close</Button><Button variant="primary" onClick={onManage}>Manage connectivity</Button></>}>
     {connectivity ? <div className={styles.shareSheet}>
-      <div className={styles.shareStatus}><StatusBadge tone={connectivity.status.tone}>{connectivity.status.title}</StatusBadge><p>{connectivity.status.detail}</p></div>
-      <div className={styles.shareAddress}><span>{recommendedKind === 'public' ? 'Verified Internet address' : recommendedKind === 'router' ? 'Public address — unverified' : recommendedKind === 'lan' ? 'LAN address' : recommendedKind === 'local' ? 'Local address' : 'Internet address'}</span><div><code>{recommendedAddress ?? 'Not available yet'}</code>{recommendedKind && <Button icon={<Clipboard size={14} />} onClick={() => void command('connectivity.copyAddress', { serverId: server.id, kind: recommendedKind })}>Copy</Button>}</div></div>
-      <div className={styles.shareFacts}><div><span>Connection method</span><strong>{connectivity.modeTitle}</strong></div><div><span>Outside-in evidence</span><strong>{publicVerified ? `Verified ${connectivity.external.checkedAt}` : 'Not verified'}</strong></div><div><span>Minecraft</span><strong>{server.ecosystem} {server.minecraftVersion}</strong></div></div>
-      <p className={styles.shareCaveat}>{publicVerified ? 'This endpoint answered from outside your network at the recorded check time. Reachability can change later.' : routerReported ? 'This is the most likely address. ChunkPilot is still checking whether it works from outside your network.' : connectivity.mode === 'PortForwarding' ? 'Internet setup has not produced a public address yet.' : 'This address is not for friends outside your home network.'}</p>
+      <ConnectionSummary server={server} connectivity={connectivity} showAll />
+      <div className={styles.shareFacts}><div><span>Server type</span><strong>{server.ecosystem}</strong></div><div><span>Minecraft version</span><strong>{server.minecraftVersion}</strong></div><div><span>Server state</span><strong>{server.state}</strong></div></div>
     </div> : <EmptyState title="Connection state unavailable" detail="ChunkPilot has not received authoritative networking state for this server." />}
   </Dialog>;
 }
@@ -251,19 +246,14 @@ function UpdateInstallDialog({ open, onClose, server, update }: {
   </Dialog>;
 }
 
-function Overview({ server, onTab, onSettings }: { server: ServerSummary; onTab: (tab: Tab) => void; onSettings: (category: string) => void }) {
+function Overview({ server, onTab, onSettings, onOpenHelp }: { server: ServerSummary; onTab: (tab: Tab) => void; onSettings: (category: string) => void; onOpenHelp: (articleId: string) => void }) {
   const snapshot = useAppStore(state => state.snapshot)!;
   const command = useAppStore(state => state.command);
   const running = server.state === 'Running';
   const connectivity = snapshot.connectivity?.serverId === server.id ? snapshot.connectivity : null;
-  const routerReported = connectivity?.mode === 'PortForwarding' && connectivity.router.enabled ? connectivity.addresses.routerReported : null;
-  const connectionKind = connectivity?.addresses.publicVerified ? 'public' : routerReported ? 'router' : connectivity?.mode === 'HomeNetwork' && connectivity.addresses.lan ? 'lan' : connectivity?.mode === 'PortForwarding' ? null : 'local';
-  const connectionAddress = connectivity?.addresses.publicVerified ?? routerReported ?? (connectionKind === 'lan' ? connectivity?.addresses.lan : connectionKind === 'local' ? connectivity?.addresses.local ?? server.localAddress : null);
   const memoryPercent = server.memoryBytes == null || !server.maximumMemoryBytes ? null : server.memoryBytes / server.maximumMemoryBytes * 100;
   return <>
-    {server.crashAnalysis && ['Crashed', 'Unresponsive'].includes(server.state)
-      ? <CrashAnalysisPanel server={server} onConsole={() => onTab('console')} />
-      : server.lastError && <div className={styles.attentionBanner}><span /><div><strong>Server needs attention</strong><p>{server.lastError}</p></div><Button onClick={() => onTab('console')}>Open console</Button></div>}
+    <ServerHealthPanel server={server} issues={snapshot.issues.filter(issue => issue.serverId === server.id)} onTab={onTab} onSettings={onSettings} onOpenHelp={onOpenHelp} />
     <div className={styles.overviewWorkbench}>
       <section className={styles.performanceSurface}><PanelTitle title="Live performance" meta={running ? 'Current session · 15 min' : 'Server stopped'} /><div className={styles.performance}>{server.cpuPercent == null || server.samples.length < 2 ? <EmptyState title="No performance data" detail={running ? 'ChunkPilot is waiting for enough real samples.' : 'Start the server to collect performance data.'} /> : <><div className={styles.performanceHead}><strong>{server.cpuPercent.toFixed(1)}%</strong><span>CPU now · {bytes(server.memoryBytes)} memory</span></div><Sparkline values={server.samples.map(sample => sample.cpuPercent)} /><div className={styles.resourceBar}><span>Memory</span><i><b style={{ width: `${Math.min(100, memoryPercent ?? 0)}%` }} /></i><strong>{memoryPercent == null ? 'Unavailable' : `${memoryPercent.toFixed(0)}%`}</strong></div></>}</div></section>
       <aside className={styles.statusRail}>
@@ -275,9 +265,35 @@ function Overview({ server, onTab, onSettings }: { server: ServerSummary; onTab:
     </div>
     <div className={styles.overviewLower}>
       <section className={styles.panel}><PanelTitle title="Recent console" action={<Button variant="subtle" onClick={() => onTab('console')}>Open console</Button>} /><div className={styles.consolePreview}>{snapshot.console.length ? snapshot.console.slice(-7).map(line => <div key={line.sequence}><span>{new Date(line.timestamp).toLocaleTimeString()} </span>{line.text}</div>) : <p>No console output is available.</p>}</div></section>
-      <section className={styles.panel}><PanelTitle title="Connection" action={<Button variant="subtle" onClick={() => onSettings('Connectivity')}>Manage connectivity</Button>} /><div className={styles.connectionPanel}><StatusBadge tone={connectivity?.status.tone ?? 'neutral'}>{connectivity?.addresses.publicVerified ? 'Friends can join' : routerReported ? 'Public address — unverified' : connectivity?.modeTitle ?? 'Unavailable'}</StatusBadge><code>{connectionAddress ?? 'Internet address not available'}</code><p>{connectivity?.addresses.publicVerified ? `Outside-in verified ${connectivity.external.checkedAt}.` : routerReported ? 'This is the most likely address. ChunkPilot is still checking whether it works from outside your network.' : connectivity?.mode === 'PortForwarding' ? 'Finish setup to obtain and verify an Internet address.' : 'Local, LAN, router-reported, and verified public addresses remain distinct.'}</p><div className={page.actions}>{connectionKind && <Button icon={<Clipboard size={14} />} onClick={() => void command('connectivity.copyAddress', { serverId: server.id, kind: connectionKind })}>Copy address</Button>}{connectivity?.mode === 'PortForwarding' && <Button variant="primary" onClick={() => onSettings('Connectivity')}>{connectivity.addresses.publicVerified ? 'Connectivity details' : 'Finish Internet setup'}</Button>}</div></div></section>
+      <section className={styles.panel}><PanelTitle title="How to join" /><div className={styles.connectionPanel}><ConnectionSummary server={server} connectivity={connectivity} compact onManage={() => onSettings('Connectivity')} /></div></section>
     </div>
   </>;
+}
+
+function ServerHealthPanel({ server, issues, onTab, onSettings, onOpenHelp }: {
+  server: ServerSummary;
+  issues: ServerHealthIssue[];
+  onTab: (tab: Tab) => void;
+  onSettings: (category: string) => void;
+  onOpenHelp: (articleId: string) => void;
+}) {
+  const [, refresh] = useState(0);
+  const visible = issues.filter(issue => window.localStorage.getItem(healthDismissalKey(issue)) !== 'dismissed').slice(0, 2);
+  if (!visible.length) return null;
+  const act = (issue: ServerHealthIssue) => {
+    if (issue.primaryAction === 'openConsole') onTab('console');
+    else if (issue.primaryAction === 'openConnectivity') onSettings('Connectivity');
+    else onOpenHelp(issue.articleId);
+  };
+  return <section className={styles.healthIssues} aria-label={`Current issues for ${server.name}`}>{visible.map(issue => <article key={`${issue.issueId}:${issue.evidenceFingerprint}`} data-severity={issue.severity}>
+    <CircleAlert size={18} aria-hidden="true" />
+    <div><strong>{issue.title}</strong><p>{issue.summary}</p><small>Evidence: {issue.evidenceSummary}</small></div>
+    <div className={page.actions}><Button onClick={() => onOpenHelp(issue.articleId)}>Troubleshoot</Button><Button variant="primary" onClick={() => act(issue)}>{issue.primaryAction === 'openConnectivity' ? 'Open networking' : issue.primaryAction === 'openConsole' ? 'Open console' : 'Open help'}</Button>{issue.dismissible && <Button variant="subtle" aria-label={`Dismiss ${issue.title}`} onClick={() => { window.localStorage.setItem(healthDismissalKey(issue), 'dismissed'); refresh(value => value + 1); }}>Dismiss</Button>}</div>
+  </article>)}</section>;
+}
+
+function healthDismissalKey(issue: ServerHealthIssue) {
+  return `chunkpilot.health.dismissed.${issue.serverId}.${issue.issueId}.${issue.evidenceFingerprint}`;
 }
 
 function CrashAnalysisPanel({ server, onConsole }: { server: ServerSummary; onConsole: () => void }) {
@@ -358,12 +374,56 @@ function ConsolePage({ server }: { server: ServerSummary }) {
 }
 
 function PlayersPage({ server }: { server: ServerSummary }) {
-  const snapshot = useAppStore(state => state.snapshot)!; const command = useAppStore(state => state.command); const [search, setSearch] = useState('');
+  const snapshot = useAppStore(state => state.snapshot)!; const command = useAppStore(state => state.command); const busy = useAppStore(state => state.busy); const [search, setSearch] = useState('');
+  const [newPlayer, setNewPlayer] = useState('');
   const [pending, setPending] = useState<{ player: string; action: string; label: string; detail: string } | null>(null);
   const players = snapshot.players.filter(player => player.name.toLowerCase().includes(search.toLowerCase()));
+  const access = snapshot.playerAccess?.serverId === server.id ? snapshot.playerAccess : null;
+  const canModerate = Boolean(access?.serverRunning);
   const moderate = (playerName: string, action: string) => void command('players.moderate', { serverId: server.id, playerName, action });
+  const setWhitelist = (enabled: boolean) => void command('players.setWhitelist', { serverId: server.id, enabled });
+  const addAllowlist = () => { const playerName = newPlayer.trim(); if (!playerName) return; void command('players.addAllowlist', { serverId: server.id, playerName }).then(() => setNewPlayer('')); };
   const confirm = (player: string, action: string, label: string, detail: string) => setPending({ player, action, label, detail });
-  return <section className={styles.panel}><div className={styles.pathBar}><SearchInput value={search} onChange={event => setSearch(event.target.value)} placeholder="Search players" aria-label="Search players" /><StatusBadge tone={server.state === 'Running' ? 'success' : 'neutral'}>{server.playersOnline == null ? 'Count unavailable' : `${server.playersOnline} online`}</StatusBadge></div>{players.length ? <table className={styles.table}><thead><tr><th>Player</th><th>Status</th><th>Allowlist</th><th>Role</th><th aria-label="Actions" /></tr></thead><tbody>{players.map(player => <tr key={player.name}><td><strong>{player.name}</strong></td><td><StatusBadge tone={player.banned ? 'danger' : player.online ? 'success' : 'neutral'}>{player.banned ? 'Banned' : player.online ? 'Online' : 'Known player'}</StatusBadge></td><td>{player.allowlisted ? 'Allowed' : 'Not allowed'}</td><td>{player.operator ? 'Operator' : 'Player'}</td><td><div className={styles.tableActions}><Button variant="subtle" onClick={() => player.allowlisted ? confirm(player.name, 'RemoveFromWhitelist', 'Remove access', `${player.name} will no longer be able to join an allowlist-only server.`) : moderate(player.name, 'AddToWhitelist')}>{player.allowlisted ? 'Remove allowlist' : 'Allowlist'}</Button><details><summary aria-label={`Moderation actions for ${player.name}`}><MoreHorizontal size={16} /></summary><div className={styles.rowMenu}>{player.operator ? <button onClick={() => confirm(player.name, 'RemoveOperator', 'Remove operator', `${player.name} will lose operator permissions.`)}>Remove operator</button> : <button onClick={() => moderate(player.name, 'GrantOperator')}>Make operator</button>}{player.online && <button onClick={() => confirm(player.name, 'Kick', 'Kick player', `${player.name} will be disconnected from the running server.`)}>Kick</button>}{player.banned ? <button onClick={() => moderate(player.name, 'Pardon')}>Pardon</button> : <button className={styles.dangerAction} onClick={() => confirm(player.name, 'Ban', 'Ban player', `${player.name} will be banned and disconnected.`)}>Ban</button>}</div></details></div></td></tr>)}</tbody></table> : <EmptyState title={snapshot.players.length ? 'No matching players' : 'Player list unavailable'} detail={server.state === 'Running' ? 'No player records match this search.' : 'Start the server to manage player access and moderation.'} />}<ConfirmDialog open={pending !== null} title={pending?.label ?? ''} detail={pending?.detail ?? ''} confirmLabel={pending?.label ?? 'Confirm'} destructive onCancel={() => setPending(null)} onConfirm={() => { if (pending) moderate(pending.player, pending.action); setPending(null); }} /></section>;
+  const evidence = server.playerStatus?.detail ?? 'ChunkPilot has not received player-status evidence for this server yet.';
+  const emptyTitle = snapshot.players.length ? 'No matching players' : server.playersOnline === 0 && server.playerStatus?.exact ? 'No players are online or known yet' : 'Player information unavailable';
+  const emptyDetail = snapshot.players.length ? 'Try a different player name.' : server.state !== 'Running' ? 'Start the server to refresh live player status. Saved whitelist, operator, and ban records remain visible when available.' : evidence;
+  return <div className={styles.playerWorkspace}>
+    <section className={styles.playerSummary}>
+      <div><span>Online now</span><strong>{server.playersOnline == null ? 'Unknown' : server.playersMaximum == null ? server.playersOnline : `${server.playersOnline} / ${server.playersMaximum}`}</strong><small>{evidence}</small></div>
+      <div><div className={styles.playerSummaryHeading}><span>Whitelist</span>{access?.supportsAllowlist && <Switch checked={access.whitelistEnabled} label={access.whitelistEnabled ? 'Turn whitelist off' : 'Turn whitelist on'} disabled={busy.has('players.setWhitelist')} onClick={() => setWhitelist(!access.whitelistEnabled)} />}</div><strong>{access ? access.whitelistEnabled ? 'On' : 'Off' : 'Unavailable'}</strong><small>{access?.supportsAllowlist ? server.state === 'Running' ? 'Changes apply immediately.' : 'Changes apply the next time the server starts.' : 'Support has not been confirmed for this server.'}</small></div>
+      <div><span>Management</span><strong>{canModerate ? 'Available' : server.state === 'Running' ? 'Unavailable' : 'Server stopped'}</strong><small>{access?.capabilityKnown ? 'Actions use the authoritative server console and access files.' : 'ChunkPilot is still identifying this imported server.'}</small></div>
+    </section>
+    <section className={styles.panel}>
+      <div className={styles.playerToolbar}><SearchInput value={search} onChange={event => setSearch(event.target.value)} placeholder="Search players" aria-label="Search players" />{access?.supportsAllowlist && <form onSubmit={event => { event.preventDefault(); addAllowlist(); }}><TextInput value={newPlayer} maxLength={16} onChange={event => setNewPlayer(event.target.value)} placeholder="Minecraft player name" aria-label="Minecraft player name" /><Button variant="primary" disabled={!canModerate || !newPlayer.trim() || busy.has('players.addAllowlist')}>{busy.has('players.addAllowlist') ? 'Adding…' : 'Add to whitelist'}</Button></form>}</div>
+      {access?.error && <div className={styles.playerError} role="alert">{access.error}</div>}
+      {players.length ? <table className={styles.table}><thead><tr><th>Player</th><th>Status</th><th>Whitelist</th><th>Role</th><th aria-label="Actions" /></tr></thead><tbody>{players.map(player => <tr key={player.name}><td><PlayerIdentity serverId={server.id} player={player} /></td><td><StatusBadge tone={player.banned ? 'danger' : player.online ? 'success' : 'neutral'}>{player.banned ? 'Banned' : player.online ? 'Online' : 'Known player'}</StatusBadge></td><td>{player.allowlisted ? 'Whitelisted' : 'Not whitelisted'}</td><td>{player.operator ? 'Operator' : 'Player'}</td><td><div className={styles.tableActions}>{access?.supportsAllowlist && <Button variant="subtle" disabled={!canModerate} onClick={() => player.allowlisted ? confirm(player.name, 'RemoveFromWhitelist', 'Remove from whitelist', `${player.name} will no longer be able to join a whitelist-only server.`) : moderate(player.name, 'AddToWhitelist')}>{player.allowlisted ? 'Remove from whitelist' : 'Add to whitelist'}</Button>}<ActionMenu label={`Moderation actions for ${player.name}`} trigger={<MoreHorizontal size={16} />} items={[
+        ...(access?.supportsOperators ? [{ label: player.operator ? 'Remove operator' : 'Make operator', icon: <ShieldCheck size={15} />, disabled: !canModerate, onSelect: () => player.operator ? confirm(player.name, 'RemoveOperator', 'Remove operator', `${player.name} will lose operator permissions.`) : moderate(player.name, 'GrantOperator') }] : []),
+        ...(player.online ? [{ label: 'Kick', icon: <Square size={13} />, disabled: !canModerate, onSelect: () => confirm(player.name, 'Kick', 'Kick player', `${player.name} will be disconnected from the running server.`) }] : []),
+        ...(access?.supportsPlayerBans ? [{ label: player.banned ? 'Pardon' : 'Ban', icon: player.banned ? <Check size={15} /> : <Trash2 size={15} />, disabled: !canModerate, destructive: !player.banned, onSelect: () => player.banned ? moderate(player.name, 'Pardon') : confirm(player.name, 'Ban', 'Ban player', `${player.name} will be banned and disconnected.`) }] : [])
+      ]} /></div></td></tr>)}</tbody></table> : <EmptyState title={emptyTitle} detail={emptyDetail} />}
+      <ConfirmDialog open={pending !== null} title={pending?.label ?? ''} detail={pending?.detail ?? ''} confirmLabel={pending?.label ?? 'Confirm'} destructive onCancel={() => setPending(null)} onConfirm={() => { if (pending) moderate(pending.player, pending.action); setPending(null); }} />
+    </section>
+  </div>;
+}
+
+function PlayerIdentity({ serverId, player }: { serverId: string; player: PlayerEntry }) {
+  const bridge = useAppStore(state => state.bridge);
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  useEffect(() => {
+    setImageUrl(null);
+    if (!bridge || !player.uuid) return;
+    const controller = new AbortController();
+    void bridge.request<{ serverId: string; uuid: string; imageUrl: string | null }>(
+      'players.head', { serverId, uuid: player.uuid }, controller.signal)
+      .then(result => {
+        if (!controller.signal.aborted && result.serverId === serverId && result.uuid.toLowerCase() === player.uuid?.toLowerCase())
+          setImageUrl(result.imageUrl);
+      })
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [bridge, player.uuid, serverId]);
+  const fallback = player.name.slice(0, 2).toUpperCase();
+  return <span className={styles.playerIdentity}><span className={styles.playerHead} aria-hidden="true">{imageUrl ? <img src={imageUrl} alt="" /> : fallback}</span><strong>{player.name}</strong></span>;
 }
 
 function FilesPage({ server }: { server: ServerSummary }) {
@@ -394,34 +454,39 @@ function ModpackPage({ server }: { server: ServerSummary }) {
   const [showInstall, setShowInstall] = useState(false);
   const pack = server.modpack;
   const providerUpdates = pack?.provider === 'Modrinth' || pack?.provider === 'CurseForge';
+  const updateAvailable = update?.status.startsWith('Update available') ?? false;
+  const canInstallUpdate = Boolean(providerUpdates && updateAvailable && update?.canInstall);
   const versionBusy = ['versions.check', 'versions.install', 'versions.rollback', 'versions.cancel'].some(method => busy.has(method));
   if (!pack || !update?.sourceLinked)
     return <section className={styles.panel}><EmptyState title="Pack identity unavailable" detail="ChunkPilot has not established an exact provider project and release for this server. Individual mods remain visible in the managed content inventory, but pack-level updates are disabled until identity is proven." /></section>;
-  return <div className={styles.versionStack}>
-    <section className={styles.panel}>
-      <div className={styles.pathBar}>
-        <div><strong>{pack.projectName}</strong> <span className={page.muted}>· {pack.provider} · {pack.versionName}</span></div>
-        <div className={page.actions}>
+  return <div className={styles.modpackPage}>
+    <section className={styles.modpackOverview}>
+      <header className={styles.modpackHeader}>
+        <div className={styles.modpackIdentity}><span aria-hidden="true"><Archive size={20} /></span><div><small>Installed modpack</small><strong>{pack.projectName}</strong><p>{pack.provider} · {update.installedVersionName || pack.versionName}</p></div></div>
+        <div className={`${page.actions} ${styles.modpackActions}`}>
           {providerUpdates && update.cancellable && <Button variant="subtle" disabled={busy.has('versions.cancel')} onClick={() => void command('versions.cancel', { serverId: server.id })}>Cancel safely</Button>}
-          {providerUpdates && update.canInstall && <Button variant="primary" disabled={versionBusy} onClick={() => setShowInstall(true)}>Install pack {update.latestVersionName ?? 'update'}</Button>}
+          {canInstallUpdate && <Button variant="primary" disabled={versionBusy} onClick={() => setShowInstall(true)}>Install pack {update.latestVersionName ?? 'update'}</Button>}
           {providerUpdates && <Button icon={<RotateCw size={14} />} disabled={versionBusy} onClick={() => void command('versions.check', { serverId: server.id })}>{busy.has('versions.check') ? 'Checking…' : 'Check pack release'}</Button>}
         </div>
+      </header>
+      <div className={styles.modpackFacts}>
+        <div><span>Pack release</span><strong>{update.installedVersionName || pack.versionName}</strong><small>{update.releaseChannel || 'Release channel unavailable'}</small></div>
+        <div><span>Minecraft</span><strong>{update.minecraftVersion || server.minecraftVersion}</strong><small>Exact pack requirement</small></div>
+        <div><span>Loader</span><strong>{update.loader || server.ecosystem}{update.loaderVersion ? ` ${update.loaderVersion}` : ''}</strong><small>Server runtime platform</small></div>
       </div>
-      <div className={styles.catalogPolicy}>
-        <div><span>Installed release</span><strong>{update.installedVersionName || pack.versionName}</strong></div>
-        <div><span>Platform</span><strong>{update.loader || server.ecosystem}{update.loaderVersion ? ` ${update.loaderVersion}` : ''}</strong></div>
-        <p>Minecraft {update.minecraftVersion || server.minecraftVersion} · {update.releaseChannel || 'Channel unavailable'}. Pack updates compare exact provider releases and never update constituent mods independently.</p>
-      </div>
-      <div className={styles.updateSummary}>
-        <div><StatusBadge tone={providerUpdates && update.canInstall ? 'warning' : providerUpdates ? 'success' : 'neutral'}>{providerUpdates ? update.status : 'Local pack'}</StatusBadge><strong>{providerUpdates ? update.detail : 'Provider updates are unavailable until this local archive is linked to an exact project release.'}</strong><span>{providerUpdates ? update.checkedAt ? `Last checked ${new Date(update.checkedAt).toLocaleString()}` : 'Not checked yet' : 'The inspected archive remains the installed baseline.'}</span></div>
+      <div className={styles.modpackUpdate} data-tone={canInstallUpdate ? 'warning' : providerUpdates ? 'success' : 'neutral'}>
+        <div><StatusBadge tone={canInstallUpdate ? 'warning' : providerUpdates ? 'success' : 'neutral'}>{providerUpdates ? update.status : 'Local pack'}</StatusBadge><span><strong>{providerUpdates ? update.detail || 'The installed release is the latest confirmed provider release.' : 'Provider updates are unavailable for this local archive.'}</strong><small>{providerUpdates ? update.checkedAt ? `Last checked ${new Date(update.checkedAt).toLocaleString()}` : 'No provider check has completed yet.' : 'The inspected archive remains the installed baseline until an exact project release is linked.'}</small></span></div>
         {update.operationPercent != null && <div className={styles.updateProgress} aria-label={`Pack update progress ${update.operationPercent.toFixed(0)} percent`}><i><b style={{ width: `${Math.max(0, Math.min(100, update.operationPercent))}%` }} /></i><span>{update.operationStep || update.operationState} · {update.operationPercent.toFixed(0)}%</span>{update.operationDetail && update.operationDetail !== update.operationStep && <small>{update.operationDetail}</small>}</div>}
       </div>
       <UpdateInstallDialog open={showInstall} onClose={() => setShowInstall(false)} server={server} update={update} />
     </section>
-    <section className={styles.versionEvidence}>
-      <header><div><strong>Pack ownership</strong><p>ChunkPilot owns the exact pack release as one recovery-backed unit. Files added outside the pack remain user-owned; changed pack-managed files are reviewed during update migration.</p></div><StatusBadge tone="info">Exact release linked</StatusBadge></header>
-      <dl className={styles.evidenceGrid}><div><dt>Provider</dt><dd>{pack.provider}</dd></div><div><dt>Project</dt><dd>{pack.projectName}</dd></div><div><dt>Release ID</dt><dd>{pack.versionId}</dd></div><div><dt>Project ID</dt><dd>{pack.projectId}</dd></div><div><dt>Update model</dt><dd>Whole pack release</dd></div></dl>
-      <p className={styles.contextNote}>Use Versions for verified recovery snapshots and rollback history. Use Mods to inspect pack-managed and user-added JAR inventory only; ordinary per-mod update is not applied to this linked pack.</p>
+    <section className={styles.packEvidence}>
+      <header><div><strong>Verified pack identity</strong><p>These exact identifiers bind updates and recovery history to this installed release.</p></div><StatusBadge tone="info">Exact release linked</StatusBadge></header>
+      <div className={styles.packEvidenceBody}>
+        <dl className={styles.packEvidenceGrid}><div><dt>Provider</dt><dd>{pack.provider}</dd></div><div><dt>Project</dt><dd>{pack.projectName}</dd></div><div><dt>Update model</dt><dd>Whole pack release</dd></div><div><dt>Project ID</dt><dd><code>{pack.projectId}</code></dd></div><div><dt>Release ID</dt><dd><code>{pack.versionId}</code></dd></div></dl>
+        <div className={styles.packRules}><div><strong>Updates stay pack-aware</strong><p>ChunkPilot compares exact provider releases. It will never update constituent mods independently or split the pack from its tested release.</p></div><div><strong>User files stay user-owned</strong><p>Files added outside the pack remain yours. Changed pack-managed files are reviewed during update migration rather than silently overwritten.</p></div></div>
+      </div>
+      <footer className={styles.packDestinations}><span><strong>Versions</strong> contains verified recovery snapshots and rollback history.</span><span><strong>Mods</strong> shows pack-managed and user-added JAR inventory.</span></footer>
     </section>
   </div>;
 }
@@ -801,7 +866,9 @@ function VersionsPage({ server }: { server: ServerSummary }) {
 }
 
 function ServerSettingsPage({ server, initialCategory }: { server: ServerSummary; initialCategory: string }) {
-  const authoritative = useAppStore(state => state.snapshot!.serverSettings); const command = useAppStore(state => state.command);
+  const received = useAppStore(state => state.snapshot!.serverSettings);
+  const authoritative = received?.serverId === server.id ? received : null;
+  const command = useAppStore(state => state.command);
   const [category, setCategory] = useState(initialCategory);
   const [baseline, setBaseline] = useState(authoritative);
   const [draft, setDraft] = useState<typeof authoritative>(() => authoritative == null ? null : new URLSearchParams(window.location.search).has('dirty') ? { ...authoritative, motd: `${authoritative.motd} Ready for Friday.` } : { ...authoritative });
@@ -814,18 +881,23 @@ function ServerSettingsPage({ server, initialCategory }: { server: ServerSummary
   useEffect(() => {
     if (!dirty && authoritative) { setBaseline(authoritative); setDraft({ ...authoritative }); }
   }, [authoritative, dirty]);
+  const discard = useCallback(() => {
+    if (!baseline) return;
+    setDraft({ ...baseline }); setStagedIcon(null); setEditorReset(value => value + 1);
+  }, [baseline]);
+  useUnsavedChangesGuard(dirty, discard, 'Your server icon, MOTD, or settings changes have not been saved.');
   if (!draft || !baseline) return <EmptyState title="Settings unavailable" detail="ChunkPilot has not received an authoritative settings snapshot for this server." />;
   const categories = ['Appearance', 'General', 'Gameplay', 'Resources', 'Connectivity'];
   const update = <K extends keyof typeof draft>(key: K, value: (typeof draft)[K]) => setDraft(valueDraft => valueDraft ? { ...valueDraft, [key]: value } : valueDraft);
   const motdError = validateMotd(draft.motd);
-  const discard = useCallback(() => { setDraft({ ...baseline }); setStagedIcon(null); setEditorReset(value => value + 1); }, [baseline]);
-  useUnsavedChangesGuard(dirty, discard, 'Your server icon, MOTD, or settings changes have not been saved.');
   const save = async () => {
     if (motdError) return;
     setSaving(true);
     try {
-      await command('settings.saveServer', { serverId: server.id, ...draft, iconPngBase64: stagedIcon?.split(',', 2)[1] ?? null });
+      await command('settings.saveServer', { ...draft, serverId: server.id, iconPngBase64: stagedIcon?.split(',', 2)[1] ?? null });
       setBaseline({ ...draft }); setStagedIcon(null); setEditorReset(value => value + 1);
+    } catch {
+      // The store owns the user-visible error. Keep the draft and its dirty guard intact for retry.
     } finally { setSaving(false); }
   };
   return <div className={styles.settingsLayout}><nav className={styles.settingsNav} aria-label="Server settings categories">{categories.map(item => <button key={item} data-selected={category === item} onClick={() => setCategory(item)}>{item}</button>)}</nav><div>
@@ -848,8 +920,8 @@ function ConnectivitySettings({ server }: { server: ServerSummary }) {
   if (!connectivity || connectivity.serverId !== server.id)
     return <EmptyState title="Connectivity unavailable" detail="ChunkPilot has not received authoritative networking state for this server." />;
   const modes: { id: ConnectivitySnapshot['mode']; title: string; detail: string; icon: typeof Wifi }[] = [
-    { id: 'HomeNetwork', title: 'LAN', detail: 'People on this Wi-Fi or wired network.', icon: Wifi },
-    { id: 'PortForwarding', title: 'Internet', detail: 'Friends elsewhere, after deliberate setup and outside-in verification.', icon: Globe2 }
+    { id: 'HomeNetwork', title: 'LAN', detail: 'People on the same Wi-Fi or wired network.', icon: Wifi },
+    { id: 'PortForwarding', title: 'Internet', detail: 'Friends outside your home, after deliberate setup.', icon: Globe2 }
   ];
   const setMode = (mode: ConnectivitySnapshot['mode']) => void command('connectivity.setMode', { serverId: server.id, mode });
   const focusConsent = (id: string) => document.getElementById(id)?.focus();
@@ -868,68 +940,42 @@ function ConnectivitySettings({ server }: { server: ServerSummary }) {
       if (connectivity.router.canCheck) { await command('connectivity.router.check', { serverId: server.id }); return; }
     }
     if (server.state !== 'Running') { await command('servers.start', { serverId: server.id }); return; }
-    // Outside-in verification starts from the automatic effect once all prerequisites are true.
   };
-  const setupBusy = connectivity.router.busy || connectivity.firewall.busy || connectivity.external.busy ||
+  const setupBusy = connectivity.router.busy || connectivity.firewall.busy ||
     busy.has('connectivity.setMode') || busy.has('connectivity.router.check') || busy.has('connectivity.firewall.primary') ||
-    busy.has('servers.start') || busy.has('connectivity.external.check');
+    busy.has('servers.start');
+  const joining = connectionChoice(server, connectivity);
+  const firewallReady = connectivity.firewall.configured;
+  const sharingConfigured = connectivity.mode === 'PortForwarding' && firewallReady && connectivity.router.enabled;
   const mainAction = connectivity.mode !== 'PortForwarding' ? 'Set up Internet access'
     : !connectivity.firewall.configured ? connectivity.firewall.consentRequired ? 'Review Windows approval' : 'Continue Windows setup'
     : !connectivity.router.enabled ? connectivity.router.consentRequired ? 'Review router approval' : 'Continue router setup'
     : server.state !== 'Running' ? 'Start server'
     : null;
   const setupSteps = [
-    { label: 'Windows Firewall', done: connectivity.firewall.configured, active: connectivity.firewall.busy || connectivity.firewall.consentRequired, state: connectivity.firewall.configured ? 'Ready' : connectivity.firewall.busy ? 'In progress' : connectivity.firewall.consentRequired ? 'Approval needed' : 'Not set up' },
-    { label: 'Automatic router setup', done: connectivity.router.enabled, active: connectivity.router.busy || connectivity.router.consentRequired, state: connectivity.router.enabled ? 'Router ready' : connectivity.router.busy ? 'In progress' : connectivity.router.consentRequired ? 'Approval needed' : 'Not set up' },
-    { label: 'Start server', done: server.state === 'Running', active: server.state === 'Starting', state: server.state === 'Running' ? 'Running' : server.state === 'Starting' ? 'Starting' : 'Server stopped' },
-    { label: 'Internet verification', done: Boolean(connectivity.addresses.publicVerified), active: connectivity.external.busy, state: connectivity.addresses.publicVerified ? 'Verified' : connectivity.external.busy ? 'Verifying' : connectivity.external.phase === 'Unreachable' ? 'Could not verify' : connectivity.external.canCheck ? 'Ready to verify' : 'Verification unavailable' }
+    { label: 'Allow through Windows', done: firewallReady, active: !firewallReady && (connectivity.firewall.busy || connectivity.firewall.consentRequired), state: connectivity.firewall.configured ? 'Ready' : connectivity.firewall.busy ? 'In progress' : connectivity.firewall.consentRequired ? 'Approval needed' : 'Not set up' },
+    { label: 'Set up router', done: connectivity.router.enabled, active: connectivity.router.busy || connectivity.router.consentRequired, state: connectivity.router.enabled ? 'Ready' : connectivity.router.busy ? 'In progress' : connectivity.router.consentRequired ? 'Approval needed' : 'Not set up' },
+    { label: 'Keep server running', done: server.state === 'Running', active: server.state === 'Starting', state: server.state === 'Running' ? 'Running' : server.state === 'Starting' ? 'Starting' : 'Server stopped' }
   ];
   return <div className={styles.connectivityPage}>
-    <header className={styles.connectivityHeader}><div><h2>Connectivity</h2><p>Choose who should be able to join. Router, firewall, and verification details stay separate and truthful.</p></div><StatusBadge tone={connectivity.status.tone}>{connectivity.status.title}</StatusBadge></header>
+    <header className={styles.connectivityHeader}><div><h2>Connectivity</h2><p>Choose whether people join from your home network or from anywhere on the Internet.</p></div><StatusBadge tone={joining.tone}>{joining.badge}</StatusBadge></header>
     <div className={styles.modeGrid} aria-label="Connection method">{modes.map(mode => <button key={mode.id} data-selected={connectivity.mode === mode.id} onClick={() => setMode(mode.id)} disabled={busy.has('connectivity.setMode')}><mode.icon size={17} /><span><strong>{mode.title}</strong><small>{mode.detail}</small></span><i aria-hidden="true" /></button>)}</div>
-    <div className={styles.connectivityStatus} data-tone={connectivity.status.tone}><div><strong>{connectivity.status.title}</strong><p>{connectivity.status.detail}</p></div><span>{connectivity.modeTitle}</span></div>
-    <section className={styles.internetPrompt}><Globe2 size={20} /><div><strong>{connectivity.addresses.publicVerified ? 'Internet access verified' : connectivity.mode === 'PortForwarding' ? 'Finish Internet setup' : 'Internet hosting'}</strong><p>ChunkPilot works through Windows access, your router, server startup, and a real outside-in check. Every network change still requires your deliberate approval.</p></div>{mainAction ? <Button variant="primary" disabled={setupBusy} onClick={() => void advanceInternetSetup()}>{setupBusy ? 'Working…' : mainAction}</Button> : <StatusBadge tone={connectivity.addresses.publicVerified ? 'success' : connectivity.external.busy ? 'info' : 'neutral'}>{connectivity.addresses.publicVerified ? 'Verified' : connectivity.external.busy ? 'Checking automatically' : 'Background verification pending'}</StatusBadge>}</section>
+    <div className={styles.connectivityStatus} data-tone={joining.tone}><div><strong>{joining.badge}</strong><p>{joining.explanation}</p></div><span>{joining.audience === 'internet' ? 'Internet' : joining.audience === 'home' ? 'LAN' : 'This computer'}</span></div>
+    <section className={styles.internetPrompt}><Globe2 size={20} /><div><strong>{sharingConfigured ? 'Internet sharing is configured' : connectivity.mode === 'PortForwarding' ? 'Finish Internet setup' : 'Let friends outside your home join'}</strong><p>ChunkPilot maintains its exact Windows and router configuration when this server starts. A configured route is not a guarantee that every outside network can connect.</p></div>{mainAction ? <Button variant="primary" disabled={setupBusy} onClick={() => void advanceInternetSetup()}>{setupBusy ? 'Working…' : mainAction}</Button> : <StatusBadge tone="success">Configured</StatusBadge>}</section>
     {connectivity.mode === 'PortForwarding' && <div className={styles.setupStepper} aria-label="Internet setup progress">{setupSteps.map((step, index) => <div key={step.label} data-complete={step.done || undefined} data-active={step.active || undefined}><span>{step.done ? <Check size={12} /> : index + 1}</span><div><strong>{step.label}</strong><small>{step.state}</small></div></div>)}</div>}
-    <section className={styles.addressSection}><div className={styles.sectionHeading}><div><h3>Joining addresses</h3><p>ChunkPilot never substitutes a local check or router response for verified public reachability.</p></div></div><div className={styles.addressGrid}>
-      <AddressRow label="This PC" value={connectivity.addresses.local} kind="local" serverId={server.id} command={command} />
-      <AddressRow label="LAN" value={connectivity.addresses.lan} kind="lan" serverId={server.id} command={command} />
-      <AddressRow label="Public address — unverified" value={connectivity.router.enabled ? connectivity.addresses.routerReported : null} kind="router" serverId={server.id} command={command} />
-      <AddressRow label="Verified Internet" value={connectivity.addresses.publicVerified} kind="public" serverId={server.id} command={command} verifiedAt={connectivity.external.checkedAt} />
-    </div></section>
+    <section className={styles.addressSection}><div className={styles.sectionHeading}><div><h3>How people connect</h3><p>The recommended address changes with the audience you selected.</p></div></div><ConnectionSummary server={server} connectivity={connectivity} showAll /></section>
     {connectivity.mode === 'PortForwarding' && <>
       {connectivity.firewall.consentRequired && <div id="firewall-consent" tabIndex={-1} className={styles.inlineConsent}><strong>{connectivity.firewall.consentTitle}</strong><p>{connectivity.firewall.consentMessage}</p><div className={page.actions}><Button onClick={() => void command('connectivity.firewall.cancelConsent', { serverId: server.id })}>Cancel</Button><Button variant="primary" onClick={() => void command('connectivity.firewall.confirm', { serverId: server.id, confirmed: true })}>Continue to Windows approval</Button></div></div>}
       {connectivity.router.consentRequired && <div id="router-consent" tabIndex={-1} className={styles.inlineConsent}><strong>Open this server port on your router?</strong>{connectivity.router.consentPoints.map(point => <p key={point}>{point}</p>)}<div className={page.actions}><Button onClick={() => void command('connectivity.router.cancelConsent', { serverId: server.id })}>Not now</Button><Button variant="primary" onClick={() => void command('connectivity.router.confirm', { serverId: server.id, confirmed: true })}>Turn on Internet hosting</Button></div></div>}
-      {connectivity.external.phase === 'Unreachable' && <div className={styles.verificationWarning}><strong>Internet verification could not reach this server</strong><p>{connectivity.external.summary}</p><Button onClick={() => void command('connectivity.external.check', { serverId: server.id })}>Recheck</Button></div>}
       <details className={styles.networkDetails}><summary>Advanced networking actions and details</summary>
         <section className={styles.connectivitySection}><div className={styles.sectionHeading}><div><h3>Windows Firewall</h3><p>One exact ChunkPilot-owned rule for this server.</p></div><StatusBadge tone={connectivity.firewall.tone}>{connectivity.firewall.badge}</StatusBadge></div><div className={styles.connectionBody}><div><strong>{connectivity.firewall.title}</strong><p>{connectivity.firewall.summary}</p></div><div className={page.actions}>{connectivity.firewall.canCancel && <Button onClick={() => void command('connectivity.firewall.cancel', { serverId: server.id })}>Cancel</Button>}{connectivity.firewall.secondaryAction && <Button onClick={() => void command('connectivity.firewall.secondary', { serverId: server.id })}>{connectivity.firewall.secondaryAction}</Button>}{connectivity.firewall.primaryAction && <Button onClick={() => void command('connectivity.firewall.primary', { serverId: server.id })}>{connectivity.firewall.primaryAction}</Button>}{connectivity.firewall.canRemove && <Button variant="danger" onClick={() => setConfirmRemove(true)}>Remove rule</Button>}</div></div></section>
         <section className={styles.connectivitySection}><div className={styles.sectionHeading}><div><h3>Automatic router setup</h3><p>Only the exact mapping owned by this server.</p></div><StatusBadge tone={connectivity.router.tone}>{connectivity.router.badge}</StatusBadge></div><div className={styles.connectionBody}><div><strong>{connectivity.router.title}</strong><p>{connectivity.router.summary}</p>{connectivity.router.upstreamNotice && <p className={styles.warningCopy}>{connectivity.router.upstreamNotice}</p>}</div><div className={page.actions}>{connectivity.router.canCancel && <Button onClick={() => void command('connectivity.router.cancel', { serverId: server.id })}>Cancel</Button>}{connectivity.router.canRetryCleanup && <Button onClick={() => void command('connectivity.router.retry', { serverId: server.id })}>Retry cleanup</Button>}{connectivity.router.canCheck && <Button onClick={() => void command('connectivity.router.check', { serverId: server.id })}>Check router</Button>}{connectivity.router.canStop && <Button variant="danger" onClick={() => setConfirmStop(true)}>Stop sharing</Button>}</div></div></section>
-        <section className={styles.connectivitySection}><div className={styles.sectionHeading}><div><h3>Internet verification</h3><p>The only evidence used for “Friends can join.”</p></div><StatusBadge tone={connectivity.external.tone}>{connectivity.external.badge}</StatusBadge></div><div className={styles.connectionBody}><div><strong>{connectivity.external.title}</strong><p>{connectivity.external.summary}</p></div><div className={page.actions}>{connectivity.external.canCancel ? <Button onClick={() => void command('connectivity.external.cancel', { serverId: server.id })}>Cancel check</Button> : <Button disabled={!connectivity.external.canCheck} onClick={() => void command('connectivity.external.check', { serverId: server.id })}>Recheck</Button>}</div></div></section>
+        <section className={styles.connectivitySection}><div className={styles.sectionHeading}><div><h3>Optional outside-in diagnostic</h3><p>A point-in-time diagnostic only; it is not part of normal setup or persistent status.</p></div><StatusBadge tone={connectivity.external.tone}>{connectivity.external.badge}</StatusBadge></div><div className={styles.connectionBody}><div><strong>{connectivity.external.title}</strong><p>{connectivity.external.summary}</p></div><div className={page.actions}>{connectivity.external.canCancel ? <Button onClick={() => void command('connectivity.external.cancel', { serverId: server.id })}>Cancel diagnostic</Button> : <Button disabled={!connectivity.external.canCheck} onClick={() => void command('connectivity.external.check', { serverId: server.id })}>Run optional diagnostic</Button>}</div></div></section>
         <div className={styles.detailGrid}><Detail label="Router method" value={connectivity.router.mechanism} /><Detail label="Transport" value={connectivity.router.transport} /><Detail label="Gateway" value={connectivity.router.gateway} /><Detail label="Internal endpoint" value={connectivity.router.internalEndpoint} /><Detail label="External port" value={connectivity.router.externalPort} /><Detail label="Lease" value={connectivity.router.lease} /><Detail label="Router address class" value={connectivity.router.addressClass} /><Detail label="Router last checked" value={connectivity.router.lastChecked} /><Detail label="Firewall network" value={connectivity.firewall.network} /><Detail label="Firewall profile" value={connectivity.firewall.profile} /><Detail label="Firewall target" value={connectivity.firewall.port} /><Detail label="Firewall last checked" value={connectivity.firewall.lastChecked} /><Detail label="Externally observed" value={connectivity.external.observedAddress} /><Detail label="Router reported" value={connectivity.external.routerAddress} /><Detail label="Outside-in timing" value={connectivity.external.connectTime} /><Detail label="Outside-in checked" value={connectivity.external.checkedAt} /></div><p>{connectivity.router.detail}</p><p>{connectivity.firewall.detail}</p><p>{connectivity.external.detail}</p></details>
     </>}
     <ConfirmDialog open={confirmStop} title="Stop Internet sharing?" detail="ChunkPilot will remove only the router mapping it can prove it owns. The server and Windows Firewall configuration remain unchanged." confirmLabel="Stop sharing" destructive onCancel={() => setConfirmStop(false)} onConfirm={() => { setConfirmStop(false); void command('connectivity.router.stop', { serverId: server.id, confirmed: true }); }} />
     <ConfirmDialog open={confirmRemove} title="Remove Windows Firewall access?" detail="ChunkPilot will remove only the exact firewall rule it can prove it created. The server folder and router setup remain unchanged." confirmLabel="Remove rule" destructive onCancel={() => setConfirmRemove(false)} onConfirm={() => { setConfirmRemove(false); void command('connectivity.firewall.remove', { serverId: server.id, confirmed: true }); }} />
   </div>;
-}
-
-function AddressRow({ label, value, kind, serverId, command, verifiedAt }: { label: string; value: string | null; kind: 'local' | 'lan' | 'router' | 'public'; serverId: string; command: ReturnType<typeof useAppStore.getState>['command']; verifiedAt?: string }) {
-  const explanation = kind === 'public' ? value ? `Outside-in verified ${verifiedAt}` : 'Not externally verified'
-    : kind === 'router' ? value ? 'Most likely public address; verification pending' : 'No active router-reported address'
-    : kind === 'lan' ? 'Only for this home network' : 'Only on this PC';
-  return <div><span>{label}</span><strong>{value ?? 'Unavailable'}</strong><small>{explanation}</small><Button variant="subtle" disabled={!value} icon={<Clipboard size={13} />} onClick={() => void command('connectivity.copyAddress', { serverId, kind })}>Copy</Button></div>;
-}
-
-function useAutomaticConnectivityVerification(server: ServerSummary | null, connectivity: ConnectivitySnapshot | null) {
-  const command = useAppStore(state => state.command);
-  const attempted = useRef('');
-  useEffect(() => {
-    if (!server || !connectivity || connectivity.mode !== 'PortForwarding' || !connectivity.router.enabled ||
-        server.state !== 'Running' || connectivity.addresses.publicVerified || connectivity.external.busy ||
-        !connectivity.external.canCheck || !['NotChecked', 'Stale'].includes(connectivity.external.phase)) return;
-    const key = `${server.id}:${connectivity.external.phase}:${connectivity.router.externalPort}`;
-    if (attempted.current === key) return;
-    attempted.current = key;
-    void command('connectivity.external.check', { serverId: server.id }).catch(() => undefined);
-  }, [command, connectivity, server]);
 }
 
 function clientRequirementLabel(value: PluginProject['clientRequirement'] | PluginRelease['clientRequirement'] | undefined): string {

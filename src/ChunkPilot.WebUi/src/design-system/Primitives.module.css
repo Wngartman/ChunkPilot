@@ -7,6 +7,13 @@
 .danger { background: var(--cp-danger-surface); border-color: var(--cp-danger-border); }
 .subtle { background: transparent; border-color: transparent; color: var(--cp-text-secondary); }
 .iconButton { width: var(--cp-control); padding: 0; }
+.switch { width: 40px; height: 23px; flex: 0 0 auto; border: 1px solid var(--cp-border-strong); border-radius: 999px; background: var(--cp-input); padding: 2px; cursor: pointer; transition: background var(--cp-fast), border-color var(--cp-fast); }
+.switch span { display: block; width: 17px; height: 17px; border-radius: 50%; background: var(--cp-text-secondary); transition: transform var(--cp-fast), background var(--cp-fast); }
+.switch[data-checked="true"] { background: var(--cp-accent-muted); border-color: var(--cp-accent); }
+.switch[data-checked="true"] span { background: var(--cp-accent-strong); transform: translateX(17px); }
+.switch:hover:not(:disabled) { border-color: var(--cp-accent); }
+.switch:focus-visible { outline: 2px solid var(--cp-focus); outline-offset: 2px; }
+.switch:disabled { opacity: .5; cursor: not-allowed; }
 .menuTrigger { width: var(--cp-control); height: var(--cp-control); display: inline-grid; place-items: center; flex: 0 0 auto; border: 1px solid var(--cp-border); border-radius: var(--cp-radius-md); padding: 0; background: var(--cp-surface-raised); color: var(--cp-text-secondary); cursor: pointer; transition: color var(--cp-fast), background var(--cp-fast), border-color var(--cp-fast); }
 .menuTrigger:hover, .menuTrigger[data-state="open"] { color: var(--cp-text); background: var(--cp-surface-hover); border-color: var(--cp-border-strong); }
 .menuContent { z-index: 1200; min-width: 204px; max-width: min(300px, calc(100vw - 20px)); padding: 6px; border: 1px solid var(--cp-border-strong); border-radius: var(--cp-radius-md); background: var(--cp-surface-raised); box-shadow: var(--cp-shadow); animation: menu-in var(--cp-fast) ease-out; }

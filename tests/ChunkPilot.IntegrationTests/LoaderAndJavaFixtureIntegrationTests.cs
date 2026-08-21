@@ -172,6 +172,9 @@ public sealed class LoaderAndJavaFixtureIntegrationTests : IDisposable
         Assert.Equal("1.21.1", result.Definition.MinecraftVersion);
         Assert.Equal("2.4.0", result.Definition.LoaderVersion);
         Assert.True(File.Exists(Path.Combine(result.Definition.RootPath, "server.jar")));
+        Assert.Contains("white-list=true",
+            await File.ReadAllTextAsync(Path.Combine(result.Definition.RootPath, "server.properties")),
+            StringComparison.Ordinal);
 
         // Registration is part of the creation transaction, not a step the caller performs
         // afterwards: the window between an activated folder and a persisted record is exactly where
@@ -328,8 +331,11 @@ public sealed class LoaderAndJavaFixtureIntegrationTests : IDisposable
         using (var archive = new ZipArchive(output, ZipArchiveMode.Create, leaveOpen: true))
         {
             var entry = archive.CreateEntry("server.jar");
-            using var target = entry.Open();
-            target.Write([0x50, 0x4B, 0x05, 0x06, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+            using (var target = entry.Open())
+                target.Write([0x50, 0x4B, 0x05, 0x06, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+            var properties = archive.CreateEntry("server.properties");
+            using var writer = new StreamWriter(properties.Open(), new UTF8Encoding(false));
+            writer.Write("motd=fixture\r\nwhite-list=false\r\n");
         }
         return output.ToArray();
     }

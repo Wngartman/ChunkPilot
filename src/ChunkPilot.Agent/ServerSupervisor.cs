@@ -182,12 +182,16 @@ public sealed class ServerSupervisor : IAsyncDisposable
     {
         var snapshots = servers.Values.Select(server => server.Snapshot()).ToArray();
         var schedules = await store.GetSchedulesAsync(cancellationToken).ConfigureAwait(false);
+        var networkConfigurations = await store.GetNetworkConfigurationsAsync(cancellationToken).ConfigureAwait(false);
+        var routerMappings = await store.GetRouterMappingsAsync(cancellationToken).ConfigureAwait(false);
         return new DashboardSnapshot
         {
             AgentConnected = true,
             Timestamp = DateTimeOffset.Now,
             Host = statistics.SampleHost(paths),
             Servers = snapshots,
+            NetworkConfigurations = networkConfigurations,
+            RouterMappings = routerMappings,
             RecentActivity = await store.GetActivityAsync(50, cancellationToken).ConfigureAwait(false),
             NextScheduledTask = schedules.Where(schedule => schedule.Enabled).Select(schedule => schedule.NextRunAt).Where(value => value is not null).Min()
         };

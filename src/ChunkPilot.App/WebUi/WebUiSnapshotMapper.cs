@@ -74,6 +74,8 @@ internal sealed class WebUiSnapshotMapper
             },
             servers = viewModel.Servers.Select(server => MapServer(server, host, viewModel, selectedId)).ToArray(),
             connectivity = MapConnectivity(viewModel, selectedId),
+            playerAccess = MapPlayerAccess(viewModel, selectedId),
+            issues = MapHealthIssues(viewModel, selected),
             console = viewModel.ConsoleLines.TakeLast(MaximumConsoleLines).Select(line => new
             {
                 sequence = line.Sequence,
@@ -84,6 +86,7 @@ internal sealed class WebUiSnapshotMapper
             players = viewModel.PlayerRows.Select(player => new
             {
                 name = player.Name,
+                uuid = player.Uuid,
                 online = player.Online,
                 allowlisted = player.Whitelisted,
                 @operator = player.Operator,
@@ -179,8 +182,7 @@ internal sealed class WebUiSnapshotMapper
                 downloadSizeBytes = viewModel.CurrentUpdateCheck?.LatestVersion?.FileSize,
                 compatibilityReasons = viewModel.CurrentUpdateCheck?.CompatibilityReasons ?? [],
                 compatibility = viewModel.CurrentUpdateCheck?.Compatibility.ToString(),
-                canInstall = viewModel.CurrentUpdateCheck?.LatestVersion is not null &&
-                    viewModel.CurrentUpdateCheck.Compatibility is not UpdateCompatibility.Incompatible and not UpdateCompatibility.Unknown,
+                canInstall = IsInstallableUpdate(viewModel.CurrentUpdateCheck),
                 operationState = viewModel.CurrentUpdateOperation?.Progress.State.ToString(),
                 operationStep = viewModel.CurrentUpdateOperation?.Progress.CurrentStep,
                 operationDetail = viewModel.CurrentUpdateOperation?.Progress.Detail,
@@ -207,6 +209,7 @@ internal sealed class WebUiSnapshotMapper
             },
             serverSettings = selected is null ? null : new
             {
+                serverId = selected.Definition.Id,
                 name = selected.Definition.Name,
                 motd = viewModel.PropertyMotd,
                 port = viewModel.PropertyPort,
@@ -265,6 +268,14 @@ internal sealed class WebUiSnapshotMapper
     private object MapServer(ServerSnapshot server, HostSnapshot host, MainViewModel viewModel, Guid? selectedId)
     {
         var isSelected = selectedId == server.Definition.Id;
+        var network = viewModel.Dashboard.NetworkConfigurations.FirstOrDefault(item =>
+            item.ServerId == server.Definition.Id);
+        var router = viewModel.Dashboard.RouterMappings.FirstOrDefault(item =>
+            item.ServerId == server.Definition.Id);
+        var networkMode = network?.Mode ??
+            VanillaNetworkingPreferencePolicy.ToNetworkMode(server.Definition.CreationNetworkingPreference);
+        if (router?.DirectInternetEnabled == true)
+            networkMode = NetworkMode.PortForwarding;
         var packSource = isSelected && viewModel.CurrentUpdateSource is
         {
             HasIdentifiedBaseline: true,
@@ -274,6 +285,17 @@ internal sealed class WebUiSnapshotMapper
             : null;
         var publicVerified = isSelected && viewModel.PublicAccessVerified &&
             viewModel.ExternalReachability.ServerId == server.Definition.Id;
+        var routerAddress = router is { RouterReportedExternalAddress.Length: > 0, ExternalPort: > 0 }
+            ? $"{router.RouterReportedExternalAddress}:{router.ExternalPort}"
+            : null;
+        var publicAddress = publicVerified ? viewModel.PublicAccessVerifiedEndpoint : routerAddress;
+        var publicAddressKind = publicVerified
+            ? "verified"
+            : routerAddress is null
+                ? null
+                : router?.HasActiveMapping == true
+                    ? "router"
+                    : "last";
         var content = packSource is not null ? "modpack" : server.Definition.Ecosystem switch
         {
             ServerEcosystem.Vanilla => "datapacks",
@@ -287,6 +309,7 @@ internal sealed class WebUiSnapshotMapper
             id = server.Definition.Id,
             name = server.Definition.Name,
             state = server.State.ToString(),
+            gameKind = server.Definition.GameKind.ToString(),
             ecosystem = server.Definition.Ecosystem.ToString(),
             minecraftVersion = server.Definition.MinecraftVersion,
             loaderVersion = string.IsNullOrWhiteSpace(server.Definition.LoaderVersion) ? null : server.Definition.LoaderVersion,
@@ -309,10 +332,13 @@ internal sealed class WebUiSnapshotMapper
             maximumMemoryBytes = (long)server.Definition.MaximumRamMb * 1024 * 1024,
             localAddress = $"localhost:{server.Definition.Port}",
             lanAddress = string.IsNullOrWhiteSpace(host.LanAddress) ? null : $"{host.LanAddress}:{server.Definition.Port}",
-            publicAddress = publicVerified ? viewModel.PublicAccessVerifiedEndpoint : null,
+            connectionMode = networkMode == NetworkMode.PortForwarding ? "PortForwarding" : "HomeNetwork",
+            publicAddress,
+            publicAddressKind,
+            publicAddressObservedAt = publicVerified ? viewModel.ExternalReachability.CheckedAt : router?.LastCheckedAt,
             publicReachability = publicVerified
                 ? "confirmed"
-                : isSelected && viewModel.SelectedNetworkMode == NetworkMode.PortForwarding
+                : networkMode == NetworkMode.PortForwarding
                     ? "not-confirmed"
                     : "unavailable",
             lastBackupAt = server.LastBackupAt,
@@ -363,13 +389,41 @@ internal sealed class WebUiSnapshotMapper
             capabilities = new
             {
                 console = true,
-                players = server.Definition.Ecosystem is not ServerEcosystem.Custom,
+                players = HasPlayersWorkspace(server.Definition),
                 files = true,
                 content,
                 versioning,
                 backups = true,
                 versions = true
             }
+        };
+    }
+
+    internal static bool IsInstallableUpdate(UpdateCheckResult? check) =>
+        check is { Status: ServerUpdateStatus.UpdateAvailable, LatestVersion: not null } &&
+        check.Compatibility is not UpdateCompatibility.Incompatible and not UpdateCompatibility.Unknown;
+
+    internal static bool HasPlayersWorkspace(ServerDefinition definition) =>
+        definition.GameKind == ServerGameKind.Minecraft;
+
+    private static object? MapPlayerAccess(MainViewModel viewModel, Guid? selectedId)
+    {
+        if (selectedId is null || viewModel.SelectedServer?.Definition is not { } definition ||
+            definition.Id != selectedId || !HasPlayersWorkspace(definition))
+            return null;
+
+        var capabilities = viewModel.SelectedCapabilities;
+        return new
+        {
+            serverId = selectedId,
+            serverRunning = viewModel.PlayerModerationAvailable,
+            whitelistEnabled = viewModel.WhitelistEnabled,
+            supportsAllowlist = capabilities?.SupportsLiveWhitelistCommands ?? false,
+            supportsOperators = capabilities?.SupportsOperators ?? false,
+            supportsPlayerBans = capabilities?.SupportsPlayerBans ?? false,
+            supportsIpBans = capabilities?.SupportsIpBans ?? false,
+            capabilityKnown = capabilities is not null,
+            error = string.IsNullOrWhiteSpace(viewModel.AccessErrorMessage) ? null : viewModel.AccessErrorMessage
         };
     }
 
@@ -396,10 +450,14 @@ internal sealed class WebUiSnapshotMapper
         var mode = viewModel.SelectedNetworkMode;
         var publicVerified = external.ServerId == selectedId && viewModel.PublicAccessVerified;
         var publicEndpoint = publicVerified ? viewModel.PublicAccessVerifiedEndpoint : null;
+        var lastKnownPublicEndpoint = external.ServerId == selectedId && external.CheckedAt is not null &&
+            external.CheckedEndpoint.PublicAddress.Length > 0 && external.CheckedEndpoint.ExternalPort > 0
+                ? $"{external.CheckedEndpoint.PublicAddress}:{external.CheckedEndpoint.ExternalPort}"
+                : null;
         var effectiveMode = mode == NetworkMode.PortForwarding ? NetworkMode.PortForwarding : NetworkMode.HomeNetwork;
         var modeTitle = effectiveMode == NetworkMode.PortForwarding ? "Internet hosting" : "LAN";
         var modeSummary = effectiveMode == NetworkMode.PortForwarding
-            ? "Friends elsewhere can join only after deliberate router setup and an outside-in check."
+            ? "Friends elsewhere can join after deliberate Windows and router setup. Optional diagnostics do not define persistent setup state."
             : "People on this Wi-Fi or wired LAN can use the LAN address when Windows allows it.";
         var (statusTitle, statusDetail, statusTone) = ConnectivityStatus(viewModel, server);
 
@@ -418,7 +476,9 @@ internal sealed class WebUiSnapshotMapper
                 routerReported = router.ServerId == selectedId && router.HasRouterReportedAddress
                     ? router.RouterReportedEndpoint
                     : null,
-                publicVerifiedAt = publicVerified ? external.CheckedAt : null
+                publicVerifiedAt = publicVerified ? external.CheckedAt : null,
+                lastKnownPublic = lastKnownPublicEndpoint,
+                lastKnownPublicAt = lastKnownPublicEndpoint is null ? null : external.CheckedAt
             },
             router = new
             {
@@ -503,6 +563,51 @@ internal sealed class WebUiSnapshotMapper
         };
     }
 
+    private static IReadOnlyList<WebUiHealthIssue> MapHealthIssues(MainViewModel viewModel, ServerSnapshot? server)
+    {
+        if (server is null)
+            return [];
+        var issues = new List<WebUiHealthIssue>(2);
+        if (server.State is ServerState.Crashed or ServerState.Unresponsive && server.LastCrashAnalysis is { } crash)
+        {
+            var articleId = crash.Code switch
+            {
+                "java.memory" => "java-heap-out-of-memory",
+                "java.version" => "java-runtime-mismatch",
+                "port.conflict" or "network.bind" => "port-binding-failed",
+                "server.watchdog" => "server-watchdog-timeout",
+                _ => "server-stopped-unexpectedly"
+            };
+            issues.Add(new WebUiHealthIssue(
+                $"crash:{articleId}", server.Definition.Id, articleId, "startup", "error",
+                crash.Title, crash.Summary,
+                crash.Evidence.Count > 0 ? crash.Evidence[0].Excerpt : crash.Summary,
+                crash.AnalyzedAt, crash.AnalyzedAt,
+                $"{crash.ReportId:N}:{crash.Code}:{crash.AnalyzedAt:O}", "openConsole", true));
+        }
+
+        var running = server.State is ServerState.Running or ServerState.Starting or ServerState.Restarting;
+        if (running && viewModel.SelectedNetworkMode == NetworkMode.PortForwarding)
+        {
+            var routerProblem = viewModel.RouterMapping.Phase is RouterMappingPhase.Conflict or
+                RouterMappingPhase.NeedsAttention or RouterMappingPhase.Unavailable or RouterMappingPhase.Undetermined;
+            var firewallProblem = viewModel.FirewallAccess.Phase is FirewallAccessPhase.NeedsAttention or
+                FirewallAccessPhase.Stale or FirewallAccessPhase.BlockedByPolicy or FirewallAccessPhase.OwnershipConflict;
+            if (routerProblem || firewallProblem)
+            {
+                var observed = viewModel.RouterMapping.LastCheckedAt ?? viewModel.FirewallAccess.LastCheckedAt ?? DateTimeOffset.UtcNow;
+                var phase = routerProblem ? viewModel.RouterMapping.Phase.ToString() : viewModel.FirewallAccess.Phase.ToString();
+                var evidence = routerProblem ? viewModel.DirectInternetSummary : viewModel.FirewallSummary;
+                issues.Add(new WebUiHealthIssue(
+                    "internet-sharing", server.Definition.Id,
+                    routerProblem ? "router-port-forwarding-needs-attention" : "windows-firewall-needs-attention",
+                    "networking", "warning", "Internet sharing needs attention", evidence, evidence,
+                    observed, observed, $"{server.Definition.Port}:{phase}:{evidence}", "openConnectivity", true));
+            }
+        }
+        return issues;
+    }
+
     private static (string Title, string Detail, string Tone) ConnectivityStatus(
         MainViewModel viewModel,
         ServerSnapshot server)
@@ -513,18 +618,25 @@ internal sealed class WebUiSnapshotMapper
                 : ("Available on your home network", $"People on this network can use {viewModel.ServerLanAddress} when Windows allows it.", "info");
         if (viewModel.SelectedNetworkMode != NetworkMode.PortForwarding)
             return ("LAN setup incomplete", "This server uses an older private-mode setting. Choose LAN to confirm ordinary home-network access.", "warning");
-        if (viewModel.PublicAccessVerified)
-            return ("Friends can join", $"An outside-in check reached {viewModel.PublicAccessVerifiedEndpoint}.", "success");
-        if (viewModel.IsDirectInternetBusy || viewModel.ExternalReachability.Busy)
-            return ("Setting up Internet access", "ChunkPilot is waiting for authoritative networking evidence.", "info");
-        if (server.State != ServerState.Running && viewModel.RouterMapping.Enabled)
-            return ("Server must be running to verify", "Internet hosting is configured, but no public reachability claim can be made while the server is stopped.", "warning");
-        if (!viewModel.ExternalReachability.ProbeConfigured)
-            return ("Verification unavailable", "This build has no configured outside-in probe, so router setup is not presented as public reachability.", "warning");
-        if (viewModel.ExternalReachability.Phase is ExternalReachabilityPhase.Unreachable or
-            ExternalReachabilityPhase.SourceAddressMismatch or ExternalReachabilityPhase.Stale)
-            return ("Needs attention", viewModel.ExternalReachabilitySummary, "warning");
-        return ("Internet access not verified", viewModel.DirectInternetSummary, "neutral");
+        if (viewModel.IsDirectInternetBusy)
+            return ("Setting up Internet sharing", "ChunkPilot is reconciling its exact Windows or router configuration.", "info");
+        if (viewModel.RouterMapping.Phase is RouterMappingPhase.Conflict or RouterMappingPhase.NeedsAttention or
+            RouterMappingPhase.Unavailable or RouterMappingPhase.Undetermined)
+            return ("Internet sharing needs attention", viewModel.DirectInternetSummary, "warning");
+        if (viewModel.FirewallAccess.Phase is FirewallAccessPhase.NeedsAttention or FirewallAccessPhase.Stale or
+            FirewallAccessPhase.BlockedByPolicy or FirewallAccessPhase.OwnershipConflict)
+            return ("Internet sharing needs attention", viewModel.FirewallSummary, "warning");
+        if (viewModel.RouterMapping.Enabled && viewModel.FirewallAccess.Configured)
+        {
+            var running = server.State == ServerState.Running
+                ? "The server is running."
+                : "The server must be running for friends to connect.";
+            var diagnostic = viewModel.PublicAccessVerified
+                ? $" An optional outside-in diagnostic reached {viewModel.PublicAccessVerifiedEndpoint}."
+                : " This status describes ChunkPilot-owned setup, not a guarantee about every outside network.";
+            return ("Internet sharing configured", $"{running}{diagnostic}", "success");
+        }
+        return ("Internet sharing not set up", viewModel.DirectInternetSummary, "neutral");
     }
 
     private static string Tone(ChunkPilot.App.DesignSystem.AppTone tone) => tone.ToString().ToLowerInvariant();
@@ -562,4 +674,19 @@ internal sealed class WebUiSnapshotMapper
     }
 
     private sealed record IconCacheEntry(long Length, DateTime LastWriteTimeUtc, string DataUrl);
+
+    private sealed record WebUiHealthIssue(
+        string IssueId,
+        Guid ServerId,
+        string ArticleId,
+        string Category,
+        string Severity,
+        string Title,
+        string Summary,
+        string EvidenceSummary,
+        DateTimeOffset FirstObservedAt,
+        DateTimeOffset LastObservedAt,
+        string EvidenceFingerprint,
+        string PrimaryAction,
+        bool Dismissible);
 }

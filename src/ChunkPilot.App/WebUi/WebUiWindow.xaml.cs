@@ -25,7 +25,8 @@ public partial class WebUiWindow : Window
     internal static readonly TimeSpan ActivePresentationRefreshInterval = TimeSpan.FromSeconds(1);
     internal static readonly TimeSpan QuiescentPresentationRefreshInterval = TimeSpan.FromSeconds(3);
     internal static bool RequiresFullPresentationRefresh(string method) =>
-        method != "workspace.load" && !method.StartsWith("connectivity.", StringComparison.Ordinal);
+        method is not "workspace.load" and not "players.head" and not "help.openExternal" &&
+        !method.StartsWith("connectivity.", StringComparison.Ordinal);
     internal static bool IsDeferredLifecycleMethod(string method) =>
         method is "servers.start" or "servers.stop" or "servers.restart";
     internal static bool IsDeferredOperationMethod(string method) =>
@@ -78,7 +79,10 @@ public partial class WebUiWindow : Window
     private readonly WebUiLocalPluginTokenStore localPluginTokens = new();
     private readonly WebUiServerImportTokenStore localImportTokens = new();
     private readonly WebUiLegacyArtifactTokenStore legacyArtifactTokens = new();
+    private readonly WebUiWorldSourceTokenStore worldSourceTokens = new();
+    private readonly CreationWorldSourceService creationWorldSources = new();
     private readonly HttpClient modpackImages = new() { Timeout = TimeSpan.FromSeconds(20) };
+    private readonly PlayerHeadImageService playerHeads = new();
 
     public WebUiWindow(MainViewModel viewModel, AgentClient client)
     {
@@ -166,6 +170,7 @@ public partial class WebUiWindow : Window
         core.Settings.IsZoomControlEnabled = false;
         core.Settings.IsStatusBarEnabled = false;
         core.Settings.IsBuiltInErrorPageEnabled = false;
+        core.Settings.AreDefaultScriptDialogsEnabled = false;
         core.Settings.IsGeneralAutofillEnabled = false;
         core.Settings.IsPasswordAutosaveEnabled = false;
         core.NavigationStarting += CoreOnNavigationStarting;
@@ -225,6 +230,27 @@ public partial class WebUiWindow : Window
     {
         if (Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps)
             Process.Start(new ProcessStartInfo(uri.AbsoluteUri) { UseShellExecute = true });
+    }
+
+    private static void OpenHelpSource(string value)
+    {
+        var uri = RequireAllowedHelpSource(value);
+        Process.Start(new ProcessStartInfo(uri.AbsoluteUri) { UseShellExecute = true });
+    }
+
+    internal static Uri RequireAllowedHelpSource(string value)
+    {
+        if (!Uri.TryCreate(value, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps)
+            throw new ArgumentException("Help sources must use HTTPS.");
+        var allowedHosts = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "www.minecraft.net", "minecraft.net", "help.minecraft.net",
+            "docs.papermc.io", "docs.fabricmc.net", "docs.neoforged.net", "docs.minecraftforge.net",
+            "support.modrinth.com", "learn.microsoft.com", "docs.oracle.com", "minecraft.wiki"
+        };
+        if (!allowedHosts.Contains(uri.Host))
+            throw new ArgumentException("That help source host is not allowed.");
+        return uri;
     }
 
     private static void BrowserOnPreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
@@ -290,6 +316,9 @@ public partial class WebUiWindow : Window
             case "diagnostics.bundle":
                 Select(parameters);
                 await viewModel.CreateDiagnosticBundleCommand.ExecuteAsync(null).ConfigureAwait(true);
+                break;
+            case "help.openExternal":
+                OpenHelpSource(RequiredString(parameters, "url", 512));
                 break;
             case "servers.import":
                 await viewModel.AddServerCommand.ExecuteAsync(null).ConfigureAwait(true);
@@ -607,6 +636,32 @@ public partial class WebUiWindow : Window
             case "players.moderate":
                 await ModeratePlayerAsync(parameters).ConfigureAwait(true);
                 break;
+            case "players.addAllowlist":
+                Select(parameters);
+                viewModel.NewWhitelistPlayerName = RequiredString(parameters, "playerName", 16);
+                if (!viewModel.AddWhitelistPlayerCommand.CanExecute(null))
+                    throw new InvalidOperationException("Start the server before changing the whitelist.");
+                await viewModel.AddWhitelistPlayerCommand.ExecuteAsync(null).ConfigureAwait(true);
+                if (viewModel.HasAccessError)
+                    throw new InvalidOperationException(viewModel.AccessErrorMessage);
+                break;
+            case "players.head":
+            {
+                var requestedServerId = Guid.Parse(RequiredString(parameters, "serverId", 64));
+                if (viewModel.SelectedServer?.Definition.Id != requestedServerId)
+                    throw new InvalidOperationException("Player identity is no longer current for the selected server.");
+                var uuid = Guid.Parse(RequiredString(parameters, "uuid", 64));
+                if (!viewModel.PlayerRows.Any(row => row.Uuid == uuid))
+                    throw new ArgumentException("That authoritative player UUID is not present for this server.");
+                var imageUrl = await playerHeads.GetDataUrlAsync(uuid).ConfigureAwait(true);
+                return JsonSerializer.SerializeToNode(new { serverId = requestedServerId, uuid, imageUrl }, WebUiProtocol.Json)!;
+            }
+            case "players.setWhitelist":
+                Select(parameters);
+                await viewModel.SetWhitelistEnabledAsync(RequiredBool(parameters, "enabled")).ConfigureAwait(true);
+                if (viewModel.HasAccessError)
+                    throw new InvalidOperationException(viewModel.AccessErrorMessage);
+                break;
             case "schedules.upsert":
                 Select(parameters);
                 ApplySchedule(parameters);
@@ -629,6 +684,7 @@ public partial class WebUiWindow : Window
                 await viewModel.SaveSettingsCommand.ExecuteAsync(null).ConfigureAwait(true);
                 break;
             case "settings.saveServer":
+                var settingsServerId = Guid.Parse(RequiredString(parameters, "serverId", 64));
                 ApplyServerSettings(parameters);
                 var propertiesChanged = viewModel.HasServerPropertyChanges;
                 var memoryChanged = viewModel.HasMemoryChanges;
@@ -642,6 +698,8 @@ public partial class WebUiWindow : Window
                 }
                 if (memoryChanged)
                 {
+                    if (viewModel.SelectedServer?.Definition.Id != settingsServerId)
+                        throw new InvalidOperationException("The selected server changed before memory settings could be saved. The new server was not modified.");
                     await viewModel.ApplyMemoryCommand.ExecuteAsync(null).ConfigureAwait(true);
                     if (viewModel.MemorySaveError.Length > 0 || viewModel.HasMemoryChanges)
                         throw new InvalidOperationException(viewModel.MemorySaveError.Length > 0
@@ -689,19 +747,37 @@ public partial class WebUiWindow : Window
                 await viewModel.CancelPackUpdateCommand.ExecuteAsync(null).ConfigureAwait(true);
                 break;
             case "connectivity.copyAddress":
-                Select(parameters);
+                if (!TryServer(parameters, out var addressServer) || addressServer is null)
+                    throw new ArgumentException("Select a server first.");
+                var addressServerId = addressServer.Definition.Id;
+                var storedRouter = viewModel.Dashboard.RouterMappings.FirstOrDefault(item =>
+                    item.ServerId == addressServerId);
+                var isSelectedAddressServer = viewModel.SelectedServer?.Definition.Id == addressServerId;
                 var kind = RequiredString(parameters, "kind", 20).ToLowerInvariant();
                 var address = kind switch
                 {
-                    "local" => viewModel.ServerLocalAddress,
-                    "lan" when viewModel.ServerLanAddress != "Unavailable" => viewModel.ServerLanAddress,
-                    "public" when viewModel.PublicAccessVerified => viewModel.PublicAccessVerifiedEndpoint,
-                    "router" when viewModel.RouterMapping.Enabled && viewModel.RouterMapping.HasRouterReportedAddress =>
+                    "local" => $"localhost:{addressServer.Definition.Port}",
+                    "lan" when !string.IsNullOrWhiteSpace(viewModel.Dashboard.Host.LanAddress) =>
+                        $"{viewModel.Dashboard.Host.LanAddress}:{addressServer.Definition.Port}",
+                    "public" when isSelectedAddressServer && viewModel.PublicAccessVerified =>
+                        viewModel.PublicAccessVerifiedEndpoint,
+                    "router" when isSelectedAddressServer && viewModel.RouterMapping.Enabled &&
+                        viewModel.RouterMapping.HasRouterReportedAddress =>
                         viewModel.RouterMapping.RouterReportedEndpoint,
+                    "router" when storedRouter is { HasActiveMapping: true,
+                        RouterReportedExternalAddress.Length: > 0, ExternalPort: > 0 } =>
+                        $"{storedRouter.RouterReportedExternalAddress}:{storedRouter.ExternalPort}",
+                    "last" when isSelectedAddressServer && viewModel.ExternalReachability.CheckedAt is not null &&
+                        viewModel.ExternalReachability.CheckedEndpoint.PublicAddress.Length > 0 &&
+                        viewModel.ExternalReachability.CheckedEndpoint.ExternalPort > 0 =>
+                        $"{viewModel.ExternalReachability.CheckedEndpoint.PublicAddress}:{viewModel.ExternalReachability.CheckedEndpoint.ExternalPort}",
+                    "last" when storedRouter is { RouterReportedExternalAddress.Length: > 0, ExternalPort: > 0 } =>
+                        $"{storedRouter.RouterReportedExternalAddress}:{storedRouter.ExternalPort}",
                     "router" => throw new InvalidOperationException("The active router mapping has not reported a likely public address."),
                     "public" => throw new InvalidOperationException("No outside-in check has verified a public address for this server."),
                     "lan" => throw new InvalidOperationException("ChunkPilot has not established a LAN address for this server."),
-                    _ => throw new ArgumentException("Address kind must be local, lan, router, or public.")
+                    "last" => throw new InvalidOperationException("No previously checked Internet address is available for this server."),
+                    _ => throw new ArgumentException("Address kind must be local, lan, router, last, or public.")
                 };
                 viewModel.CopyTextCommand.Execute(address);
                 break;
@@ -791,6 +867,8 @@ public partial class WebUiWindow : Window
                 return await CreationDestinationAsync(parameters).ConfigureAwait(true);
             case "creation.chooseFolder":
                 return ChooseCreationFolder(parameters);
+            case "creation.chooseWorld":
+                return await ChooseCreationWorldAsync(parameters).ConfigureAwait(true);
             case "creation.begin":
                 return BeginCreationOperation(parameters);
             case "creation.operations":
@@ -975,6 +1053,10 @@ public partial class WebUiWindow : Window
                      throw new InvalidOperationException("No server is selected.");
         var check = viewModel.CurrentUpdateCheck ??
                     throw new InvalidOperationException("No authoritative update check is available.");
+        if (check.Status != ServerUpdateStatus.UpdateAvailable)
+            throw new InvalidOperationException(check.Status == ServerUpdateStatus.UpToDate
+                ? "This exact pack release is already installed."
+                : "No installable pack update is currently available.");
         var target = check.LatestVersion ??
                      throw new InvalidOperationException("No installable update has been confirmed for this server.");
         if (check.Compatibility is UpdateCompatibility.Incompatible or UpdateCompatibility.Unknown)
@@ -1907,6 +1989,52 @@ public partial class WebUiWindow : Window
         return JsonSerializer.SerializeToNode(new { path }, WebUiProtocol.Json);
     }
 
+    private async Task<JsonNode?> ChooseCreationWorldAsync(JsonObject parameters)
+    {
+        var kindText = OptionalString(parameters, "kind", 16);
+        var kind = kindText.Equals("folder", StringComparison.OrdinalIgnoreCase)
+            ? CreationWorldSourceKind.Folder
+            : kindText.Equals("zip", StringComparison.OrdinalIgnoreCase)
+                ? CreationWorldSourceKind.ZipArchive
+                : throw new ArgumentException("Choose either a world folder or a world ZIP.");
+        string path;
+        if (kind == CreationWorldSourceKind.Folder)
+        {
+            path = new DialogService().SelectFolder("Choose an existing Minecraft world folder") ?? "";
+            if (string.IsNullOrWhiteSpace(path))
+                return JsonSerializer.SerializeToNode(new { cancelled = true }, WebUiProtocol.Json);
+        }
+        else
+        {
+            var dialog = new Microsoft.Win32.OpenFileDialog
+            {
+                Title = "Choose a ZIP containing one Minecraft world",
+                Filter = "Minecraft world ZIP (*.zip)|*.zip",
+                CheckFileExists = true,
+                Multiselect = false
+            };
+            if (dialog.ShowDialog(this) != true)
+                return JsonSerializer.SerializeToNode(new { cancelled = true }, WebUiProtocol.Json);
+            path = dialog.FileName;
+        }
+        var source = await creationWorldSources.InspectAsync(path, kind).ConfigureAwait(true);
+        var token = worldSourceTokens.Issue(source);
+        return JsonSerializer.SerializeToNode(new
+        {
+            cancelled = false,
+            token.Token,
+            token.DisplayName,
+            kind = token.Kind.ToString(),
+            token.WorldName,
+            token.SourceSizeBytes,
+            token.ExpandedSizeBytes,
+            token.FileCount,
+            token.IncludesNether,
+            token.IncludesEnd,
+            token.ExpiresAt
+        }, WebUiProtocol.Json);
+    }
+
     private JsonNode? BeginCreationOperation(JsonObject parameters)
     {
         if (!Guid.TryParse(RequiredString(parameters, "operationId", 64), out var operationId))
@@ -1973,6 +2101,7 @@ public partial class WebUiWindow : Window
         }
         if (parameters["eulaAccepted"]?.GetValue<bool>() is not true)
             throw new ArgumentException("You must deliberately accept the Minecraft EULA before creation.");
+        var initialWorld = await ConsumeInitialWorldAsync(parameters, cancellationToken).ConfigureAwait(true);
         var plan = new VanillaCreationPlan
         {
             OperationId = Guid.Parse(RequiredString(parameters, "operationId", 64)),
@@ -1994,6 +2123,7 @@ public partial class WebUiWindow : Window
             MetadataRetrievedUtc = creationCatalog.RetrievedUtc,
             MetadataFromCache = creationCatalog.IsFromCache,
             UserSuppliedArtifact = suppliedArtifact,
+            InitialWorld = initialWorld,
             AcknowledgedWarnings = version.Warnings
         };
         var problems = plan.Problems();
@@ -2011,6 +2141,7 @@ public partial class WebUiWindow : Window
         if (parameters["experimentalAccepted"]?.GetValue<bool>() is not true)
             throw new ArgumentException(
                 "Acknowledge that this exact modpack release will be validated on demand during creation.");
+        var initialWorld = await ConsumeInitialWorldAsync(parameters, cancellationToken).ConfigureAwait(true);
 
         ModpackCreationPlan plan;
         var localToken = OptionalString(parameters, "localPackToken", 128);
@@ -2027,6 +2158,8 @@ public partial class WebUiWindow : Window
                 throw new InvalidOperationException("The selected local server source changed after review. Choose it again.");
             if (reviewed.SourceKind != ServerImportSourceKind.ModrinthPack)
             {
+                if (initialWorld is not null)
+                    throw new ArgumentException("A complete imported server source already owns its world layout. Choose Create new world for that path, or create a managed server from a version or pack and upload the world there.");
                 var management = Enum.TryParse<ServerImportManagementMode>(
                     OptionalString(parameters, "importManagementMode", 32), true, out var parsedManagement)
                     ? parsedManagement : ServerImportManagementMode.ManagedCopy;
@@ -2142,7 +2275,8 @@ public partial class WebUiWindow : Window
                 OptionalString(parameters, "networking", 60), true, out var preference)
                 ? preference
                 : VanillaNetworkingPreference.DecideLater,
-            ExperimentalRuntimeRiskAccepted = true
+            ExperimentalRuntimeRiskAccepted = true,
+            InitialWorld = initialWorld
         };
     }
 
@@ -2175,6 +2309,7 @@ public partial class WebUiWindow : Window
             throw new ArgumentException("Acknowledge that this exact loader combination is Experimental before creation.");
         if (parameters["eulaAccepted"]?.GetValue<bool>() is not true)
             throw new ArgumentException("You must deliberately accept the Minecraft EULA before creation.");
+        var initialWorld = await ConsumeInitialWorldAsync(parameters, cancellationToken).ConfigureAwait(true);
         var plan = new ManagedLoaderCreationPlan
         {
             OperationId = Guid.Parse(RequiredString(parameters, "operationId", 64)),
@@ -2199,7 +2334,8 @@ public partial class WebUiWindow : Window
             MetadataRetrievedUtc = builds.RetrievedUtc,
             MetadataFromCache = versions.IsFromCache || builds.IsFromCache,
             ExperimentalRuntimeRiskAccepted = build.SupportTier != MinecraftVersionSupportTier.Experimental ||
-                                              parameters["experimentalAccepted"]?.GetValue<bool>() is true
+                                              parameters["experimentalAccepted"]?.GetValue<bool>() is true,
+            InitialWorld = initialWorld
         };
         var problems = plan.Problems();
         if (problems.Count > 0) throw new ArgumentException(string.Join(" ", problems));
@@ -2240,6 +2376,7 @@ public partial class WebUiWindow : Window
         }
         if (parameters["eulaAccepted"]?.GetValue<bool>() is not true)
             throw new ArgumentException("You must deliberately accept the Minecraft EULA before creation.");
+        var initialWorld = await ConsumeInitialWorldAsync(parameters, cancellationToken).ConfigureAwait(true);
 
         var plan = new PaperCreationPlan
         {
@@ -2265,12 +2402,23 @@ public partial class WebUiWindow : Window
             MetadataRetrievedUtc = builds.RetrievedUtc,
             MetadataFromCache = paperVersionCatalog.IsFromCache || builds.IsFromCache,
             ExperimentalRuntimeRiskAccepted = build.SupportTier != MinecraftVersionSupportTier.Experimental ||
-                                                parameters["experimentalAccepted"]?.GetValue<bool>() is true
+                                                parameters["experimentalAccepted"]?.GetValue<bool>() is true,
+            InitialWorld = initialWorld
         };
         var problems = plan.Problems();
         if (problems.Count > 0)
             throw new ArgumentException(string.Join(" ", problems));
         return await paperCreation.BeginAsync(plan, cancellationToken).ConfigureAwait(true);
+    }
+
+    private async Task<CreationWorldSource?> ConsumeInitialWorldAsync(
+        JsonObject parameters,
+        CancellationToken cancellationToken)
+    {
+        var token = OptionalString(parameters, "initialWorldToken", 128);
+        return string.IsNullOrWhiteSpace(token)
+            ? null
+            : await worldSourceTokens.ConsumeAsync(token, cancellationToken).ConfigureAwait(true);
     }
 
     private async Task<JsonNode?> CreationProgressAsync(JsonObject parameters)
@@ -2679,8 +2827,10 @@ public partial class WebUiWindow : Window
         localPluginTokens.Clear();
         localImportTokens.Clear();
         legacyArtifactTokens.Clear();
+        worldSourceTokens.Clear();
         modpackImageCache.Clear();
         modpackImages.Dispose();
+        playerHeads.Dispose();
         bridge?.Dispose();
         CoreWebView2? core = null;
         try

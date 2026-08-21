@@ -183,10 +183,12 @@ internal static class WebUiFixtureLauncher
                 ("dashboard-several", "several", "dashboard", null, null, null, false, 1280, 820),
                 ("overview-running", "running", "servers", "overview", null, null, false, 1280, 820),
                 ("overview-stopped", "stopped", "servers", "overview", null, null, false, 1280, 820),
+                ("health-attention", "attention", "servers", "overview", null, null, false, 1280, 820),
                 ("server-menu", "running", "servers", "overview", null, "menu", false, 1280, 820),
                 ("share", "running", "servers", "overview", null, "share", false, 1280, 820),
                 ("connectivity-local", "running", "servers", "overview", null, "connectivity-local", false, 1280, 820),
                 ("connectivity-pending", "running", "servers", "settings", null, "connectivity-pending", false, 1280, 820),
+                ("connectivity-owned", "running", "servers", "settings", null, "share-unverified", false, 1280, 820),
                 ("connectivity-public", "running", "servers", "overview", null, "connectivity-public", false, 1280, 820),
                 ("connectivity-failure", "running", "servers", "overview", null, "connectivity-failure", false, 1280, 820),
                 ("console-wrapped", "running", "servers", "console", null, null, false, 1280, 820),
@@ -200,7 +202,9 @@ internal static class WebUiFixtureLauncher
                 ("motd-rich", "running", "servers", "settings", null, "motd-rich", false, 1280, 820),
                 ("motd-raw", "running", "servers", "settings", null, "motd-raw", false, 1280, 820),
                 ("global-settings", "running", "settings", null, null, null, false, 1280, 820),
+                ("help-center", "running", "settings", null, null, null, false, 1280, 820),
                 ("create-game", "running", "create", null, "0", null, false, 1280, 820),
+                ("create-world-upload", "running", "create", null, "4", null, false, 1280, 820),
                 ("create-paper-game", "running", "create", null, "0", "paper", false, 1280, 820),
                 ("create-paper-version", "running", "create", null, "1", "paper", false, 1280, 820),
                 ("create-paper-review", "running", "create", null, "6", "paper", false, 1280, 820),
@@ -222,6 +226,7 @@ internal static class WebUiFixtureLauncher
                 ("mods-browse", "fabric", "servers", "content", null, "mods-browse", false, 1280, 820),
                 ("mods-updates", "neoforge", "servers", "content", null, "mods-updates", false, 1280, 820),
                 ("overview-narrow-1100x700", "running", "servers", "overview", null, null, false, 1100, 700),
+                ("server-list-long-names", "longnames", "dashboard", null, null, null, false, 920, 700),
                 ("dashboard-large-1440x900", "several", "dashboard", null, null, null, false, 1440, 900),
                 // Keep the dirty state last: its real beforeunload guard intentionally blocks a
                 // subsequent navigation, while still allowing the capture itself to be reviewed.
@@ -234,7 +239,9 @@ internal static class WebUiFixtureLauncher
                 Height = capture.Height;
                 await Dispatcher.InvokeAsync(() => { }, System.Windows.Threading.DispatcherPriority.Render);
                 await NavigateAsync(capture.Fixture, capture.Page, capture.Tab, capture.Stage,
-                    capture.Name == "connectivity-pending" ? "Connectivity" : null,
+                    capture.Name is "connectivity-pending" or "connectivity-owned" ? "Connectivity"
+                        : capture.Name == "help-center" ? "Help & troubleshooting"
+                        : null,
                     capture.Mode, capture.Dirty).ConfigureAwait(true);
                 if (capture.Name == "files-editor")
                 {
@@ -292,6 +299,35 @@ internal static class WebUiFixtureLauncher
                     {
                         var ready = await browser.CoreWebView2.ExecuteScriptAsync(
                             "document.body.innerText.includes('Exact release')").ConfigureAwait(true);
+                        if (string.Equals(ready, "true", StringComparison.OrdinalIgnoreCase))
+                            break;
+                        await Task.Delay(100).ConfigureAwait(true);
+                    }
+                }
+                if (capture.Name == "create-world-upload")
+                {
+                    for (var attempt = 0; attempt < 20; attempt++)
+                    {
+                        var selected = await browser.CoreWebView2.ExecuteScriptAsync(
+                            "(() => { const button = [...document.querySelectorAll('button')].find(candidate => candidate.textContent?.includes('Upload World')); if (!button) return false; button.click(); return true; })()")
+                            .ConfigureAwait(true);
+                        if (string.Equals(selected, "true", StringComparison.OrdinalIgnoreCase))
+                            break;
+                        await Task.Delay(100).ConfigureAwait(true);
+                    }
+                    for (var attempt = 0; attempt < 20; attempt++)
+                    {
+                        var reviewed = await browser.CoreWebView2.ExecuteScriptAsync(
+                            "(() => { const button = [...document.querySelectorAll('button')].find(candidate => candidate.textContent?.includes('Choose world folder')); if (!button) return false; button.click(); return true; })()")
+                            .ConfigureAwait(true);
+                        if (string.Equals(reviewed, "true", StringComparison.OrdinalIgnoreCase))
+                            break;
+                        await Task.Delay(100).ConfigureAwait(true);
+                    }
+                    for (var attempt = 0; attempt < 20; attempt++)
+                    {
+                        var ready = await browser.CoreWebView2.ExecuteScriptAsync(
+                            "document.body.innerText.includes('Reviewed locally')").ConfigureAwait(true);
                         if (string.Equals(ready, "true", StringComparison.OrdinalIgnoreCase))
                             break;
                         await Task.Delay(100).ConfigureAwait(true);

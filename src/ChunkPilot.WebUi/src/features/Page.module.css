@@ -82,6 +82,7 @@
 .serverCardMeta { padding: 0 16px 14px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .serverCardMeta label { display: block; margin-bottom: 3px; color: var(--cp-text-muted); font-size: 10px; text-transform: uppercase; letter-spacing: .05em; }
 .serverCardMeta span { font-size: 12px; }
+.serverCardMeta small { display: block; margin-top: 3px; color: var(--cp-text-muted); font-size: 9px; }
 .serverCardActions { min-height: 48px; display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 0 12px; border-top: 1px solid var(--cp-border); background: var(--cp-input); }
 .sectionGap { margin-top: 14px; }
 .formGrid { display: grid; gap: 1px; background: var(--cp-border); }

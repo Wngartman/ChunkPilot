@@ -90,7 +90,6 @@ public sealed partial class MainViewModel : ObservableObject
     /// Requests the beginner Vanilla creation workflow without coupling application state to its
     /// current WPF presentation. The shell owns composition and may replace the window later.
     /// </summary>
-    public event EventHandler? VanillaCreationRequested;
 
     /// <summary>Centralized navigation state. Prevents the reversion bug.</summary>
     public NavigationService Navigation { get; }
@@ -1092,10 +1091,6 @@ public sealed partial class MainViewModel : ObservableObject
             SelectedServer = Servers.FirstOrDefault(server => server.Definition.RootPath.Equals(folder, StringComparison.OrdinalIgnoreCase));
         }).ConfigureAwait(true);
     }
-
-    [RelayCommand]
-    private void CreateVanillaServer() =>
-        VanillaCreationRequested?.Invoke(this, EventArgs.Empty);
 
     [RelayCommand(CanExecute = nameof(CanStartServer))]
     private async Task StartServerAsync(ServerSnapshot? server) =>

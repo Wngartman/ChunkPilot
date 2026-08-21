@@ -24,8 +24,7 @@ internal static class DesignSystemFiles
     /// </summary>
     public static IReadOnlyList<string> LegacyViewsAwaitingRebuild { get; } =
     [
-        "ImportServerWindow.xaml",
-        "InstallServerWindow.xaml"
+        "ImportServerWindow.xaml"
     ];
 
     /// <summary>C# files permitted to raise a Windows message box, pending the dialog rebuild.</summary>
