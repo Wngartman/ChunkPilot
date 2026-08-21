@@ -247,7 +247,7 @@ public sealed class CreateServerV2LiveVanillaTests
         Assert.Contains("releases only", model.ChannelDescription, StringComparison.OrdinalIgnoreCase);
 
         model.IncludeSnapshots = true;
-        await gateway.SettleAsync();
+        await WaitForCatalogAsync(model);
         Assert.Contains(model.Versions, version => version.Channel == VanillaReleaseChannel.Snapshot);
         Assert.True(gateway.LastIncludeSnapshots);
     }
@@ -258,7 +258,7 @@ public sealed class CreateServerV2LiveVanillaTests
         var gateway = new FakeGateway();
         var model = await AtSetupAsync(gateway);
         model.IncludeSnapshots = true;
-        await gateway.SettleAsync();
+        await WaitForCatalogAsync(model);
 
         var snapshot = model.Versions.First(version => version.Channel == VanillaReleaseChannel.Snapshot);
         model.SelectedVersion = snapshot;
@@ -407,8 +407,7 @@ public sealed class CreateServerV2LiveVanillaTests
     {
         var gateway = new FakeGateway();
         var model = await AtSetupAsync(gateway);
-        model.ServerName = "Sunday survival";
-        await gateway.SettleAsync();
+        await SetNameAsync(model, gateway, "Sunday survival");
 
         Assert.Equal("Sunday survival", gateway.LastDestinationName);
         Assert.False(model.HasNameMessages);
@@ -1213,6 +1212,14 @@ public sealed class CreateServerV2LiveVanillaTests
         return model;
     }
 
+    /// <summary>Waits for the fire-and-forget channel refresh to finish applying its collection.</summary>
+    private static async Task WaitForCatalogAsync(LiveVanillaWizardViewModel model)
+    {
+        for (var attempt = 0; attempt < 2_000 && model.CatalogState == LiveCatalogState.Loading; attempt++)
+            await Task.Delay(1);
+        Assert.NotEqual(LiveCatalogState.Loading, model.CatalogState);
+    }
+
     /// <summary>Sets the name and waits for the destination answer the real Agent would send back.</summary>
     private static async Task SetNameAsync(LiveVanillaWizardViewModel model, FakeGateway gateway, string name)
     {
@@ -1375,21 +1382,6 @@ public sealed class CreateServerV2LiveVanillaTests
         public int DestinationRequests { get; private set; }
 
         public void Release() => release.TrySetResult();
-
-        /// <summary>
-        /// Lets a fire-and-forget request the view model started finish before the test asserts.
-        /// </summary>
-        /// <remarks>
-        /// The destination lookup is deliberately not awaited by the view model — typing a name must
-        /// not block the interface — so a test has to give the continuation a turn. Yielding twice is
-        /// enough for a gateway whose only asynchrony is <c>Task.Yield</c>.
-        /// </remarks>
-        public async Task SettleAsync()
-        {
-            await Task.Yield();
-            await Task.Yield();
-            await Task.Yield();
-        }
 
         public void ReleaseSubmission() => submission.TrySetResult();
 
