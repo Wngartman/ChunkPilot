@@ -25,7 +25,8 @@ public partial class WebUiWindow : Window
     internal static readonly TimeSpan ActivePresentationRefreshInterval = TimeSpan.FromSeconds(1);
     internal static readonly TimeSpan QuiescentPresentationRefreshInterval = TimeSpan.FromSeconds(3);
     internal static bool RequiresFullPresentationRefresh(string method) =>
-        method != "workspace.load" && !method.StartsWith("connectivity.", StringComparison.Ordinal);
+        method is not "workspace.load" and not "players.head" and not "help.openExternal" &&
+        !method.StartsWith("connectivity.", StringComparison.Ordinal);
     internal static bool IsDeferredLifecycleMethod(string method) =>
         method is "servers.start" or "servers.stop" or "servers.restart";
     internal static bool IsDeferredOperationMethod(string method) =>
@@ -79,6 +80,7 @@ public partial class WebUiWindow : Window
     private readonly WebUiServerImportTokenStore localImportTokens = new();
     private readonly WebUiLegacyArtifactTokenStore legacyArtifactTokens = new();
     private readonly HttpClient modpackImages = new() { Timeout = TimeSpan.FromSeconds(20) };
+    private readonly PlayerHeadImageService playerHeads = new();
 
     public WebUiWindow(MainViewModel viewModel, AgentClient client)
     {
@@ -227,6 +229,27 @@ public partial class WebUiWindow : Window
             Process.Start(new ProcessStartInfo(uri.AbsoluteUri) { UseShellExecute = true });
     }
 
+    private static void OpenHelpSource(string value)
+    {
+        var uri = RequireAllowedHelpSource(value);
+        Process.Start(new ProcessStartInfo(uri.AbsoluteUri) { UseShellExecute = true });
+    }
+
+    internal static Uri RequireAllowedHelpSource(string value)
+    {
+        if (!Uri.TryCreate(value, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps)
+            throw new ArgumentException("Help sources must use HTTPS.");
+        var allowedHosts = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "www.minecraft.net", "minecraft.net", "help.minecraft.net",
+            "docs.papermc.io", "docs.fabricmc.net", "docs.neoforged.net", "docs.minecraftforge.net",
+            "support.modrinth.com", "learn.microsoft.com", "docs.oracle.com", "minecraft.wiki"
+        };
+        if (!allowedHosts.Contains(uri.Host))
+            throw new ArgumentException("That help source host is not allowed.");
+        return uri;
+    }
+
     private static void BrowserOnPreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
     {
         if ((Keyboard.Modifiers & ModifierKeys.Control) != 0 && e.Key is Key.Add or Key.Subtract or Key.OemPlus or Key.OemMinus or Key.D0)
@@ -290,6 +313,9 @@ public partial class WebUiWindow : Window
             case "diagnostics.bundle":
                 Select(parameters);
                 await viewModel.CreateDiagnosticBundleCommand.ExecuteAsync(null).ConfigureAwait(true);
+                break;
+            case "help.openExternal":
+                OpenHelpSource(RequiredString(parameters, "url", 512));
                 break;
             case "servers.import":
                 await viewModel.AddServerCommand.ExecuteAsync(null).ConfigureAwait(true);
@@ -611,11 +637,22 @@ public partial class WebUiWindow : Window
                 Select(parameters);
                 viewModel.NewWhitelistPlayerName = RequiredString(parameters, "playerName", 16);
                 if (!viewModel.AddWhitelistPlayerCommand.CanExecute(null))
-                    throw new InvalidOperationException("Start the server before changing the allowlist.");
+                    throw new InvalidOperationException("Start the server before changing the whitelist.");
                 await viewModel.AddWhitelistPlayerCommand.ExecuteAsync(null).ConfigureAwait(true);
                 if (viewModel.HasAccessError)
                     throw new InvalidOperationException(viewModel.AccessErrorMessage);
                 break;
+            case "players.head":
+            {
+                var requestedServerId = Guid.Parse(RequiredString(parameters, "serverId", 64));
+                if (viewModel.SelectedServer?.Definition.Id != requestedServerId)
+                    throw new InvalidOperationException("Player identity is no longer current for the selected server.");
+                var uuid = Guid.Parse(RequiredString(parameters, "uuid", 64));
+                if (!viewModel.PlayerRows.Any(row => row.Uuid == uuid))
+                    throw new ArgumentException("That authoritative player UUID is not present for this server.");
+                var imageUrl = await playerHeads.GetDataUrlAsync(uuid).ConfigureAwait(true);
+                return JsonSerializer.SerializeToNode(new { serverId = requestedServerId, uuid, imageUrl }, WebUiProtocol.Json)!;
+            }
             case "players.setWhitelist":
                 Select(parameters);
                 await viewModel.SetWhitelistEnabledAsync(RequiredBool(parameters, "enabled")).ConfigureAwait(true);
@@ -644,6 +681,7 @@ public partial class WebUiWindow : Window
                 await viewModel.SaveSettingsCommand.ExecuteAsync(null).ConfigureAwait(true);
                 break;
             case "settings.saveServer":
+                var settingsServerId = Guid.Parse(RequiredString(parameters, "serverId", 64));
                 ApplyServerSettings(parameters);
                 var propertiesChanged = viewModel.HasServerPropertyChanges;
                 var memoryChanged = viewModel.HasMemoryChanges;
@@ -657,6 +695,8 @@ public partial class WebUiWindow : Window
                 }
                 if (memoryChanged)
                 {
+                    if (viewModel.SelectedServer?.Definition.Id != settingsServerId)
+                        throw new InvalidOperationException("The selected server changed before memory settings could be saved. The new server was not modified.");
                     await viewModel.ApplyMemoryCommand.ExecuteAsync(null).ConfigureAwait(true);
                     if (viewModel.MemorySaveError.Length > 0 || viewModel.HasMemoryChanges)
                         throw new InvalidOperationException(viewModel.MemorySaveError.Length > 0
@@ -2718,6 +2758,7 @@ public partial class WebUiWindow : Window
         legacyArtifactTokens.Clear();
         modpackImageCache.Clear();
         modpackImages.Dispose();
+        playerHeads.Dispose();
         bridge?.Dispose();
         CoreWebView2? core = null;
         try

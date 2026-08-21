@@ -3,12 +3,18 @@ using ChunkPilot.App.DesignSystem;
 using ChunkPilot.App.DesignSystem.Gallery;
 using ChunkPilot.App.WebUi;
 using ChunkPilot.Core;
+using System.Runtime.InteropServices;
 using Forms = System.Windows.Forms;
 
 namespace ChunkPilot.App;
 
 public partial class App : Application
 {
+    private const string WindowsAppUserModelId = "ChunkPilot.Desktop";
+
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    private static extern int SetCurrentProcessExplicitAppUserModelID(string appId);
+
     private Mutex? mutex;
     private Forms.NotifyIcon? trayIcon;
     private AgentClient? agentClient;
@@ -19,6 +25,7 @@ public partial class App : Application
 
     protected override async void OnStartup(StartupEventArgs e)
     {
+        _ = SetCurrentProcessExplicitAppUserModelID(WindowsAppUserModelId);
         base.OnStartup(e);
         AppTheme.Initialize(this);
 

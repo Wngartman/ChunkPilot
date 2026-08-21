@@ -146,6 +146,17 @@ function snapshot(servers: ServerSummary[]): WebUiSnapshot {
       capabilityKnown: true,
       error: null
     } : null,
+    issues: selected?.crashAnalysis ? [{
+      issueId: `crash:${selected.crashAnalysis.code}`,
+      serverId: selected.id,
+      articleId: selected.crashAnalysis.code === 'port.conflict' ? 'port-binding-failed' : 'server-stopped-unexpectedly',
+      category: 'startup', severity: 'error', title: selected.crashAnalysis.title,
+      summary: selected.crashAnalysis.summary,
+      evidenceSummary: selected.crashAnalysis.evidence[0]?.excerpt ?? selected.crashAnalysis.summary,
+      firstObservedAt: selected.crashAnalysis.analyzedAt, lastObservedAt: selected.crashAnalysis.analyzedAt,
+      evidenceFingerprint: `${selected.crashAnalysis.reportId}:${selected.crashAnalysis.code}`,
+      primaryAction: 'openConsole', dismissible: true
+    }] : [],
     console: Array.from({ length: 240 }, (_, index) => ({
       sequence: index + 1,
       timestamp: new Date(Date.parse(now) - (239 - index) * 1_150).toISOString(),
@@ -159,11 +170,11 @@ function snapshot(servers: ServerSummary[]): WebUiSnapshot {
             : `[Server thread/INFO]: ${index % 9 === 0 ? 'Saved the game' : `Tick ${18_200 + index} completed`}`
     })),
     players: [
-      { name: 'MapleRook', online: true, allowlisted: true, operator: true, banned: false },
-      { name: 'CinderFox', online: true, allowlisted: true, operator: false, banned: false },
-      { name: 'GlassBadger', online: true, allowlisted: false, operator: false, banned: false },
-      { name: 'NorthSignal', online: true, allowlisted: true, operator: false, banned: false },
-      { name: 'OldQuartz', online: false, allowlisted: true, operator: false, banned: false }
+      { name: 'MapleRook', uuid: '069a79f4-44e9-4726-a5be-fca90e38aaf5', online: true, allowlisted: true, operator: true, banned: false },
+      { name: 'CinderFox', uuid: null, online: true, allowlisted: true, operator: false, banned: false },
+      { name: 'GlassBadger', uuid: null, online: true, allowlisted: false, operator: false, banned: false },
+      { name: 'NorthSignal', uuid: null, online: true, allowlisted: true, operator: false, banned: false },
+      { name: 'OldQuartz', uuid: null, online: false, allowlisted: true, operator: false, banned: false }
     ],
     files: [
       { name: 'world', relativePath: 'world', kind: 'folder', sizeBytes: null, modifiedAt: now },
@@ -199,7 +210,7 @@ function snapshot(servers: ServerSummary[]): WebUiSnapshot {
       { id: 3, timestamp: '2026-08-13T22:16:00-06:00', serverId: selected?.id ?? null, serverName: selected?.name ?? '', action: 'Safe stop', result: 'Stopped', error: null, durationMs: 4_204 }
     ],
     settings: { minimizeToTray: false, startMinimized: false, startWithWindows: false, reducedMotion: false },
-    serverSettings: selected ? { name: selected.name, motd: 'A quiet place to build.', port: selected.port, maximumPlayers: selected.playersMaximum ?? 20, difficulty: 'normal', gameMode: 'survival', pvp: true, allowlist: true, minimumRamMb: 1024, maximumRamMb: selected.maximumMemoryBytes / 1024 / 1024, runInBackground: true } : null
+    serverSettings: selected ? { serverId: selected.id, name: selected.name, motd: 'A quiet place to build.', port: selected.port, maximumPlayers: selected.playersMaximum ?? 20, difficulty: 'normal', gameMode: 'survival', pvp: true, allowlist: true, minimumRamMb: 1024, maximumRamMb: selected.maximumMemoryBytes / 1024 / 1024, runInBackground: true } : null
   };
 }
 
@@ -276,11 +287,11 @@ export class FixtureBridge implements BridgeAdapter {
     }
     if (this.current.connectivity && (mode === 'connectivity-unverified' || mode === 'share-unverified')) {
       this.current.connectivity.mode = 'PortForwarding'; this.current.connectivity.modeTitle = 'Internet hosting';
-      this.current.connectivity.status = { title: 'Internet access not verified', detail: 'The router is ready and the outside-in check is still pending.', tone: 'info' };
+      this.current.connectivity.status = { title: 'Internet sharing configured', detail: 'ChunkPilot owns the Windows Firewall rule and router mapping for this server. This setup state is not proof that a friend can connect.', tone: 'success' };
       this.current.connectivity.addresses.routerReported = '203.0.113.24:25565';
       this.current.connectivity.router = { ...this.current.connectivity.router, phase: 'Active', title: 'Router ready', summary: 'The router reports an active mapping for this server.', badge: 'Ready', tone: 'success', enabled: true, canCheck: false, canStop: true, externalPort: '25565' };
       this.current.connectivity.firewall = { ...this.current.connectivity.firewall, phase: 'Configured', title: 'Windows Firewall ready', summary: 'ChunkPilot owns one exact rule for this server.', badge: 'Ready', tone: 'success', configured: true, primaryAction: null };
-      this.current.connectivity.external = { ...this.current.connectivity.external, phase: 'Checking', blocker: 'None', title: 'Checking from outside…', summary: 'ChunkPilot is testing the exact public endpoint.', badge: 'Checking', tone: 'info', busy: true, canCheck: false, canCancel: true, routerAddress: '203.0.113.24', port: 'TCP 25565' };
+      this.current.connectivity.external = { ...this.current.connectivity.external, phase: 'Eligible', blocker: 'None', title: 'Optional diagnostic not run', summary: 'Owned setup is ready. An outside-in check is available only from Advanced diagnostics.', badge: 'Optional', tone: 'neutral', busy: false, canCheck: true, canCancel: false, routerAddress: '203.0.113.24', port: 'TCP 25565' };
     }
     if (this.current.connectivity && (mode === 'connectivity-public' || mode === 'share-public')) {
       this.current.connectivity.mode = 'PortForwarding'; this.current.connectivity.modeTitle = 'Internet hosting';
@@ -306,6 +317,13 @@ export class FixtureBridge implements BridgeAdapter {
 
   async request<T>(method: BridgeMethod, params: Record<string, unknown> = {}): Promise<T> {
     if (method === 'snapshot.get' || method === 'renderer.ready') return (method === 'snapshot.get' ? this.current : { ready: true }) as T;
+    if (method === 'players.head') return {
+      serverId: params.serverId,
+      uuid: params.uuid,
+      imageUrl: params.uuid === '069a79f4-44e9-4726-a5be-fca90e38aaf5'
+        ? 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAYAAADED76LAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAAwSURBVChTY3DVVv6PDzPAGFtbklEwXAG6BDqGK7BNrIMLIrOJNwEXRlGAzcEETQAAaGmXQ0M6gQQAAAAASUVORK5CYII='
+        : null
+    } as T;
     if (method === 'creation.catalog' && params.platform === 'Paper') return { platform: 'Paper', available: true, message: 'Deterministic PaperMC fixture inventory.', retrievedAt: now, fromCache: true, stale: false, manifestLatestReleaseId: '', manifestLatestSnapshotId: '', latestVerifiedReleaseId: '', versions: fixtureCatalogVersions.filter(version => version.releaseKind === 'Release').slice(0, 18).map(version => ({ ...version, support: 'Experimental', supportReason: 'Exact build metadata is available, but this Paper version is not runtime-certified.', selectable: true, hasServerArtifact: false, hasIntegrityMetadata: false, launchProfile: { ...version.launchProfile, kind: 'PaperNogui', arguments: '--nogui' }, certification: { level: 'MetadataValidated', runtimeLaunched: false, readinessConfirmed: false, cleanShutdownConfirmed: false, runtimeValidatedAt: null, limitations: ['This exact Paper version has not been isolated-runtime certified by this ChunkPilot build.'] }, provenance: 'Official PaperMC Fill v3 fixture' })) } as T;
     if (method === 'creation.catalog') return { available: true, message: 'Deterministic 906-entry fixture inventory for local performance and visual review.', retrievedAt: now, fromCache: true, stale: false, manifestLatestReleaseId: '1.21.8', manifestLatestSnapshotId: '26w33a', latestVerifiedReleaseId: '1.21.8', versions: fixtureCatalogVersions } as T;
     if (method === 'creation.paperBuilds') return { available: true, message: '', retrievedAt: now, fromCache: true, stale: false, minecraftVersion: String(params.versionId), builds: [132, 131, 130, 129].map(id => ({ id, label: `Build ${id}`, channel: 'Stable', publishedAt: now, sizeBytes: 54846016, selectable: true, supportReason: 'Exact stable PaperMC build.', provenance: 'Official PaperMC Fill v3 fixture' })) } as T;

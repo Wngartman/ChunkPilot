@@ -26,18 +26,21 @@ export function connectionChoice(server: ServerSummary, connectivity?: Connectiv
     };
     if (connectivity.addresses.routerReported) return {
       audience: 'internet', label: 'Share with friends', address: connectivity.addresses.routerReported,
-      kind: 'router', badge: connectivity.external.busy ? 'Checking connection' : 'Still checking', tone: connectivity.external.busy ? 'info' : 'warning',
-      explanation: 'This is the most likely address for your friends. ChunkPilot is checking it in the background.'
+      kind: 'router', badge: connectivity.router.enabled && connectivity.firewall.configured ? 'Internet sharing configured' : 'Setup incomplete',
+      tone: connectivity.router.enabled && connectivity.firewall.configured ? 'success' : 'warning',
+      explanation: connectivity.router.enabled && connectivity.firewall.configured
+        ? 'ChunkPilot owns the matching Windows and router setup. Keep the server running; outside networks can still impose limits.'
+        : 'This router-reported address is retained as evidence, but the owned setup is not complete.'
     };
     if (connectivity.addresses.lastKnownPublic) return {
       audience: 'internet', label: 'Share with friends', address: connectivity.addresses.lastKnownPublic,
       kind: 'last', badge: 'Last used', tone: 'warning',
-      explanation: `This was the last known Internet address${connectivity.addresses.lastKnownPublicAt ? ` on ${new Date(connectivity.addresses.lastKnownPublicAt).toLocaleString()}` : ''}. It may have changed, so ChunkPilot needs to check it again.`
+      explanation: `This was the last known Internet address${connectivity.addresses.lastKnownPublicAt ? ` on ${new Date(connectivity.addresses.lastKnownPublicAt).toLocaleString()}` : ''}. It may have changed and is not presented as current.`
     };
     return {
       audience: 'internet', label: 'Share with friends', address: null, kind: null,
-      badge: connectivity.external.busy ? 'Checking connection' : 'Setup incomplete', tone: connectivity.external.busy ? 'info' : 'warning',
-      explanation: 'Finish the guided setup. ChunkPilot will check the connection automatically when the server and network are ready.'
+      badge: 'Setup incomplete', tone: 'warning',
+      explanation: 'Finish the guided Windows and router setup. No outside-in diagnostic is required for the setup status.'
     };
   }
   if (server.connectionMode === 'PortForwarding') {
@@ -49,15 +52,15 @@ export function connectionChoice(server: ServerSummary, connectivity?: Connectiv
     if (server.publicAddress) return {
       audience: 'internet', label: 'Share with friends', address: server.publicAddress,
       kind: server.publicAddressKind === 'router' ? 'router' : 'last',
-      badge: server.publicAddressKind === 'router' ? 'Still checking' : 'Last used', tone: 'warning',
+      badge: server.publicAddressKind === 'router' ? 'Internet sharing configured' : 'Last used', tone: server.publicAddressKind === 'router' ? 'success' : 'warning',
       explanation: server.publicAddressKind === 'router'
-        ? 'This is the most likely address for your friends. It has not passed an outside-in check.'
+        ? 'ChunkPilot owns the router setup for this address. Keep the server running; this is not a guarantee about every outside network.'
         : `This was the last known Internet address${server.publicAddressObservedAt ? ` on ${new Date(server.publicAddressObservedAt).toLocaleString()}` : ''}. It may have changed.`
     };
     return {
       audience: 'internet', label: 'Share with friends', address: null, kind: null,
       badge: 'Setup incomplete', tone: 'warning',
-      explanation: 'Open connectivity settings to finish setup and check the connection.'
+      explanation: 'Open connectivity settings to finish the owned Windows and router setup.'
     };
   }
   const lan = connectivity?.addresses.lan ?? server.lanAddress;

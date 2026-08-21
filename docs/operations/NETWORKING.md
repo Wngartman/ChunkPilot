@@ -15,9 +15,10 @@ ChunkPilot keeps five independent truths separate:
 
 The WebUI **Share** dialog never substitutes the LAN value for the Internet value. A current
 router-reported address or the most recent checked address may be copied before confirmation, but it is
-labelled **Still checking** or **Last used** and never presented as proof that friends can join. Only an
-independently confirmed endpoint receives **Connection confirmed**. A public value equal to the LAN
-value is rejected by the networking authority.
+labelled **Internet sharing configured**, **Setup incomplete**, or **Last used** from owned router and
+firewall evidence and is never presented as proof that friends can join. Only an independently confirmed
+point-in-time diagnostic receives **Connection confirmed**. A public value equal to the LAN value is
+rejected by the networking authority.
 
 Modes:
 
@@ -33,11 +34,14 @@ A private/shared WAN address may indicate CGNAT; the safe next step is to ask th
 
 The server hero reduces the authoritative state to LAN, setting up Internet access, connection
 confirmed, needs attention, or checking unavailable. Overview, Share, Servers, and Connectivity reuse
-one audience-aware summary: this computer, the same home network, or friends outside the home. The
+one audience-aware summary: this computer, the same home network, or friends outside the home. Normal
+Internet setup is three owned facts: the exact Windows rule, the exact router mapping, and a running
+server. Outside-in probing is an explicit Advanced diagnostic; it does not poll automatically and is not
+required for persistent setup status. The
 ordinary Connectivity choice is only **LAN** or **Internet**; internal private/migration modes remain
 supported without becoming normal choices. Local, LAN, router-reported, last-checked, and externally
 verified Internet endpoints remain distinct. Existing router, firewall, cancellation, removal, and
-outside-in commands stay behind deliberate actions and confirmations. Internet selection alone does not
+outside-in command stays behind a deliberate Advanced action. Internet selection alone does not
 enable exposure.
 
 Create Server records only one of Local only, Home network, Internet hosting, or Configure later as a

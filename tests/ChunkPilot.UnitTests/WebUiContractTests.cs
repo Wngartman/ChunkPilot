@@ -149,6 +149,8 @@ public sealed class WebUiContractTests
         Assert.True(WebUiMethodPolicy.IsAllowed("appearance.chooseIcon"));
         Assert.True(WebUiMethodPolicy.IsAllowed("players.addAllowlist"));
         Assert.True(WebUiMethodPolicy.IsAllowed("players.setWhitelist"));
+        Assert.True(WebUiMethodPolicy.IsAllowed("players.head"));
+        Assert.True(WebUiMethodPolicy.IsAllowed("help.openExternal"));
         Assert.True(WebUiMethodPolicy.IsAllowed("plugins.openFolder"));
         Assert.True(WebUiMethodPolicy.IsAllowed("plugins.configFiles"));
         Assert.True(WebUiMethodPolicy.IsAllowed("plugins.saveConfig"));
@@ -188,6 +190,11 @@ public sealed class WebUiContractTests
     {
         Assert.False(WebUiWindow.RequiresFullPresentationRefresh("workspace.load"));
         Assert.False(WebUiWindow.RequiresFullPresentationRefresh("connectivity.external.check"));
+        Assert.False(WebUiWindow.RequiresFullPresentationRefresh("players.head"));
+        Assert.False(WebUiWindow.RequiresFullPresentationRefresh("help.openExternal"));
+        Assert.Equal("docs.papermc.io", WebUiWindow.RequireAllowedHelpSource("https://docs.papermc.io/paper/basic-troubleshooting/").Host);
+        Assert.Throws<ArgumentException>(() => WebUiWindow.RequireAllowedHelpSource("http://docs.papermc.io/"));
+        Assert.Throws<ArgumentException>(() => WebUiWindow.RequireAllowedHelpSource("https://example.com/help"));
         Assert.False(WebUiWindow.RequiresFullPresentationRefresh("connectivity.setMode"));
         Assert.True(WebUiWindow.RequiresFullPresentationRefresh("servers.start"));
         Assert.True(WebUiWindow.RequiresFullPresentationRefresh("backups.create"));

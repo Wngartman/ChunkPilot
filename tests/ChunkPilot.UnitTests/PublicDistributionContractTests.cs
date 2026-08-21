@@ -195,6 +195,20 @@ public sealed class PublicDistributionContractTests
         Assert.DoesNotContain("AppContext.BaseDirectory, \"Assets\", \"ChunkPilot.ico\"", app, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void Published_and_installed_windows_share_one_explicit_app_identity()
+    {
+        var project = File.ReadAllText(Path.Combine(Root, "src", "ChunkPilot.App", "ChunkPilot.App.csproj"));
+        var window = File.ReadAllText(Path.Combine(Root, "src", "ChunkPilot.App", "WebUi", "WebUiWindow.xaml"));
+        var app = File.ReadAllText(Path.Combine(Root, "src", "ChunkPilot.App", "App.xaml.cs"));
+        var installer = File.ReadAllText(Path.Combine(Root, "installer", "ChunkPilot.iss"));
+
+        Assert.Contains("CopyToPublishDirectory=\"PreserveNewest\"", project, StringComparison.Ordinal);
+        Assert.Contains("Icon=\"pack://application:,,,/Assets/ChunkPilot.ico\"", window, StringComparison.Ordinal);
+        Assert.Contains("SetCurrentProcessExplicitAppUserModelID", app, StringComparison.Ordinal);
+        Assert.Equal(2, installer.Split("AppUserModelID: \"ChunkPilot.Desktop\"", StringSplitOptions.None).Length - 1);
+    }
+
     private static string RepositoryRoot()
     {
         var current = new DirectoryInfo(AppContext.BaseDirectory);

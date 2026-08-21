@@ -38,11 +38,13 @@ describe('Servers library joining addresses', () => {
     current.connectivity!.mode = 'PortForwarding';
     current.connectivity!.addresses.routerReported = '203.0.113.24:25565';
     current.connectivity!.addresses.publicVerified = null;
+    current.connectivity!.router.enabled = true;
+    current.connectivity!.firewall.configured = true;
     current.servers[0].publicReachability = 'not-confirmed';
     useAppStore.setState({ snapshot: current });
     render(<ServersPage onOpenServer={() => undefined} onCreate={() => undefined} />);
     expect(screen.getByText('203.0.113.24:25565')).toBeTruthy();
-    expect(screen.getByText('Still checking')).toBeTruthy();
+    expect(screen.getByText('Internet sharing configured')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Copy Internet address' })).toBeTruthy();
     expect(screen.queryByText('Friends can join')).toBeNull();
   });

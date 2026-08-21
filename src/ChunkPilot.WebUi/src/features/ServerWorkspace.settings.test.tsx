@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { NavigationGuardProvider } from '../app/NavigationGuard';
 import type { BridgeAdapter } from '../bridge/client';
@@ -50,6 +50,90 @@ describe('server settings and console acceptance behavior', () => {
     expect(difficulty.value).toBe('hard');
     fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
     expect(difficulty.value).toBe('custom-legacy');
+  });
+
+  it('never carries a settings draft into a newly selected server before its snapshot arrives', async () => {
+    const current = structuredClone(fixtures.running);
+    const first = current.servers[0];
+    const second = { ...structuredClone(first), id: '22222222-2222-2222-2222-222222222222', name: first.name };
+    const third = { ...structuredClone(first), id: '33333333-3333-3333-3333-333333333333', name: 'Third server' };
+    current.servers.push(second, third);
+    current.selectedServerId = first.id;
+    useAppStore.setState({ snapshot: current });
+    window.history.replaceState({}, '', '/?tab=settings&settings=Appearance');
+    const view = render(<NavigationGuardProvider><ServerWorkspace serverId={first.id} /></NavigationGuardProvider>);
+    fireEvent.click(screen.getByRole('button', { name: 'Raw' }));
+    fireEvent.input(screen.getByLabelText('Raw Vanilla MOTD'), { target: { value: 'Unsaved first-server text' } });
+
+    const switched = structuredClone(current);
+    switched.selectedServerId = second.id;
+    act(() => useAppStore.getState().applySnapshot(switched));
+    view.rerender(<NavigationGuardProvider><ServerWorkspace serverId={second.id} /></NavigationGuardProvider>);
+
+    expect(screen.getByText('Settings unavailable')).toBeTruthy();
+    expect(screen.queryByDisplayValue('Unsaved first-server text')).toBeNull();
+
+    const authoritativeSecond = structuredClone(switched);
+    authoritativeSecond.revision += 1;
+    authoritativeSecond.serverSettings = { ...current.serverSettings!, serverId: second.id, name: second.name, motd: 'Second server MOTD' };
+    act(() => useAppStore.getState().applySnapshot(authoritativeSecond));
+    await waitFor(() => expect(screen.queryByText('Settings unavailable')).toBeNull());
+    fireEvent.click(screen.getByRole('button', { name: 'Raw' }));
+    expect(screen.getByDisplayValue('Second server MOTD')).toBeTruthy();
+    expect(screen.queryByDisplayValue('Unsaved first-server text')).toBeNull();
+  });
+
+  it('keeps a delayed save bound to its original server while selection changes', async () => {
+    const current = structuredClone(fixtures.running);
+    const first = current.servers[0];
+    const second = { ...structuredClone(first), id: '22222222-2222-2222-2222-222222222222', name: 'Second server' };
+    current.servers.push(second);
+    let finishSave!: () => void;
+    const savePending = new Promise<void>(resolve => { finishSave = resolve; });
+    const delayedBridge: BridgeAdapter = {
+      request: async <T,>(method: BridgeMethod, params: Record<string, unknown> = {}) => {
+        calls.push({ method, params });
+        if (method === 'settings.saveServer') { await savePending; return { accepted: true } as T; }
+        return { accepted: true } as T;
+      },
+      subscribe: () => () => undefined,
+      dispose: () => undefined
+    };
+    useAppStore.setState({ snapshot: current, bridge: delayedBridge });
+    window.history.replaceState({}, '', '/?tab=settings&settings=Appearance');
+    const view = render(<NavigationGuardProvider><ServerWorkspace serverId={first.id} /></NavigationGuardProvider>);
+    fireEvent.click(screen.getByRole('button', { name: 'Raw' }));
+    fireEvent.input(screen.getByLabelText('Raw Vanilla MOTD'), { target: { value: 'Saved only for the first server' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    expect(calls.find(call => call.method === 'settings.saveServer')?.params.serverId).toBe(first.id);
+
+    const switched = structuredClone(current);
+    switched.selectedServerId = second.id;
+    act(() => useAppStore.getState().applySnapshot(switched));
+    view.rerender(<NavigationGuardProvider><ServerWorkspace serverId={second.id} /></NavigationGuardProvider>);
+    expect(screen.getByText('Settings unavailable')).toBeTruthy();
+    await act(async () => { finishSave(); await savePending; });
+    expect(screen.queryByDisplayValue('Saved only for the first server')).toBeNull();
+  });
+
+  it('keeps a failed MOTD save editable and dirty for a safe retry', async () => {
+    const failingBridge: BridgeAdapter = {
+      request: async <T,>(method: BridgeMethod) => {
+        if (method === 'settings.saveServer') throw new Error('Synthetic save failure');
+        return { accepted: true } as T;
+      },
+      subscribe: () => () => undefined,
+      dispose: () => undefined
+    };
+    useAppStore.setState({ bridge: failingBridge });
+    workspace('/?tab=settings&settings=Appearance');
+    fireEvent.click(screen.getByRole('button', { name: 'Raw' }));
+    fireEvent.input(screen.getByLabelText('Raw Vanilla MOTD'), { target: { value: 'Keep this failed draft' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() => expect(useAppStore.getState().error).toBe('Synthetic save failure'));
+    expect(screen.getByDisplayValue('Keep this failed draft')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Save changes' })).toBeTruthy();
   });
 
   it('wraps long console lines by default and persists the user toggle', () => {

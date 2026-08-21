@@ -29,10 +29,11 @@ function AppContent() {
     const query = new URLSearchParams(window.location.search);
     return query.has('fixture') && query.get('page') === 'servers' && query.get('mode')?.startsWith('library') ? null : undefined;
   });
-  const [settingsCategory] = useState(() => {
+  const [settingsCategory, setSettingsCategory] = useState(() => {
     const query = new URLSearchParams(window.location.search);
     return query.get('category') ?? query.get('settings') ?? 'General';
   });
+  const [helpArticleId, setHelpArticleId] = useState<string | null>(() => new URLSearchParams(window.location.search).get('article'));
   const [initializationError, setInitializationError] = useState('');
   const initialized = useAppStore(state => state.snapshot !== null);
   const snapshot = useAppStore(state => state.snapshot);
@@ -91,11 +92,27 @@ function AppContent() {
     });
   };
   const selected = Boolean(activeServerId && snapshot?.servers.some(server => server.id === activeServerId));
+  const openHelp = (articleId: string) => {
+    setHelpArticleId(articleId);
+    setSettingsCategory('Help & troubleshooting');
+    setRoute('settings');
+  };
+  const followHelpDeepLink = (destination: 'console' | 'connectivity' | 'players' | 'backups' | 'versions' | 'files') => {
+    const selectedId = snapshot?.selectedServerId;
+    if (!selectedId) return;
+    const params = new URLSearchParams(window.location.search);
+    params.set('page', 'servers');
+    if (destination === 'connectivity') { params.set('tab', 'settings'); params.set('settings', 'Connectivity'); }
+    else { params.set('tab', destination); params.delete('settings'); }
+    window.history.replaceState({}, '', `${window.location.pathname}?${params}`);
+    setServerRouteId(selectedId);
+    setRoute('servers');
+  };
   let content = route === 'dashboard' ? <DashboardPage onServers={openLibrary} onOpenServer={openServer} onCreate={() => setRoute('create')} />
-    : route === 'servers' ? (selected ? <ServerWorkspace serverId={activeServerId!} /> : <ServersPage onOpenServer={openServer} onCreate={() => setRoute('create')} />)
+    : route === 'servers' ? (selected ? <ServerWorkspace serverId={activeServerId!} onOpenHelp={openHelp} /> : <ServersPage onOpenServer={openServer} onCreate={() => setRoute('create')} />)
     : route === 'activity' ? <ActivityPage />
     : route === 'automation' ? <AutomationPage />
-    : route === 'settings' ? <SettingsPage initialCategory={settingsCategory} />
+    : route === 'settings' ? <SettingsPage initialCategory={settingsCategory} initialHelpArticleId={helpArticleId} onHelpDeepLink={followHelpDeepLink} />
     : route === 'gallery' ? <DesignGalleryPage />
     : <CreateServerPage onDone={() => { setServerRouteId(undefined); setRoute('servers'); }} />;
   return <Shell route={route} activeServerId={activeServerId} onRoute={next => navigate(() => runMeasuredNavigation(next, () => setRoute(next)))} onOpenServer={openServer} onOpenLibrary={openLibrary}><Suspense fallback={<div className={styles.routeLoading}>Loading view…</div>}>{content}</Suspense></Shell>;

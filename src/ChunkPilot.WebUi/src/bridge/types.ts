@@ -102,7 +102,22 @@ export interface ServerDeletionPreflight {
 }
 
 export interface ConsoleEntry { sequence: number; timestamp: string; stream: string; text: string; }
-export interface PlayerEntry { name: string; online: boolean; allowlisted: boolean; operator: boolean; banned: boolean; }
+export interface PlayerEntry { name: string; uuid: string | null; online: boolean; allowlisted: boolean; operator: boolean; banned: boolean; }
+export interface ServerHealthIssue {
+  issueId: string;
+  serverId: string;
+  articleId: string;
+  category: 'startup' | 'runtime' | 'networking' | 'performance' | 'content';
+  severity: 'warning' | 'error';
+  title: string;
+  summary: string;
+  evidenceSummary: string;
+  firstObservedAt: string;
+  lastObservedAt: string;
+  evidenceFingerprint: string;
+  primaryAction: 'openConsole' | 'openConnectivity' | 'openHelp';
+  dismissible: boolean;
+}
 export interface FileEntry { name: string; relativePath: string; kind: 'folder' | 'editable' | 'binary' | 'too-large'; sizeBytes: number | null; modifiedAt: string | null; }
 export type ContentDependencyKind = 'Required' | 'Optional' | 'LoadBefore' | 'Incompatible' | 'Embedded' | 'Unknown';
 export interface ContentDependency { id: string; kind: ContentDependencyKind; }
@@ -308,6 +323,7 @@ export interface WebUiSnapshot {
     capabilityKnown: boolean;
     error: string | null;
   } | null;
+  issues: ServerHealthIssue[];
   console: ConsoleEntry[];
   players: PlayerEntry[];
   files: FileEntry[];
@@ -325,6 +341,7 @@ export interface WebUiSnapshot {
     reducedMotion: boolean;
   };
   serverSettings: {
+    serverId: string;
     name: string;
     motd: string;
     port: number;
@@ -345,6 +362,7 @@ export type BridgeMethod =
   | 'servers.start' | 'servers.stop' | 'servers.restart' | 'servers.openFolder'
   | 'servers.deletePreflight' | 'servers.delete' | 'servers.createManagedCopy'
   | 'diagnostics.openLogs' | 'diagnostics.bundle'
+  | 'help.openExternal'
   | 'servers.import' | 'servers.rename' | 'servers.changeIcon'
   | 'appearance.chooseIcon'
   | 'plugins.openFolder' | 'plugins.chooseLocal' | 'plugins.installLocal' | 'plugins.providers' | 'plugins.search' | 'plugins.release'
@@ -355,7 +373,7 @@ export type BridgeMethod =
   | 'modpacks.providers' | 'modpacks.versions' | 'modpacks.cache' | 'modpacks.search' | 'modpacks.resolveLink' | 'modpacks.image' | 'modpacks.chooseLocal'
   | 'console.send' | 'workspace.load' | 'files.openFolder' | 'files.navigate' | 'files.read' | 'files.write'
   | 'backups.create' | 'backups.restore' | 'backups.verify'
-  | 'players.moderate' | 'players.addAllowlist' | 'players.setWhitelist' | 'schedules.upsert' | 'schedules.delete' | 'settings.saveGlobal' | 'settings.saveServer'
+  | 'players.moderate' | 'players.addAllowlist' | 'players.setWhitelist' | 'players.head' | 'schedules.upsert' | 'schedules.delete' | 'settings.saveGlobal' | 'settings.saveServer'
   | 'connectivity.copyAddress' | 'connectivity.open' | 'connectivity.setMode'
   | 'connectivity.router.check' | 'connectivity.router.confirm' | 'connectivity.router.cancelConsent' | 'connectivity.router.stop' | 'connectivity.router.cancel' | 'connectivity.router.retry'
   | 'connectivity.external.check' | 'connectivity.external.cancel'

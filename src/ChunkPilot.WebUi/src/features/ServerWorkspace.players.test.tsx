@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import userEvent from '@testing-library/user-event';
 import type { BridgeAdapter } from '../bridge/client';
@@ -44,16 +44,17 @@ describe('Minecraft players workspace', () => {
     expect(screen.getByText('MapleRook')).toBeTruthy();
   });
 
-  it('adds an allowlist name through the authoritative bridge command', () => {
+  it('uses player-facing Whitelist terminology while preserving the authoritative bridge command', () => {
     const server = renderWorkspace();
     fireEvent.change(screen.getByLabelText('Minecraft player name'), { target: { value: 'NewPlayer' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Add to allowlist' }));
+    fireEvent.click(screen.getAllByRole('button', { name: 'Add to whitelist' })[0]);
     expect(calls).toContainEqual({ method: 'players.addAllowlist', params: { serverId: server.id, playerName: 'NewPlayer' } });
+    expect(screen.queryByText(/allowlist/i)).toBeNull();
   });
 
   it('changes the server-wide allowlist through the authoritative bridge command', () => {
     const server = renderWorkspace();
-    fireEvent.click(screen.getByRole('switch', { name: 'Turn allowlist off' }));
+    fireEvent.click(screen.getByRole('switch', { name: 'Turn whitelist off' }));
     expect(calls).toContainEqual({ method: 'players.setWhitelist', params: { serverId: server.id, enabled: false } });
   });
 
@@ -67,6 +68,23 @@ describe('Minecraft players workspace', () => {
     expect(table.contains(item)).toBe(false);
   });
 
+  it('renders a native-fetched authoritative player head and leaves missing UUIDs on a local fallback', async () => {
+    const imageUrl = 'data:image/png;base64,aGVhZA==';
+    const headBridge: BridgeAdapter = {
+      ...bridge,
+      request: async <T,>(method: BridgeMethod, params: Record<string, unknown> = {}) => {
+        calls.push({ method, params });
+        if (method === 'players.head') return { serverId: params.serverId, uuid: params.uuid, imageUrl } as T;
+        return { accepted: true } as T;
+      }
+    };
+    useAppStore.setState({ bridge: headBridge });
+    renderWorkspace();
+    await waitFor(() => expect(document.querySelector(`img[src="${imageUrl}"]`)).toBeTruthy());
+    expect(calls.filter(call => call.method === 'players.head')).toHaveLength(1);
+    expect(screen.getByText('CI')).toBeTruthy();
+  });
+
   it('keeps known access records visible while stopped and never turns unknown into zero', () => {
     const current = structuredClone(fixtures.running);
     current.servers[0].state = 'Stopped';
@@ -78,7 +96,7 @@ describe('Minecraft players workspace', () => {
     renderWorkspace();
     expect(screen.getByText('Unknown')).toBeTruthy();
     expect(screen.getByText('MapleRook')).toBeTruthy();
-    expect((screen.getByRole('button', { name: 'Add to allowlist' }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getAllByRole('button', { name: 'Add to whitelist' })[0] as HTMLButtonElement).disabled).toBe(true);
   });
 
   it('does not expose Minecraft player controls for Terraria', () => {

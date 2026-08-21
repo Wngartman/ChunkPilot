@@ -45,7 +45,7 @@ Source: "prerequisites\MicrosoftEdgeWebview2Setup.exe"; Flags: dontcopy
 
 [Icons]
 Name: "{autoprograms}\ChunkPilot\ChunkPilot"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\Assets\ChunkPilot.ico"; Comment: "Open ChunkPilot"; AppUserModelID: "ChunkPilot.Desktop"
-Name: "{autodesktop}\ChunkPilot"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\Assets\ChunkPilot.ico"; Tasks: desktopicon
+Name: "{autodesktop}\ChunkPilot"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\Assets\ChunkPilot.ico"; Comment: "Open ChunkPilot"; AppUserModelID: "ChunkPilot.Desktop"; Tasks: desktopicon
 
 [InstallDelete]
 Type: files; Name: "{autoprograms}\ChunkPilot\ChunkPilot WebUI Preview.lnk"

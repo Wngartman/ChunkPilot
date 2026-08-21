@@ -37,9 +37,17 @@ running the full Dashboard refresh first.
 Every `ServerSummary` carries its game kind separately from its detected Minecraft ecosystem. The
 central mapper exposes the Players capability for every Minecraft server, including Custom/Unknown
 imports, and excludes Terraria. `playerAccess` projects only the selected server's authoritative
-running state, allowlist state, moderation capabilities, and last access error. `players.addAllowlist`
+running state, whitelist state, moderation capabilities, authoritative player UUIDs, and last access error. `players.addAllowlist`
 and `players.moderate` reuse the existing ViewModel/Agent moderation commands; React never edits access
-files or sends an unvalidated raw console command.
+files or sends an unvalidated raw console command. `players.head` accepts only a UUID already present in
+the selected server snapshot. Native code retrieves the signed Mojang profile and
+`textures.minecraft.net` skin, applies the face/hat layers, and returns a bounded data URL; React never
+fetches an arbitrary player image URL. `serverSettings.serverId` and `issues[].serverId` make selected
+server ownership explicit across asynchronous renderer updates.
+
+`help.openExternal` accepts HTTPS URLs from the documented Minecraft, loader, provider, Microsoft, and
+Oracle source-host allowlist. Help content and search are bundled locally; no search term or server state
+leaves the PC.
 
 `appearance.chooseIcon` opens the native file picker and returns a bounded PNG data URL plus a display filename, never a filesystem path. The browser produces a validated 64 x 64 PNG crop and sends it as an optional part of `settings.saveServer`; C# stages it under the isolated ChunkPilot data root and the Agent remains the sole owner of final `server-icon.png` installation. MOTD changes use the existing server-property save path. Version install, rollback, verify, and cancel requests delegate to the existing authoritative commands and preserve their native safety confirmations.
 

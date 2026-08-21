@@ -6,7 +6,7 @@
 | Select/manage server | Server workspace | existing selection and detail load | Wired |
 | Start, stop, restart | Hero lifecycle action | existing commands and Agent | Wired |
 | Console read/send | Console | bounded console and send command | Wired |
-| Players | Players on every Minecraft workspace | centralized game-kind capability, player-access snapshot and existing moderation commands | Wired with truthful unknown/stopped states, saved access records, add/remove allowlist, operator, kick and ban actions; Terraria remains excluded |
+| Players | Players on every Minecraft workspace | centralized game-kind capability, player-access snapshot and existing moderation commands | Wired with truthful unknown/stopped states, authoritative UUID-backed official player heads with local fallback, saved access records, add/remove whitelist, operator, kick and ban actions; Terraria remains excluded |
 | Files/open folder/edit text | Files | path-confined Agent file service and native Explorer action | Wired; text editing is atomic and bridge-bounded |
 | Plugins / Mods / Modpack | Capability label | Agent inventory, provider operations, and linked update source | Paper exposes Plugins; Fabric/NeoForge/Forge/Quilt expose Mods; an identity-linked pack exposes Modpack. Pack updates compare exact provider releases and never silently update constituent mods |
 | Backups/create/verify/restore | Backups | existing backup commands | Wired |

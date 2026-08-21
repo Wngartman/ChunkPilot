@@ -83,6 +83,7 @@ describe('server connectivity presentation', () => {
     current.connectivity!.status = { title: 'Internet access not verified', detail: 'Verification is pending.', tone: 'neutral' };
     current.connectivity!.router.enabled = true;
     current.connectivity!.router.phase = 'Active';
+    current.connectivity!.firewall.configured = true;
     current.connectivity!.addresses.routerReported = '203.0.113.24:25565';
     current.connectivity!.addresses.publicVerified = null;
     current.connectivity!.external.phase = 'ProbeUnavailable';
@@ -92,14 +93,14 @@ describe('server connectivity presentation', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Share' }));
     const dialog = screen.getByRole('dialog', { name: `Share ${server.name}` });
     expect(within(dialog).getByText('Share with friends')).toBeTruthy();
-    expect(within(dialog).getByText('Still checking')).toBeTruthy();
+    expect(within(dialog).getByText('Internet sharing configured')).toBeTruthy();
     expect(within(dialog).queryByText('Friends can join')).toBeNull();
-    expect(within(dialog).getByText(/most likely address/i)).toBeTruthy();
+    expect(within(dialog).getByText(/outside networks can still impose limits/i)).toBeTruthy();
     fireEvent.click(within(dialog).getByRole('button', { name: 'Copy friend address' }));
     expect(calls).toContainEqual({ method: 'connectivity.copyAddress', params: { serverId: server.id, kind: 'router' } });
   });
 
-  it('presents a four-step beginner flow and automatically verifies an eligible running server', async () => {
+  it('presents a three-step owned-state flow without automatically running an outside-in probe', async () => {
     const current = structuredClone(fixtures.running);
     current.connectivity!.mode = 'PortForwarding';
     current.connectivity!.modeTitle = 'Internet hosting';
@@ -115,12 +116,13 @@ describe('server connectivity presentation', () => {
     const progress = screen.getByLabelText('Internet setup progress');
     expect(within(progress).getByText('Allow through Windows')).toBeTruthy();
     expect(within(progress).getByText('Set up router')).toBeTruthy();
-    expect(within(progress).getByText('Check connection')).toBeTruthy();
+    expect(within(progress).getByText('Keep server running')).toBeTruthy();
+    expect(within(progress).queryByText('Check connection')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Verify now' })).toBeNull();
-    expect(calls).toContainEqual({ method: 'connectivity.external.check', params: { serverId: server.id } });
+    expect(calls).not.toContainEqual({ method: 'connectivity.external.check', params: { serverId: server.id } });
   });
 
-  it('does not contradict confirmed outside-in evidence with an incomplete Windows step', () => {
+  it('does not let old outside-in evidence replace incomplete owned Windows state', () => {
     const current = structuredClone(fixtures.running);
     current.connectivity!.mode = 'PortForwarding';
     current.connectivity!.addresses.publicVerified = '203.0.113.24:25565';
@@ -131,8 +133,8 @@ describe('server connectivity presentation', () => {
     window.history.replaceState({}, '', '/?tab=settings&settings=Connectivity');
     workspace();
     const progress = screen.getByLabelText('Internet setup progress');
-    expect(within(progress).getByText('Allowed')).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Continue Windows setup' })).toBeNull();
+    expect(within(progress).getAllByText('Not set up')).toHaveLength(2);
+    expect(screen.getByRole('button', { name: 'Continue Windows setup' })).toBeTruthy();
   });
 
   it('keeps a previously checked Internet address copyable without calling it current or verified', () => {

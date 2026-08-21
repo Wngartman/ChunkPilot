@@ -183,10 +183,12 @@ internal static class WebUiFixtureLauncher
                 ("dashboard-several", "several", "dashboard", null, null, null, false, 1280, 820),
                 ("overview-running", "running", "servers", "overview", null, null, false, 1280, 820),
                 ("overview-stopped", "stopped", "servers", "overview", null, null, false, 1280, 820),
+                ("health-attention", "attention", "servers", "overview", null, null, false, 1280, 820),
                 ("server-menu", "running", "servers", "overview", null, "menu", false, 1280, 820),
                 ("share", "running", "servers", "overview", null, "share", false, 1280, 820),
                 ("connectivity-local", "running", "servers", "overview", null, "connectivity-local", false, 1280, 820),
                 ("connectivity-pending", "running", "servers", "settings", null, "connectivity-pending", false, 1280, 820),
+                ("connectivity-owned", "running", "servers", "settings", null, "share-unverified", false, 1280, 820),
                 ("connectivity-public", "running", "servers", "overview", null, "connectivity-public", false, 1280, 820),
                 ("connectivity-failure", "running", "servers", "overview", null, "connectivity-failure", false, 1280, 820),
                 ("console-wrapped", "running", "servers", "console", null, null, false, 1280, 820),
@@ -200,6 +202,7 @@ internal static class WebUiFixtureLauncher
                 ("motd-rich", "running", "servers", "settings", null, "motd-rich", false, 1280, 820),
                 ("motd-raw", "running", "servers", "settings", null, "motd-raw", false, 1280, 820),
                 ("global-settings", "running", "settings", null, null, null, false, 1280, 820),
+                ("help-center", "running", "settings", null, null, null, false, 1280, 820),
                 ("create-game", "running", "create", null, "0", null, false, 1280, 820),
                 ("create-paper-game", "running", "create", null, "0", "paper", false, 1280, 820),
                 ("create-paper-version", "running", "create", null, "1", "paper", false, 1280, 820),
@@ -234,7 +237,9 @@ internal static class WebUiFixtureLauncher
                 Height = capture.Height;
                 await Dispatcher.InvokeAsync(() => { }, System.Windows.Threading.DispatcherPriority.Render);
                 await NavigateAsync(capture.Fixture, capture.Page, capture.Tab, capture.Stage,
-                    capture.Name == "connectivity-pending" ? "Connectivity" : null,
+                    capture.Name is "connectivity-pending" or "connectivity-owned" ? "Connectivity"
+                        : capture.Name == "help-center" ? "Help & troubleshooting"
+                        : null,
                     capture.Mode, capture.Dirty).ConfigureAwait(true);
                 if (capture.Name == "files-editor")
                 {
