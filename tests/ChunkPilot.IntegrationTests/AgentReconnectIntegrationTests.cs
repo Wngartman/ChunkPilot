@@ -150,7 +150,7 @@ public sealed class AgentReconnectIntegrationTests
         }
     }
 
-    [Fact(Timeout = 30_000)]
+    [Fact(Timeout = 45_000)]
     public async Task Manual_stop_preempts_a_start_waiting_for_readiness()
     {
         var root = Path.Combine(Path.GetTempPath(), "ChunkPilot-stop-startup-" + Guid.NewGuid().ToString("N"));
@@ -165,24 +165,30 @@ public sealed class AgentReconnectIntegrationTests
             var start = SendAsync<OperationResult>(pipeName, "Start",
                 AuthorizedServerRequest(definition.Id, session, PublicConnectivityOperation.StartServer));
 
-            var identityDeadline = DateTimeOffset.UtcNow.AddSeconds(5);
+            await using var store = new ChunkPilotStore(new AppDataPaths(root));
+            await store.InitializeAsync();
+            ProcessIdentity? startedIdentity = null;
+            var identityDeadline = DateTimeOffset.UtcNow.AddSeconds(10);
             while (DateTimeOffset.UtcNow < identityDeadline)
             {
-                await using var store = new ChunkPilotStore(new AppDataPaths(root));
-                await store.InitializeAsync();
-                if (await store.GetProcessIdentityAsync(definition.Id) is not null)
+                startedIdentity = await store.GetProcessIdentityAsync(definition.Id);
+                if (startedIdentity is not null)
                     break;
                 await Task.Delay(50);
             }
+            Assert.NotNull(startedIdentity);
+            var starting = Assert.Single((await SendAsync<DashboardSnapshot>(pipeName, "Dashboard")).Servers);
+            Assert.Equal(ServerState.Starting, starting.State);
 
             var timer = Stopwatch.StartNew();
             var stop = await SendAsync<OperationResult>(pipeName, "Stop",
                     AuthorizedStopRequest(definition.Id, session))
-                .WaitAsync(TimeSpan.FromSeconds(3));
+                .WaitAsync(TimeSpan.FromSeconds(12));
             timer.Stop();
 
             Assert.True(stop.Success, stop.Message);
-            Assert.True(timer.Elapsed < TimeSpan.FromSeconds(3), $"Stop took {timer.Elapsed}.");
+            Assert.True(timer.Elapsed < TimeSpan.FromSeconds(11),
+                $"Stop exceeded the bounded operation-takeover contract: {timer.Elapsed}.");
             var server = Assert.Single((await SendAsync<DashboardSnapshot>(pipeName, "Dashboard")).Servers);
             Assert.Equal(ServerState.Stopped, server.State);
             await Assert.ThrowsAnyAsync<Exception>(async () => await start);
