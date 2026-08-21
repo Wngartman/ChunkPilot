@@ -306,11 +306,32 @@ internal static class WebUiFixtureLauncher
                 }
                 if (capture.Name == "create-world-upload")
                 {
-                    _ = await browser.CoreWebView2.ExecuteScriptAsync(
-                        "[...document.querySelectorAll('button')].find(button => button.textContent?.includes('Upload World'))?.click()").ConfigureAwait(true);
-                    await Task.Delay(100).ConfigureAwait(true);
-                    _ = await browser.CoreWebView2.ExecuteScriptAsync(
-                        "[...document.querySelectorAll('button')].find(button => button.textContent?.includes('Choose world folder'))?.click()").ConfigureAwait(true);
+                    for (var attempt = 0; attempt < 20; attempt++)
+                    {
+                        var selected = await browser.CoreWebView2.ExecuteScriptAsync(
+                            "(() => { const button = [...document.querySelectorAll('button')].find(candidate => candidate.textContent?.includes('Upload World')); if (!button) return false; button.click(); return true; })()")
+                            .ConfigureAwait(true);
+                        if (string.Equals(selected, "true", StringComparison.OrdinalIgnoreCase))
+                            break;
+                        await Task.Delay(100).ConfigureAwait(true);
+                    }
+                    for (var attempt = 0; attempt < 20; attempt++)
+                    {
+                        var reviewed = await browser.CoreWebView2.ExecuteScriptAsync(
+                            "(() => { const button = [...document.querySelectorAll('button')].find(candidate => candidate.textContent?.includes('Choose world folder')); if (!button) return false; button.click(); return true; })()")
+                            .ConfigureAwait(true);
+                        if (string.Equals(reviewed, "true", StringComparison.OrdinalIgnoreCase))
+                            break;
+                        await Task.Delay(100).ConfigureAwait(true);
+                    }
+                    for (var attempt = 0; attempt < 20; attempt++)
+                    {
+                        var ready = await browser.CoreWebView2.ExecuteScriptAsync(
+                            "document.body.innerText.includes('Reviewed locally')").ConfigureAwait(true);
+                        if (string.Equals(ready, "true", StringComparison.OrdinalIgnoreCase))
+                            break;
+                        await Task.Delay(100).ConfigureAwait(true);
+                    }
                 }
                 await Task.Delay(250).ConfigureAwait(true);
                 var path = Path.Combine(directory, capture.Name + ".png");
