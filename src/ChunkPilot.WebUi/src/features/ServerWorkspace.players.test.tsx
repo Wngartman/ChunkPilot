@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import userEvent from '@testing-library/user-event';
 import type { BridgeAdapter } from '../bridge/client';
 import type { BridgeMethod } from '../bridge/types';
 import { NavigationGuardProvider } from '../app/NavigationGuard';
@@ -48,6 +49,22 @@ describe('Minecraft players workspace', () => {
     fireEvent.change(screen.getByLabelText('Minecraft player name'), { target: { value: 'NewPlayer' } });
     fireEvent.click(screen.getByRole('button', { name: 'Add to allowlist' }));
     expect(calls).toContainEqual({ method: 'players.addAllowlist', params: { serverId: server.id, playerName: 'NewPlayer' } });
+  });
+
+  it('changes the server-wide allowlist through the authoritative bridge command', () => {
+    const server = renderWorkspace();
+    fireEvent.click(screen.getByRole('switch', { name: 'Turn allowlist off' }));
+    expect(calls).toContainEqual({ method: 'players.setWhitelist', params: { serverId: server.id, enabled: false } });
+  });
+
+  it('portals player moderation actions outside the clipped table surface', async () => {
+    const user = userEvent.setup();
+    renderWorkspace();
+    const table = screen.getByRole('table');
+    await user.click(screen.getByRole('button', { name: 'Moderation actions for MapleRook' }));
+    const item = await screen.findByRole('menuitem', { name: 'Remove operator' });
+    expect(item).toBeTruthy();
+    expect(table.contains(item)).toBe(false);
   });
 
   it('keeps known access records visible while stopped and never turns unknown into zero', () => {

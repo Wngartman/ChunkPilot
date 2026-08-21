@@ -123,6 +123,7 @@ public sealed class WebUiContractTests
         Assert.True(WebUiMethodPolicy.IsAllowed("schedules.delete"));
         Assert.True(WebUiMethodPolicy.IsAllowed("appearance.chooseIcon"));
         Assert.True(WebUiMethodPolicy.IsAllowed("players.addAllowlist"));
+        Assert.True(WebUiMethodPolicy.IsAllowed("players.setWhitelist"));
         Assert.True(WebUiMethodPolicy.IsAllowed("plugins.openFolder"));
         Assert.True(WebUiMethodPolicy.IsAllowed("plugins.configFiles"));
         Assert.True(WebUiMethodPolicy.IsAllowed("plugins.saveConfig"));

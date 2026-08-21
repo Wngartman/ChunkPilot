@@ -1128,8 +1128,7 @@ public sealed class InstallationCoordinator
                     ProjectName = request.ServerName.Trim(),
                     ProjectId = ManagedServerInstaller.MakeSafeInstanceName(request.ServerName),
                     InstalledVersionId = result.Sha256,
-                    InstalledVersionName = string.IsNullOrWhiteSpace(request.Build)
-                        ? result.Definition.MinecraftVersion : request.Build,
+                    InstalledVersionName = Path.GetFileNameWithoutExtension(request.Source),
                     InstalledFileId = result.Sha256,
                     MinecraftVersion = result.Definition.MinecraftVersion,
                     Loader = result.Definition.Ecosystem.ToString(),

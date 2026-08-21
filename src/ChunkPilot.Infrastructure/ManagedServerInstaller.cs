@@ -682,7 +682,7 @@ public sealed class ManagedServerInstaller
         var document = ServerPropertiesDocument.Parse(
             $"# Created by ChunkPilot after explicit EULA acceptance\r\n" +
             $"server-port={request.Port}\r\nmax-players={request.MaxPlayers}\r\n" +
-            "gamemode=survival\r\ndifficulty=normal\r\nonline-mode=true\r\nwhite-list=false\r\n");
+            "gamemode=survival\r\ndifficulty=normal\r\nonline-mode=true\r\nwhite-list=true\r\n");
         foreach (var property in request.InitialProperties)
             document.Set(property.Key, property.Value);
         return document.ToString();
@@ -698,9 +698,10 @@ public sealed class ManagedServerInstaller
             ? ServerPropertiesDocument.Parse(await File.ReadAllTextAsync(path, cancellationToken).ConfigureAwait(false))
             : ServerPropertiesDocument.Parse(
                 "# Created by ChunkPilot after explicit EULA acceptance\r\n" +
-                "gamemode=survival\r\ndifficulty=normal\r\nonline-mode=true\r\nwhite-list=false\r\n");
+                "gamemode=survival\r\ndifficulty=normal\r\nonline-mode=true\r\nwhite-list=true\r\n");
         document.Set("server-port", request.Port.ToString(System.Globalization.CultureInfo.InvariantCulture));
         document.Set("max-players", request.MaxPlayers.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        document.Set("white-list", "true");
         foreach (var property in request.InitialProperties)
             document.Set(property.Key, property.Value);
         await File.WriteAllTextAsync(path, document.ToString(), new UTF8Encoding(false), cancellationToken)

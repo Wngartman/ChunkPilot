@@ -1,4 +1,4 @@
-export const memoryPresets = [1024, 2048, 3072, 4096, 6144, 8192, 12288, 16384, 20480, 24576] as const;
+export const memoryPresets = [1024, 2048, 3072, 4096, 6144, 8192, 10240, 12288, 16384, 20480, 24576] as const;
 
 export interface MemoryParseResult {
   valid: boolean;
@@ -10,6 +10,11 @@ export interface MemoryParseResult {
 export function formatMemory(mebibytes: number): string {
   const gigabytes = mebibytes / 1024;
   return `${mebibytes.toLocaleString()} MB (${Number.isInteger(gigabytes) ? gigabytes : gigabytes.toFixed(2).replace(/0+$/, '').replace(/\.$/, '')} GB)`;
+}
+
+export function formatGigabytes(mebibytes: number): string {
+  const gigabytes = mebibytes / 1024;
+  return Number.isInteger(gigabytes) ? String(gigabytes) : gigabytes.toFixed(2).replace(/0+$/, '').replace(/\.$/, '');
 }
 
 export function parseMemory(text: string, minimumMib = 512, maximumMib = 24 * 1024): MemoryParseResult {

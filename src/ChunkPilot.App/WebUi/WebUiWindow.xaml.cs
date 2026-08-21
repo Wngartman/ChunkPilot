@@ -616,6 +616,12 @@ public partial class WebUiWindow : Window
                 if (viewModel.HasAccessError)
                     throw new InvalidOperationException(viewModel.AccessErrorMessage);
                 break;
+            case "players.setWhitelist":
+                Select(parameters);
+                await viewModel.SetWhitelistEnabledAsync(RequiredBool(parameters, "enabled")).ConfigureAwait(true);
+                if (viewModel.HasAccessError)
+                    throw new InvalidOperationException(viewModel.AccessErrorMessage);
+                break;
             case "schedules.upsert":
                 Select(parameters);
                 ApplySchedule(parameters);

@@ -102,19 +102,11 @@
 .playerSummary span { color: var(--cp-text-muted); font-size: 9px; font-weight: 650; text-transform: uppercase; letter-spacing: .055em; }
 .playerSummary strong { margin-top: 7px; font-size: 16px; }
 .playerSummary small { margin-top: 5px; color: var(--cp-text-muted); font-size: 10px; line-height: 1.4; }
+.playerSummaryHeading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .playerToolbar { min-height: 52px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 10px 8px 14px; border-bottom: 1px solid var(--cp-border); }
 .playerToolbar > div { width: min(340px, 100%); }
 .playerToolbar form { display: flex; align-items: center; gap: 8px; }
 .playerError { padding: 10px 14px; border-bottom: 1px solid var(--cp-danger-border); background: var(--cp-danger-surface); color: var(--cp-danger); font-size: 11px; }
-.tableActions details { position: relative; }
-.tableActions summary { width: 30px; height: 30px; display: grid; place-items: center; border: 1px solid var(--cp-border); border-radius: var(--cp-radius-md); color: var(--cp-text-secondary); cursor: pointer; list-style: none; }
-.tableActions summary::-webkit-details-marker { display: none; }
-.tableActions summary:hover, .tableActions details[open] summary { color: var(--cp-text); background: var(--cp-surface-hover); }
-.rowMenu { position: absolute; z-index: 20; right: 0; top: 34px; min-width: 158px; padding: 5px; border: 1px solid var(--cp-border-strong); border-radius: var(--cp-radius-md); background: var(--cp-surface-raised); box-shadow: var(--cp-shadow); }
-.rowMenu button { width: 100%; min-height: 31px; border: 0; border-radius: var(--cp-radius-sm); padding: 0 9px; background: transparent; color: var(--cp-text); text-align: left; font: inherit; }
-.rowMenu button:hover, .rowMenu button:focus-visible { background: var(--cp-surface-hover); }
-.rowMenu button:disabled { opacity: .5; cursor: not-allowed; }
-.rowMenu .dangerAction { color: var(--cp-danger); }
 .pathBar { min-height: 43px; display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 0 12px 0 15px; border-bottom: 1px solid var(--cp-border); }
 .pathBar code { color: var(--cp-text-secondary); font-family: "Cascadia Mono", Consolas, monospace; font-size: 11px; }
 .fileLayout { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(340px, .75fr); gap: 14px; }

@@ -635,7 +635,7 @@ public sealed class LocalPackageHistoryUpdateProvider : IUpdateProviderAdapter
 {
     public UpdateProvider Provider => UpdateProvider.LocalPackageHistory;
 
-    public Task<IReadOnlyList<PackVersionInfo>> GetVersionsAsync(
+    public async Task<IReadOnlyList<PackVersionInfo>> GetVersionsAsync(
         UpdateSource source,
         UpdatePreferences preferences,
         CancellationToken cancellationToken = default)
@@ -647,12 +647,17 @@ public sealed class LocalPackageHistoryUpdateProvider : IUpdateProviderAdapter
         if (!File.Exists(path))
             throw new FileNotFoundException("The linked local update package was not found.", path);
         var file = new FileInfo(path);
+        await using var stream = new FileStream(file.FullName, FileMode.Open, FileAccess.Read, FileShare.Read,
+            128 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
+        using var hasher = SHA256.Create();
+        var sha256 = Convert.ToHexString(await hasher.ComputeHashAsync(stream, cancellationToken).ConfigureAwait(false))
+            .ToLowerInvariant();
         IReadOnlyList<PackVersionInfo> versions =
         [
             new()
             {
                 PackId = source.ProjectId,
-                VersionId = file.LastWriteTimeUtc.Ticks.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                VersionId = sha256,
                 VersionName = Path.GetFileNameWithoutExtension(file.Name),
                 ReleaseChannel = ReleaseChannel.Stable,
                 PublishedAt = file.LastWriteTimeUtc,
@@ -662,10 +667,10 @@ public sealed class LocalPackageHistoryUpdateProvider : IUpdateProviderAdapter
                 DownloadUrl = file.FullName,
                 FileName = file.Name,
                 FileSize = file.Length,
-                Sha256 = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(file.FullName))).ToLowerInvariant()
+                Sha256 = sha256
             }
         ];
-        return Task.FromResult(versions);
+        return versions;
     }
 }
 

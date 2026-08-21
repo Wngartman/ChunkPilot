@@ -66,6 +66,35 @@ public sealed class Release12Tests : IDisposable
     }
 
     [Fact]
+    public async Task Local_package_history_uses_the_archive_hash_as_exact_version_identity()
+    {
+        var package = Path.Combine(root, "StaTech Industry-2.0.0-rc4-serverpack.zip");
+        await File.WriteAllTextAsync(package, "exact local package fixture");
+        var expectedHash = Convert.ToHexString(SHA256.HashData(await File.ReadAllBytesAsync(package)))
+            .ToLowerInvariant();
+        var source = Source(UpdateProvider.LocalPackageHistory) with
+        {
+            InstalledVersionId = expectedHash,
+            InstalledVersionName = "6.0.2",
+            SourceUrl = package
+        };
+
+        var available = Assert.Single(await new LocalPackageHistoryUpdateProvider()
+            .GetVersionsAsync(source, new UpdatePreferences()));
+
+        Assert.Equal(expectedHash, available.VersionId);
+        Assert.Equal(expectedHash, available.Sha256);
+        Assert.Equal("StaTech Industry-2.0.0-rc4-serverpack", available.VersionName);
+        var result = new PackUpdateCompatibilityService().Evaluate(
+            new ServerDefinition { Id = source.ServerId, MinecraftVersion = source.MinecraftVersion },
+            source,
+            available with { VersionName = source.InstalledVersionName },
+            [available],
+            DateTimeOffset.Now);
+        Assert.Equal(ServerUpdateStatus.UpToDate, result.Status);
+    }
+
+    [Fact]
     public async Task Modrinth_filters_channels_and_prefers_server_package()
     {
         var handler = new StubHandler(request =>
