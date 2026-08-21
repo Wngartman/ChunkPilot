@@ -6,7 +6,7 @@
 
 ## Repository State
 
-- Worktree: `D:\ChunkPilot\temp\networking-players-clarity`
+- Worktree: isolated release-candidate checkout
 - Branch: `codex/world-import-ui-hardening`
 - Verified implementation checkpoints: `115491ce305af32b7fe809983506b44f3ac0d7c0` plus the Alpha 5 release-preparation commit reported at handoff
 - Base: public Alpha 4, `3bd0131fac16625ff006191c4493cfcfb53153f1`
@@ -92,8 +92,7 @@ remains blocked on manual user acceptance and the external checks listed below.
 ## User Acceptance
 
 ```powershell
-Set-Location 'D:\ChunkPilot\temp\networking-players-clarity'
-Start-Process -FilePath 'D:\ChunkPilot\temp\networking-players-clarity\artifacts\self-contained-win-x64\ChunkPilot.exe'
+Start-Process -FilePath '.\artifacts\self-contained-win-x64\ChunkPilot.exe'
 ```
 
 Confirm server A/B/C MOTD isolation, Whitelist copy, automatic owned connectivity state, taskbar identity,
