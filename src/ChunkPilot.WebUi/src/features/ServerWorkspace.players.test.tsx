@@ -1,0 +1,92 @@
+// @vitest-environment jsdom
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import type { BridgeAdapter } from '../bridge/client';
+import type { BridgeMethod } from '../bridge/types';
+import { NavigationGuardProvider } from '../app/NavigationGuard';
+import { fixtures } from '../fixtures/catalog';
+import { useAppStore } from '../state/store';
+import { ServerWorkspace } from './ServerWorkspace';
+
+const calls: { method: BridgeMethod; params: Record<string, unknown> }[] = [];
+const bridge: BridgeAdapter = {
+  request: async <T,>(method: BridgeMethod, params: Record<string, unknown> = {}) => {
+    calls.push({ method, params });
+    return { accepted: true } as T;
+  },
+  subscribe: () => () => undefined,
+  dispose: () => undefined
+};
+
+beforeEach(() => {
+  calls.length = 0;
+  window.history.replaceState({}, '', '/?tab=players');
+  useAppStore.setState({ snapshot: structuredClone(fixtures.running), bridge, busy: new Set(), error: null });
+});
+afterEach(cleanup);
+
+function renderWorkspace() {
+  const server = useAppStore.getState().snapshot!.servers[0];
+  render(<NavigationGuardProvider><ServerWorkspace serverId={server.id} /></NavigationGuardProvider>);
+  return server;
+}
+
+describe('Minecraft players workspace', () => {
+  it('remains available to a Minecraft server whose ecosystem is unknown or custom', () => {
+    const current = structuredClone(fixtures.running);
+    current.servers[0].ecosystem = 'Custom';
+    current.servers[0].gameKind = 'Minecraft';
+    current.servers[0].capabilities.players = true;
+    useAppStore.setState({ snapshot: current });
+    renderWorkspace();
+    expect(screen.getByRole('button', { name: 'Players' }).getAttribute('aria-current')).toBe('page');
+    expect(screen.getByText('MapleRook')).toBeTruthy();
+  });
+
+  it('adds an allowlist name through the authoritative bridge command', () => {
+    const server = renderWorkspace();
+    fireEvent.change(screen.getByLabelText('Minecraft player name'), { target: { value: 'NewPlayer' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add to allowlist' }));
+    expect(calls).toContainEqual({ method: 'players.addAllowlist', params: { serverId: server.id, playerName: 'NewPlayer' } });
+  });
+
+  it('keeps known access records visible while stopped and never turns unknown into zero', () => {
+    const current = structuredClone(fixtures.running);
+    current.servers[0].state = 'Stopped';
+    current.servers[0].playersOnline = null;
+    current.servers[0].playersMaximum = null;
+    current.servers[0].playerStatus = { online: null, maximum: null, source: 'StatusCheckFailed', exact: false, checkedAt: '2026-08-14T16:42:00-06:00', detail: 'Live status is unavailable while the server is stopped.' };
+    current.playerAccess!.serverRunning = false;
+    useAppStore.setState({ snapshot: current });
+    renderWorkspace();
+    expect(screen.getByText('Unknown')).toBeTruthy();
+    expect(screen.getByText('MapleRook')).toBeTruthy();
+    expect((screen.getByRole('button', { name: 'Add to allowlist' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('does not expose Minecraft player controls for Terraria', () => {
+    const current = structuredClone(fixtures.running);
+    current.servers[0].gameKind = 'Terraria';
+    current.servers[0].capabilities.players = false;
+    current.playerAccess = null;
+    useAppStore.setState({ snapshot: current });
+    window.history.replaceState({}, '', '/');
+    renderWorkspace();
+    expect(screen.queryByRole('button', { name: 'Players' })).toBeNull();
+  });
+
+  it('keeps the stable Players route while an authoritative reconnect snapshot changes status', () => {
+    renderWorkspace();
+    expect(screen.getByRole('button', { name: 'Players' }).getAttribute('aria-current')).toBe('page');
+    const next = structuredClone(fixtures.running);
+    next.revision += 1;
+    next.servers[0].state = 'Stopped';
+    next.servers[0].playersOnline = null;
+    next.servers[0].playerStatus = { online: null, maximum: null, source: 'StatusCheckFailed', exact: false, checkedAt: '2026-08-14T16:43:00-06:00', detail: 'The Agent reconnected while the server was stopped.' };
+    next.playerAccess!.serverRunning = false;
+    act(() => useAppStore.getState().applySnapshot(next));
+    expect(screen.getByRole('button', { name: 'Players' }).getAttribute('aria-current')).toBe('page');
+    expect(screen.getByText('Server stopped')).toBeTruthy();
+    expect(screen.getByText('MapleRook')).toBeTruthy();
+  });
+});

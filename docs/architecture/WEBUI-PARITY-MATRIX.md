@@ -6,14 +6,14 @@
 | Select/manage server | Server workspace | existing selection and detail load | Wired |
 | Start, stop, restart | Hero lifecycle action | existing commands and Agent | Wired |
 | Console read/send | Console | bounded console and send command | Wired |
-| Players | Players | player-access snapshot and existing moderation commands | Wired with destructive confirmation |
+| Players | Players on every Minecraft workspace | centralized game-kind capability, player-access snapshot and existing moderation commands | Wired with truthful unknown/stopped states, saved access records, add/remove allowlist, operator, kick and ban actions; Terraria remains excluded |
 | Files/open folder/edit text | Files | path-confined Agent file service and native Explorer action | Wired; text editing is atomic and bridge-bounded |
 | Plugins / Mods / Modpack | Capability label | Agent inventory, provider operations, and linked update source | Paper exposes Plugins; Fabric/NeoForge/Forge/Quilt expose Mods; an identity-linked pack exposes Modpack. Pack updates compare exact provider releases and never silently update constituent mods |
 | Backups/create/verify/restore | Backups | existing backup commands | Wired |
 | Versions/check/install/verify/rollback/cancel | Versions | official Mojang inventory plus existing update and version commands | Full searchable inventory and installed evidence wired; hardened linked-source operations retained; arbitrary catalog-target change remains unavailable |
 | Global settings | Settings | existing settings save | Wired |
 | Server properties | Server Settings | atomic server.properties path | Wired |
-| Connectivity/share | hero / Overview / Share / Server Settings | existing network mode, router, exact firewall and outside-in commands | Four beginner modes, distinct local/LAN/verified-public addresses, consent, retry/cancel/stop and advanced evidence wired; public success remains outside-in only |
+| Connectivity/share | hero / Overview / Share / Servers / Server Settings | existing network mode, router, exact firewall and outside-in commands | Ordinary UI exposes LAN/Internet, distinct local/LAN/current-or-last-known Internet addresses, copy actions, automatic checking, consent, retry/cancel/stop and advanced evidence; confirmed success remains outside-in only |
 | Create Vanilla server | Create Server | official Mojang inventory plus hardened creation gateway | Exact selected ID, artifact/Java/profile evidence, experimental consent, review, and begin wired |
 | Create Paper server | Create Server | official PaperMC Fill v3 inventory plus hardened creation transaction | Exact Minecraft version and build, identity-bound certification, Java, connectivity, EULA, review and begin wired; metadata-only builds require separate experimental consent |
 | Create Fabric server | Create Server | official Fabric Meta endpoints plus hardened creation transaction | Exact Minecraft, Loader and installer identity, managed Java, official launcher SHA-256, connectivity, EULA and review wired; exact certified combination is recommended |

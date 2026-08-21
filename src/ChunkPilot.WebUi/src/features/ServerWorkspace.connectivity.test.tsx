@@ -37,8 +37,9 @@ describe('server connectivity presentation', () => {
     const server = workspace();
     fireEvent.click(screen.getByRole('button', { name: 'Share' }));
     const dialog = screen.getByRole('dialog', { name: `Share ${server.name}` });
-    expect(within(dialog).getByText('Available on your home network')).toBeTruthy();
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Copy' }));
+    expect(within(dialog).getByText('Share on your LAN')).toBeTruthy();
+    expect(within(dialog).getByText(/will not work over the Internet/i)).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Copy LAN address' }));
     expect(calls).toContainEqual({ method: 'connectivity.copyAddress', params: { serverId: server.id, kind: 'lan' } });
     fireEvent.keyDown(window, { key: 'Escape' });
     expect(screen.queryByRole('dialog')).toBeNull();
@@ -47,7 +48,7 @@ describe('server connectivity presentation', () => {
   it('offers exactly the ordinary LAN and Internet modes and persists the selected mode', () => {
     window.history.replaceState({}, '', '/?tab=settings&settings=Connectivity');
     const server = workspace();
-    expect(screen.getByRole('button', { name: /LAN/ }).getAttribute('data-selected')).toBe('true');
+    expect(screen.getByRole('button', { name: /^LAN People/ }).getAttribute('data-selected')).toBe('true');
     expect(screen.getByRole('button', { name: /^Internet Friends/ })).toBeTruthy();
     expect(screen.queryByRole('button', { name: /Local only/ })).toBeNull();
     expect(screen.queryByRole('button', { name: /Configure later/ })).toBeNull();
@@ -68,9 +69,10 @@ describe('server connectivity presentation', () => {
     const server = workspace();
     fireEvent.click(screen.getByRole('button', { name: 'Share' }));
     const dialog = screen.getByRole('dialog', { name: `Share ${server.name}` });
-    expect(within(dialog).getByText('Verified Internet address')).toBeTruthy();
+    expect(within(dialog).getByText('Share with friends')).toBeTruthy();
+    expect(within(dialog).getByText('Connection confirmed')).toBeTruthy();
     expect(within(dialog).getByText('203.0.113.24:25565')).toBeTruthy();
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Copy' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Copy friend address' }));
     expect(calls).toContainEqual({ method: 'connectivity.copyAddress', params: { serverId: server.id, kind: 'public' } });
   });
 
@@ -89,10 +91,11 @@ describe('server connectivity presentation', () => {
     const server = workspace();
     fireEvent.click(screen.getByRole('button', { name: 'Share' }));
     const dialog = screen.getByRole('dialog', { name: `Share ${server.name}` });
-    expect(within(dialog).getByText('Public address — unverified')).toBeTruthy();
+    expect(within(dialog).getByText('Share with friends')).toBeTruthy();
+    expect(within(dialog).getByText('Still checking')).toBeTruthy();
     expect(within(dialog).queryByText('Friends can join')).toBeNull();
     expect(within(dialog).getByText(/most likely address/i)).toBeTruthy();
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Copy' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Copy friend address' }));
     expect(calls).toContainEqual({ method: 'connectivity.copyAddress', params: { serverId: server.id, kind: 'router' } });
   });
 
@@ -110,10 +113,44 @@ describe('server connectivity presentation', () => {
     window.history.replaceState({}, '', '/?tab=settings&settings=Connectivity');
     const server = workspace();
     const progress = screen.getByLabelText('Internet setup progress');
-    expect(within(progress).getByText('Windows Firewall')).toBeTruthy();
-    expect(within(progress).getByText('Automatic router setup')).toBeTruthy();
-    expect(within(progress).getByText('Internet verification')).toBeTruthy();
+    expect(within(progress).getByText('Allow through Windows')).toBeTruthy();
+    expect(within(progress).getByText('Set up router')).toBeTruthy();
+    expect(within(progress).getByText('Check connection')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Verify now' })).toBeNull();
     expect(calls).toContainEqual({ method: 'connectivity.external.check', params: { serverId: server.id } });
+  });
+
+  it('does not contradict confirmed outside-in evidence with an incomplete Windows step', () => {
+    const current = structuredClone(fixtures.running);
+    current.connectivity!.mode = 'PortForwarding';
+    current.connectivity!.addresses.publicVerified = '203.0.113.24:25565';
+    current.connectivity!.external.phase = 'Reachable';
+    current.connectivity!.firewall.configured = false;
+    current.connectivity!.firewall.consentRequired = false;
+    useAppStore.setState({ snapshot: current });
+    window.history.replaceState({}, '', '/?tab=settings&settings=Connectivity');
+    workspace();
+    const progress = screen.getByLabelText('Internet setup progress');
+    expect(within(progress).getByText('Allowed')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Continue Windows setup' })).toBeNull();
+  });
+
+  it('keeps a previously checked Internet address copyable without calling it current or verified', () => {
+    const current = structuredClone(fixtures.running);
+    current.connectivity!.mode = 'PortForwarding';
+    current.connectivity!.addresses.routerReported = null;
+    current.connectivity!.addresses.publicVerified = null;
+    current.connectivity!.addresses.lastKnownPublic = '198.51.100.14:25565';
+    current.connectivity!.addresses.lastKnownPublicAt = '2026-08-13T16:42:00-06:00';
+    current.connectivity!.external.phase = 'Stale';
+    useAppStore.setState({ snapshot: current });
+    const server = workspace();
+    fireEvent.click(screen.getByRole('button', { name: 'Share' }));
+    const dialog = screen.getByRole('dialog', { name: `Share ${server.name}` });
+    expect(within(dialog).getByText('Share with friends')).toBeTruthy();
+    expect(within(dialog).getByText('Last used')).toBeTruthy();
+    expect(within(dialog).queryByText('Friends can join')).toBeNull();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Copy friend address' }));
+    expect(calls).toContainEqual({ method: 'connectivity.copyAddress', params: { serverId: server.id, kind: 'last' } });
   });
 });

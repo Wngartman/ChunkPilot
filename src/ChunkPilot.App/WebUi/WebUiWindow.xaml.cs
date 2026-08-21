@@ -607,6 +607,15 @@ public partial class WebUiWindow : Window
             case "players.moderate":
                 await ModeratePlayerAsync(parameters).ConfigureAwait(true);
                 break;
+            case "players.addAllowlist":
+                Select(parameters);
+                viewModel.NewWhitelistPlayerName = RequiredString(parameters, "playerName", 16);
+                if (!viewModel.AddWhitelistPlayerCommand.CanExecute(null))
+                    throw new InvalidOperationException("Start the server before changing the allowlist.");
+                await viewModel.AddWhitelistPlayerCommand.ExecuteAsync(null).ConfigureAwait(true);
+                if (viewModel.HasAccessError)
+                    throw new InvalidOperationException(viewModel.AccessErrorMessage);
+                break;
             case "schedules.upsert":
                 Select(parameters);
                 ApplySchedule(parameters);
@@ -689,19 +698,37 @@ public partial class WebUiWindow : Window
                 await viewModel.CancelPackUpdateCommand.ExecuteAsync(null).ConfigureAwait(true);
                 break;
             case "connectivity.copyAddress":
-                Select(parameters);
+                if (!TryServer(parameters, out var addressServer) || addressServer is null)
+                    throw new ArgumentException("Select a server first.");
+                var addressServerId = addressServer.Definition.Id;
+                var storedRouter = viewModel.Dashboard.RouterMappings.FirstOrDefault(item =>
+                    item.ServerId == addressServerId);
+                var isSelectedAddressServer = viewModel.SelectedServer?.Definition.Id == addressServerId;
                 var kind = RequiredString(parameters, "kind", 20).ToLowerInvariant();
                 var address = kind switch
                 {
-                    "local" => viewModel.ServerLocalAddress,
-                    "lan" when viewModel.ServerLanAddress != "Unavailable" => viewModel.ServerLanAddress,
-                    "public" when viewModel.PublicAccessVerified => viewModel.PublicAccessVerifiedEndpoint,
-                    "router" when viewModel.RouterMapping.Enabled && viewModel.RouterMapping.HasRouterReportedAddress =>
+                    "local" => $"localhost:{addressServer.Definition.Port}",
+                    "lan" when !string.IsNullOrWhiteSpace(viewModel.Dashboard.Host.LanAddress) =>
+                        $"{viewModel.Dashboard.Host.LanAddress}:{addressServer.Definition.Port}",
+                    "public" when isSelectedAddressServer && viewModel.PublicAccessVerified =>
+                        viewModel.PublicAccessVerifiedEndpoint,
+                    "router" when isSelectedAddressServer && viewModel.RouterMapping.Enabled &&
+                        viewModel.RouterMapping.HasRouterReportedAddress =>
                         viewModel.RouterMapping.RouterReportedEndpoint,
+                    "router" when storedRouter is { HasActiveMapping: true,
+                        RouterReportedExternalAddress.Length: > 0, ExternalPort: > 0 } =>
+                        $"{storedRouter.RouterReportedExternalAddress}:{storedRouter.ExternalPort}",
+                    "last" when isSelectedAddressServer && viewModel.ExternalReachability.CheckedAt is not null &&
+                        viewModel.ExternalReachability.CheckedEndpoint.PublicAddress.Length > 0 &&
+                        viewModel.ExternalReachability.CheckedEndpoint.ExternalPort > 0 =>
+                        $"{viewModel.ExternalReachability.CheckedEndpoint.PublicAddress}:{viewModel.ExternalReachability.CheckedEndpoint.ExternalPort}",
+                    "last" when storedRouter is { RouterReportedExternalAddress.Length: > 0, ExternalPort: > 0 } =>
+                        $"{storedRouter.RouterReportedExternalAddress}:{storedRouter.ExternalPort}",
                     "router" => throw new InvalidOperationException("The active router mapping has not reported a likely public address."),
                     "public" => throw new InvalidOperationException("No outside-in check has verified a public address for this server."),
                     "lan" => throw new InvalidOperationException("ChunkPilot has not established a LAN address for this server."),
-                    _ => throw new ArgumentException("Address kind must be local, lan, router, or public.")
+                    "last" => throw new InvalidOperationException("No previously checked Internet address is available for this server."),
+                    _ => throw new ArgumentException("Address kind must be local, lan, router, last, or public.")
                 };
                 viewModel.CopyTextCommand.Execute(address);
                 break;

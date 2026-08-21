@@ -25,7 +25,10 @@ export default function App() {
 
 function AppContent() {
   const [route, setRoute] = useState<GlobalRoute>(() => (new URLSearchParams(window.location.search).get('page') as GlobalRoute | null) ?? 'dashboard');
-  const [serverRouteId, setServerRouteId] = useState<string | null | undefined>(undefined);
+  const [serverRouteId, setServerRouteId] = useState<string | null | undefined>(() => {
+    const query = new URLSearchParams(window.location.search);
+    return query.has('fixture') && query.get('page') === 'servers' && query.get('mode')?.startsWith('library') ? null : undefined;
+  });
   const [settingsCategory] = useState(() => {
     const query = new URLSearchParams(window.location.search);
     return query.get('category') ?? query.get('settings') ?? 'General';

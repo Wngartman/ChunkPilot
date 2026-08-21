@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Activity, ArrowRight, History as CalendarClock, Download, FolderOpen, Play, Plus, RefreshCw, Server as ServerIcon, Square, X as Trash2 } from '../design-system/Icons';
+import { Activity, ArrowRight, History as CalendarClock, Clipboard, Download, FolderOpen, Play, Plus, RefreshCw, Server as ServerIcon, Square, X as Trash2 } from '../design-system/Icons';
 import type { ServerSummary } from '../bridge/types';
 import { Button, ConfirmDialog, EmptyState, Metric, PanelTitle, SearchInput, Sparkline, StatusBadge, TextInput } from '../design-system/Primitives';
 import { useAppStore } from '../state/store';
 import { lifecycleAction } from './lifecycle';
+import { connectionChoice } from './connectivity/ConnectionSummary';
 import styles from './Page.module.css';
 
 const formatBytes = (value: number | null, precision = 1) => value == null ? 'Unavailable' : value >= 1024 ** 3 ? `${(value / 1024 ** 3).toFixed(precision)} GB` : `${(value / 1024 ** 2).toFixed(precision)} MB`;
@@ -59,11 +60,11 @@ export function ServersPage({ onOpenServer, onCreate }: { onOpenServer: (server:
   return <div className={styles.pageWrap}>
     <header className={styles.pageHeader}><div><h1>Servers</h1><p>Create, import, compare, and open your local servers.</p></div><div className={styles.actions}><Button icon={<Download size={15} />} onClick={() => void command('servers.import')}>Add existing</Button><Button variant="primary" icon={<Plus size={15} />} onClick={onCreate}>Create server</Button></div></header>
     <div className={styles.toolbar}><SearchInput value={search} onChange={event => setSearch(event.target.value)} placeholder="Search servers" aria-label="Search servers" /><span /><Button variant="subtle" icon={<RefreshCw size={14} />} onClick={() => void command('snapshot.refresh')}>Refresh</Button></div>
-    {servers.length === 0 ? <div className={styles.panel}><EmptyState title={snapshot.servers.length ? 'No matching servers' : 'No servers yet'} detail={snapshot.servers.length ? 'Try a different server name, platform, or version.' : 'Create a managed server or add an existing folder.'} action={!snapshot.servers.length ? <Button variant="primary" onClick={onCreate}>Create server</Button> : undefined} /></div> : <div className={styles.cards}>{servers.map(server => <article className={styles.serverCard} key={server.id}>
+    {servers.length === 0 ? <div className={styles.panel}><EmptyState title={snapshot.servers.length ? 'No matching servers' : 'No servers yet'} detail={snapshot.servers.length ? 'Try a different server name, platform, or version.' : 'Create a managed server or add an existing folder.'} action={!snapshot.servers.length ? <Button variant="primary" onClick={onCreate}>Create server</Button> : undefined} /></div> : <div className={styles.cards}>{servers.map(server => { const choice = connectionChoice(server, snapshot.connectivity?.serverId === server.id ? snapshot.connectivity : null); return <article className={styles.serverCard} key={server.id}>
       <div className={styles.serverCardTop}><div className={styles.identity}><div className={styles.serverIcon}>{server.iconUrl ? <img src={server.iconUrl} alt="" aria-hidden="true" /> : <ServerIcon size={18} />}</div><div className={styles.identityText}><strong>{server.name}</strong><small>{server.ecosystem} · Minecraft {server.minecraftVersion}</small></div></div><StatusBadge tone={stateTone(server.state)}>{server.state}</StatusBadge></div>
-      <div className={styles.serverCardMeta}><div><label>Players</label><span>{playerText(server)}</span></div><div><label>Memory</label><span>{formatBytes(server.memoryBytes)}</span></div><div><label>Join address</label><span>{mainJoiningAddress(server)}</span></div><div><label>Backup</label><span>{server.lastBackupAt ? new Date(server.lastBackupAt).toLocaleDateString() : 'Not recorded'}</span></div></div>
-      <div className={styles.serverCardActions}><Button variant="subtle" icon={<FolderOpen size={14} />} onClick={() => void command('servers.openFolder', { serverId: server.id })}>Folder</Button><Button variant="primary" onClick={() => open(server)}>Manage</Button></div>
-    </article>)}</div>}
+      <div className={styles.serverCardMeta}><div><label>Players</label><span>{playerText(server)}</span></div><div><label>Memory</label><span>{formatBytes(server.memoryBytes)}</span></div><div><label>{choice.audience === 'internet' ? 'Internet address' : choice.audience === 'home' ? 'Same home network' : 'This computer'}</label><span>{choice.address ?? 'Not available yet'}</span>{choice.audience === 'internet' && <small>{choice.badge}</small>}</div><div><label>Backup</label><span>{server.lastBackupAt ? new Date(server.lastBackupAt).toLocaleDateString() : 'Not recorded'}</span></div></div>
+      <div className={styles.serverCardActions}>{choice.kind && choice.address && <Button variant="subtle" icon={<Clipboard size={14} />} onClick={event => { event.stopPropagation(); void command('connectivity.copyAddress', { serverId: server.id, kind: choice.kind }); }}>Copy {choice.audience === 'internet' ? 'Internet' : choice.audience === 'home' ? 'home' : 'local'} address</Button>}<Button variant="subtle" icon={<FolderOpen size={14} />} onClick={() => void command('servers.openFolder', { serverId: server.id })}>Folder</Button><Button variant="primary" onClick={() => open(server)}>Manage</Button></div>
+    </article>; })}</div>}
   </div>;
 }
 

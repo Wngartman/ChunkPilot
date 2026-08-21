@@ -25,13 +25,21 @@ operation ID and `creation.progress` is the reattach path after renderer or resp
 receives a local archive path or writes pack files.
 
 Connectivity projects the selected server's existing `NetworkConfiguration`, router mapping, exact
-Windows Firewall state, and outside-in verification as one read-only presentation snapshot. Allowed
-commands select Local/Home/Internet/Configure-later mode, run the existing router/firewall/verification
-actions, cancel them, stop sharing, and copy one explicitly named local, LAN, or verified-public
-address. Public copy is rejected unless outside-in evidence supplies the exact endpoint. Router and
-firewall mutation still require deliberate confirmation and remain owned by the native App/Agent path.
+Windows Firewall state, outside-in verification, and exact last-checked endpoint as one read-only
+presentation snapshot. Ordinary mode changes accept only Home/LAN or Internet; internal private and
+migration modes remain representable. Copy commands name local, LAN, current router-reported,
+last-checked, or independently verified Internet evidence. Only the independently verified form may
+be labelled confirmed. Router and firewall mutation still require deliberate confirmation and remain
+owned by the native App/Agent path.
 Ordinary workspace loads and connectivity actions publish the resulting snapshot without redundantly
 running the full Dashboard refresh first.
+
+Every `ServerSummary` carries its game kind separately from its detected Minecraft ecosystem. The
+central mapper exposes the Players capability for every Minecraft server, including Custom/Unknown
+imports, and excludes Terraria. `playerAccess` projects only the selected server's authoritative
+running state, allowlist state, moderation capabilities, and last access error. `players.addAllowlist`
+and `players.moderate` reuse the existing ViewModel/Agent moderation commands; React never edits access
+files or sends an unvalidated raw console command.
 
 `appearance.chooseIcon` opens the native file picker and returns a bounded PNG data URL plus a display filename, never a filesystem path. The browser produces a validated 64 x 64 PNG crop and sends it as an optional part of `settings.saveServer`; C# stages it under the isolated ChunkPilot data root and the Agent remains the sole owner of final `server-icon.png` installation. MOTD changes use the existing server-property save path. Version install, rollback, verify, and cancel requests delegate to the existing authoritative commands and preserve their native safety confirmations.
 

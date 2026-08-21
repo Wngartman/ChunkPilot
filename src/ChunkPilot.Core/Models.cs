@@ -300,6 +300,8 @@ public sealed record DashboardSnapshot
     public DateTimeOffset Timestamp { get; init; } = DateTimeOffset.UtcNow;
     public HostSnapshot Host { get; init; } = new();
     public IReadOnlyList<ServerSnapshot> Servers { get; init; } = [];
+    public IReadOnlyList<NetworkConfiguration> NetworkConfigurations { get; init; } = [];
+    public IReadOnlyList<RouterMappingRecord> RouterMappings { get; init; } = [];
     public IReadOnlyList<ActivityEntry> RecentActivity { get; init; } = [];
     public DateTimeOffset? NextScheduledTask { get; init; }
 }

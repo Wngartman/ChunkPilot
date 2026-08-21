@@ -74,6 +74,7 @@ internal sealed class WebUiSnapshotMapper
             },
             servers = viewModel.Servers.Select(server => MapServer(server, host, viewModel, selectedId)).ToArray(),
             connectivity = MapConnectivity(viewModel, selectedId),
+            playerAccess = MapPlayerAccess(viewModel, selectedId),
             console = viewModel.ConsoleLines.TakeLast(MaximumConsoleLines).Select(line => new
             {
                 sequence = line.Sequence,
@@ -265,6 +266,14 @@ internal sealed class WebUiSnapshotMapper
     private object MapServer(ServerSnapshot server, HostSnapshot host, MainViewModel viewModel, Guid? selectedId)
     {
         var isSelected = selectedId == server.Definition.Id;
+        var network = viewModel.Dashboard.NetworkConfigurations.FirstOrDefault(item =>
+            item.ServerId == server.Definition.Id);
+        var router = viewModel.Dashboard.RouterMappings.FirstOrDefault(item =>
+            item.ServerId == server.Definition.Id);
+        var networkMode = network?.Mode ??
+            VanillaNetworkingPreferencePolicy.ToNetworkMode(server.Definition.CreationNetworkingPreference);
+        if (router?.DirectInternetEnabled == true)
+            networkMode = NetworkMode.PortForwarding;
         var packSource = isSelected && viewModel.CurrentUpdateSource is
         {
             HasIdentifiedBaseline: true,
@@ -274,6 +283,17 @@ internal sealed class WebUiSnapshotMapper
             : null;
         var publicVerified = isSelected && viewModel.PublicAccessVerified &&
             viewModel.ExternalReachability.ServerId == server.Definition.Id;
+        var routerAddress = router is { RouterReportedExternalAddress.Length: > 0, ExternalPort: > 0 }
+            ? $"{router.RouterReportedExternalAddress}:{router.ExternalPort}"
+            : null;
+        var publicAddress = publicVerified ? viewModel.PublicAccessVerifiedEndpoint : routerAddress;
+        var publicAddressKind = publicVerified
+            ? "verified"
+            : routerAddress is null
+                ? null
+                : router?.HasActiveMapping == true
+                    ? "router"
+                    : "last";
         var content = packSource is not null ? "modpack" : server.Definition.Ecosystem switch
         {
             ServerEcosystem.Vanilla => "datapacks",
@@ -287,6 +307,7 @@ internal sealed class WebUiSnapshotMapper
             id = server.Definition.Id,
             name = server.Definition.Name,
             state = server.State.ToString(),
+            gameKind = server.Definition.GameKind.ToString(),
             ecosystem = server.Definition.Ecosystem.ToString(),
             minecraftVersion = server.Definition.MinecraftVersion,
             loaderVersion = string.IsNullOrWhiteSpace(server.Definition.LoaderVersion) ? null : server.Definition.LoaderVersion,
@@ -309,10 +330,13 @@ internal sealed class WebUiSnapshotMapper
             maximumMemoryBytes = (long)server.Definition.MaximumRamMb * 1024 * 1024,
             localAddress = $"localhost:{server.Definition.Port}",
             lanAddress = string.IsNullOrWhiteSpace(host.LanAddress) ? null : $"{host.LanAddress}:{server.Definition.Port}",
-            publicAddress = publicVerified ? viewModel.PublicAccessVerifiedEndpoint : null,
+            connectionMode = networkMode == NetworkMode.PortForwarding ? "PortForwarding" : "HomeNetwork",
+            publicAddress,
+            publicAddressKind,
+            publicAddressObservedAt = publicVerified ? viewModel.ExternalReachability.CheckedAt : router?.LastCheckedAt,
             publicReachability = publicVerified
                 ? "confirmed"
-                : isSelected && viewModel.SelectedNetworkMode == NetworkMode.PortForwarding
+                : networkMode == NetworkMode.PortForwarding
                     ? "not-confirmed"
                     : "unavailable",
             lastBackupAt = server.LastBackupAt,
@@ -363,13 +387,37 @@ internal sealed class WebUiSnapshotMapper
             capabilities = new
             {
                 console = true,
-                players = server.Definition.Ecosystem is not ServerEcosystem.Custom,
+                players = HasPlayersWorkspace(server.Definition),
                 files = true,
                 content,
                 versioning,
                 backups = true,
                 versions = true
             }
+        };
+    }
+
+    internal static bool HasPlayersWorkspace(ServerDefinition definition) =>
+        definition.GameKind == ServerGameKind.Minecraft;
+
+    private static object? MapPlayerAccess(MainViewModel viewModel, Guid? selectedId)
+    {
+        if (selectedId is null || viewModel.SelectedServer?.Definition is not { } definition ||
+            definition.Id != selectedId || !HasPlayersWorkspace(definition))
+            return null;
+
+        var capabilities = viewModel.SelectedCapabilities;
+        return new
+        {
+            serverId = selectedId,
+            serverRunning = viewModel.PlayerModerationAvailable,
+            whitelistEnabled = viewModel.WhitelistEnabled,
+            supportsAllowlist = capabilities?.SupportsLiveWhitelistCommands ?? false,
+            supportsOperators = capabilities?.SupportsOperators ?? false,
+            supportsPlayerBans = capabilities?.SupportsPlayerBans ?? false,
+            supportsIpBans = capabilities?.SupportsIpBans ?? false,
+            capabilityKnown = capabilities is not null,
+            error = string.IsNullOrWhiteSpace(viewModel.AccessErrorMessage) ? null : viewModel.AccessErrorMessage
         };
     }
 
@@ -396,6 +444,10 @@ internal sealed class WebUiSnapshotMapper
         var mode = viewModel.SelectedNetworkMode;
         var publicVerified = external.ServerId == selectedId && viewModel.PublicAccessVerified;
         var publicEndpoint = publicVerified ? viewModel.PublicAccessVerifiedEndpoint : null;
+        var lastKnownPublicEndpoint = external.ServerId == selectedId && external.CheckedAt is not null &&
+            external.CheckedEndpoint.PublicAddress.Length > 0 && external.CheckedEndpoint.ExternalPort > 0
+                ? $"{external.CheckedEndpoint.PublicAddress}:{external.CheckedEndpoint.ExternalPort}"
+                : null;
         var effectiveMode = mode == NetworkMode.PortForwarding ? NetworkMode.PortForwarding : NetworkMode.HomeNetwork;
         var modeTitle = effectiveMode == NetworkMode.PortForwarding ? "Internet hosting" : "LAN";
         var modeSummary = effectiveMode == NetworkMode.PortForwarding
@@ -418,7 +470,9 @@ internal sealed class WebUiSnapshotMapper
                 routerReported = router.ServerId == selectedId && router.HasRouterReportedAddress
                     ? router.RouterReportedEndpoint
                     : null,
-                publicVerifiedAt = publicVerified ? external.CheckedAt : null
+                publicVerifiedAt = publicVerified ? external.CheckedAt : null,
+                lastKnownPublic = lastKnownPublicEndpoint,
+                lastKnownPublicAt = lastKnownPublicEndpoint is null ? null : external.CheckedAt
             },
             router = new
             {

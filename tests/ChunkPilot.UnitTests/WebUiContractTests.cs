@@ -58,6 +58,26 @@ public sealed class WebUiContractTests
     }
 
     [Fact]
+    public void Players_workspace_follows_game_kind_not_detected_minecraft_ecosystem()
+    {
+        Assert.True(WebUiSnapshotMapper.HasPlayersWorkspace(new ServerDefinition
+        {
+            GameKind = ServerGameKind.Minecraft,
+            Ecosystem = ServerEcosystem.Custom
+        }));
+        Assert.True(WebUiSnapshotMapper.HasPlayersWorkspace(new ServerDefinition
+        {
+            GameKind = ServerGameKind.Minecraft,
+            Ecosystem = ServerEcosystem.Unknown
+        }));
+        Assert.False(WebUiSnapshotMapper.HasPlayersWorkspace(new ServerDefinition
+        {
+            GameKind = ServerGameKind.Terraria,
+            Ecosystem = ServerEcosystem.Custom
+        }));
+    }
+
+    [Fact]
     public void PresentationRefreshIsAdaptiveWithoutWeakeningActiveServerUpdates()
     {
         Assert.Equal(TimeSpan.FromSeconds(1), WebUiWindow.ActivePresentationRefreshInterval);
@@ -102,6 +122,7 @@ public sealed class WebUiContractTests
         Assert.True(WebUiMethodPolicy.IsAllowed("schedules.upsert"));
         Assert.True(WebUiMethodPolicy.IsAllowed("schedules.delete"));
         Assert.True(WebUiMethodPolicy.IsAllowed("appearance.chooseIcon"));
+        Assert.True(WebUiMethodPolicy.IsAllowed("players.addAllowlist"));
         Assert.True(WebUiMethodPolicy.IsAllowed("plugins.openFolder"));
         Assert.True(WebUiMethodPolicy.IsAllowed("plugins.configFiles"));
         Assert.True(WebUiMethodPolicy.IsAllowed("plugins.saveConfig"));

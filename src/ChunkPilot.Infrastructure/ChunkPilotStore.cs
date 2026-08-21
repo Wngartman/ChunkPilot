@@ -1246,6 +1246,23 @@ public sealed class ChunkPilotStore : IAsyncDisposable
         CancellationToken cancellationToken = default) =>
         GetServerJsonAsync<NetworkConfiguration>("network_configurations", serverId, cancellationToken);
 
+    public async Task<IReadOnlyList<NetworkConfiguration>> GetNetworkConfigurationsAsync(
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = await OpenAsync(cancellationToken).ConfigureAwait(false);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT json FROM network_configurations ORDER BY updated_utc";
+        var results = new List<NetworkConfiguration>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            var item = JsonSerializer.Deserialize<NetworkConfiguration>(reader.GetString(0), ProtocolJson.Options);
+            if (item is not null)
+                results.Add(item);
+        }
+        return results;
+    }
+
     /// <summary>
     /// Stores one server's Direct internet intent and the evidence needed to prove a router mapping is
     /// ChunkPilot's own.

@@ -141,14 +141,17 @@ interface, and policy evidence should remain progressively disclosed.
 **Acceptance outcome.** Current networking state and its primary action are easy to find while every
 truthfulness rule in [Networking](../operations/NETWORKING.md) remains intact.
 
-The server hero keeps **Share** visible and states Local only, LAN, Internet setup, verified
-joinability, or attention in plain language. Overview points directly to **Manage connectivity**. The
-WebUI Connectivity category starts with beginner Local only, LAN, Internet hosting, and Configure later choices while retaining private/internal state under advanced recovery paths, plus separate local, LAN, router-reported,
-and verified-public evidence; router, firewall and diagnostic internals remain progressively disclosed.
+The server hero keeps **Share** visible and states LAN, Internet setup, confirmed joinability, or
+attention in plain language. Overview points directly to **Manage connectivity**. The WebUI
+Connectivity category exposes only the ordinary **LAN** and **Internet** choices while retaining
+private/internal migration states under advanced recovery paths. A shared connection summary explains
+who should use the local, LAN, current Internet, or last-known Internet address. Router, firewall and
+diagnostic internals remain progressively disclosed.
 This change does not alter lease ownership, consent, router operations, firewall operations or public
 verification. When Internet is selected but not verified, Overview shows **Set up Internet access**
-instead of substituting localhost. The guided action reuses the authoritative firewall, router, and
-outside-in commands and retains each consent boundary.
+instead of substituting localhost. A router-reported address remains copyable while clearly labelled as
+still checking; only outside-in evidence produces **Connection confirmed**. The guided action reuses the
+authoritative firewall, router, and outside-in commands and retains each consent boundary.
 
 ---
 

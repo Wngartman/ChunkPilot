@@ -45,7 +45,7 @@ internal static class WebUiMethodPolicy
         "mods.install", "mods.plan", "mods.installPlan", "mods.setEnabled", "mods.remove", "mods.configFiles", "mods.saveConfig",
         "content.operations", "content.cancel",
         "modpacks.providers", "modpacks.versions", "modpacks.cache", "modpacks.search", "modpacks.resolveLink", "modpacks.image", "modpacks.chooseLocal",
-        "backups.create", "backups.restore", "backups.verify", "players.moderate",
+        "backups.create", "backups.restore", "backups.verify", "players.moderate", "players.addAllowlist",
         "schedules.upsert", "schedules.delete",
         "settings.saveGlobal", "settings.saveServer",
         "connectivity.copyAddress", "connectivity.open", "connectivity.setMode",

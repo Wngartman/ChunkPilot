@@ -30,6 +30,7 @@ export interface ServerSummary {
   id: string;
   name: string;
   state: ServerState;
+  gameKind: 'Minecraft' | 'Terraria';
   ecosystem: string;
   minecraftVersion: string;
   loaderVersion?: string;
@@ -51,7 +52,10 @@ export interface ServerSummary {
   maximumMemoryBytes: number;
   localAddress: string;
   lanAddress: string | null;
+  connectionMode: 'HomeNetwork' | 'PortForwarding';
   publicAddress: string | null;
+  publicAddressKind: 'verified' | 'router' | 'last' | null;
+  publicAddressObservedAt: string | null;
   publicReachability: 'confirmed' | 'not-confirmed' | 'unavailable';
   lastBackupAt: string | null;
   lastError: string | null;
@@ -190,6 +194,8 @@ export interface ConnectivitySnapshot {
     publicVerified: string | null;
     routerReported: string | null;
     publicVerifiedAt: string | null;
+    lastKnownPublic: string | null;
+    lastKnownPublicAt: string | null;
   };
   router: {
     phase: string;
@@ -291,6 +297,17 @@ export interface WebUiSnapshot {
   };
   servers: ServerSummary[];
   connectivity: ConnectivitySnapshot | null;
+  playerAccess: {
+    serverId: string;
+    serverRunning: boolean;
+    whitelistEnabled: boolean;
+    supportsAllowlist: boolean;
+    supportsOperators: boolean;
+    supportsPlayerBans: boolean;
+    supportsIpBans: boolean;
+    capabilityKnown: boolean;
+    error: string | null;
+  } | null;
   console: ConsoleEntry[];
   players: PlayerEntry[];
   files: FileEntry[];
@@ -338,7 +355,7 @@ export type BridgeMethod =
   | 'modpacks.providers' | 'modpacks.versions' | 'modpacks.cache' | 'modpacks.search' | 'modpacks.resolveLink' | 'modpacks.image' | 'modpacks.chooseLocal'
   | 'console.send' | 'workspace.load' | 'files.openFolder' | 'files.navigate' | 'files.read' | 'files.write'
   | 'backups.create' | 'backups.restore' | 'backups.verify'
-  | 'players.moderate' | 'schedules.upsert' | 'schedules.delete' | 'settings.saveGlobal' | 'settings.saveServer'
+  | 'players.moderate' | 'players.addAllowlist' | 'schedules.upsert' | 'schedules.delete' | 'settings.saveGlobal' | 'settings.saveServer'
   | 'connectivity.copyAddress' | 'connectivity.open' | 'connectivity.setMode'
   | 'connectivity.router.check' | 'connectivity.router.confirm' | 'connectivity.router.cancelConsent' | 'connectivity.router.stop' | 'connectivity.router.cancel' | 'connectivity.router.retry'
   | 'connectivity.external.check' | 'connectivity.external.cancel'
