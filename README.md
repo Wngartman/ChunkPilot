@@ -51,7 +51,7 @@ CurseForge project links and provider contracts are implemented, but live produc
 
 ## Data and privacy
 
-ChunkPilot is local-first: there is no required ChunkPilot account, no ads, and no telemetry. Server metadata, settings, recovery records, and logs remain on the PC. External requests occur only for the provider or reachability operation the user selects.
+ChunkPilot is local-first: there is no required ChunkPilot account, no ads, and no telemetry. Server metadata, settings, recovery records, and logs remain on the PC. Provider metadata and downloads run only for the selected workflow or an enabled update check. When the Players workspace shows an authoritative player UUID, ChunkPilot automatically asks Mojang's official profile and texture services for that player's head and keeps a bounded in-memory cache. Optional outside-in checks require an explicit action; no production ChunkPilot probe endpoint is compiled into this build. See the complete [network egress inventory](docs/security/NETWORK-EGRESS.md).
 
 Managed servers default to `%USERPROFILE%\ChunkPilot\Servers`; application state defaults to `%LOCALAPPDATA%\ChunkPilot`. Imported folders remain in place and are treated as external data unless the user deliberately creates a managed copy. Uninstall preserves server data by default.
 

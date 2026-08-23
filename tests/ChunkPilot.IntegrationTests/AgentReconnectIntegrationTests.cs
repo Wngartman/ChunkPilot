@@ -12,6 +12,87 @@ namespace ChunkPilot.IntegrationTests;
 public sealed class AgentReconnectIntegrationTests
 {
     [Fact(Timeout = 30_000)]
+    public async Task Agent_pipe_rejects_an_oversized_request_and_remains_responsive()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "ChunkPilot-pipe-size-" + Guid.NewGuid().ToString("N"));
+        var instanceId = Guid.NewGuid().ToString("N");
+        var pipeName = ChunkPilotConstants.PipeNameFor(instanceId);
+        Directory.CreateDirectory(root);
+
+        using var agent = StartAgent(root, instanceId);
+        try
+        {
+            await WaitForAgentAsync(pipeName);
+            var request = new AgentRequest
+            {
+                Operation = "Ping",
+                Payload = JsonSerializer.SerializeToElement(
+                    new { padding = new string('x', 300 * 1024) }, ProtocolJson.Options)
+            };
+
+            var response = await SendRawAsync(pipeName, JsonSerializer.Serialize(request, ProtocolJson.Options));
+
+            Assert.False(response.Success);
+            Assert.Contains("limit", response.Error, StringComparison.OrdinalIgnoreCase);
+            Assert.True((await SendAsync<OperationResult>(pipeName, "Ping")).Success);
+            Assert.True((await SendAsync<OperationResult>(pipeName, "ShutdownAgent")).Success);
+            await agent.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        }
+        finally
+        {
+            if (!agent.HasExited)
+            {
+                agent.Kill(entireProcessTree: true);
+                await agent.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+            }
+            await DeleteFixtureRootAsync(root);
+        }
+    }
+
+    [Fact(Timeout = 30_000)]
+    public async Task Agent_pipe_bounds_clients_that_connect_without_sending_a_request()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "ChunkPilot-pipe-clients-" + Guid.NewGuid().ToString("N"));
+        var instanceId = Guid.NewGuid().ToString("N");
+        var pipeName = ChunkPilotConstants.PipeNameFor(instanceId);
+        var clients = new List<NamedPipeClientStream>();
+        Directory.CreateDirectory(root);
+
+        using var agent = StartAgent(root, instanceId);
+        try
+        {
+            await WaitForAgentAsync(pipeName);
+            for (var index = 0; index < 16; index++)
+            {
+                var client = NewPipeClient(pipeName);
+                await client.ConnectAsync(1_000);
+                clients.Add(client);
+            }
+
+            using var overflow = NewPipeClient(pipeName);
+            await Assert.ThrowsAsync<TimeoutException>(() => overflow.ConnectAsync(300));
+
+            foreach (var client in clients)
+                client.Dispose();
+            clients.Clear();
+            await WaitForAgentAsync(pipeName);
+            Assert.True((await SendAsync<OperationResult>(pipeName, "ShutdownAgent")).Success);
+            await agent.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        }
+        finally
+        {
+            foreach (var client in clients)
+                client.Dispose();
+            if (!agent.HasExited)
+            {
+                agent.Kill(entireProcessTree: true);
+                await agent.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+            }
+            await DeleteFixtureRootAsync(root);
+        }
+    }
+
+    [Fact(Timeout = 30_000)]
     public async Task Agent_start_does_not_restore_stale_previous_running_state_without_autostart_policy()
     {
         var root = Path.Combine(Path.GetTempPath(), "ChunkPilot-no-stale-restore-" + Guid.NewGuid().ToString("N"));
@@ -742,6 +823,20 @@ public sealed class AgentReconnectIntegrationTests
             throw new InvalidOperationException(response.Error);
         return response.Payload!.Value.Deserialize<T>(ProtocolJson.Options)
                ?? throw new IOException("Invalid payload.");
+    }
+
+    private static NamedPipeClientStream NewPipeClient(string pipeName) => new(
+        ".", pipeName, PipeDirection.InOut, PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
+
+    private static async Task<AgentResponse> SendRawAsync(string pipeName, string request)
+    {
+        using var pipe = NewPipeClient(pipeName);
+        await pipe.ConnectAsync(1_000);
+        using var reader = new StreamReader(pipe, new UTF8Encoding(false), false, 65_536, leaveOpen: true);
+        await using var writer = new StreamWriter(pipe, new UTF8Encoding(false), 65_536, leaveOpen: true) { AutoFlush = true };
+        await writer.WriteLineAsync(request);
+        return JsonSerializer.Deserialize<AgentResponse>(await reader.ReadLineAsync() ?? "", ProtocolJson.Options)
+               ?? throw new IOException("Invalid response.");
     }
 
     private static async Task DeleteFixtureRootAsync(string root)

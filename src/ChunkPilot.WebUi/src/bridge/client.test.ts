@@ -88,6 +88,18 @@ describe('WebView bridge client', () => {
     bridge.dispose();
   });
 
+  it('does not send work when its cancellation signal is already aborted', async () => {
+    const native = host();
+    const bridge = new WebViewBridge();
+    const cancellation = new AbortController();
+    cancellation.abort();
+
+    await expect(bridge.request('snapshot.refresh', {}, cancellation.signal))
+      .rejects.toMatchObject({ code: 'cancelled' });
+    expect(native.sent).toEqual([]);
+    bridge.dispose();
+  });
+
   it('rejects pending work when the renderer is disposed', async () => {
     host();
     const bridge = new WebViewBridge();

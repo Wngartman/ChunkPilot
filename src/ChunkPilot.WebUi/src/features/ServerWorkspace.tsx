@@ -429,9 +429,29 @@ function PlayerIdentity({ serverId, player }: { serverId: string; player: Player
 function FilesPage({ server }: { server: ServerSummary }) {
   const snapshot = useAppStore(state => state.snapshot)!; const command = useAppStore(state => state.command); const [search, setSearch] = useState('');
   const [loaded, setLoaded] = useState<TextFileContent | null>(null); const [draft, setDraft] = useState(''); const [loading, setLoading] = useState('');
+  const readGeneration = useRef(0); const saveGeneration = useRef(0);
+  useEffect(() => () => { readGeneration.current += 1; saveGeneration.current += 1; }, []);
   const files = snapshot.files.filter(file => file.name.toLowerCase().includes(search.toLowerCase()));
-  const open = (file: (typeof files)[number]) => { setLoaded(null); setDraft(''); if (file.kind === 'folder') { void command('files.navigate', { serverId: server.id, relativePath: file.relativePath }); return; } if (file.kind !== 'editable') return; setLoading(file.relativePath); void command<TextFileContent>('files.read', { serverId: server.id, relativePath: file.relativePath }).then(value => { setLoaded(value); setDraft(value.content); }).finally(() => setLoading('')); };
-  const save = () => { if (!loaded || draft === loaded.content) return; void command('files.write', { serverId: server.id, file: { ...loaded, content: draft } }).then(() => setLoaded({ ...loaded, content: draft })); };
+  const open = (file: (typeof files)[number]) => {
+    const generation = ++readGeneration.current; saveGeneration.current += 1;
+    setLoaded(null); setDraft(''); setLoading('');
+    if (file.kind === 'folder') { void command('files.navigate', { serverId: server.id, relativePath: file.relativePath }); return; }
+    if (file.kind !== 'editable') return;
+    setLoading(file.relativePath);
+    void command<TextFileContent>('files.read', { serverId: server.id, relativePath: file.relativePath })
+      .then(value => { if (readGeneration.current === generation) { setLoaded(value); setDraft(value.content); } })
+      .catch(() => undefined)
+      .finally(() => { if (readGeneration.current === generation) setLoading(''); });
+  };
+  const save = () => {
+    if (!loaded || draft === loaded.content) return;
+    const file = loaded; const content = draft; const read = readGeneration.current; const save = ++saveGeneration.current;
+    void command('files.write', { serverId: server.id, file: { ...file, content } }).then(() => {
+      if (readGeneration.current !== read || saveGeneration.current !== save) return;
+      setLoaded(current => current?.relativePath === file.relativePath && current.loadedSha256 === file.loadedSha256
+        ? { ...current, content } : current);
+    }).catch(() => undefined);
+  };
   const parent = snapshot.currentFolder.includes('/') ? snapshot.currentFolder.slice(0, snapshot.currentFolder.lastIndexOf('/')) : '';
   return <div className={styles.fileLayout}><section className={styles.panel}><div className={styles.pathBar}><div className={page.actions}>{snapshot.currentFolder && <Button variant="subtle" onClick={() => void command('files.navigate', { serverId: server.id, relativePath: parent })}>Up</Button>}<code>{snapshot.currentFolder || 'Server folder'}</code></div><div className={page.actions}><SearchInput value={search} onChange={event => setSearch(event.target.value)} placeholder="Search files" aria-label="Search files" /><Button icon={<FolderOpen size={14} />} onClick={() => void command('servers.openFolder', { serverId: server.id })}>Explorer</Button></div></div>{files.length ? <table className={styles.table}><thead><tr><th>Name</th><th>Type</th><th>Size</th><th>Modified</th></tr></thead><tbody>{files.map(file => <tr key={file.relativePath} className={file.relativePath === loaded?.relativePath ? styles.selectedRow : undefined} onDoubleClick={() => open(file)}><td><button className={styles.fileButton} onClick={() => open(file)}><span className={page.identity}>{file.kind === 'folder' ? <Folder size={16} color="var(--cp-warning)" /> : <File size={16} />}<strong>{file.name}</strong></span></button></td><td>{file.kind === 'folder' ? 'Folder' : file.kind === 'editable' ? 'Editable text' : file.kind === 'too-large' ? 'Use Explorer' : 'Binary'}</td><td>{bytes(file.sizeBytes)}</td><td>{file.modifiedAt ? new Date(file.modifiedAt).toLocaleString() : 'Unavailable'}</td></tr>)}</tbody></table> : <EmptyState title="No files to show" detail="No safe file entries match this folder and search." />}</section><section className={styles.fileEditor}><PanelTitle title={loaded?.relativePath ?? (loading ? 'Loading file…' : 'Text editor')} meta={loaded ? `${loaded.encodingName}${loaded.hasBom ? ' · BOM' : ''}` : 'Select an editable text file'} />{loaded ? <><textarea aria-label={`Edit ${loaded.relativePath}`} value={draft} onChange={event => setDraft(event.target.value)} spellCheck={false} /><footer><span>{draft === loaded.content ? 'No unsaved changes' : 'Unsaved changes'}</span><div className={page.actions}><Button disabled={draft === loaded.content} onClick={() => setDraft(loaded.content)}>Discard</Button><Button variant="primary" disabled={draft === loaded.content} onClick={save}>Save file</Button></div></footer></> : <EmptyState title={loading ? 'Loading file' : 'No file selected'} detail="Choose a safe text file to inspect or edit. ChunkPilot confines changes to this server and writes them atomically." />}</section></div>;
 }

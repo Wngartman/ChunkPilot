@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Buffers;
 using System.Diagnostics;
 using System.IO.Pipes;
 using System.Runtime.InteropServices;
@@ -12,6 +13,8 @@ namespace ChunkPilot.Agent;
 
 public sealed class AgentPipeServer
 {
+    private const int MaximumInboundRequestBytes = 256 * 1024;
+    private static readonly TimeSpan RequestReadDeadline = TimeSpan.FromSeconds(5);
     private readonly ServerSupervisor supervisor;
     private readonly ChunkPilotStore store;
     private readonly ServerDetectionService detector;
@@ -131,25 +134,46 @@ public sealed class AgentPipeServer
         var sessionMonitor = MonitorUiSessionsAsync(cancellationToken);
         while (!cancellationToken.IsCancellationRequested)
         {
-            var pipe = new NamedPipeServerStream(
-                ChunkPilotConstants.PipeName,
-                PipeDirection.InOut,
-                NamedPipeServerStream.MaxAllowedServerInstances,
-                PipeTransmissionMode.Byte,
-                PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly,
-                64 * 1024,
-                64 * 1024);
             try
             {
+                // Acquire capacity before creating the next listening instance. A same-user client that
+                // connects and never sends a frame can therefore occupy at most this fixed set of pipes.
+                await handlerLimit.WaitAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+
+            NamedPipeServerStream? pipe = null;
+            try
+            {
+                pipe = new NamedPipeServerStream(
+                    ChunkPilotConstants.PipeName,
+                    PipeDirection.InOut,
+                    NamedPipeServerStream.MaxAllowedServerInstances,
+                    PipeTransmissionMode.Byte,
+                    PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly,
+                    64 * 1024,
+                    64 * 1024);
                 await pipe.WaitForConnectionAsync(cancellationToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
-                await pipe.DisposeAsync().ConfigureAwait(false);
+                if (pipe is not null)
+                    await pipe.DisposeAsync().ConfigureAwait(false);
+                handlerLimit.Release();
                 break;
             }
+            catch
+            {
+                if (pipe is not null)
+                    await pipe.DisposeAsync().ConfigureAwait(false);
+                handlerLimit.Release();
+                throw;
+            }
             var id = Interlocked.Increment(ref handlerId);
-            var task = HandleLimitedAsync(pipe, cancellationToken);
+            var task = HandleAcceptedAsync(pipe, cancellationToken);
             handlers[id] = task;
             _ = task.ContinueWith(completed => handlers.TryRemove(id, out _),
                 CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
@@ -200,12 +224,15 @@ public sealed class AgentPipeServer
         }
     }
 
-    private async Task HandleLimitedAsync(NamedPipeServerStream pipe, CancellationToken cancellationToken)
+    private async Task HandleAcceptedAsync(NamedPipeServerStream pipe, CancellationToken cancellationToken)
     {
-        await handlerLimit.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             await HandleAsync(pipe, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // Host shutdown cancels stalled readers so Agent exit never waits for a client frame.
         }
         catch (IOException exception)
         {
@@ -220,20 +247,28 @@ public sealed class AgentPipeServer
 
     private async Task HandleAsync(NamedPipeServerStream pipe, CancellationToken cancellationToken)
     {
-        using var reader = new StreamReader(pipe, new UTF8Encoding(false), detectEncodingFromByteOrderMarks: false,
-            bufferSize: 64 * 1024, leaveOpen: true);
         await using var writer = new StreamWriter(pipe, new UTF8Encoding(false), bufferSize: 64 * 1024, leaveOpen: true)
         {
             AutoFlush = true
         };
-        var line = await reader.ReadLineAsync(cancellationToken).ConfigureAwait(false);
-        if (string.IsNullOrWhiteSpace(line))
-            return;
-
         AgentRequest? request = null;
         AgentResponse response;
         try
         {
+            using var readDeadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            readDeadline.CancelAfter(RequestReadDeadline);
+            string? line;
+            try
+            {
+                line = await ReadBoundedRequestAsync(pipe, readDeadline.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                throw new TimeoutException("The Agent request was not completed within the local pipe read deadline.");
+            }
+            if (string.IsNullOrWhiteSpace(line))
+                return;
+
             request = JsonSerializer.Deserialize<AgentRequest>(line, ProtocolJson.Options)
                       ?? throw new JsonException("Request was empty.");
             var payload = await DispatchAsync(
@@ -256,6 +291,47 @@ public sealed class AgentPipeServer
             };
         }
         await writer.WriteLineAsync(JsonSerializer.Serialize(response, ProtocolJson.Options)).ConfigureAwait(false);
+    }
+
+    private static async Task<string?> ReadBoundedRequestAsync(
+        Stream input,
+        CancellationToken cancellationToken)
+    {
+        var rented = ArrayPool<byte>.Shared.Rent(8 * 1024);
+        try
+        {
+            using var request = new MemoryStream(capacity: 16 * 1024);
+            while (true)
+            {
+                var remainingWithSentinel = MaximumInboundRequestBytes - checked((int)request.Length) + 1;
+                var read = await input.ReadAsync(
+                    rented.AsMemory(0, Math.Min(rented.Length, remainingWithSentinel)), cancellationToken)
+                    .ConfigureAwait(false);
+                if (read == 0)
+                    break;
+
+                var newline = Array.IndexOf(rented, (byte)'\n', 0, read);
+                var count = newline >= 0 ? newline : read;
+                if (request.Length + count > MaximumInboundRequestBytes)
+                    throw new InvalidDataException(
+                        $"The Agent request exceeded the {MaximumInboundRequestBytes}-byte local pipe limit.");
+                request.Write(rented, 0, count);
+                if (newline >= 0)
+                    break;
+            }
+
+            if (request.Length == 0)
+                return null;
+            var bytes = request.ToArray();
+            var length = bytes.Length;
+            if (length > 0 && bytes[length - 1] == (byte)'\r')
+                length--;
+            return new UTF8Encoding(false, throwOnInvalidBytes: true).GetString(bytes, 0, length);
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(rented);
+        }
     }
 
     private async Task<JsonElement> DispatchAsync(

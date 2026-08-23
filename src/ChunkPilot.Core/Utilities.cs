@@ -37,7 +37,8 @@ public static partial class SecretRedactor
         if (string.IsNullOrEmpty(value))
             return value;
 
-        var result = KeyValueSecretRegex().Replace(value, "$1=<redacted>");
+        var result = KeyValueSecretRegex().Replace(value, "$1$2$3$4<redacted>");
+        result = BasicAuthorizationRegex().Replace(result, "$1 <redacted>");
         result = BearerRegex().Replace(result, "Bearer <redacted>");
         result = UriSecretRegex().Replace(result, "$1<redacted>");
         return result;
@@ -49,8 +50,11 @@ public static partial class SecretRedactor
             pair => SecretKeyRegex().IsMatch(pair.Key) ? "<redacted>" : Redact(pair.Value),
             StringComparer.OrdinalIgnoreCase);
 
-    [GeneratedRegex(@"(?i)\b(password|passwd|secret|token|api[_-]?key|rcon[_-]?password)\s*[:=]\s*([^\s;]+)")]
+    [GeneratedRegex(@"(?i)\b(password|passwd|secret|token|access[_-]?token|refresh[_-]?token|client[_-]?secret|api[_-]?key|rcon[_-]?password|credential)([""']?)(\s*[:=]\s*)([""']?)[^""'\s;,}\]]+")]
     private static partial Regex KeyValueSecretRegex();
+
+    [GeneratedRegex(@"(?i)\b(Authorization\s*:\s*Basic)\s+[A-Za-z0-9+/=_-]+")]
+    private static partial Regex BasicAuthorizationRegex();
 
     [GeneratedRegex(@"(?i)\bBearer\s+[A-Za-z0-9._~+/\-=]+")]
     private static partial Regex BearerRegex();

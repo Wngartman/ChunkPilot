@@ -99,12 +99,11 @@ public sealed partial class DiagnosticsService
             64 * 1024, FileOptions.Asynchronous);
         using var archive = new ZipArchive(stream, ZipArchiveMode.Create, leaveOpen: true);
         await AddTextAsync(archive, "launch.txt", BuildLaunchSummary(server), cancellationToken).ConfigureAwait(false);
-        await AddTextAsync(archive, "activity.json",
-            System.Text.Json.JsonSerializer.Serialize(activity, new System.Text.Json.JsonSerializerOptions(ProtocolJson.Options) { WriteIndented = true }),
-            cancellationToken).ConfigureAwait(false);
-        await AddTextAsync(archive, "inventory.json",
-            System.Text.Json.JsonSerializer.Serialize(jars.Inventory(server), new System.Text.Json.JsonSerializerOptions(ProtocolJson.Options) { WriteIndented = true }),
-            cancellationToken).ConfigureAwait(false);
+        var json = new System.Text.Json.JsonSerializerOptions(ProtocolJson.Options) { WriteIndented = true };
+        await AddTextAsync(archive, "activity.json", SecretRedactor.Redact(
+            System.Text.Json.JsonSerializer.Serialize(activity, json)), cancellationToken).ConfigureAwait(false);
+        await AddTextAsync(archive, "inventory.json", SecretRedactor.Redact(
+            System.Text.Json.JsonSerializer.Serialize(jars.Inventory(server), json)), cancellationToken).ConfigureAwait(false);
 
         foreach (var file in DiagnosticFiles(server.RootPath).Take(30))
         {

@@ -1,3 +1,4 @@
+using System.IO.Compression;
 using ChunkPilot.App;
 using ChunkPilot.Core;
 using ChunkPilot.Infrastructure;
@@ -6,6 +7,55 @@ namespace ChunkPilot.UnitTests;
 
 public sealed class TroubleshootingServiceTests
 {
+    [Fact]
+    public async Task Diagnostic_bundle_redacts_structured_activity_without_erasing_useful_context()
+    {
+        var testParent = Path.Combine(AppContext.BaseDirectory, "test-temp");
+        var root = Path.Combine(testParent, Guid.NewGuid().ToString("N"));
+        var serverRoot = Path.Combine(root, "server");
+        Directory.CreateDirectory(serverRoot);
+        try
+        {
+            var paths = new AppDataPaths(Path.Combine(root, "data"), Path.Combine(root, "managed"));
+            var files = new SafeFileService(paths);
+            var service = new DiagnosticsService(paths, new JarInventoryService(files, paths));
+            var server = new ServerDefinition
+            {
+                Id = Guid.NewGuid(),
+                Name = "Synthetic privacy fixture",
+                RootPath = serverRoot,
+                WorkingDirectory = serverRoot,
+                Executable = "java.exe"
+            };
+            var activity = new[]
+            {
+                new ActivityEntry
+                {
+                    ServerId = server.Id,
+                    ServerName = server.Name,
+                    Action = "Synthetic failure for FixturePlayer at 10.20.30.40",
+                    Result = "Failed",
+                    Error = "Authorization: Bearer activity-secret access_token=query-secret"
+                }
+            };
+
+            var bundle = await service.CreateDiagnosticBundleAsync(server, activity);
+            using var archive = ZipFile.OpenRead(bundle);
+            using var reader = new StreamReader(Assert.Single(archive.Entries, entry => entry.FullName == "activity.json").Open());
+            var json = await reader.ReadToEndAsync();
+
+            Assert.DoesNotContain("activity-secret", json, StringComparison.Ordinal);
+            Assert.DoesNotContain("query-secret", json, StringComparison.Ordinal);
+            Assert.Contains("FixturePlayer", json, StringComparison.Ordinal);
+            Assert.Contains("10.20.30.40", json, StringComparison.Ordinal);
+        }
+        finally
+        {
+            if (Directory.Exists(root) && Path.GetFullPath(root).StartsWith(Path.GetFullPath(testParent), StringComparison.OrdinalIgnoreCase))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
     [Fact]
     public void Startup_help_only_appears_for_an_attempt_that_never_reached_readiness()
     {

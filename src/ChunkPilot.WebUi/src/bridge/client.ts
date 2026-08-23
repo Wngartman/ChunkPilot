@@ -20,11 +20,13 @@ export class WebViewBridge {
 
   async request<T>(method: BridgeMethod, params: Record<string, unknown> = {}, signal?: AbortSignal): Promise<T> {
     if (!window.chrome?.webview) throw new BridgeError('backend_disconnected', 'The native ChunkPilot host is unavailable.');
+    if (signal?.aborted) throw new BridgeError('cancelled', 'The operation was cancelled.');
     const id = `web-${Date.now().toString(36)}-${++this.sequence}`;
     const message: BridgeRequest = { protocolVersion, id, method, params };
     return new Promise<T>((resolve, reject) => {
       const timer = window.setTimeout(() => {
         this.pending.delete(id);
+        signal?.removeEventListener('abort', abort);
         this.cancelNative(id);
         reject(new BridgeError('timeout', 'ChunkPilot did not answer in time.'));
       }, this.timeoutMs);

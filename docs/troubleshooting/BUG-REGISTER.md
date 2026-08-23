@@ -6,6 +6,72 @@ become the durable record and the entry can leave this active register.
 
 ---
 
+## CP-2026-038 — A pre-cancelled renderer request is still sent to the native host
+
+| Field | Value |
+|---|---|
+| Date | 2026-08-22 |
+| Severity | Medium — navigation cancellation can still start provider work and leave the renderer waiting for timeout |
+| Area | WebUI bridge cancellation |
+| Status | **Fixed locally** — pre-cancelled requests are rejected before allocation or native dispatch |
+| Validation | `client.test.ts`: pre-aborted signal sends zero bridge messages; active cancellation and late-response regressions remain green |
+
+`AbortSignal.addEventListener` does not invoke a newly added listener when its signal was already aborted.
+The bridge therefore posted work and left its promise pending until timeout. The request now checks the
+signal before allocating an ID, and timeout cleanup also removes the abort listener.
+
+---
+
+## CP-2026-037 — A late Files read can replace the newly selected file
+
+| Field | Value |
+|---|---|
+| Date | 2026-08-22 |
+| Severity | Medium — the editor can display content owned by a previous selection and invite a mistaken edit |
+| Area | WebUI Files workspace |
+| Status | **Fixed locally** — read/save generation fences bind results to the current file and baseline hash |
+| Validation | `ServerWorkspace.files.test.tsx`: delayed file A is ignored after file B is selected |
+
+The Files editor had no request generation. A slow read for the previous row could win after a faster read
+for the current row and replace the editor text. Reads and saves now capture a generation, file identity,
+and hash; late work is ignored, and unmount invalidates all pending results.
+
+---
+
+## CP-2026-036 — Structured diagnostic entries bypass credential redaction
+
+| Field | Value |
+|---|---|
+| Date | 2026-08-22 |
+| Severity | Critical — a locally exported support bundle could retain credentials present in structured activity data |
+| Area | Diagnostics / privacy boundary |
+| Status | **Fixed locally** — one redaction boundary covers text logs and serialized structured JSON |
+| Validation | Unit regressions prove Bearer, Basic, API-key, access/refresh token, client-secret, password, and credential removal while useful context remains |
+
+The bundle redacted launch and log text but wrote `activity.json` and `inventory.json` directly. The shared
+redactor also missed several common authorization forms. Structured JSON now passes through the same expanded
+redactor. Player names, UUIDs, addresses, paths, timestamps, and versions remain intentionally available for
+diagnosis, and the export UI truthfully asks the user to review the local bundle before sharing.
+
+---
+
+## CP-2026-035 — Same-user clients can hold unbounded Agent pipe connections
+
+| Field | Value |
+|---|---|
+| Date | 2026-08-22 |
+| Severity | Medium — a same-user local process can retain unbounded connected pipes or oversized request buffers |
+| Area | App-to-Agent named-pipe transport |
+| Status | **Fixed locally** — admission is capped before listening and every request has byte and time bounds |
+| Validation | Integration regressions reject a 300 KiB request, cap 16 stalled clients, and prove the Agent accepts a valid request afterward |
+
+The server limited concurrent handlers only after a pipe was connected, immediately created another listener,
+and used unbounded line reading with no read deadline. It now acquires the 16-client admission gate before
+creating a listener, accepts at most 256 KiB of strict UTF-8 input, applies a five-second read deadline, and
+continues serving valid same-user clients after rejection. `PipeOptions.CurrentUserOnly` remains enforced.
+
+---
+
 ## CP-2026-034 — Repository-local installer prerequisites fail on their default invocation
 
 | Field | Value |

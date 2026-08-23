@@ -52,6 +52,25 @@ public sealed class LifecycleAndUtilityTests
     }
 
     [Fact]
+    public void Secret_redaction_covers_authorization_and_query_credentials_but_retains_diagnostic_context()
+    {
+        var value = SecretRedactor.Redact(
+            "Authorization: Basic ZmFrZTpzZWNyZXQ= access_token=query-secret client_secret=client-secret " +
+            "player=FixturePlayer uuid=12345678-1234-1234-1234-1234567890ab ip=10.20.30.40 path=C:\\Fixture\\world " +
+            "{\"apiKey\":\"json-secret\",\"credential\":\"json-credential\"}");
+
+        Assert.DoesNotContain("ZmFrZTpzZWNyZXQ", value, StringComparison.Ordinal);
+        Assert.DoesNotContain("query-secret", value, StringComparison.Ordinal);
+        Assert.DoesNotContain("client-secret", value, StringComparison.Ordinal);
+        Assert.DoesNotContain("json-secret", value, StringComparison.Ordinal);
+        Assert.DoesNotContain("json-credential", value, StringComparison.Ordinal);
+        Assert.Contains("FixturePlayer", value, StringComparison.Ordinal);
+        Assert.Contains("12345678-1234-1234-1234-1234567890ab", value, StringComparison.Ordinal);
+        Assert.Contains("10.20.30.40", value, StringComparison.Ordinal);
+        Assert.Contains("C:\\Fixture\\world", value, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Statistics_downsampling_preserves_bounds_and_aggregates_real_values()
     {
         var samples = Enumerable.Range(0, 1_000).Select(index => new StatisticsSample

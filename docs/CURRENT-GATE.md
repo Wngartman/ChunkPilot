@@ -1,104 +1,87 @@
 # Current ChunkPilot Gate
 
-> Git and directly inspected runtime evidence override this file. This checkpoint may describe a candidate,
-> but it may not declare visual, hardware, installer, privilege, networking, or real-machine acceptance on
-> the user's behalf.
+> Git and directly inspected runtime evidence override this file. Correct stale state before proceeding.
+> Automated work may establish a Beta Candidate, but it may not declare real-machine, visual, installer,
+> privilege, router/firewall, outside-in, signing, or user acceptance on the user's behalf.
 
-## Repository State
+## Repository state
 
-- Worktree: isolated release-candidate checkout
-- Branch: `codex/world-import-ui-hardening`
-- Verified implementation checkpoints: `115491ce305af32b7fe809983506b44f3ac0d7c0` plus the Alpha 5 release-preparation commit reported at handoff
-- Base: public Alpha 4, `3bd0131fac16625ff006191c4493cfcfb53153f1`
-- Version: `1.3.0-alpha.5`; schema: `6` (unchanged; no migration)
-- Preservation stash: untouched
-- Publication: Alpha 5 candidate; push, tag, workflow, and public asset state are reported only after live verification
-- This checkpoint is committed as a metadata/tooling descendant. The final live HEAD is reported at
-  handoff because a commit cannot contain its own hash.
+- Isolated worktree: dedicated `temp/beta-readiness-hardening` checkout
+- Branch: `codex/beta-readiness-hardening`
+- Starting HEAD and ancestry: `7cea6e2f2365d5e582d82ed8c9aa7d5bbae5a763`, tracking exact `origin/main`
+- Public Alpha 5 tag: `v1.3.0-alpha.5` peels to `69efa222e1a20471c1cc959283d02c0731d6ae5a`
+- Version: `1.3.0-alpha.5`; database schema: `6`
+- Primary checkout, unrelated worktrees, installed release, and preservation stash are untouched.
+- Nothing from this audit is pushed, tagged, or published.
 
-## Current Gate
+## Current gate
 
-The bounded server-state, player-identity, networking-clarity, server-health, and offline-help candidate is
-implemented and passes the local automated, package, isolated-runtime, and visual gates. Broader 1.4 work
-remains blocked on manual user acceptance and the external checks listed below.
+Beta-readiness audit and hardening of the existing Minecraft product, with no new feature breadth until the
+reliability gate is understood. This document does not currently declare ChunkPilot a Beta Candidate.
 
-## Verified Outcome
+## Beta-candidate acceptance criteria
 
-- Server settings snapshots carry immutable server identity; stale native loads, late responses, dirty MOTD
-  drafts, and saves cannot cross a server-selection boundary.
-- Visible access-list language is consistently **Whitelist** while internal allowlist contracts remain stable.
-- Ordinary Internet setup is a three-step owned-state flow. Outside-in testing is an explicit Advanced,
-  point-in-time diagnostic and does not replace router/firewall ownership evidence.
-- Process, borderless window, Start-menu shortcut, desktop shortcut, embedded executable icon, and published
-  ICO use one `ChunkPilot.Desktop` identity. The published icon hash matches the nine-frame source ICO.
-- Player UUIDs survive the snapshot boundary. Official Mojang skin textures are host-allowlisted, bounded,
-  cached, cropped locally, and replaced by local initials when unavailable.
-- At most two server-health issues appear, only from authoritative crash/unresponsive or exact-owned network
-  failure evidence. Dismissals are fingerprinted and reversible from Help.
-- Settings includes 28 offline articles across 10 categories, exact-signature/alias search, stable deep links,
-  safe steps, stop conditions, related help, and user-invoked allowlisted primary sources.
-- Long server names cannot shrink their sidebar status indicator, and a server selection cannot render the
-  previous server's player or whitelist state while the new authoritative snapshot is loading.
-- Existing world folders and ZIPs are bounded, reviewed, revalidated, copied through managed transactional
-  staging, and never modified. Paper-style Nether and End siblings are carried with the main world.
-- Installed modpack identity, runtime requirements, update state, provider evidence, ownership boundaries,
-  recovery, and inventory destinations are visually distinct.
+- No known open reproducible Critical or High defect in the supported Minecraft core.
+- Automated suites, Release build, development package, packaged smoke, close/ownership smoke, audits, and
+  source hygiene checks pass.
+- No known data-safety regression, cross-server state leak, lifecycle deadlock, hidden telemetry/egress,
+  unexplained owned process, or unexplained measurable performance regression remains.
+- Major screens receive direct packaged visual/runtime inspection, and the registers remain truthful.
 
-## Final-Source Checks
+## VERIFIED evidence
 
-- Frontend: **passed** — 25 files, 143 tests; typecheck, lint, and Vite production build; 207 modules.
-- Native unit: **passed** — 1,337/1,337, zero skipped.
-- Native integration: **passed** — 349/349, zero skipped, sequential isolated fixtures.
-- Release build: **passed** — zero warnings and zero errors.
-- Feature development package: **passed** — targeted native/package contracts 38/38.
-- Self-contained win-x64: **passed** — App, Agent, firewall helper, WebUI, and `Assets\ChunkPilot.ico` present.
-- Installer compile: **passed** — Inno Setup 7.0.2; local unsigned validation artifact only; not installed.
-- `git diff --check`: **passed** — only expected LF-to-CRLF working-copy notices.
-- Migration: **skipped** — schema is unchanged.
+- The branch point, remote main, Alpha 5 tag identity, version metadata, and schema were directly inspected.
+- The branch began clean in a dedicated worktree; no user-owned work was reset, discarded, or merged.
+- The two commits after the Alpha 5 tag are release-verification/release-wrapper changes by Git inspection.
 
-## Runtime and Visual Evidence
+## REPORTED evidence
 
-- Normal packaged launch used isolated `CHUNKPILOT_DATA_ROOT` and
-  `CHUNKPILOT_MANAGED_SERVERS_ROOT`; the window appeared in 1,672 ms.
-- The visible packaged app loaded Help, matched `UnsupportedClassVersionError` to the Java runtime article,
-  and closed normally with no candidate App, Agent, or helper process left behind.
-- Native fixture captures passed for health, players, owned connectivity, and Help at 125% scaling.
-- Production WebUI inspection passed at 1440x1000 and 430x932 with no document-level horizontal overflow.
-  Player rows, health actions, and Help search/deep links remained usable at the compact width.
+- Alpha 5 reportedly passed 143 WebUI, 1,337 unit, 349 integration, and 15 packaged-Agent tests, Release
+  build, dependency/secret audits, clean extraction, install/upgrade/reinstall/uninstall, and persistence checks.
+- Recent server-state isolation, Players, Help, networking clarity, world upload, modpack UI, icon, and
+  debloat work is reported implemented. It remains subject to this branch's direct inspection and reruns.
 
-## Initial Failures Closed by This Pass
+## UNKNOWN/manual evidence
 
-- Initial focused WebUI run: 5 failures / 13 passes (settings isolation, old four-step connectivity, and three
-  visible access-list labels).
-- Initial package contract: missing explicit packaged `WebUiWindow` icon.
-- Expanded MOTD regression: unavailable-to-authoritative transition exposed a React hook-order violation.
-- Artifact inspection: MSBuild item metadata did not copy `Assets\ChunkPilot.ico`; an explicit publish target
-  now does so and the output hash is verified.
-- Clean prerequisite acquisition: both scripts resolved `$PSScriptRoot` too early and Inno help exit 1 was
-  treated as failure; default invocations now pass.
-- One MOTD assertion selected the visual editor while checking raw text, one build command used the wrong
-  WebUI path casing, and one spaced fixture argument was initially unquoted; these were harness/invocation
-  errors, not retained product defects.
+- Current local baseline and final suite results, packaged runtime behavior, visual/accessibility coverage,
+  performance, complete production egress inventory, and open-defect counts are not yet established.
+- Real router/firewall/outside-in behavior, real personal worlds/servers, signing, fresh-PC installation, and
+  user acceptance remain external/manual evidence.
 
-## Unknown or User Acceptance Required
+## Known bugs/friction
 
-- Fresh installation and taskbar/shortcut identity on the other Windows PC from the original report.
-- Real router, Windows Firewall elevation, public address, CGNAT/double-NAT, and outside-in behavior.
-- Live Mojang profile/texture availability and cache behavior under real player traffic.
-- Real server switching with user-authored MOTD data and real crash/network evidence.
-- Relative startup performance against a controlled pre-change baseline; only the candidate measurement is
-  available.
+- No new defect is recorded until it is reproduced. Existing authoritative bug and friction registers remain
+  in force and will not be erased.
+- Missing root product license and approval-gated CurseForge access remain decisions, not audit fixes.
 
-## User Acceptance
+## Current bounded unit
 
-```powershell
-Start-Process -FilePath '.\artifacts\self-contained-win-x64\ChunkPilot.exe'
-```
+Build the product-surface matrix; reproduce and fix all discovered Critical/High defects; fix only coherent,
+bounded Medium defects; document production egress; measure resource use; remove only proven waste; and run
+the proportional HighRisk development gate using synthetic fixtures.
 
-Confirm server A/B/C MOTD isolation, Whitelist copy, automatic owned connectivity state, taskbar identity,
-player-head fallbacks, evidence-backed issue cards, Help exact-error search, and normal close behavior.
+## Explicit non-goals
 
-## Next Gate
+No new games, loader breadth, cloud/network provider, account, telemetry, remote/mobile management, AI help,
+signing identity, installer technology, product license choice, real-server access, or public release work.
 
-Resume broader 1.4 Connectivity and maps work only after this candidate passes user acceptance. Do not claim
-fresh-machine install, external-network, live-skin, signed, pushed, tagged, or released status from this gate.
+## Stop conditions
+
+Stop a branch of work for unresolved product/security/ownership policy, unsafe access to excluded state, or
+two substantially different failed fixes. Any unfixed reproducible Critical/High defect blocks the verdict.
+
+## Required verification
+
+Targeted regressions; all frontend and .NET suites; typecheck/lint/build; Release build; self-contained package;
+packaged Agent/default-WebUI/normal-close smokes; dependency and secret audits; `git diff --check`; measured
+performance; direct packaged visual/runtime review; and installer checks only if packaging changes.
+
+## Manual acceptance still required
+
+User review of the resulting development build, a fresh-PC experience where needed, real networking and
+privilege behavior, real personal-server workflows, public signing, and any later public Beta authorization.
+
+## Next blocked roadmap step
+
+No feature breadth or public Beta declaration/release proceeds until this audit has a final verdict and the
+remaining user and real-machine acceptance gates are completed.

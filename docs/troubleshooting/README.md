@@ -9,4 +9,4 @@ Start with the in-app diagnostics and the server's **Console** and **Overview** 
 - [Windows Firewall access](../security/WINDOWS-FIREWALL-ACCESS.md)
 - [Backup safety](../operations/BACKUP-SAFETY.md)
 
-When reporting a problem, include the ChunkPilot version from **Settings → About**, the operation ID when shown, and a local diagnostic bundle. Do not attach worlds, server JARs, API keys, or other secrets.
+When reporting a problem, include the ChunkPilot version from **Settings → About**, the operation ID when shown, and a local diagnostic bundle. Bundles are created and stored locally. ChunkPilot redacts recognized passwords, API keys, authorization credentials, and tokens, but deliberately retains useful diagnostic context such as player names, UUIDs, IP addresses, and private file paths. Review the ZIP before sharing it. Do not attach worlds, server JARs, API keys, or other secrets.
