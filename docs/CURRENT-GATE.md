@@ -1,87 +1,112 @@
 # Current ChunkPilot Gate
 
-> Git and directly inspected runtime evidence override this file. Correct stale state before proceeding.
-> Automated work may establish a Beta Candidate, but it may not declare real-machine, visual, installer,
-> privilege, router/firewall, outside-in, signing, or user acceptance on the user's behalf.
+> Git and directly inspected runtime evidence override this file. Automated work can establish a Beta
+> Candidate; it cannot claim real router, firewall, signing, installer, personal-server, or user acceptance.
 
 ## Repository state
 
-- Isolated worktree: dedicated `temp/beta-readiness-hardening` checkout
-- Branch: `codex/beta-readiness-hardening`
-- Starting HEAD and ancestry: `7cea6e2f2365d5e582d82ed8c9aa7d5bbae5a763`, tracking exact `origin/main`
-- Public Alpha 5 tag: `v1.3.0-alpha.5` peels to `69efa222e1a20471c1cc959283d02c0731d6ae5a`
-- Version: `1.3.0-alpha.5`; database schema: `6`
-- Primary checkout, unrelated worktrees, installed release, and preservation stash are untouched.
-- Nothing from this audit is pushed, tagged, or published.
+- Branch: `codex/beta-readiness-hardening`, based directly on public `origin/main` at
+  `7cea6e2f2365d5e582d82ed8c9aa7d5bbae5a763`.
+- Product hardening commit: `6641c29ebf932ee58f4e07f209576fee8edc95d6`.
+- Final handoff HEAD: the documentation/copy commit containing this gate, directly descended from the
+  product commit. Its exact object ID is authoritative from `git rev-parse HEAD` and the final report;
+  a commit cannot embed its own object ID.
+- Public Alpha 5 tag: `v1.3.0-alpha.5`, peeling to
+  `69efa222e1a20471c1cc959283d02c0731d6ae5a`.
+- Version `1.3.0-alpha.5`; database schema `6`; no migration or packaging-identity change.
+- Primary checkout, unrelated worktrees, installed release, real server data, and preservation stash were
+  not modified. Nothing was pushed, tagged, or published.
 
 ## Current gate
 
-Beta-readiness audit and hardening of the existing Minecraft product, with no new feature breadth until the
-reliability gate is understood. This document does not currently declare ChunkPilot a Beta Candidate.
+**BETA CANDIDATE** for user acceptance. This is not a public Beta declaration or release.
 
 ## Beta-candidate acceptance criteria
 
-- No known open reproducible Critical or High defect in the supported Minecraft core.
-- Automated suites, Release build, development package, packaged smoke, close/ownership smoke, audits, and
-  source hygiene checks pass.
-- No known data-safety regression, cross-server state leak, lifecycle deadlock, hidden telemetry/egress,
-  unexplained owned process, or unexplained measurable performance regression remains.
-- Major screens receive direct packaged visual/runtime inspection, and the registers remain truthful.
+- Zero known open reproducible Critical or High product-code defects in the supported Minecraft core.
+- Full HighRisk suites and exact packaged App/Agent ownership smokes pass with no data-safety regression,
+  cross-server leak, lifecycle hang, hidden egress, or unexplained owned process.
+- Major UI surfaces, narrow/scale/accessibility states, dependency/secret posture, and resource use have
+  direct evidence. Registers and limitations remain truthful.
 
 ## VERIFIED evidence
 
-- The branch point, remote main, Alpha 5 tag identity, version metadata, and schema were directly inspected.
-- The branch began clean in a dedicated worktree; no user-owned work was reset, discarded, or merged.
-- The two commits after the Alpha 5 tag are release-verification/release-wrapper changes by Git inspection.
+- WebUI: 26 files / 145 tests, typecheck, lint, and 207-module production build passed.
+- .NET: 1,339 unit and 351 integration tests passed, zero failed/skipped; Release solution build completed
+  with zero warnings/errors; schema remained 6.
+- Self-contained win-x64 App, Agent, and Firewall Helper published. Packaged Agent self-test passed 15/15.
+  Exact committed bytes opened the default WebUI, accepted normal close in under 210 ms, stopped their exact
+  Agent, preserved an unrelated isolated Agent, left zero invisible UI/owned processes, and cleaned both roots.
+- Security: npm and NuGet audits found zero vulnerabilities. Gitleaks 8.30.1 scanned 48 reachable commits
+  with zero findings; 1,027 reachable blobs contained zero prohibited paths. CSP, trusted origin, bridge
+  allowlist/size bounds, session capability, DPAPI boundary, helper allowlist, and external-link policy were
+  inspected. `docs/security/NETWORK-EGRESS.md` records production Internet and local-network paths.
+- Four defects were reproduced before correction and now have regressions: CP-2026-035 through CP-2026-038.
+  The Critical diagnostic-export issue and all other new findings are fixed.
+- Visual/runtime: 54 deterministic packaged captures covered the major shell, creation, Vanilla, Paper,
+  modded/modpack, console, players, files, content, backup, version, settings, help, and connectivity surfaces.
+  Reviewed states included 920-wide long names, 1100x700, 1280-class, 1440x900, 125%, 150%, High Contrast,
+  and Reduced Motion. Keyboard focus visibly traversed navigation, Enter activated Servers, and Alt+F4 closed.
+- Performance used the same isolated package method, three launches, three-second warmup, and five-second
+  idle window before and after. Cold startup was 1,333.3 -> 1,350.7 ms; warm mean 1,361.9 -> 1,322.8 ms.
+  Mean App/Agent/WebView CPU was 0.716/0.176/0.670% -> 0.300/0.137/0.280%; combined working set
+  669.8 -> 640.3 MiB; App/Agent/WebView working set 195.9/59.8/405.0 -> 182.7/57.9/390.7 MiB.
+  Process/WebView/renderer counts remained 9/6/1. Mean close was 169.1 -> 200.6 ms, every run below 210 ms
+  with zero leftovers. The changes do not affect the idle loop, so lower CPU/I/O is treated as system noise,
+  not a claimed optimization; no material regression was observed.
+- Debloat: no tracked file/package passed the proof-of-death bar, so none was removed. The owned baseline
+  worktree and review profiles/captures recovered 977,325,406 bytes (about 932 MiB). Historical certification
+  evidence and reachable old icon blobs were intentionally retained.
 
 ## REPORTED evidence
 
-- Alpha 5 reportedly passed 143 WebUI, 1,337 unit, 349 integration, and 15 packaged-Agent tests, Release
-  build, dependency/secret audits, clean extraction, install/upgrade/reinstall/uninstall, and persistence checks.
-- Recent server-state isolation, Players, Help, networking clarity, world upload, modpack UI, icon, and
-  debloat work is reported implemented. It remains subject to this branch's direct inspection and reruns.
+Alpha 5's installer lifecycle, Alpha 4 upgrade, clean extraction, and prior exact compatibility campaigns
+remain release evidence from the accepted public snapshot; they were not rerun as if this were a release.
 
 ## UNKNOWN/manual evidence
 
-- Current local baseline and final suite results, packaged runtime behavior, visual/accessibility coverage,
-  performance, complete production egress inventory, and open-defect counts are not yet established.
-- Real router/firewall/outside-in behavior, real personal worlds/servers, signing, fresh-PC installation, and
-  user acceptance remain external/manual evidence.
+- Real Windows Firewall elevation, the actual router, PCP/NAT-PMP/UPnP, CGNAT/double NAT, NAT loopback,
+  outside-home Minecraft, task-kill behavior, and personal servers/worlds were deliberately not touched.
+- Fresh second-PC install/upgrade experience, unsigned SmartScreen UX, public signing, CurseForge approval,
+  and user visual/workflow acceptance remain external.
+- No new live provider compatibility campaign was run; deterministic provider/failure fixtures and existing
+  exact certification evidence were used.
 
 ## Known bugs/friction
 
-- No new defect is recorded until it is reproduced. Existing authoritative bug and friction registers remain
-  in force and will not be erased.
-- Missing root product license and approval-gated CurseForge access remain decisions, not audit fixes.
+- Critical blockers: 0. High product-code blockers: 0.
+- Medium: CP-2026-001 remains open and isolated; unsupported Minecraft 26.x gamerules are shown as unavailable
+  and Console remains the documented workaround.
+- External/manual: CP-2026-020 remains register-open until real Windows/network close and task-kill acceptance,
+  despite its implementation and automated ownership/close evidence passing here.
+- CurseForge live access and the missing root source-license decision remain explicit non-defect decisions.
 
 ## Current bounded unit
 
-Build the product-surface matrix; reproduce and fix all discovered Critical/High defects; fix only coherent,
-bounded Medium defects; document production egress; measure resource use; remove only proven waste; and run
-the proportional HighRisk development gate using synthetic fixtures.
+Completed: beta-readiness hardening of existing functionality only. No feature breadth was added.
 
 ## Explicit non-goals
 
-No new games, loader breadth, cloud/network provider, account, telemetry, remote/mobile management, AI help,
-signing identity, installer technology, product license choice, real-server access, or public release work.
+No new game/loader/provider, cloud service, account, telemetry, remote/mobile management, AI help, signing
+identity, installer technology, product-license choice, real-server access, or public release work.
 
 ## Stop conditions
 
-Stop a branch of work for unresolved product/security/ownership policy, unsafe access to excluded state, or
-two substantially different failed fixes. Any unfixed reproducible Critical/High defect blocks the verdict.
+Any newly reproduced Critical/High defect, data-safety uncertainty, ownership-policy ambiguity, or unexplained
+owned process/performance regression reopens this gate and changes the verdict to **NOT BETA READY**.
 
 ## Required verification
 
-Targeted regressions; all frontend and .NET suites; typecheck/lint/build; Release build; self-contained package;
-packaged Agent/default-WebUI/normal-close smokes; dependency and secret audits; `git diff --check`; measured
-performance; direct packaged visual/runtime review; and installer checks only if packaging changes.
+Passed: targeted regressions, full frontend/.NET HighRisk suites, Release build, self-contained publish,
+packaged Agent/default-WebUI/normal-close smokes, audits, diff hygiene, performance, and packaged visual/runtime
+review. Repository-wide `dotnet format --verify-no-changes` remains unavailable as a clean gate because 38
+pre-existing files have unrelated whitespace drift; no mass formatting was performed.
 
 ## Manual acceptance still required
 
-User review of the resulting development build, a fresh-PC experience where needed, real networking and
-privilege behavior, real personal-server workflows, public signing, and any later public Beta authorization.
+User review of the development build, real-machine networking/privilege checks, fresh-PC experience, personal
+server workflows, public signing, and explicit authorization before any Beta publication.
 
 ## Next blocked roadmap step
 
-No feature breadth or public Beta declaration/release proceeds until this audit has a final verdict and the
-remaining user and real-machine acceptance gates are completed.
+User acceptance and real-machine connectivity acceptance before any public Beta declaration/release.

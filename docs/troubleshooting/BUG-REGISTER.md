@@ -13,7 +13,8 @@ become the durable record and the entry can leave this active register.
 | Date | 2026-08-22 |
 | Severity | Medium — navigation cancellation can still start provider work and leave the renderer waiting for timeout |
 | Area | WebUI bridge cancellation |
-| Status | **Fixed locally** — pre-cancelled requests are rejected before allocation or native dispatch |
+| Status | **Fixed** — pre-cancelled requests are rejected before allocation or native dispatch |
+| Fixed commit | `6641c29ebf932ee58f4e07f209576fee8edc95d6` |
 | Validation | `client.test.ts`: pre-aborted signal sends zero bridge messages; active cancellation and late-response regressions remain green |
 
 `AbortSignal.addEventListener` does not invoke a newly added listener when its signal was already aborted.
@@ -29,7 +30,8 @@ signal before allocating an ID, and timeout cleanup also removes the abort liste
 | Date | 2026-08-22 |
 | Severity | Medium — the editor can display content owned by a previous selection and invite a mistaken edit |
 | Area | WebUI Files workspace |
-| Status | **Fixed locally** — read/save generation fences bind results to the current file and baseline hash |
+| Status | **Fixed** — read/save generation fences bind results to the current file and baseline hash |
+| Fixed commit | `6641c29ebf932ee58f4e07f209576fee8edc95d6` |
 | Validation | `ServerWorkspace.files.test.tsx`: delayed file A is ignored after file B is selected |
 
 The Files editor had no request generation. A slow read for the previous row could win after a faster read
@@ -45,7 +47,8 @@ and hash; late work is ignored, and unmount invalidates all pending results.
 | Date | 2026-08-22 |
 | Severity | Critical — a locally exported support bundle could retain credentials present in structured activity data |
 | Area | Diagnostics / privacy boundary |
-| Status | **Fixed locally** — one redaction boundary covers text logs and serialized structured JSON |
+| Status | **Fixed** — one redaction boundary covers text logs and serialized structured JSON |
+| Fixed commit | `6641c29ebf932ee58f4e07f209576fee8edc95d6` |
 | Validation | Unit regressions prove Bearer, Basic, API-key, access/refresh token, client-secret, password, and credential removal while useful context remains |
 
 The bundle redacted launch and log text but wrote `activity.json` and `inventory.json` directly. The shared
@@ -62,7 +65,8 @@ diagnosis, and the export UI truthfully asks the user to review the local bundle
 | Date | 2026-08-22 |
 | Severity | Medium — a same-user local process can retain unbounded connected pipes or oversized request buffers |
 | Area | App-to-Agent named-pipe transport |
-| Status | **Fixed locally** — admission is capped before listening and every request has byte and time bounds |
+| Status | **Fixed** — admission is capped before listening and every request has byte and time bounds |
+| Fixed commit | `6641c29ebf932ee58f4e07f209576fee8edc95d6` |
 | Validation | Integration regressions reject a 300 KiB request, cap 16 stalled clients, and prove the Agent accepts a valid request afterward |
 
 The server limited concurrent handlers only after a pipe was connected, immediately created another listener,
