@@ -20,9 +20,13 @@ public sealed partial class MainViewModel : ObservableObject
     private readonly IFolderLauncher folderLauncher;
     private bool loadingDetails;
     private Guid? detailsServerId;
+    private Guid? loadedDetailsServerId;
+    private bool reloadDetailsRequested;
     private readonly ConsoleFollowState consoleFollow = new();
     private long consoleClearedThroughSequence;
     private Guid? lastSelectedServerId;
+
+    internal Guid? WebUiDetailsServerId => loadedDetailsServerId;
     private TroubleshootingReport currentTroubleshootingReport = new();
     private readonly Dictionary<Guid, PublicConnectivityLeaseIdentity> publicConnectivityLeases = [];
     private UiSessionCredential uiSession = new();
@@ -809,6 +813,9 @@ public sealed partial class MainViewModel : ObservableObject
         CurrentTroubleshootingReport = TroubleshootingService.Analyze(value);
         if (value is null)
         {
+            detailsServerId = null;
+            loadedDetailsServerId = null;
+            reloadDetailsRequested = false;
             Navigation.IsServerWorkspaceActive = false;
             return;
         }
@@ -828,6 +835,9 @@ public sealed partial class MainViewModel : ObservableObject
         if (detailsServerId != value.Definition.Id)
         {
             detailsServerId = value.Definition.Id;
+            loadedDetailsServerId = null;
+            reloadDetailsRequested = true;
+            ResetUnstampedServerDetails();
             // Editable fields are filled from the definition when the workspace opens, and never
             // again from a refresh. Refresh runs every second, so re-assigning them there overwrote
             // whatever the user was in the middle of typing on the Settings page.
@@ -842,6 +852,32 @@ public sealed partial class MainViewModel : ObservableObject
             _ = LoadServerDetailsAsync();
         }
         SyncPlayerAccessStamp(value);
+    }
+
+    /// <summary>
+    /// Clears detail models that do not carry a server ID before a different server can be loaded.
+    /// The WebUI keeps its own bounded, ID-keyed presentation cache, so this does not create a warm
+    /// navigation flash. It does prevent a failed detail request from exposing another server's data.
+    /// </summary>
+    private void ResetUnstampedServerDetails()
+    {
+        FileEntries.Clear();
+        CurrentFolder = "";
+        Inventory.Clear();
+        Diagnostics.Clear();
+        Worlds.Clear();
+        OnPropertyChanged(nameof(HasWorlds));
+        AutomationRecipes.Clear();
+        AutomationTemplates.Clear();
+        Datapacks.Clear();
+        Gamerules.Clear();
+        GamerulesAvailable = false;
+        GameruleUnavailableReason = "";
+        SelectedCapabilities = null;
+        SelectedCrossplayConfiguration = new CrossplayConfiguration();
+        SetResourcePackFields(new ResourcePackConfiguration());
+        ResetPlayerAccessForServerSwitch();
+        ResetUpdateDetailsForServerSwitch();
     }
 
     [RelayCommand]
@@ -2036,27 +2072,49 @@ public sealed partial class MainViewModel : ObservableObject
 
     private async Task LoadServerDetailsAsync()
     {
-        if (SelectedServer is null || loadingDetails)
+        if (SelectedServer is null)
             return;
+        if (loadingDetails)
+        {
+            reloadDetailsRequested = true;
+            return;
+        }
         loadingDetails = true;
         try
         {
-            SelectedCapabilities = await client.SendAsync<ServerCapabilityProfile>(
-                "GetCapabilities", new ServerIdRequest(SelectedServer.Definition.Id)).ConfigureAwait(true);
-            var network = await client.SendAsync<NetworkConfiguration>(
-                "GetNetworkConfiguration", new ServerIdRequest(SelectedServer.Definition.Id)).ConfigureAwait(true);
-            SelectedNetworkMode = network.Mode;
-            ShowsDirectInternetConsent = false;
-            await Task.WhenAll(LoadBackupsAsync(), LoadSchedulesAsync(), LoadFilesCoreAsync(""),
-                LoadInventoryAsync(), LoadDiagnosticsAsync(), LoadPropertiesAsync(), LoadWorldsAsync(),
-                LoadPlayerAccessAsync(), LoadGamerulesAsync(), LoadUpdateDetailsAsync(), LoadAutomationAsync(),
-                LoadCrossplayAsync(), LoadDatapacksAsync(), LoadResourcePackAsync(), LoadRouterMappingAsync(),
-                LoadFirewallAccessAsync(), LoadExternalReachabilityAsync())
-                .ConfigureAwait(true);
-        }
-        catch (Exception exception)
-        {
-            StatusMessage = $"Some server details are unavailable: {exception.Message}";
+            do
+            {
+                reloadDetailsRequested = false;
+                var targetId = SelectedServer?.Definition.Id;
+                if (targetId is null)
+                    break;
+                loadedDetailsServerId = null;
+                try
+                {
+                    SelectedCapabilities = await client.SendAsync<ServerCapabilityProfile>(
+                        "GetCapabilities", new ServerIdRequest(targetId.Value)).ConfigureAwait(true);
+                    var network = await client.SendAsync<NetworkConfiguration>(
+                        "GetNetworkConfiguration", new ServerIdRequest(targetId.Value)).ConfigureAwait(true);
+                    SelectedNetworkMode = network.Mode;
+                    ShowsDirectInternetConsent = false;
+                    await Task.WhenAll(LoadBackupsAsync(), LoadSchedulesAsync(), LoadFilesCoreAsync(""),
+                        LoadInventoryAsync(), LoadDiagnosticsAsync(), LoadPropertiesAsync(), LoadWorldsAsync(),
+                        LoadPlayerAccessAsync(), LoadGamerulesAsync(), LoadUpdateDetailsAsync(), LoadAutomationAsync(),
+                        LoadCrossplayAsync(), LoadDatapacksAsync(), LoadResourcePackAsync(), LoadRouterMappingAsync(),
+                        LoadFirewallAccessAsync(), LoadExternalReachabilityAsync())
+                        .ConfigureAwait(true);
+                }
+                catch (Exception exception)
+                {
+                    StatusMessage = $"Some server details are unavailable: {exception.Message}";
+                }
+
+                if (!reloadDetailsRequested && SelectedServer?.Definition.Id == targetId)
+                    loadedDetailsServerId = targetId;
+                else if (SelectedServer is not null)
+                    reloadDetailsRequested = true;
+            }
+            while (reloadDetailsRequested);
         }
         finally
         {

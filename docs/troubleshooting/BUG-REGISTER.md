@@ -6,6 +6,40 @@ become the durable record and the entry can leave this active register.
 
 ---
 
+## CP-2026-039 — Server selection discards its immediate snapshot and waits behind unrelated detail work
+
+| Field | Value |
+|---|---|
+| Date | 2026-08-27 |
+| Severity | High — ordinary server navigation can block for roughly ten seconds while a prior server's unstamped details remain in memory |
+| Area | Native/WebUI server selection, async identity isolation, presentation cache |
+| Status | **Fixed locally** — immediate authoritative response, native loading/ready identity fence, and bounded exact-ID workspace cache |
+| Fixed commit | Gate 1 commit `Make server switching immediate and isolated` |
+| Validation | Native selection-fence regression; direct-response, duplicate-name, cached A/B isolation, loading preservation, out-of-order rapid-selection, and 8-entry LRU regressions; 30 warm, 10 cold, 20 rapid measurement |
+
+The native bridge already returned a snapshot synchronously from `snapshot.selectServer`, but the renderer
+discarded it and waited for a periodic presentation event. That refresh can include Agent dashboard and
+local connectivity work, explaining the user-reported full-page `Opening <server>` delay without any fixed
+ten-second renderer timer. Applying the response alone was unsafe: native detail collections do not all
+carry server IDs, and the one global detail loader could still be finishing the previous selection.
+
+Selection now applies its returned snapshot immediately. A native `Loading`/`Ready` fence exposes unstamped
+details only after the newest selected server's serialized pass finishes; changing identity clears those
+native models so a failed section cannot reveal prior data. The renderer keeps at most eight ready snapshots
+by exact server ID and may show that server's cached workspace while the native model refreshes. Cold opens
+show the new header/navigation immediately and delay the page-local loading state by 150 ms. Selection itself
+performs no provider request.
+
+Measured store/presentation boundary during the full WebUI suite on the Release test host: cached warm p50
+`0.001 ms`, p95 `0.009 ms`, max `0.049 ms`; cold authoritative acknowledgement p50 `0.308 ms`, p95/max
+`0.499 ms`; 20 reverse-completed rapid requests settled in `5.735 ms`, with 30 native selection requests
+and zero provider requests. These
+are deterministic in-process boundary measurements, not a claim about end-user compositor latency. The
+pre-fix wall-time baseline remains the user's roughly ten-second report; the deterministic reproduction is
+that the immediate native result was discarded.
+
+---
+
 ## CP-2026-038 — A pre-cancelled renderer request is still sent to the native host
 
 | Field | Value |

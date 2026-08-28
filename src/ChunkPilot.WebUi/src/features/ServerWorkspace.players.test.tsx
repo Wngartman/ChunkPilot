@@ -46,13 +46,15 @@ describe('Minecraft players workspace', () => {
 
     render(<NavigationGuardProvider><ServerWorkspace serverId={next.id} /></NavigationGuardProvider>);
 
-    expect(screen.getByRole('status').textContent).toContain('Opening Server B');
+    expect(screen.getByRole('heading', { name: 'Server B' })).toBeTruthy();
+    expect(screen.queryByText('Opening Server B')).toBeNull();
     expect(screen.queryByText('PreviousServerPlayer')).toBeNull();
     expect(calls.some(call => call.method === 'workspace.load' && call.params.serverId === next.id)).toBe(false);
 
     const authoritative = structuredClone(current);
     authoritative.revision += 1;
     authoritative.selectedServerId = next.id;
+    authoritative.workspace = { serverId: next.id, state: 'Ready' };
     authoritative.playerAccess = { ...authoritative.playerAccess!, serverId: next.id };
     authoritative.players = [{ ...authoritative.players[0], name: 'ServerBPlayer' }];
     act(() => useAppStore.getState().applySnapshot(authoritative));

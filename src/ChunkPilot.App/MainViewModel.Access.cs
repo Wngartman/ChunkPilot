@@ -256,6 +256,27 @@ public sealed partial class MainViewModel
         SyncOnlinePlayerRows();
     }
 
+    private void ResetPlayerAccessForServerSwitch()
+    {
+        foreach (var row in PlayerRows)
+            row.PropertyChanged -= PlayerRow_PropertyChanged;
+        PlayerRows.Clear();
+        OnlinePlayerRows.Clear();
+        BannedRows.Clear();
+        loadedPlayerAccessStamp = "";
+        KnownPlayerCount = 0;
+        OnlinePlayerCount = 0;
+        WhitelistEnabled = false;
+        PlayerModerationAvailable = false;
+        AccessErrorMessage = "";
+        OnPropertyChanged(nameof(HasPlayerRows));
+        OnPropertyChanged(nameof(HasOnlinePlayerRows));
+        OnPropertyChanged(nameof(FilteredOnlinePlayerRows));
+        OnPropertyChanged(nameof(HasFilteredOnlinePlayerRows));
+        OnPropertyChanged(nameof(ShowsOnlinePlayerSearchEmpty));
+        NotifyOnlinePlayerSelectionState();
+    }
+
     /// <summary>Keeps Overview on the same row instances and commands as the full Access page.</summary>
     private void SyncOnlinePlayerRows()
     {

@@ -300,6 +300,10 @@ export interface WebUiSnapshot {
     defaultUi: string;
   };
   selectedServerId: string | null;
+  workspace: {
+    serverId: string;
+    state: 'Loading' | 'Ready';
+  } | null;
   operation: { method: string; serverId: string | null; message: string } | null;
   statusMessage: string | null;
   host: {

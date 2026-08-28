@@ -130,6 +130,7 @@ function snapshot(servers: ServerSummary[]): WebUiSnapshot {
     appVersion: '1.3.0',
     build: { productVersion: '1.3.0-alpha.5+fixture', releaseTag: 'v1.3.0-alpha.5', gitSha: 'fixture', buildTimestampUtc: '2026-08-21T00:00:00Z', schemaVersion: '6', architecture: 'x64', defaultUi: 'WebUI' },
     selectedServerId: selected?.id ?? null,
+    workspace: selected ? { serverId: selected.id, state: 'Ready' as const } : null,
     operation: null,
     statusMessage: null,
     host: { cpuPercent: 31.6, usedMemoryBytes: 21.3 * gib, totalMemoryBytes: 64 * gib, freeDiskBytes: 612 * gib, totalDiskBytes: 1.81 * 1024 * gib, cpuModel: 'AMD Ryzen 9 7950X3D' },

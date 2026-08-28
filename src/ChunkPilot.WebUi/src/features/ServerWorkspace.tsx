@@ -90,6 +90,13 @@ export function ServerWorkspace({ serverId, onOpenHelp = () => undefined }: { se
   const navigate = useGuardedNavigation();
   const server = snapshot.servers.find(item => item.id === serverId);
   const scopedSnapshotReady = Boolean(server && snapshot.selectedServerId === server.id);
+  const detailsReady = Boolean(server && snapshot.workspace?.serverId === server.id && snapshot.workspace.state === 'Ready');
+  const [showColdOpening, setShowColdOpening] = useState(false);
+  useEffect(() => {
+    if (scopedSnapshotReady) { setShowColdOpening(false); return; }
+    const timer = window.setTimeout(() => setShowColdOpening(true), 150);
+    return () => window.clearTimeout(timer);
+  }, [server?.id, scopedSnapshotReady]);
   useEffect(() => { if (server && scopedSnapshotReady) void command('workspace.load', { serverId: server.id, destination: tab }).catch(() => undefined); }, [tab, server?.id, scopedSnapshotReady]);
   if (!server) return null;
   const tabs: { id: Tab; label: string; icon: typeof ServerIcon; enabled: boolean }[] = [
@@ -132,15 +139,16 @@ export function ServerWorkspace({ serverId, onOpenHelp = () => undefined }: { se
       <nav className={styles.tabs} aria-label={`${server.name} navigation`}>{tabs.filter(item => item.enabled).map(item => <button className={styles.tab} key={item.id} data-selected={tab === item.id} aria-current={tab === item.id ? 'page' : undefined} onClick={() => navigate(() => runMeasuredNavigation(`server-tab-${item.id}`, () => { setMenuOpen(false); setTab(item.id); }))}><item.icon size={14} />{item.label}</button>)}</nav>
     </section>
     <div className={styles.content}>
-      {!scopedSnapshotReady ? <section className={styles.panel} role="status"><EmptyState title={`Opening ${server.name}`} detail="Waiting for authoritative data from this server. Previous server details are not carried across the switch." /></section> : <>
+      {!scopedSnapshotReady ? (showColdOpening ? <section className={styles.panel} role="status"><EmptyState title={`Opening ${server.name}`} detail="Waiting for authoritative data from this server. Previous server details are not carried across the switch." /></section> : <div className={styles.selectionPlaceholder} aria-hidden="true" />) : <>
+        {!detailsReady && <div className={styles.sectionLoading} role="status">Refreshing this server's remaining details in the background…</div>}
         {tab === 'overview' && <Overview server={server} onTab={setTab} onSettings={openSettings} onOpenHelp={onOpenHelp} />}
-        {tab === 'console' && <ConsolePage server={server} />}
-        {tab === 'players' && <PlayersPage server={server} />}
-        {tab === 'files' && <FilesPage server={server} />}
-        {tab === 'content' && <ContentPage server={server} />}
-        {tab === 'backups' && <BackupsPage server={server} />}
-        {tab === 'versions' && <VersionsPage server={server} />}
-        {tab === 'settings' && <ServerSettingsPage key={server.id} server={server} initialCategory={settingsCategory} />}
+        {detailsReady && tab === 'console' && <ConsolePage server={server} />}
+        {detailsReady && tab === 'players' && <PlayersPage server={server} />}
+        {detailsReady && tab === 'files' && <FilesPage server={server} />}
+        {detailsReady && tab === 'content' && <ContentPage server={server} />}
+        {detailsReady && tab === 'backups' && <BackupsPage server={server} />}
+        {detailsReady && tab === 'versions' && <VersionsPage server={server} />}
+        {detailsReady && tab === 'settings' && <ServerSettingsPage key={server.id} server={server} initialCategory={settingsCategory} />}
       </>}
     </div>
     {scopedSnapshotReady && <ShareDialog open={shareOpen} onClose={closeShare} server={server} connectivity={snapshot.connectivity?.serverId === server.id ? snapshot.connectivity : null} onManage={() => { closeShare(); openSettings('Connectivity'); }} />}

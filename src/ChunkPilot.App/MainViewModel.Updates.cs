@@ -614,6 +614,21 @@ public sealed partial class MainViewModel
         CurseForgeKeyConfigured = key.Value == "configured";
     }
 
+    private void ResetUpdateDetailsForServerSwitch()
+    {
+        Versions.Clear();
+        UpdateHistory.Clear();
+        CurrentUpdateSource = null;
+        CurrentUpdateCheck = null;
+        CurrentUpdateOperation = null;
+        SelectedVersion = null;
+        OnPropertyChanged(nameof(HasVersionHistory));
+        OnPropertyChanged(nameof(IsPendingUpdateValidation));
+        OnPropertyChanged(nameof(ActivePackVersion));
+        OnPropertyChanged(nameof(ActualPackJava));
+        OnPropertyChanged(nameof(RollbackAvailability));
+    }
+
     internal async Task LoadUpdateCenterAsync() =>
         Replace(UpdateCenterItems,
             await client.SendAsync<IReadOnlyList<UpdateCenterItem>>("GetUpdateCenter").ConfigureAwait(true));

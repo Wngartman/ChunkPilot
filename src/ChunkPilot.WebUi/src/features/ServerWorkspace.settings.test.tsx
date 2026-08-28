@@ -67,17 +67,19 @@ describe('server settings and console acceptance behavior', () => {
 
     const switched = structuredClone(current);
     switched.selectedServerId = second.id;
+    switched.workspace = { serverId: second.id, state: 'Loading' };
     act(() => useAppStore.getState().applySnapshot(switched));
     view.rerender(<NavigationGuardProvider><ServerWorkspace serverId={second.id} /></NavigationGuardProvider>);
 
-    expect(screen.getByText('Settings unavailable')).toBeTruthy();
+    expect(screen.getByText(/Refreshing this server's remaining details/)).toBeTruthy();
     expect(screen.queryByDisplayValue('Unsaved first-server text')).toBeNull();
 
     const authoritativeSecond = structuredClone(switched);
     authoritativeSecond.revision += 1;
+    authoritativeSecond.workspace = { serverId: second.id, state: 'Ready' };
     authoritativeSecond.serverSettings = { ...current.serverSettings!, serverId: second.id, name: second.name, motd: 'Second server MOTD' };
     act(() => useAppStore.getState().applySnapshot(authoritativeSecond));
-    await waitFor(() => expect(screen.queryByText('Settings unavailable')).toBeNull());
+    await waitFor(() => expect(screen.queryByText(/Refreshing this server's remaining details/)).toBeNull());
     fireEvent.click(screen.getByRole('button', { name: 'Raw' }));
     expect(screen.getByDisplayValue('Second server MOTD')).toBeTruthy();
     expect(screen.queryByDisplayValue('Unsaved first-server text')).toBeNull();
@@ -109,9 +111,10 @@ describe('server settings and console acceptance behavior', () => {
 
     const switched = structuredClone(current);
     switched.selectedServerId = second.id;
+    switched.workspace = { serverId: second.id, state: 'Loading' };
     act(() => useAppStore.getState().applySnapshot(switched));
     view.rerender(<NavigationGuardProvider><ServerWorkspace serverId={second.id} /></NavigationGuardProvider>);
-    expect(screen.getByText('Settings unavailable')).toBeTruthy();
+    expect(screen.getByText(/Refreshing this server's remaining details/)).toBeTruthy();
     await act(async () => { finishSave(); await savePending; });
     expect(screen.queryByDisplayValue('Saved only for the first server')).toBeNull();
   });

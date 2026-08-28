@@ -16,6 +16,8 @@
 .tab:hover { color: var(--cp-text); background: var(--cp-subtle-overlay); }
 .tab[data-selected="true"] { color: var(--cp-text); border-bottom-color: var(--cp-accent); }
 .content { width: min(100%, 1500px); margin: 0 auto; padding: 18px 30px 40px; }
+.selectionPlaceholder { min-height: 120px; }
+.sectionLoading { margin-bottom: 10px; padding: 8px 11px; border: 1px solid var(--cp-border); border-radius: var(--cp-radius-md); background: var(--cp-surface-raised); color: var(--cp-text-muted); font-size: 10px; }
 .panel { min-width: 0; border: 1px solid var(--cp-border); border-radius: var(--cp-radius-lg); background: var(--cp-surface); overflow: hidden; }
 .attentionBanner { display: grid; grid-template-columns: 4px minmax(0, 1fr) auto; align-items: center; gap: 13px; margin-bottom: 14px; padding: 13px 14px; border: 1px solid var(--cp-danger-border); background: var(--cp-danger-surface-deep); }
 .attentionBanner > span { align-self: stretch; border-radius: 2px; background: var(--cp-danger); }

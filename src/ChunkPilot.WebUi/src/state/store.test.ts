@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { BridgeAdapter } from '../bridge/client';
+import type { BridgeMethod, WebUiSnapshot } from '../bridge/types';
 import { fixtures } from '../fixtures/catalog';
 import { useAppStore } from './store';
 
 describe('authoritative WebUI store', () => {
-  beforeEach(() => useAppStore.setState({ snapshot: null, bridge: null, busy: new Set(), pendingOperations: new Map(), completedOperations: new Set(), error: null }));
+  beforeEach(() => useAppStore.setState({ snapshot: null, bridge: null, busy: new Set(), pendingOperations: new Map(), completedOperations: new Set(), serverSnapshots: new Map(), cachedPresentationServerId: null, error: null }));
 
   it('rejects a stale snapshot revision', () => {
     const newest = { ...fixtures.running, revision: 20 };
@@ -12,6 +13,92 @@ describe('authoritative WebUI store', () => {
     useAppStore.getState().applySnapshot(newest);
     useAppStore.getState().applySnapshot(stale);
     expect(useAppStore.getState().snapshot?.servers[0].state).toBe('Running');
+  });
+
+  it('applies the authoritative selection response without waiting for a periodic snapshot event', async () => {
+    const initial = structuredClone(fixtures.running);
+    const target = { ...structuredClone(initial.servers[0]), id: 'server-target', name: 'Duplicate display name' };
+    initial.servers.push(target);
+    initial.selectedServerId = initial.servers[0].id;
+    const selected = { ...structuredClone(initial), revision: initial.revision + 1, selectedServerId: target.id };
+    const request: BridgeAdapter['request'] = async <T,>(method: BridgeMethod) => {
+        expect(method).toBe('snapshot.selectServer');
+        return selected as T;
+    };
+    const bridge: BridgeAdapter = {
+      request,
+      subscribe: () => () => undefined,
+      dispose: () => undefined
+    };
+    useAppStore.setState({ snapshot: initial, bridge });
+
+    await useAppStore.getState().command('snapshot.selectServer', { serverId: target.id });
+
+    expect(useAppStore.getState().snapshot?.selectedServerId).toBe(target.id);
+  });
+
+  it('restores only the selected server cached workspace while native details refresh', () => {
+    const alpha = selectedFixture('alpha-id', 'Same name', 30, 'AlphaPlayer');
+    const bravo = selectedFixture('bravo-id', 'Same name', 31, 'BravoPlayer');
+    useAppStore.getState().applySnapshot(alpha);
+    useAppStore.getState().applySnapshot(bravo);
+
+    useAppStore.getState().prepareServerSelection(alpha.selectedServerId!);
+    const cached = useAppStore.getState().snapshot!;
+    expect(cached.selectedServerId).toBe('alpha-id');
+    expect(cached.players.map(player => player.name)).toEqual(['AlphaPlayer']);
+    expect(cached.players.map(player => player.name)).not.toContain('BravoPlayer');
+
+    useAppStore.getState().applySnapshot({
+      ...structuredClone(alpha),
+      revision: 32,
+      workspace: { serverId: 'alpha-id', state: 'Loading' },
+      players: []
+    });
+    expect(useAppStore.getState().snapshot?.players.map(player => player.name)).toEqual(['AlphaPlayer']);
+    expect(useAppStore.getState().snapshot?.revision).toBe(32);
+  });
+
+  it('bounds per-server workspace caching and promotes a cache hit by exact ID', () => {
+    for (let index = 0; index < 10; index += 1)
+      useAppStore.getState().applySnapshot(selectedFixture(`server-${index}`, 'Repeated name', 100 + index, `Player-${index}`));
+
+    expect(useAppStore.getState().serverSnapshots.size).toBe(8);
+    expect(useAppStore.getState().serverSnapshots.has('server-0')).toBe(false);
+    expect(useAppStore.getState().serverSnapshots.has('server-9')).toBe(true);
+
+    useAppStore.getState().prepareServerSelection('server-4');
+    expect(useAppStore.getState().snapshot?.selectedServerId).toBe('server-4');
+    expect(useAppStore.getState().snapshot?.players[0]?.name).toBe('Player-4');
+  });
+
+  it('keeps the newest rapid selection when bridge responses arrive out of order', async () => {
+    const initial = selectedFixture('server-a', 'Repeated name', 200, 'Player-A');
+    const serverB = { ...structuredClone(initial.servers[0]), id: 'server-b' };
+    const serverC = { ...structuredClone(initial.servers[0]), id: 'server-c' };
+    initial.servers.push(serverB, serverC);
+    let resolveB!: (snapshot: WebUiSnapshot) => void;
+    let resolveC!: (snapshot: WebUiSnapshot) => void;
+    const bridge: BridgeAdapter = {
+      request: <T,>(_method: BridgeMethod, params?: Record<string, unknown>) => new Promise<T>(resolve => {
+        const complete = resolve as (snapshot: WebUiSnapshot) => void;
+        if (params?.serverId === 'server-b') resolveB = complete;
+        else resolveC = complete;
+      }),
+      subscribe: () => () => undefined,
+      dispose: () => undefined
+    };
+    useAppStore.setState({ snapshot: initial, bridge });
+
+    const selectB = useAppStore.getState().command('snapshot.selectServer', { serverId: 'server-b' });
+    const selectC = useAppStore.getState().command('snapshot.selectServer', { serverId: 'server-c' });
+    resolveC({ ...structuredClone(initial), revision: 202, selectedServerId: 'server-c', workspace: { serverId: 'server-c', state: 'Loading' } });
+    await selectC;
+    resolveB({ ...structuredClone(initial), revision: 201, selectedServerId: 'server-b', workspace: { serverId: 'server-b', state: 'Loading' } });
+    await selectB;
+
+    expect(useAppStore.getState().snapshot?.selectedServerId).toBe('server-c');
+    expect(useAppStore.getState().snapshot?.revision).toBe(202);
   });
 
   it('tracks a pending command without claiming lifecycle success', async () => {
@@ -159,3 +246,13 @@ describe('authoritative WebUI store', () => {
     expect(useAppStore.getState().busy.has('servers.start')).toBe(false);
   });
 });
+
+function selectedFixture(id: string, name: string, revision: number, playerName: string): WebUiSnapshot {
+  const snapshot = structuredClone(fixtures.running);
+  snapshot.revision = revision;
+  snapshot.selectedServerId = id;
+  snapshot.workspace = { serverId: id, state: 'Ready' };
+  snapshot.servers = [{ ...snapshot.servers[0], id, name }];
+  snapshot.players = [{ name: playerName, uuid: `${id}-uuid`, online: true, allowlisted: true, operator: false, banned: false }];
+  return snapshot;
+}

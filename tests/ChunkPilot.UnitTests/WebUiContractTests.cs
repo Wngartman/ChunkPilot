@@ -363,4 +363,123 @@ public sealed class WebUiContractTests
         Assert.False(WebUiProtocol.IsTrustedSource("https://user@chunkpilot.local/index.html"));
         Assert.False(WebUiProtocol.IsTrustedSource("https://example.com/"));
     }
+
+    [Fact]
+    public async Task Server_switch_fences_unstamped_details_until_the_new_identity_finishes_loading()
+    {
+        var alphaId = Guid.NewGuid();
+        var bravoId = Guid.NewGuid();
+        var alpha = SelectionServer(alphaId, "Repeated name");
+        var bravo = SelectionServer(bravoId, "Repeated name");
+        var client = new SelectionFenceClient(alpha);
+        var viewModel = new MainViewModel(client, new SelectionDialogs());
+        await viewModel.InitializeAsync();
+        viewModel.Servers.Add(bravo);
+
+        viewModel.SelectedServer = alpha;
+        await client.FirstCapabilitiesRequest.WaitAsync(TimeSpan.FromSeconds(2));
+        viewModel.PlayerRows.Add(new ChunkPilot.App.Access.PlayerAccessRow(
+            new UnifiedPlayerAccess { Name = "AlphaPlayer", Online = true, Whitelisted = true },
+            whitelistEnabled: true,
+            serverRunning: true,
+            (_, _) => Task.FromResult(true),
+            _ => { }));
+
+        viewModel.SelectedServer = bravo;
+        var opening = new WebUiSnapshotMapper().Capture(viewModel);
+
+        Assert.Equal(bravoId, opening["selectedServerId"]!.GetValue<Guid>());
+        Assert.Equal("Loading", opening["workspace"]!["state"]!.GetValue<string>());
+        Assert.Empty(opening["players"]!.AsArray());
+        Assert.Empty(viewModel.PlayerRows);
+
+        client.ReleaseCapabilities();
+        await WaitUntilAsync(() => viewModel.WebUiDetailsServerId == bravoId, TimeSpan.FromSeconds(2));
+        var ready = new WebUiSnapshotMapper().Capture(viewModel);
+        Assert.Equal("Ready", ready["workspace"]!["state"]!.GetValue<string>());
+        Assert.Empty(ready["players"]!.AsArray());
+
+        viewModel.SelectedServer = null;
+        viewModel.SelectedServer = bravo;
+        await WaitUntilAsync(() => viewModel.WebUiDetailsServerId == bravoId, TimeSpan.FromSeconds(2));
+        Assert.Equal(new[] { alphaId, bravoId, bravoId }, client.CapabilityServerIds);
+    }
+
+    private static ServerSnapshot SelectionServer(Guid id, string name) => new()
+    {
+        Definition = new ServerDefinition
+        {
+            Id = id,
+            Name = name,
+            RootPath = Path.Combine(Path.GetTempPath(), id.ToString("N")),
+            WorkingDirectory = Path.Combine(Path.GetTempPath(), id.ToString("N")),
+            Executable = "java.exe"
+        },
+        State = ServerState.Stopped
+    };
+
+    private static async Task WaitUntilAsync(Func<bool> condition, TimeSpan timeout)
+    {
+        var deadline = DateTimeOffset.UtcNow + timeout;
+        while (!condition() && DateTimeOffset.UtcNow < deadline)
+            await Task.Delay(10);
+        Assert.True(condition(), "The selected server detail pass did not reach its identity fence.");
+    }
+
+    private sealed class SelectionFenceClient(ServerSnapshot initial) : IAgentClient
+    {
+        private readonly TaskCompletionSource releaseCapabilities =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource firstCapabilitiesRequest =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int capabilityRequests;
+
+        public Task FirstCapabilitiesRequest => firstCapabilitiesRequest.Task;
+        public List<Guid> CapabilityServerIds { get; } = [];
+
+        public Task EnsureConnectedAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+        public void ReleaseCapabilities() => releaseCapabilities.TrySetResult();
+
+        public async Task<TResponse> SendAsync<TResponse>(string operation, object? payload = null,
+            CancellationToken cancellationToken = default)
+        {
+            object response;
+            switch (operation)
+            {
+                case "Dashboard":
+                    response = new DashboardSnapshot { AgentConnected = true, Servers = [initial] };
+                    break;
+                case "GetSetting":
+                    response = new TextResponse("");
+                    break;
+                case "GetCapabilities":
+                {
+                    var serverId = ((ServerIdRequest)payload!).ServerId;
+                    CapabilityServerIds.Add(serverId);
+                    if (Interlocked.Increment(ref capabilityRequests) == 1)
+                        firstCapabilitiesRequest.TrySetResult();
+                    await releaseCapabilities.Task.WaitAsync(cancellationToken);
+                    response = new ServerCapabilityProfile();
+                    break;
+                }
+                case "GetNetworkConfiguration":
+                    response = new NetworkConfiguration { ServerId = ((ServerIdRequest)payload!).ServerId };
+                    break;
+                default:
+                    response = OperationResult.Ok("fixture");
+                    break;
+            }
+            return (TResponse)response;
+        }
+    }
+
+    private sealed class SelectionDialogs : IDialogService
+    {
+        public string? SelectFolder(string title, string? initialPath = null) => null;
+        public string? SelectFile(string title, string filter) => null;
+        public bool Confirm(string title, string message) => false;
+        public void ShowError(string title, string message) { }
+        public void ShowInformation(string title, string message) { }
+    }
 }

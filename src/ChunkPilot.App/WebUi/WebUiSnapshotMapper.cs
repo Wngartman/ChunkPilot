@@ -18,6 +18,7 @@ internal sealed class WebUiSnapshotMapper
     {
         var selected = viewModel.SelectedServer;
         var selectedId = selected?.Definition.Id;
+        var detailsReady = selectedId is not null && viewModel.WebUiDetailsServerId == selectedId;
         var host = viewModel.Dashboard.Host;
         var versions = viewModel.Versions
             .Where(version => selectedId is null || version.ServerId == selectedId)
@@ -56,6 +57,11 @@ internal sealed class WebUiSnapshotMapper
                 defaultUi = BuildIdentity.Current.DefaultUi
             },
             selectedServerId = selectedId,
+            workspace = selectedId is null ? null : new
+            {
+                serverId = selectedId,
+                state = detailsReady ? "Ready" : "Loading"
+            },
             operation = viewModel.IsBusy ? new
             {
                 method = "authoritative-operation",
@@ -72,10 +78,10 @@ internal sealed class WebUiSnapshotMapper
                 totalDiskBytes = (long?)host.TotalDiskBytes,
                 cpuModel = string.IsNullOrWhiteSpace(host.CpuModel) ? null : host.CpuModel
             },
-            servers = viewModel.Servers.Select(server => MapServer(server, host, viewModel, selectedId)).ToArray(),
-            connectivity = MapConnectivity(viewModel, selectedId),
-            playerAccess = MapPlayerAccess(viewModel, selectedId),
-            issues = MapHealthIssues(viewModel, selected),
+            servers = viewModel.Servers.Select(server => MapServer(server, host, viewModel, selectedId, detailsReady)).ToArray(),
+            connectivity = detailsReady ? MapConnectivity(viewModel, selectedId) : null,
+            playerAccess = detailsReady ? MapPlayerAccess(viewModel, selectedId) : null,
+            issues = detailsReady ? MapHealthIssues(viewModel, selected) : [],
             console = viewModel.ConsoleLines.TakeLast(MaximumConsoleLines).Select(line => new
             {
                 sequence = line.Sequence,
@@ -83,7 +89,7 @@ internal sealed class WebUiSnapshotMapper
                 stream = line.Stream,
                 text = line.Text
             }).ToArray(),
-            players = viewModel.PlayerRows.Select(player => new
+            players = viewModel.PlayerRows.Where(_ => detailsReady).Select(player => new
             {
                 name = player.Name,
                 uuid = player.Uuid,
@@ -92,7 +98,7 @@ internal sealed class WebUiSnapshotMapper
                 @operator = player.Operator,
                 banned = player.Banned
             }).ToArray(),
-            files = viewModel.FileEntries.Select(file => new
+            files = viewModel.FileEntries.Where(_ => detailsReady).Select(file => new
             {
                 name = file.Name,
                 relativePath = file.RelativePath,
@@ -100,7 +106,7 @@ internal sealed class WebUiSnapshotMapper
                 sizeBytes = file.IsDirectory ? (long?)null : file.SizeBytes,
                 modifiedAt = file.ModifiedAt == default ? (DateTimeOffset?)null : file.ModifiedAt
             }).ToArray(),
-            plugins = viewModel.Inventory.Select(item =>
+            plugins = viewModel.Inventory.Where(_ => detailsReady).Select(item =>
             {
                 var load = PluginLoadEvidence(item, selected?.State, viewModel.ConsoleLines);
                 return new
@@ -133,7 +139,7 @@ internal sealed class WebUiSnapshotMapper
                     clientRequirement = item.ClientRequirement
                 };
             }).ToArray(),
-            currentFolder = viewModel.CurrentFolder,
+            currentFolder = detailsReady ? viewModel.CurrentFolder : "",
             schedules = viewModel.Schedules.Where(schedule => selectedId is null || schedule.ServerId == selectedId).Select(schedule => new
             {
                 id = schedule.Id,
@@ -161,7 +167,7 @@ internal sealed class WebUiSnapshotMapper
                 source = backup.Source
             }).ToArray(),
             versions,
-            update = selected is null ? null : new
+            update = selected is null || !detailsReady ? null : new
             {
                 status = viewModel.UpdateStatusText,
                 detail = viewModel.UpdateStatusDetail,
@@ -207,7 +213,7 @@ internal sealed class WebUiSnapshotMapper
                 startWithWindows = viewModel.StartWithWindows,
                 reducedMotion = viewModel.ReducedMotion
             },
-            serverSettings = selected is null ? null : new
+            serverSettings = selected is null || !detailsReady ? null : new
             {
                 serverId = selected.Definition.Id,
                 name = selected.Definition.Name,
@@ -265,7 +271,8 @@ internal sealed class WebUiSnapshotMapper
         _ => "binary"
     };
 
-    private object MapServer(ServerSnapshot server, HostSnapshot host, MainViewModel viewModel, Guid? selectedId)
+    private object MapServer(ServerSnapshot server, HostSnapshot host, MainViewModel viewModel, Guid? selectedId,
+        bool selectedDetailsReady)
     {
         var isSelected = selectedId == server.Definition.Id;
         var network = viewModel.Dashboard.NetworkConfigurations.FirstOrDefault(item =>
@@ -276,14 +283,14 @@ internal sealed class WebUiSnapshotMapper
             VanillaNetworkingPreferencePolicy.ToNetworkMode(server.Definition.CreationNetworkingPreference);
         if (router?.DirectInternetEnabled == true)
             networkMode = NetworkMode.PortForwarding;
-        var packSource = isSelected && viewModel.CurrentUpdateSource is
+        var packSource = isSelected && selectedDetailsReady && viewModel.CurrentUpdateSource is
         {
             HasIdentifiedBaseline: true,
             Provider: UpdateProvider.Modrinth or UpdateProvider.CurseForge or UpdateProvider.LocalPackageHistory
         }
             ? viewModel.CurrentUpdateSource
             : null;
-        var publicVerified = isSelected && viewModel.PublicAccessVerified &&
+        var publicVerified = isSelected && selectedDetailsReady && viewModel.PublicAccessVerified &&
             viewModel.ExternalReachability.ServerId == server.Definition.Id;
         var routerAddress = router is { RouterReportedExternalAddress.Length: > 0, ExternalPort: > 0 }
             ? $"{router.RouterReportedExternalAddress}:{router.ExternalPort}"

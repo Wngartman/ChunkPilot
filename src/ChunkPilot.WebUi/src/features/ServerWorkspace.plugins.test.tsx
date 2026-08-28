@@ -48,6 +48,7 @@ beforeEach(() => {
   const paper = current.servers.find(server => server.capabilities.content === 'plugins')!;
   paper.state = 'Stopped';
   current.selectedServerId = paper.id;
+  current.workspace = { serverId: paper.id, state: 'Ready' };
   current.plugins = [{ name: 'Duplicate', fileName: 'Duplicate.jar', relativePath: 'plugins/Duplicate.jar', version: '1.0', id: 'Duplicate', loader: 'Bukkit', sizeBytes: 1200, modifiedAt: '2026-08-17T12:00:00Z', enabled: true, duplicateId: true, dependencies: ['Vault'], dependencyDetails: [{ id: 'Vault', kind: 'Required' }], compatibility: 'LikelyCompatible', compatibilityReason: 'Metadata matches Paper.', loadState: 'Unknown', loadEvidence: 'No explicit current-session load evidence.', installSource: 'Local file', sha256: 'fixture' } satisfies PluginInventoryEntry];
   useAppStore.setState({ snapshot: current, bridge, busy: new Set(), error: null });
 });

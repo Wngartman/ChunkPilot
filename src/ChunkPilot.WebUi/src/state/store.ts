@@ -8,9 +8,12 @@ interface AppStore {
   busy: Set<string>;
   pendingOperations: Map<string, string>;
   completedOperations: Set<string>;
+  serverSnapshots: Map<string, WebUiSnapshot>;
+  cachedPresentationServerId: string | null;
   error: string | null;
   setBridge: (bridge: BridgeAdapter) => void;
   applySnapshot: (snapshot: WebUiSnapshot) => void;
+  prepareServerSelection: (serverId: string) => void;
   consumeEvent: (event: BridgeEvent) => void;
   command: <T>(method: BridgeMethod, params?: Record<string, unknown>, signal?: AbortSignal) => Promise<T>;
   clearError: () => void;
@@ -22,9 +25,69 @@ export const useAppStore = create<AppStore>((set, get) => ({
   busy: new Set<string>(),
   pendingOperations: new Map<string, string>(),
   completedOperations: new Set<string>(),
+  serverSnapshots: new Map<string, WebUiSnapshot>(),
+  cachedPresentationServerId: null,
   error: null,
   setBridge: bridge => set({ bridge }),
-  applySnapshot: snapshot => set(state => state.snapshot && snapshot.revision < state.snapshot.revision ? state : { snapshot }),
+  applySnapshot: snapshot => set(state => {
+    if (state.snapshot && snapshot.revision < state.snapshot.revision) return state;
+    const selectedId = snapshot.selectedServerId;
+    if (selectedId && snapshot.workspace?.state === 'Loading' &&
+        state.cachedPresentationServerId === selectedId && state.snapshot?.selectedServerId === selectedId) {
+      const cached = state.snapshot;
+      return {
+        snapshot: {
+          ...cached,
+          revision: snapshot.revision,
+          capturedAt: snapshot.capturedAt,
+          agentConnected: snapshot.agentConnected,
+          appVersion: snapshot.appVersion,
+          build: snapshot.build,
+          operation: snapshot.operation,
+          statusMessage: snapshot.statusMessage,
+          host: snapshot.host,
+          servers: snapshot.servers,
+          activity: snapshot.activity,
+          settings: snapshot.settings
+        }
+      };
+    }
+
+    const serverSnapshots = new Map(state.serverSnapshots);
+    if (selectedId && snapshot.workspace?.state === 'Ready') {
+      serverSnapshots.delete(selectedId);
+      serverSnapshots.set(selectedId, snapshot);
+      while (serverSnapshots.size > 8) serverSnapshots.delete(serverSnapshots.keys().next().value!);
+    }
+    return { snapshot, serverSnapshots, cachedPresentationServerId: null };
+  }),
+  prepareServerSelection: serverId => set(state => {
+    const current = state.snapshot;
+    const cached = state.serverSnapshots.get(serverId);
+    if (!current || !cached) return { cachedPresentationServerId: null };
+    const serverSnapshots = new Map(state.serverSnapshots);
+    serverSnapshots.delete(serverId);
+    serverSnapshots.set(serverId, cached);
+    return {
+      serverSnapshots,
+      cachedPresentationServerId: serverId,
+      snapshot: {
+        ...cached,
+        revision: current.revision,
+        capturedAt: current.capturedAt,
+        agentConnected: current.agentConnected,
+        appVersion: current.appVersion,
+        build: current.build,
+        operation: current.operation,
+        statusMessage: current.statusMessage,
+        host: current.host,
+        servers: current.servers,
+        activity: current.activity,
+        settings: current.settings,
+        selectedServerId: serverId
+      }
+    };
+  }),
   consumeEvent: event => {
     if (event.event === 'snapshot.changed') get().applySnapshot(event.payload as WebUiSnapshot);
     if (event.event === 'operation.completed') {
@@ -47,9 +110,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
     const bridge = get().bridge;
     if (!bridge) throw new Error('Native bridge is unavailable.');
     set(state => ({ busy: new Set(state.busy).add(method), error: null }));
+    if (method === 'snapshot.selectServer' && typeof params.serverId === 'string')
+      get().prepareServerSelection(params.serverId);
     let keepPending = false;
     try {
       const result = await bridge.request<T>(method, params, signal);
+      if (method === 'snapshot.selectServer') get().applySnapshot(result as WebUiSnapshot);
       if (method === 'servers.start' || method === 'servers.stop' || method === 'servers.restart' || method === 'servers.delete' || method === 'servers.createManagedCopy' || method === 'versions.install') {
         const accepted = result as { accepted?: boolean; operationId?: string };
         if (accepted?.accepted === true && accepted.operationId) {
