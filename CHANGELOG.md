@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+### Instant server switching and native CurseForge lifecycle
+
+- Removed the roughly ten-second server-selection stall by applying the Agent's immediate authoritative
+  selection response, fencing unstamped native detail models by exact server ID, and retaining a bounded
+  eight-server ready-workspace cache without permitting old-server data or provider work during switching.
+- Added a native-only CurseForge credential boundary using the one ignored local developer file and
+  DPAPI-protected storage. The key never enters React, command-line arguments, logs, diagnostics, packages,
+  or normal user settings; public credential delivery remains gated by written provider authorization.
+- Added official CurseForge discovery, pagination, exact project/file and link resolution, version/loader/
+  category/channel filtering, bounded native images, typed provider failures, rate-limit handling, and
+  demand-driven modpack and Mods provider tabs.
+- Added transactional official server-pack creation and safely generated manifest candidates with exact
+  dependency/distribution/hash checks, restricted overrides, official loader installation, loopback-only
+  staged validation, atomic promotion, cleanup, and truthful unsupported states.
+- Added whole-pack CurseForge updates with distinct client/server file identity, local provider-file SHA-256
+  ownership baselines, user-modified file conflict preservation, world/config recovery rules, existing
+  snapshot/rollback recovery, and exact CurseForge mod dependency install through the Content workspace.
+
 ## 1.3.0-alpha.5 - 2026-08-21
 
 ### Server workspace clarity and existing-world creation

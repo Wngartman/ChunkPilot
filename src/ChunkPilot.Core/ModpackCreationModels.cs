@@ -91,8 +91,8 @@ public sealed record ModpackCreationPlan
                 problems.Add("The selected local pack is not bound to its inspected archive identity.");
         }
         if (string.IsNullOrWhiteSpace(MinecraftVersion) || string.IsNullOrWhiteSpace(Loader) ||
-            RequiredJavaMajor <= 0)
-            problems.Add("The pack's exact Minecraft and Java requirements were not established.");
+            string.IsNullOrWhiteSpace(LoaderVersion) || RequiredJavaMajor <= 0)
+            problems.Add("The pack's exact Minecraft, loader, and Java requirements were not established.");
         if (!Eula.IsAuthorised)
             problems.Add("The Minecraft EULA was not accepted.");
         var memory = MemoryAllocationPolicy.ValidatePair(MinimumRamMb, MaximumRamMb);

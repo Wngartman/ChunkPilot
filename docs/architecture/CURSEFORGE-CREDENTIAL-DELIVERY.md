@@ -41,7 +41,8 @@ to arbitrary end users or that persistent provider caching is allowed.
 
 ## Implemented local credential boundary
 
-- The only default source is `D:\ChunkPilot\.secrets\curseforge-api-key.txt`.
+- The only default source is the repository-local `.secrets\curseforge-api-key.txt` provisioning file;
+  native code binds that developer path exactly and the file is never tracked or packaged.
 - `CHUNKPILOT_CURSEFORGE_KEY_FILE` may contain one absolute file path. It never contains the key value.
 - The Agent reads a bounded single-value file directly and imports it into the existing DPAPI CurrentUser
   secret store. The bytes are cleared after import.
@@ -54,7 +55,7 @@ to arbitrary end users or that persistent provider caching is allowed.
 - Logs and provisioning results report only present/imported/unavailable state. They never include the key or
   source path.
 
-The example at `docs/examples/curseforge-api-key.example.txt` is a non-secret placeholder and is explicitly
+The example at `docs/examples/curseforge-credential-placeholder.txt` is a non-secret placeholder and is explicitly
 allowed through the ignore pattern so the safe shape remains reviewable.
 
 ## Public-build behavior
@@ -84,4 +85,3 @@ Every item requires evidence before changing the decision to `DIRECT CLIENT DELI
    security, package-secret, and independent publication audits pass.
 
 Written application-specific terms override this general analysis only when they are supplied and reviewed.
-

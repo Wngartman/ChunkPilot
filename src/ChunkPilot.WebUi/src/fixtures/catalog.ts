@@ -262,16 +262,21 @@ export const fixtures: Record<string, WebUiSnapshot> = {
   terraria: snapshot([terraria]),
   attention: snapshot([attention]),
   starting: snapshot([server({ state: 'Starting', playersOnline: null, playersMaximum: null, uptimeSeconds: null, cpuPercent: null, memoryBytes: null, samples: [] })]),
-  unknown: snapshot([server({ playersOnline: null, playersMaximum: null, cpuPercent: null, memoryBytes: null, samples: [], publicReachability: 'unavailable', lastBackupAt: null })])
+  unknown: snapshot([server({ playersOnline: null, playersMaximum: null, cpuPercent: null, memoryBytes: null, samples: [], publicReachability: 'unavailable', lastBackupAt: null })]),
+  curseforge: snapshot([server()]),
+  'curseforge-rate-limited': snapshot([server()])
 };
 
 export class FixtureBridge implements BridgeAdapter {
   private listeners = new Set<(event: BridgeEvent) => void>();
   private current: WebUiSnapshot;
   private curseForgeConfigured = false;
+  private curseForgeRateLimited = false;
   constructor(name = 'several') {
     this.current = structuredClone(fixtures[name] ?? fixtures.several);
     const mode = new URLSearchParams(window.location.search).get('mode');
+    this.curseForgeConfigured = name === 'curseforge' || name === 'curseforge-rate-limited';
+    this.curseForgeRateLimited = name === 'curseforge-rate-limited';
     if (mode === 'library-public' && this.current.servers.length > 0) {
       const target = this.current.servers[0];
       this.current.servers[0] = {
@@ -396,12 +401,13 @@ export class FixtureBridge implements BridgeAdapter {
     if (method === 'plugins.search') return [{ provider: 'Modrinth', projectId: 'fixture-tools', slug: 'fixture-tools', name: 'Fixture Tools', author: 'ChunkPilot fixture', summary: 'Deterministic Paper utilities for visual review.', downloads: 42_100, updatedAt: now, serverSide: 'required' }] as T;
     if (method === 'plugins.release') return { provider: 'Modrinth', projectId: String(params.projectId), versionId: 'fixture-current', versionName: '5.5.0', minecraftVersion: '1.21.8', loader: 'paper', releaseChannel: 'release', publishedAt: now, fileName: 'LuckPerms-Bukkit-5.5.0.jar', sizeBytes: 1_500_000, integrity: 'sha512', dependencies: [] } as T;
     if (method === 'plugins.plan') return { canInstall: true, problems: [], releases: [] } as T;
-    if (method === 'mods.providers') return [{ provider: 'Modrinth', available: true, detail: 'Official API available.' }] as T;
-    if (method === 'mods.search') return [{ provider: 'Modrinth', kind: 'Mod', projectId: 'lithium', slug: 'lithium', name: 'Lithium', author: 'CaffeineMC', summary: 'Server performance improvements with exact loader filtering.', downloads: 22_400_000, updatedAt: now, serverSide: 'required', clientSide: 'optional', clientRequirement: 'ClientOptional' }] as T;
+    if (method === 'mods.providers') return [{ provider: 'Modrinth', available: true, detail: 'Official API available.' }, { provider: 'CurseForge', available: this.curseForgeConfigured, detail: this.curseForgeConfigured ? 'Approved fixture access is active.' : 'Approved native CurseForge credential is missing.' }] as T;
+    if (method === 'mods.search') { const provider = params.provider === 'CurseForge' ? 'CurseForge' : 'Modrinth'; if (provider === 'CurseForge' && !this.curseForgeConfigured) throw new Error('The approved native CurseForge credential is missing.'); return [{ provider, kind: 'Mod', projectId: 'lithium', slug: 'lithium', name: 'Lithium', author: 'CaffeineMC', summary: 'Server performance improvements with exact loader filtering.', downloads: 22_400_000, updatedAt: now, serverSide: 'required', clientSide: 'optional', clientRequirement: 'ClientOptional' }] as T; }
     if (method === 'modpacks.providers') return [{ provider: 'Modrinth', available: true, detail: 'Official Modrinth API is available.' }, { provider: 'CurseForge', available: this.curseForgeConfigured, detail: this.curseForgeConfigured ? 'Approved fixture access is active.' : 'Approved native CurseForge credential is missing in this development fixture.' }] as T;
     if (method === 'modpacks.versions') {
       const provider = params.provider === 'CurseForge' ? 'CurseForge' : 'Modrinth';
       if (provider === 'CurseForge' && !this.curseForgeConfigured) return { provider, state: 'AuthenticationRequired', versions: [], detail: 'Approved native CurseForge credential is missing.', failedStage: 'native credential', retrievedAt: null, fromCache: false, stale: false } as T;
+      if (provider === 'CurseForge' && this.curseForgeRateLimited) return { provider, state: 'RateLimited', versions: [], detail: 'The CurseForge rate limit is active. Try again shortly.', failedStage: 'provider request', retrievedAt: null, fromCache: false, stale: false } as T;
       return { provider, state: 'Ready', versions: [
         { versionId: '1.21.8', kind: 'Release', publishedAt: now, isMajor: true },
         { versionId: '1.20.1', kind: 'Release', publishedAt: '2023-06-12T00:00:00Z', isMajor: false },
@@ -412,16 +418,19 @@ export class FixtureBridge implements BridgeAdapter {
     }
     if (method === 'modpacks.cache' || method === 'modpacks.search') {
       const provider = params.provider === 'CurseForge' ? 'CurseForge' : 'Modrinth';
-      const item = { provider, projectId: 'fixture-pack', slug: 'fixture-pack', name: 'Copper Trails', author: 'ChunkPilot fixture', summary: 'A deterministic server-capable fixture pack for visual review.', downloadCount: 1_240_000, updatedAt: now, categories: ['fabric', 'adventure'], hasImage: false, serverSupport: 'AutomatedWithReview', clientRequirement: 'MatchingPackRequired', trend: { available: false, detail: 'No local period snapshot history exists yet.' }, versions: [{ versionId: 'fixture-pack-4', versionName: '4.2.0', minecraftVersion: '1.21.8', loader: 'fabric', releaseChannel: 'Stable', publishedAt: now, sizeBytes: 1_240_000, changelog: 'Fixture release.', requiredJavaMajor: 21, hasIntegrity: true, canCreate: true }] };
+      const item = { provider, projectId: 'fixture-pack', slug: 'fixture-pack', name: 'Copper Trails', author: 'ChunkPilot fixture', summary: 'A deterministic server-capable fixture pack for visual review.', downloadCount: 1_240_000, updatedAt: now, categories: ['fabric', 'adventure'], hasImage: false, serverSupport: 'AutomatedWithReview', clientRequirement: 'MatchingPackRequired', trend: { available: false, detail: 'No local period snapshot history exists yet.' }, versions: [{ versionId: 'fixture-pack-4', versionName: '4.2.0', minecraftVersion: '1.21.8', loader: 'fabric', releaseChannel: 'Stable', publishedAt: now, sizeBytes: 1_240_000, changelog: 'Fixture release.', requiredJavaMajor: 21, hasIntegrity: true, canCreate: true, serverPath: provider === 'CurseForge' ? 'ChunkPilot can generate and validate a server candidate' : 'Official server pack', limitation: provider === 'CurseForge' ? 'Every required file and the staged launch must verify before promotion.' : '' }] };
       if (provider === 'CurseForge' && !this.curseForgeConfigured) return { provider, state: 'AuthenticationRequired', items: [], detail: 'Approved native CurseForge credential is missing.', failedStage: 'native credential', retrievedAt: null, fromCache: false, stale: false } as T;
+      if (provider === 'CurseForge' && this.curseForgeRateLimited) return { provider, state: 'RateLimited', items: [], detail: 'The CurseForge rate limit is active. Try again shortly.', failedStage: 'provider request', retrievedAt: null, fromCache: false, stale: false } as T;
       return { provider, state: 'Ready', items: [item], detail: 'Fixture catalog ready.', failedStage: '', retrievedAt: now, fromCache: method === 'modpacks.cache', stale: false } as T;
     }
     if (method === 'modpacks.resolveLink') {
       const url = String(params.url ?? '');
-      if (url.includes('curseforge.com')) throw new Error('The approved native CurseForge credential is missing. Modrinth links and local pack imports remain available.');
-      const release = { versionId: 'fixture-pack-4', versionName: '4.2.0', minecraftVersion: '1.21.8', loader: 'fabric', releaseChannel: 'Stable', publishedAt: now, sizeBytes: 1_240_000, changelog: 'Fixture release.', requiredJavaMajor: 21, hasIntegrity: true, canCreate: true };
-      const project = { provider: 'Modrinth', projectId: 'fixture-pack', slug: 'fixture-pack', name: 'Copper Trails', author: 'ChunkPilot fixture', summary: 'A deterministic server-capable fixture pack for visual review.', downloadCount: 1_240_000, updatedAt: now, categories: ['fabric', 'adventure'], hasImage: false, serverSupport: 'AutomatedWithReview', clientRequirement: 'MatchingPackRequired', trend: { available: false, detail: 'No local period snapshot history exists yet.' }, versions: [release] };
-      return { canonicalUrl: `${'https:'}//modrinth.com/modpack/fixture-pack`, exactRelease: url.includes('/version/'), project, release, detail: url.includes('/version/') ? 'Resolved the exact release from the provider link.' : 'Selected the newest stable server-capable release.' } as T;
+      const provider = url.includes('curseforge.com') ? 'CurseForge' : 'Modrinth';
+      if (provider === 'CurseForge' && !this.curseForgeConfigured) throw new Error('The approved native CurseForge credential is missing. Modrinth links and local pack imports remain available.');
+      const release = { versionId: 'fixture-pack-4', versionName: '4.2.0', minecraftVersion: '1.21.8', loader: 'fabric', releaseChannel: 'Stable', publishedAt: now, sizeBytes: 1_240_000, changelog: 'Fixture release.', requiredJavaMajor: 21, hasIntegrity: true, canCreate: true, serverPath: provider === 'CurseForge' ? 'ChunkPilot can generate and validate a server candidate' : 'Official server pack' };
+      const project = { provider, projectId: 'fixture-pack', slug: 'fixture-pack', name: 'Copper Trails', author: 'ChunkPilot fixture', summary: 'A deterministic server-capable fixture pack for visual review.', downloadCount: 1_240_000, updatedAt: now, categories: ['fabric', 'adventure'], hasImage: false, serverSupport: 'AutomatedWithReview', clientRequirement: 'MatchingPackRequired', trend: { available: false, detail: 'No local period snapshot history exists yet.' }, versions: [release] };
+      const exactRelease = url.includes('/version/') || url.includes('/files/');
+      return { canonicalUrl: provider === 'CurseForge' ? `${'https:'}//www.curseforge.com/minecraft/modpacks/fixture-pack${exactRelease ? '/files/123456' : ''}` : `${'https:'}//modrinth.com/modpack/fixture-pack`, exactRelease, project, release, detail: exactRelease ? 'Resolved the exact release from the provider link.' : 'Selected the newest stable server-capable release.' } as T;
     }
     if (method === 'modpacks.image') return { dataUrl: null } as T;
     if (method === 'modpacks.chooseLocal') return { cancelled: true } as T;
@@ -436,7 +445,7 @@ export class FixtureBridge implements BridgeAdapter {
       identityEvidence: 'Mojang publishes no official server hash for this target. The file remains user-supplied and must pass isolated runtime validation.',
       expiresAt: new Date(Date.now() + 300_000).toISOString()
     } as T;
-    if (method === 'mods.release') return { provider: 'Modrinth', kind: 'Mod', projectId: String(params.projectId), versionId: 'lithium-exact', versionName: '0.18.1', minecraftVersion: '26.2', loader: this.current.servers[0]?.ecosystem === 'NeoForge' ? 'neoforge' : 'fabric', releaseChannel: 'release', publishedAt: now, fileName: 'lithium-0.18.1.jar', sizeBytes: 880_000, integrity: 'sha512', serverSide: 'required', clientSide: 'optional', clientRequirement: 'ClientOptional', dependencies: [] } as T;
+    if (method === 'mods.release') { const provider = params.provider === 'CurseForge' ? 'CurseForge' : 'Modrinth'; return { provider, kind: 'Mod', projectId: String(params.projectId), versionId: 'lithium-exact', versionName: '0.18.1', minecraftVersion: '26.2', loader: this.current.servers[0]?.ecosystem === 'NeoForge' ? 'neoforge' : 'fabric', releaseChannel: 'release', publishedAt: now, fileName: 'lithium-0.18.1.jar', sizeBytes: 880_000, integrity: provider === 'CurseForge' ? 'sha1' : 'sha512', serverSide: 'required', clientSide: 'optional', clientRequirement: 'ClientOptional', dependencies: [] } as T; }
     if (method === 'mods.plan') return { canInstall: true, problems: [], releases: [] } as T;
     if (method === 'plugins.configFiles') return [{ relativePath: 'plugins/LuckPerms/config.yml', name: 'config.yml', format: 'yaml', sizeBytes: 2840, modifiedAt: now }] as T;
     if (method === 'mods.configFiles') return [{ relativePath: 'config/lithium.properties', name: 'lithium.properties', format: 'properties', sizeBytes: 940, modifiedAt: now }] as T;

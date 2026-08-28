@@ -36,6 +36,7 @@
 .releaseLimitation strong { color: var(--cp-warning); }
 .empty, .loading { min-height: 180px; display: grid; place-items: center; align-content: center; gap: 6px; color: var(--cp-text-muted); font-size: 10px; text-align: center; }
 .error, .connectState { display: flex; align-items: center; gap: 10px; padding: 10px; border: 1px solid var(--cp-danger-border); background: var(--cp-danger-surface-deep); color: var(--cp-danger); font-size: 10px; }
+.error { flex-wrap: wrap; }
 .error > span, .connectState > div { flex: 1; display: grid; gap: 2px; }
 .error details { flex-basis: 100%; }
 .connectState { border-color: var(--cp-border-strong); background: var(--cp-surface-raised); color: var(--cp-text-secondary); }

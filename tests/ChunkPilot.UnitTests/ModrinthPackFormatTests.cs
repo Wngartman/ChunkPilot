@@ -269,6 +269,8 @@ public sealed class ModrinthPackFormatTests : IDisposable
             VersionId = "release",
             VersionName = "1.0",
             MinecraftVersion = "1.21.1",
+            Loader = "NeoForge",
+            LoaderVersion = "21.1.233",
             RequiredJavaMajor = 21,
             ExpectedSizeBytes = 1_000,
             ExpectedSha1 = new string('a', 40),
@@ -292,7 +294,7 @@ public sealed class ModrinthPackFormatTests : IDisposable
             VersionId = ""
         };
         Assert.Contains(invalid.Problems(), problem => problem.Contains("identity", StringComparison.OrdinalIgnoreCase));
-        Assert.Contains(invalid.Problems(), problem => problem.Contains("trusted Modrinth CDN", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(invalid.Problems(), problem => problem.Contains("trusted provider CDN", StringComparison.OrdinalIgnoreCase));
         Assert.Contains(invalid.Problems(), problem => problem.Contains("integrity", StringComparison.OrdinalIgnoreCase));
     }
 
@@ -308,6 +310,8 @@ public sealed class ModrinthPackFormatTests : IDisposable
             VersionId = "1.0",
             VersionName = "1.0",
             MinecraftVersion = "1.21.1",
+            Loader = "NeoForge",
+            LoaderVersion = "21.1.233",
             RequiredJavaMajor = 21,
             ServerName = "Local pack server",
             Eula = new VanillaEulaAcceptance

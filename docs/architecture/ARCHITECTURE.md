@@ -37,6 +37,19 @@ Fabric, Quilt, Forge, and NeoForge use `LoaderMetadataService` and `LoaderInstal
 
 Managed Java uses an `IManagedJavaPackageProvider`. The Temurin adapter requires official SHA-256, extracts through traversal-safe code, health-checks x64/version evidence, and persists per-server absolute paths under app data without changing the Windows Java environment.
 
+CurseForge authentication stays inside Infrastructure. `CurseForgeCredentialProvisioner` reads only the
+approved local developer file (or its path-only override), imports it into the DPAPI secret store, and never
+returns credential material to App, Agent protocol models, or React. `CurseForgeApiClient` is the single
+official API/CDN HTTP boundary: HTTPS/host allowlists, no cookies or redirects, connect/total timeouts,
+bounded JSON, typed status mapping, cancellation, and in-flight request coalescing are enforced there.
+Persistent CurseForge API-response caching is disabled under the currently reviewed provider terms.
+
+Official CurseForge server packs and generated candidates reuse the managed installation transaction. The
+generated path accepts only an exact CurseForge manifest, recursively resolved required file relationships,
+provider size/SHA-1, locally recorded SHA-256, the narrow `config`/`defaultconfigs` override set, and an exact
+official loader install. Both paths must pass a loopback-only staged launch, readiness/status check and clean
+stop before promotion. Arbitrary pack scripts are never executed.
+
 Crossplay packages use `ICrossplayPackageProvider`. Installation is stopped-server-only, capability-gated, backed up, hash-verified, and serialized under the canonical server-root lock. ChunkPilot records relative ownership paths and versions so removal can move only its own Geyser, Floodgate, and ViaVersion JARs into Recovery while preserving generated configuration.
 
 Datapack installation is bound to a selected world containing `level.dat`, validates `pack.mcmeta`, backs up before mutation, stages files uniquely, and records the final content hash. Resource-pack settings require HTTPS and a valid SHA-1, then update `server.properties` atomically with recovery.
@@ -46,6 +59,12 @@ Datapack installation is bound to a selected world containing `level.dat`, valid
 Provider code is behind `IUpdateProviderAdapter`; ViewModels use only typed agent operations. `UpdateSourceDetector` trusts explicit ChunkPilot manifests and recognized launcher/provider IDs, never folder names or mod similarity.
 
 `ServerPackUpdateService` writes an operation journal, checks both snapshot/cache and server-volume free space, creates a full compressed snapshot with per-file SHA-256 data, downloads or reuses a content-addressed cache file, verifies the strongest provider digest, and extracts through traversal-safe code. `PackMigrationPlanner` copies worlds, player data, server properties, access lists, JVM settings, icons, user files outside pack-managed locations, and explicitly marked persistent paths. The new pack remains authoritative for mods, libraries, scripts, defaults, and pack configuration; removed JARs become explicit conflicts and remain in the rollback snapshot. An unresolved plan returns before activation. The user can select the old file, the new baseline, or supply complete merged text for a bounded text configuration file; the second staging pass records and applies those choices.
+
+CurseForge installations add `.chunkpilot/provider-owned-files.json`, a local SHA-256 baseline for files
+materialized from the exact provider release. During updates, an unchanged obsolete provider file may leave
+with the retired pack, while a locally modified provider file is preserved and surfaced for review. Explicit
+`NewBaseline` is required to replace/remove that modified file. The exact project ID/slug, client file ID,
+official server-pack file ID when present, loader and Minecraft version remain distinct persisted identities.
 
 The candidate launch profile must be controllable and non-detaching. The existing root is renamed to a same-volume retained sibling and the candidate is renamed into place. The retained sibling and operation journal stay until the agent observes console readiness and completes a local Minecraft status handshake.
 
