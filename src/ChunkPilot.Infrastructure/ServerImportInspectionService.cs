@@ -163,33 +163,15 @@ public sealed partial class ServerImportInspectionService
         var platform = DetectPlatform(names, info.Name);
         var (minecraft, loader) = DetectVersions(names.Append(info.Name));
         var displayName = Path.GetFileNameWithoutExtension(info.Name);
+        CurseForgePackManifest? exactCurseManifest = null;
         if (curseManifest is not null)
         {
-            await using var manifestStream = curseManifest.Entry.Open();
-            using var document = await JsonDocument.ParseAsync(manifestStream,
-                new JsonDocumentOptions { MaxDepth = 32, AllowTrailingCommas = false }, cancellationToken)
+            exactCurseManifest = await new CurseForgePackManifestReader().ReadAsync(info.FullName, cancellationToken)
                 .ConfigureAwait(false);
-            var root = document.RootElement;
-            if (root.TryGetProperty("name", out var name)) displayName = name.GetString() ?? displayName;
-            if (root.TryGetProperty("minecraft", out var mc))
-            {
-                if (mc.TryGetProperty("version", out var version)) minecraft = version.GetString() ?? minecraft;
-                if (mc.TryGetProperty("modLoaders", out var loaders) && loaders.ValueKind == JsonValueKind.Array)
-                {
-                    var id = loaders.EnumerateArray().Select(item => item.TryGetProperty("id", out var value)
-                            ? value.GetString() : null).FirstOrDefault(value => !string.IsNullOrWhiteSpace(value)) ?? "";
-                    if (!string.IsNullOrWhiteSpace(id))
-                    {
-                        var split = id.Split('-', 2);
-                        platform = split[0] switch
-                        {
-                            "forge" => "Forge", "neoforge" => "NeoForge", "fabric" => "Fabric",
-                            "quilt" => "Quilt", _ => platform
-                        };
-                        loader = split.Length > 1 ? split[1] : loader;
-                    }
-                }
-            }
+            displayName = exactCurseManifest.Name;
+            minecraft = exactCurseManifest.MinecraftVersion;
+            platform = exactCurseManifest.Loader.ToString();
+            loader = exactCurseManifest.LoaderVersion;
         }
         var candidates = names.Where(IsLaunchCandidate).Take(12).ToArray();
         var serverRoot = SharedRoot(candidates.Length > 0 ? candidates : names.Take(100).ToArray());
@@ -199,7 +181,9 @@ public sealed partial class ServerImportInspectionService
         if (sourceKind == ServerImportSourceKind.CurseForgePack)
             warnings.Add("A CurseForge client manifest is not itself proof of a complete dedicated-server package.");
         if (candidates.Length > 1) warnings.Add("Choose the intended launcher before installation.");
-        var canInstall = candidates.Length > 0;
+        var canInstall = sourceKind == ServerImportSourceKind.CurseForgePack
+            ? exactCurseManifest is not null
+            : candidates.Length > 0;
         return new ServerImportInspection
         {
             SourceKind = sourceKind,

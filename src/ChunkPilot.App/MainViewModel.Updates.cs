@@ -92,9 +92,6 @@ public sealed partial class MainViewModel
     private ReleaseChannel linkReleaseChannel = ReleaseChannel.Stable;
 
     [ObservableProperty]
-    private string curseForgeApiKey = "";
-
-    [ObservableProperty]
     private bool curseForgeKeyConfigured;
 
     [ObservableProperty]
@@ -562,20 +559,6 @@ public sealed partial class MainViewModel
         {
             CheckIntervalHours = Math.Clamp(hours, 1, 24 * 30)
         };
-    }
-
-    [RelayCommand]
-    private async Task SaveCurseForgeApiKeyAsync()
-    {
-        if (string.IsNullOrWhiteSpace(CurseForgeApiKey))
-            return;
-        await RunBusyAsync("Encrypting provider key for the current Windows user…", async () =>
-        {
-            _ = await client.SendAsync<OperationResult>("SetCurseForgeApiKey",
-                new SettingsValueRequest("curseforge-api-key", CurseForgeApiKey)).ConfigureAwait(true);
-            CurseForgeApiKey = "";
-            CurseForgeKeyConfigured = true;
-        }).ConfigureAwait(true);
     }
 
     internal async Task LoadUpdateDetailsAsync()

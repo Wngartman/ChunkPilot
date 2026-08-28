@@ -3,6 +3,7 @@ namespace ChunkPilot.Core;
 public enum PluginProviderKind
 {
     Modrinth,
+    CurseForge,
     Hangar
 }
 
@@ -79,19 +80,32 @@ public sealed record PluginRelease
     public IReadOnlyList<PluginDependency> Dependencies { get; init; } = [];
 }
 
-public sealed record PluginSearchRequest(Guid ServerId, string Search, int Limit = 20);
-public sealed record PluginReleaseRequest(Guid ServerId, string ProjectId);
+public sealed record PluginSearchRequest(
+    Guid ServerId,
+    string Search,
+    int Limit = 20,
+    PluginProviderKind Provider = PluginProviderKind.Modrinth);
+public sealed record PluginReleaseRequest(
+    Guid ServerId,
+    string ProjectId,
+    PluginProviderKind Provider = PluginProviderKind.Modrinth);
 public sealed record PluginProviderInstallRequest(
     Guid ServerId,
     string ProjectId,
     string VersionId,
-    bool RestartIfRunning = false);
-public sealed record PluginProviderPlanRequest(Guid ServerId, string ProjectId, string VersionId);
+    bool RestartIfRunning = false,
+    PluginProviderKind Provider = PluginProviderKind.Modrinth);
+public sealed record PluginProviderPlanRequest(
+    Guid ServerId,
+    string ProjectId,
+    string VersionId,
+    PluginProviderKind Provider = PluginProviderKind.Modrinth);
 public sealed record PluginProviderInstallPlanRequest(
     Guid ServerId,
     string ProjectId,
     string VersionId,
-    bool RestartIfRunning = false);
+    bool RestartIfRunning = false,
+    PluginProviderKind Provider = PluginProviderKind.Modrinth);
 public sealed record PluginInstallPlan
 {
     public IReadOnlyList<PluginRelease> Releases { get; init; } = [];

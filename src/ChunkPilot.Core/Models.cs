@@ -101,6 +101,8 @@ public enum InstallSourceType
     ExistingPackageFolder,
     CustomPackage,
     ModrinthPack,
+    CurseForgeServerPack,
+    CurseForgeGeneratedPack,
 
     /// <summary>A user-owned server JAR copied through the managed creation transaction.</summary>
     LocalServerJar
@@ -511,9 +513,13 @@ public sealed record ServerInstallRequest
     /// <summary>Trusted provider identity recorded by the native creation path. Never inferred from the pack index.</summary>
     public UpdateProvider PackProvider { get; init; }
     public string PackProjectId { get; init; } = "";
+    public string PackProjectSlug { get; init; } = "";
     public string PackProjectName { get; init; } = "";
     public string PackVersionId { get; init; } = "";
+    public string PackServerFileId { get; init; } = "";
     public string PackVersionName { get; init; } = "";
+    public string PackLoader { get; init; } = "";
+    public string PackLoaderVersion { get; init; } = "";
     public ReleaseChannel PackReleaseChannel { get; init; } = ReleaseChannel.Stable;
 }
 

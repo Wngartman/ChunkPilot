@@ -800,10 +800,16 @@ public sealed class InstallationCoordinator
             var request = new ServerInstallRequest
             {
                 OperationId = plan.OperationId,
-                SourceType = InstallSourceType.ModrinthPack,
+                SourceType = plan.SourceKind switch
+                {
+                    ModpackCreationSource.CurseForgeOfficialServerPack => InstallSourceType.CurseForgeServerPack,
+                    ModpackCreationSource.CurseForgeGeneratedCandidate or
+                        ModpackCreationSource.LocalCurseForgeManifest => InstallSourceType.CurseForgeGeneratedPack,
+                    _ => InstallSourceType.ModrinthPack
+                },
                 Source = plan.Source,
                 MinecraftVersion = plan.MinecraftVersion,
-                Build = plan.VersionName,
+                Build = plan.LoaderVersion,
                 ServerName = plan.ServerName,
                 InstanceRoot = plan.InstanceRoot,
                 JavaPath = java.JavaPath,
@@ -816,13 +822,18 @@ public sealed class InstallationCoordinator
                 EulaAccepted = plan.Eula.Accepted,
                 EulaAcceptedAt = plan.Eula.AcceptedAtUtc,
                 ExpectedSha1 = plan.ExpectedSha1,
+                ExpectedSha256 = plan.ExpectedSha256,
                 ExpectedSha512 = plan.ExpectedSha512,
                 ExpectedSizeBytes = plan.ExpectedSizeBytes,
                 PackProvider = plan.Provider,
                 PackProjectId = plan.ProjectId,
+                PackProjectSlug = plan.ProjectSlug,
                 PackProjectName = plan.ProjectName,
                 PackVersionId = plan.VersionId,
+                PackServerFileId = plan.ServerPackFileId,
                 PackVersionName = plan.VersionName,
+                PackLoader = plan.Loader,
+                PackLoaderVersion = plan.LoaderVersion,
                 PackReleaseChannel = plan.ReleaseChannel
             };
             await RunAsync(request, state).ConfigureAwait(false);
@@ -1141,26 +1152,36 @@ public sealed class InstallationCoordinator
                     InstalledAt = DateTimeOffset.UtcNow,
                     DetectionEvidence = "Recorded by ChunkPilot managed installation."
                 }, state.Cancellation.Token).ConfigureAwait(false);
-            if (request.SourceType == InstallSourceType.ModrinthPack)
+            if (request.SourceType is InstallSourceType.ModrinthPack or InstallSourceType.CurseForgeServerPack or
+                InstallSourceType.CurseForgeGeneratedPack)
                 await store.UpsertUpdateSourceAsync(new UpdateSource
                 {
                     ServerId = result.Definition.Id,
                     Provider = request.PackProvider,
                     ProjectName = request.PackProjectName,
                     ProjectId = request.PackProjectId,
+                    ProjectSlug = request.PackProjectSlug,
                     InstalledVersionId = request.PackVersionId,
                     InstalledVersionName = request.PackVersionName,
-                    InstalledFileId = result.Sha256,
+                    InstalledFileId = string.IsNullOrWhiteSpace(request.PackServerFileId)
+                        ? string.IsNullOrWhiteSpace(request.PackVersionId) ? result.Sha256 : request.PackVersionId
+                        : request.PackServerFileId,
                     MinecraftVersion = result.Definition.MinecraftVersion,
                     Loader = result.Definition.Ecosystem.ToString(),
                     LoaderVersion = result.Definition.LoaderVersion,
                     ReleaseChannel = request.PackReleaseChannel,
                     SourceUrl = request.Source,
                     InstalledAt = DateTimeOffset.UtcNow,
-                    IsUserLinked = request.PackProvider == UpdateProvider.Modrinth,
+                    IsUserLinked = (request.PackProvider is UpdateProvider.Modrinth or UpdateProvider.CurseForge) &&
+                                   !string.IsNullOrWhiteSpace(request.PackProjectId),
                     DetectionEvidence = request.PackProvider == UpdateProvider.Modrinth
                         ? "Recorded from exact Modrinth catalog identity and a verified .mrpack archive."
-                        : "Recorded from a locally selected verified .mrpack archive."
+                        : request.PackProvider == UpdateProvider.CurseForge &&
+                          !string.IsNullOrWhiteSpace(request.PackProjectId)
+                            ? string.IsNullOrWhiteSpace(request.PackServerFileId)
+                                ? "Recorded from exact CurseForge client-pack identity and a natively verified generated server candidate."
+                                : "Recorded from exact CurseForge client/server-pack relationship and a natively verified official server pack."
+                            : "Recorded from a locally selected exact CurseForge manifest; provider updates remain unavailable until the pack project/release is linked exactly."
                 }, state.Cancellation.Token).ConfigureAwait(false);
             lock (state.Gate)
             {

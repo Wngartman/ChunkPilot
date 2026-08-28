@@ -87,9 +87,9 @@ describe('Paper plugin management', () => {
     fireEvent.click(plan);
     expect(screen.getByRole('alertdialog').textContent).toContain('Vault.jar');
     fireEvent.click(screen.getByRole('button', { name: 'Install verified plan' }));
-    expect(calls).toContainEqual({ method: 'plugins.search', params: { serverId: paper.id, search: 'tools', limit: 20 } });
+    expect(calls).toContainEqual({ method: 'plugins.search', params: { serverId: paper.id, search: 'tools', limit: 20, provider: 'Modrinth' } });
     expect(calls).toContainEqual({ method: 'plugins.installPlan', params: expect.objectContaining({
-      serverId: paper.id, projectId: 'fixture', versionId: 'release-1', restartIfRunning: false,
+      serverId: paper.id, projectId: 'fixture', versionId: 'release-1', provider: 'Modrinth', restartIfRunning: false,
       operationId: expect.any(String)
     }) });
   });
@@ -170,9 +170,9 @@ describe('Paper plugin management', () => {
     fireEvent.click(update);
     fireEvent.click(screen.getByRole('button', { name: 'Apply plugin change' }));
 
-    expect(calls).toContainEqual({ method: 'plugins.release', params: { serverId: paper.id, projectId: 'fixture' } });
+    expect(calls).toContainEqual({ method: 'plugins.release', params: { serverId: paper.id, projectId: 'fixture', provider: 'Modrinth' } });
     expect(calls).toContainEqual({ method: 'plugins.install', params: expect.objectContaining({
-      serverId: paper.id, projectId: 'fixture', versionId: 'release-1', restartIfRunning: false,
+      serverId: paper.id, projectId: 'fixture', versionId: 'release-1', provider: 'Modrinth', restartIfRunning: false,
       operationId: expect.any(String)
     }) });
   });

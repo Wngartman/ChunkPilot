@@ -3,6 +3,9 @@ namespace ChunkPilot.Core;
 public enum ModpackCreationSource
 {
     Modrinth,
+    CurseForgeOfficialServerPack,
+    CurseForgeGeneratedCandidate,
+    LocalCurseForgeManifest,
     LocalMrpack
 }
 
@@ -18,13 +21,18 @@ public sealed record ModpackCreationPlan
     public string Source { get; init; } = "";
     public UpdateProvider Provider { get; init; }
     public string ProjectId { get; init; } = "";
+    public string ProjectSlug { get; init; } = "";
     public string ProjectName { get; init; } = "";
     public string VersionId { get; init; } = "";
+    public string ServerPackFileId { get; init; } = "";
     public string VersionName { get; init; } = "";
     public ReleaseChannel ReleaseChannel { get; init; } = ReleaseChannel.Stable;
     public string MinecraftVersion { get; init; } = "";
+    public string Loader { get; init; } = "";
+    public string LoaderVersion { get; init; } = "";
     public int RequiredJavaMajor { get; init; }
     public string ExpectedSha1 { get; init; } = "";
+    public string ExpectedSha256 { get; init; } = "";
     public string ExpectedSha512 { get; init; } = "";
     public long? ExpectedSizeBytes { get; init; }
     public string ServerName { get; init; } = "";
@@ -46,17 +54,34 @@ public sealed record ModpackCreationPlan
             problems.Add("The server has no name.");
         if (string.IsNullOrWhiteSpace(Source))
             problems.Add("No Modrinth pack archive was selected.");
-        if (SourceKind == ModpackCreationSource.Modrinth)
+        if (SourceKind is ModpackCreationSource.Modrinth or ModpackCreationSource.CurseForgeOfficialServerPack or
+            ModpackCreationSource.CurseForgeGeneratedCandidate)
         {
-            if (Provider != UpdateProvider.Modrinth || string.IsNullOrWhiteSpace(ProjectId) ||
+            var expectedProvider = SourceKind == ModpackCreationSource.Modrinth
+                ? UpdateProvider.Modrinth : UpdateProvider.CurseForge;
+            if (Provider != expectedProvider || string.IsNullOrWhiteSpace(ProjectId) ||
                 string.IsNullOrWhiteSpace(VersionId))
-                problems.Add("The exact Modrinth project and release identity is incomplete.");
+                problems.Add("The exact provider project and release identity is incomplete.");
             if (!Uri.TryCreate(Source, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps ||
-                !uri.IdnHost.Equals("cdn.modrinth.com", StringComparison.OrdinalIgnoreCase))
-                problems.Add("The selected Modrinth release does not use the trusted Modrinth CDN.");
-            if (ExpectedSizeBytes is null or <= 0 || string.IsNullOrWhiteSpace(ExpectedSha1) ||
-                string.IsNullOrWhiteSpace(ExpectedSha512))
-                problems.Add("The selected Modrinth release has incomplete integrity metadata.");
+                (SourceKind == ModpackCreationSource.Modrinth
+                    ? !uri.IdnHost.Equals("cdn.modrinth.com", StringComparison.OrdinalIgnoreCase)
+                    : !CurseForgeDownloadHost(uri.IdnHost)))
+                problems.Add("The selected release does not use its trusted provider CDN.");
+            if (ExpectedSizeBytes is null or <= 0 || ExpectedSha1.Length != 40 ||
+                SourceKind == ModpackCreationSource.Modrinth && ExpectedSha512.Length != 128)
+                problems.Add("The selected provider release has incomplete integrity metadata.");
+            if (SourceKind == ModpackCreationSource.CurseForgeOfficialServerPack &&
+                string.IsNullOrWhiteSpace(ServerPackFileId))
+                problems.Add("The official CurseForge server-pack relationship is incomplete.");
+        }
+        else if (SourceKind == ModpackCreationSource.LocalCurseForgeManifest)
+        {
+            if (Provider != UpdateProvider.CurseForge)
+                problems.Add("A local CurseForge manifest must retain CurseForge provenance.");
+            if (!File.Exists(Source))
+                problems.Add("The selected local CurseForge archive was not found.");
+            if (ExpectedSizeBytes is null or <= 0 || ExpectedSha256.Length != 64)
+                problems.Add("The selected local CurseForge archive is not bound to its reviewed identity.");
         }
         else
         {
@@ -65,7 +90,8 @@ public sealed record ModpackCreationPlan
             if (ExpectedSizeBytes is null or <= 0 || ExpectedSha512.Length != 128)
                 problems.Add("The selected local pack is not bound to its inspected archive identity.");
         }
-        if (string.IsNullOrWhiteSpace(MinecraftVersion) || RequiredJavaMajor <= 0)
+        if (string.IsNullOrWhiteSpace(MinecraftVersion) || string.IsNullOrWhiteSpace(Loader) ||
+            RequiredJavaMajor <= 0)
             problems.Add("The pack's exact Minecraft and Java requirements were not established.");
         if (!Eula.IsAuthorised)
             problems.Add("The Minecraft EULA was not accepted.");
@@ -76,6 +102,10 @@ public sealed record ModpackCreationPlan
         if (InitialWorld is { } world) problems.AddRange(world.Problems());
         return problems.Distinct(StringComparer.Ordinal).ToArray();
     }
+
+    private static bool CurseForgeDownloadHost(string host) =>
+        host.Equals("forgecdn.net", StringComparison.OrdinalIgnoreCase) ||
+        host.EndsWith(".forgecdn.net", StringComparison.OrdinalIgnoreCase);
 }
 
 public sealed record BeginModpackCreationRequest(ModpackCreationPlan Plan);

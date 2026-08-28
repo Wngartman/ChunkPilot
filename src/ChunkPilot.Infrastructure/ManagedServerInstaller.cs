@@ -200,6 +200,9 @@ public sealed class ManagedServerInstaller
     private readonly ModrinthPackServerService packInstaller;
     private readonly ServerCreationTransaction transaction;
     private readonly CreationWorldSourceService worldSources;
+    private readonly CurseForgeApiClient? curseForge;
+    private readonly CurseForgePackService? curseForgePacks;
+    private readonly IStagedServerValidator stagedValidator;
     private readonly HttpClient http;
 
     public ManagedServerInstaller(
@@ -210,7 +213,10 @@ public sealed class ManagedServerInstaller
         LoaderInstallationService? loaderInstaller = null,
         ServerCreationTransaction? transaction = null,
         ModrinthPackServerService? packInstaller = null,
-        CreationWorldSourceService? worldSources = null)
+        CreationWorldSourceService? worldSources = null,
+        CurseForgeApiClient? curseForge = null,
+        CurseForgePackService? curseForgePacks = null,
+        IStagedServerValidator? stagedValidator = null)
     {
         this.paths = paths;
         this.store = store;
@@ -219,6 +225,11 @@ public sealed class ManagedServerInstaller
         this.packInstaller = packInstaller ?? new ModrinthPackServerService(loaderInstaller: loaderInstaller);
         this.transaction = transaction ?? new ServerCreationTransaction(store);
         this.worldSources = worldSources ?? new CreationWorldSourceService();
+        this.curseForge = curseForge;
+        this.curseForgePacks = curseForgePacks ?? (curseForge is null
+            ? null
+            : new CurseForgePackService(curseForge, loaders: loaderInstaller));
+        this.stagedValidator = stagedValidator ?? new StagedServerValidator();
         http = httpClient ?? new HttpClient { Timeout = TimeSpan.FromMinutes(30) };
         if (http.DefaultRequestHeaders.UserAgent.Count == 0)
             http.DefaultRequestHeaders.UserAgent.ParseAdd("ChunkPilot/1.3.0 (local Windows server manager)");
@@ -296,6 +307,10 @@ public sealed class ManagedServerInstaller
                 var payload = await StagePayloadAsync(request, installerJava, context.StagingPath, progress, context.LogPath, token)
                     .ConfigureAwait(false);
                 staged = payload;
+                if (request.SourceType is InstallSourceType.CurseForgeServerPack or
+                    InstallSourceType.CurseForgeGeneratedPack)
+                    await ProviderOwnershipManifest.WriteAsync(context.StagingPath, "CurseForge", token)
+                        .ConfigureAwait(false);
                 if (request.InitialWorld is { } initialWorld)
                 {
                     Report(progress, request.OperationId, InstallState.Extracting,
@@ -358,6 +373,22 @@ public sealed class ManagedServerInstaller
                 };
                 await WritePackIdentityAsync(context.StagingPath, definition, request, payload, token)
                     .ConfigureAwait(false);
+                if (request.SourceType is InstallSourceType.CurseForgeServerPack or
+                    InstallSourceType.CurseForgeGeneratedPack)
+                {
+                    Report(progress, request.OperationId, InstallState.Validating, CreationStage.FinalSafetyCheck,
+                        "Starting the staged server on loopback for a bounded safety check", 84, 0, null, 0,
+                        Path.GetFileName(relativeLaunchPath), context.LogPath);
+                    var validation = await stagedValidator.ValidateAsync(runtimeJava, context.StagingPath,
+                        relativeLaunchPath, payload.UsesArgumentFile, TimeSpan.FromMinutes(3), token)
+                        .ConfigureAwait(false);
+                    foreach (var line in validation.Tail)
+                        await AppendLogAsync(context.LogPath, "[staged-validation] " + line, token).ConfigureAwait(false);
+                    await WriteValidationEvidenceAsync(context.StagingPath, validation, token).ConfigureAwait(false);
+                    if (!validation.Succeeded)
+                        throw new InvalidDataException(
+                            "ChunkPilot could not build a working server from this release. " + validation.Summary);
+                }
                 return new CreationCandidate(definition, payload.SourceUrl, payload.Sha256,
                     $"Source={request.SourceType}; Version={payload.MinecraftVersion}; Build={payload.Build}");
             },
@@ -542,6 +573,113 @@ public sealed class ManagedServerInstaller
             }
         }
 
+        if (request.SourceType == InstallSourceType.CurseForgeServerPack)
+        {
+            if (curseForge is null)
+                throw new InvalidOperationException("The native CurseForge download boundary is unavailable.");
+            if (!Uri.TryCreate(request.Source, UriKind.Absolute, out var sourceUri) ||
+                !CurseForgeApiClient.IsApprovedDownloadUri(sourceUri))
+                throw new InvalidDataException("The official server pack does not use an approved CurseForge CDN host.");
+            var archivePath = Path.Combine(paths.Staging, $"{request.OperationId:N}-curseforge-server.zip");
+            try
+            {
+                Directory.CreateDirectory(paths.Staging);
+                using var response = await curseForge.SendDownloadAsync(sourceUri, cancellationToken).ConfigureAwait(false);
+                if (request.ExpectedSizeBytes is not > 0 or > 4L * 1024 * 1024 * 1024)
+                    throw new InvalidDataException("The official server pack does not have a safe declared size.");
+                if (response.Content.Headers.ContentLength is { } contentLength &&
+                    contentLength != request.ExpectedSizeBytes.Value)
+                    throw new InvalidDataException("The official server-pack response size changed after review.");
+                await using (var input = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false))
+                await using (var output = new FileStream(archivePath, FileMode.CreateNew, FileAccess.Write, FileShare.None,
+                                 128 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan))
+                {
+                    var buffer = new byte[128 * 1024];
+                    long transferred = 0;
+                    while (true)
+                    {
+                        var read = await input.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
+                        if (read == 0) break;
+                        transferred = checked(transferred + read);
+                        if (transferred > request.ExpectedSizeBytes.Value)
+                            throw new InvalidDataException("The official server-pack download exceeded its declared size.");
+                        await output.WriteAsync(buffer.AsMemory(0, read), cancellationToken).ConfigureAwait(false);
+                        Report(progress, request.OperationId, InstallState.Downloading,
+                            CreationStage.DownloadingServer, "Downloading the exact official CurseForge server pack",
+                            12, transferred, request.ExpectedSizeBytes, 0, Path.GetFileName(archivePath), logPath);
+                    }
+                    if (transferred != request.ExpectedSizeBytes.Value)
+                        throw new InvalidDataException("The official server-pack download ended before its declared size.");
+                    await output.FlushAsync(cancellationToken).ConfigureAwait(false);
+                }
+                VerifyHash(archivePath, request.ExpectedSha1, request.ExpectedSha256, request.ExpectedSha512);
+                Report(progress, request.OperationId, InstallState.Extracting, CreationStage.PreparingServerFiles,
+                    "Inspecting and extracting the verified official server pack", 55, 0, null, 0,
+                    Path.GetFileName(archivePath), logPath);
+                await ExtractZipSafeAsync(archivePath, stagingPath, cancellationToken).ConfigureAwait(false);
+                NormalizeSinglePackageRoot(stagingPath);
+                var launch = FindKnownServerPackLaunch(stagingPath);
+                return new StagedPayload(
+                    Path.GetRelativePath(stagingPath, launch.Path), request.MinecraftVersion,
+                    string.IsNullOrWhiteSpace(request.PackLoaderVersion) ? request.Build : request.PackLoaderVersion,
+                    request.Source, Sha256(archivePath), launch.UsesArgumentFile,
+                    ToEcosystemFromLoader(request.PackLoader), request.InstallerVersion);
+            }
+            finally
+            {
+                if (File.Exists(archivePath)) File.Delete(archivePath);
+            }
+        }
+
+        if (request.SourceType == InstallSourceType.CurseForgeGeneratedPack)
+        {
+            if (curseForge is null || curseForgePacks is null)
+                throw new InvalidOperationException("The native CurseForge generated-pack boundary is unavailable.");
+            var archivePath = request.Source;
+            var removeArchive = false;
+            try
+            {
+                if (Uri.TryCreate(request.Source, UriKind.Absolute, out var sourceUri))
+                {
+                    if (!CurseForgeApiClient.IsApprovedDownloadUri(sourceUri))
+                        throw new InvalidDataException("The CurseForge client pack does not use an approved CDN host.");
+                    archivePath = Path.Combine(paths.Staging, $"{request.OperationId:N}-curseforge-client.zip");
+                    removeArchive = true;
+                    await DownloadCurseForgeArchiveAsync(sourceUri, archivePath, request, progress, logPath,
+                        "Downloading the exact CurseForge client manifest pack", cancellationToken).ConfigureAwait(false);
+                }
+                else if (!File.Exists(archivePath))
+                {
+                    throw new FileNotFoundException("The selected local CurseForge manifest archive was not found.", archivePath);
+                }
+                if (request.ExpectedSizeBytes is not > 0 ||
+                    new FileInfo(archivePath).Length != request.ExpectedSizeBytes.Value)
+                    throw new InvalidDataException("The CurseForge client archive size no longer matches the reviewed artifact.");
+                VerifyHash(archivePath, request.ExpectedSha1, request.ExpectedSha256, request.ExpectedSha512);
+                Report(progress, request.OperationId, InstallState.Extracting, CreationStage.PreparingServerFiles,
+                    "Resolving exact CurseForge manifest files and managed loader", 52, 0, null, 0,
+                    Path.GetFileName(archivePath), logPath);
+                var installed = await curseForgePacks.MaterializeAndInstallAsync(
+                    archivePath, stagingPath, javaPath, logPath, cancellationToken).ConfigureAwait(false);
+                if (!installed.Manifest.MinecraftVersion.Equals(request.MinecraftVersion, StringComparison.OrdinalIgnoreCase) ||
+                    !installed.Manifest.Loader.ToString().Equals(request.PackLoader, StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidDataException("The CurseForge manifest identity changed after the creation review.");
+                if (!string.IsNullOrWhiteSpace(request.PackLoaderVersion) &&
+                    !installed.LoaderVersion.Equals(request.PackLoaderVersion, StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidDataException("The CurseForge loader version changed after the creation review.");
+                Report(progress, request.OperationId, InstallState.Validating, CreationStage.VerifyingServerDownload,
+                    "Verifying generated server candidate identity", 76, 0, null, 0,
+                    $"{installed.Manifest.Loader} {installed.LoaderVersion}", logPath);
+                return new StagedPayload(installed.LaunchRelativePath, installed.Manifest.MinecraftVersion,
+                    installed.LoaderVersion, request.Source, Sha256(archivePath), installed.UsesArgumentFile,
+                    installed.Ecosystem, installed.InstallerVersion);
+            }
+            finally
+            {
+                if (removeArchive && File.Exists(archivePath)) File.Delete(archivePath);
+            }
+        }
+
         if (request.SourceType == InstallSourceType.ExistingPackageFolder)
         {
             var source = Path.GetFullPath(request.Source);
@@ -695,6 +833,15 @@ public sealed class ManagedServerInstaller
         if (request.SourceType == InstallSourceType.ModrinthPack &&
             !Uri.TryCreate(request.Source, UriKind.Absolute, out _) && !File.Exists(request.Source))
             throw new FileNotFoundException("The selected local Modrinth pack was not found.", request.Source);
+        if (request.SourceType == InstallSourceType.CurseForgeServerPack &&
+            (!Uri.TryCreate(request.Source, UriKind.Absolute, out var curseForgeSource) ||
+             !CurseForgeApiClient.IsApprovedDownloadUri(curseForgeSource)))
+            throw new InvalidDataException("The selected CurseForge server-pack URL is not approved.");
+        if (request.SourceType == InstallSourceType.CurseForgeGeneratedPack &&
+            !File.Exists(request.Source) &&
+            (!Uri.TryCreate(request.Source, UriKind.Absolute, out var curseForgeClient) ||
+             !CurseForgeApiClient.IsApprovedDownloadUri(curseForgeClient)))
+            throw new InvalidDataException("The selected CurseForge manifest archive is neither a reviewed local file nor an approved provider download.");
         if (request.InitialWorld is { } world)
         {
             var problems = world.Problems();
@@ -740,7 +887,9 @@ public sealed class ManagedServerInstaller
         StagedPayload payload,
         CancellationToken cancellationToken)
     {
-        if (request.SourceType != InstallSourceType.ModrinthPack || request.PackProvider == UpdateProvider.None)
+        if (request.SourceType is not (InstallSourceType.ModrinthPack or InstallSourceType.CurseForgeServerPack or
+                InstallSourceType.CurseForgeGeneratedPack) ||
+            request.PackProvider == UpdateProvider.None)
             return;
         var metadataRoot = Path.Combine(stagingPath, ".chunkpilot");
         Directory.CreateDirectory(metadataRoot);
@@ -750,9 +899,12 @@ public sealed class ManagedServerInstaller
             Provider = request.PackProvider,
             ProjectName = request.PackProjectName,
             ProjectId = request.PackProjectId,
+            ProjectSlug = request.PackProjectSlug,
             InstalledVersionId = request.PackVersionId,
             InstalledVersionName = request.PackVersionName,
-            InstalledFileId = payload.Sha256,
+            InstalledFileId = string.IsNullOrWhiteSpace(request.PackServerFileId)
+                ? string.IsNullOrWhiteSpace(request.PackVersionId) ? payload.Sha256 : request.PackVersionId
+                : request.PackServerFileId,
             MinecraftVersion = payload.MinecraftVersion,
             Loader = payload.Ecosystem.ToString(),
             LoaderVersion = payload.Build,
@@ -760,8 +912,14 @@ public sealed class ManagedServerInstaller
             ReleaseChannel = request.PackReleaseChannel,
             SourceUrl = request.Source,
             InstalledAt = DateTimeOffset.UtcNow,
-            IsUserLinked = request.PackProvider == UpdateProvider.Modrinth,
-            DetectionEvidence = request.PackProvider == UpdateProvider.Modrinth
+            IsUserLinked = request.PackProvider is UpdateProvider.Modrinth or UpdateProvider.CurseForge,
+            DetectionEvidence = request.PackProvider == UpdateProvider.CurseForge
+                ? string.IsNullOrWhiteSpace(request.PackProjectId)
+                    ? "Recorded from an exact local CurseForge manifest archive; every materialized project/file was verified natively, but the pack project/release itself is not linked."
+                    : string.IsNullOrWhiteSpace(request.PackServerFileId)
+                        ? $"Recorded from exact reviewed CurseForge project slug {request.PackProjectSlug} and client file {request.PackVersionId}; manifest files, provider SHA-1 values, and local SHA-256 baselines were verified."
+                        : $"Recorded from exact reviewed CurseForge project slug {request.PackProjectSlug}, client file {request.PackVersionId}, and official server-pack file {request.PackServerFileId}; provider SHA-1 and local SHA-256 were verified."
+                : request.PackProvider == UpdateProvider.Modrinth
                 ? "Recorded from the exact reviewed Modrinth project and release; archive and all indexed files were verified."
                 : "Recorded from a locally selected .mrpack. Provider updates require a separately proven project identity."
         };
@@ -815,6 +973,106 @@ public sealed class ManagedServerInstaller
         return candidates.FirstOrDefault() ??
                throw new InvalidDataException("No runnable server JAR was found in the staged package.");
     }
+
+    private static async Task WriteValidationEvidenceAsync(
+        string stagingPath,
+        StagedServerValidationResult validation,
+        CancellationToken cancellationToken)
+    {
+        var metadataRoot = Path.Combine(stagingPath, ".chunkpilot");
+        Directory.CreateDirectory(metadataRoot);
+        var evidence = new
+        {
+            schemaVersion = 1,
+            validatedAtUtc = DateTimeOffset.UtcNow,
+            validation.Succeeded,
+            validation.ReadinessConfirmed,
+            validation.LoopbackStatusConfirmed,
+            validation.CleanStopConfirmed,
+            validation.NoUnexpectedGuiConfirmed,
+            validation.Summary
+        };
+        await File.WriteAllTextAsync(Path.Combine(metadataRoot, "staged-validation.json"),
+            JsonSerializer.Serialize(evidence, ProtocolJson.Options), new UTF8Encoding(false), cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    private async Task DownloadCurseForgeArchiveAsync(
+        Uri uri,
+        string destination,
+        ServerInstallRequest request,
+        IProgress<InstallProgress>? progress,
+        string logPath,
+        string message,
+        CancellationToken cancellationToken)
+    {
+        if (curseForge is null) throw new InvalidOperationException("The native CurseForge download boundary is unavailable.");
+        if (request.ExpectedSizeBytes is not > 0 or > ServerImportInspectionService.MaximumCompressedBytes)
+            throw new InvalidDataException("The CurseForge archive does not have a safe declared size.");
+        Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+        using var response = await curseForge.SendDownloadAsync(uri, cancellationToken).ConfigureAwait(false);
+        if (response.Content.Headers.ContentLength is { } length && length != request.ExpectedSizeBytes.Value)
+            throw new InvalidDataException("The CurseForge archive response size changed after review.");
+        await using var input = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+        await using var output = new FileStream(destination, FileMode.CreateNew, FileAccess.Write, FileShare.None,
+            128 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
+        var buffer = new byte[128 * 1024];
+        long transferred = 0;
+        while (true)
+        {
+            var read = await input.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
+            if (read == 0) break;
+            transferred = checked(transferred + read);
+            if (transferred > request.ExpectedSizeBytes.Value)
+                throw new InvalidDataException("The CurseForge archive exceeded its declared size.");
+            await output.WriteAsync(buffer.AsMemory(0, read), cancellationToken).ConfigureAwait(false);
+            Report(progress, request.OperationId, InstallState.Downloading, CreationStage.DownloadingServer,
+                message, 12, transferred, request.ExpectedSizeBytes, 0, Path.GetFileName(destination), logPath);
+        }
+        if (transferred != request.ExpectedSizeBytes.Value)
+            throw new InvalidDataException("The CurseForge archive ended before its declared size.");
+        await output.FlushAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private static (string Path, bool UsesArgumentFile) FindKnownServerPackLaunch(string stagingPath)
+    {
+        var arguments = Directory.EnumerateFiles(stagingPath, "win_args.txt", SearchOption.AllDirectories)
+            .Where(path => path.Contains($"{Path.DirectorySeparatorChar}libraries{Path.DirectorySeparatorChar}",
+                StringComparison.OrdinalIgnoreCase))
+            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (arguments.Length == 1)
+            return (arguments[0], true);
+        if (arguments.Length > 1)
+            throw new InvalidDataException("The official server pack contains multiple ambiguous managed launch profiles.");
+        return (FindLaunchJar(stagingPath, ""), false);
+    }
+
+    private static void NormalizeSinglePackageRoot(string stagingPath)
+    {
+        var files = Directory.EnumerateFiles(stagingPath).ToArray();
+        var directories = Directory.EnumerateDirectories(stagingPath).ToArray();
+        if (files.Length > 0 || directories.Length != 1) return;
+        var nested = directories[0];
+        foreach (var entry in Directory.EnumerateFileSystemEntries(nested))
+        {
+            var target = Path.Combine(stagingPath, Path.GetFileName(entry));
+            if (File.Exists(target) || Directory.Exists(target))
+                throw new IOException("The official server-pack root contains a case-colliding destination.");
+            if (Directory.Exists(entry)) Directory.Move(entry, target);
+            else File.Move(entry, target);
+        }
+        Directory.Delete(nested);
+    }
+
+    private static ServerEcosystem ToEcosystemFromLoader(string loader) => loader.Trim().ToLowerInvariant() switch
+    {
+        "fabric" => ServerEcosystem.Fabric,
+        "quilt" => ServerEcosystem.Quilt,
+        "forge" => ServerEcosystem.Forge,
+        "neoforge" => ServerEcosystem.NeoForge,
+        _ => ServerEcosystem.Custom
+    };
 
     private static string ResolveJava(string requested)
     {

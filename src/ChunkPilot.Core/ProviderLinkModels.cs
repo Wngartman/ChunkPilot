@@ -15,7 +15,8 @@ public sealed record ProviderLinkReference(
     ProviderLinkKind Kind,
     string ProjectReference,
     string? ReleaseReference,
-    string CanonicalUrl);
+    string CanonicalUrl,
+    CatalogContentType ContentType = CatalogContentType.Modpack);
 
 public static class ProviderLinkParser
 {
@@ -82,10 +83,11 @@ public static class ProviderLinkParser
     {
         reference = null;
         error = "";
-        if (segments.Length < 3 || segments[0] != "minecraft" || segments[1] != "modpacks" ||
+        if (segments.Length < 3 || segments[0] != "minecraft" ||
+            segments[1] is not ("modpacks" or "mc-mods") ||
             !SafeId(segments[2]))
         {
-            error = "Use a CurseForge Minecraft modpack project or exact-file link.";
+            error = "Use a CurseForge Minecraft modpack or mod project or exact-file link.";
             return false;
         }
 
@@ -104,8 +106,9 @@ public static class ProviderLinkParser
         reference = new ProviderLinkReference(CatalogProvider.CurseForge,
             file is null ? ProviderLinkKind.Project : ProviderLinkKind.ExactRelease,
             segments[2], file,
-            $"https://www.curseforge.com/minecraft/modpacks/{Uri.EscapeDataString(segments[2])}" +
-            (file is null ? "" : $"/files/{file}"));
+            $"https://www.curseforge.com/minecraft/{segments[1]}/{Uri.EscapeDataString(segments[2])}" +
+            (file is null ? "" : $"/files/{file}"),
+            segments[1] == "mc-mods" ? CatalogContentType.Mod : CatalogContentType.Modpack);
         return true;
     }
 

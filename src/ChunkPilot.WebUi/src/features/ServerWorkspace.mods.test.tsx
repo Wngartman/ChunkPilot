@@ -115,10 +115,10 @@ describe('Fabric mod management', () => {
 
     expect(await screen.findByText(/Optional for friends/)).toBeTruthy();
     expect(calls).toContainEqual({
-      method: 'mods.search', params: { serverId: server.id, search: 'lithium', limit: 20 }
+      method: 'mods.search', params: { serverId: server.id, search: 'lithium', limit: 20, provider: 'Modrinth' }
     });
     expect(calls).toContainEqual({
-      method: 'mods.release', params: { serverId: server.id, projectId: 'lithium' }
+      method: 'mods.release', params: { serverId: server.id, projectId: 'lithium', provider: 'Modrinth' }
     });
   });
 

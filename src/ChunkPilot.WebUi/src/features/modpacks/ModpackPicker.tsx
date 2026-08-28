@@ -47,7 +47,10 @@ function BrowseModpackPicker({ value, onChange }: {
   const [failedStage, setFailedStage] = useState('');
   const [providerStatuses, setProviderStatuses] = useState<ModpackProviderStatus[]>([]);
   const [providerVersions, setProviderVersions] = useState<ModpackVersionInventory | null>(null);
+  const [canLoadMore, setCanLoadMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const generation = useRef(0);
+  const paginationRequest = useRef<AbortController | null>(null);
   const resultsRef = useRef<HTMLDivElement>(null);
   const onChangeRef = useRef(onChange);
   const valueRef = useRef(value);
@@ -93,6 +96,7 @@ function BrowseModpackPicker({ value, onChange }: {
     const apply = (result: ModpackCatalogResult) => {
       if (requestGeneration !== generation.current) return;
       setProjects(result.items);
+      setCanLoadMore(result.items.length === 20);
       setDetail(result.detail);
       setFailedStage(result.failedStage);
       setState(toBrowserState(result));
@@ -100,6 +104,7 @@ function BrowseModpackPicker({ value, onChange }: {
     };
     const run = async () => {
       setFailedStage('');
+      setCanLoadMore(false);
       setState('Loading cache');
       try {
         const cached = await bridge.request<ModpackCatalogResult>('modpacks.cache', parameters, controller.signal);
@@ -124,7 +129,7 @@ function BrowseModpackPicker({ value, onChange }: {
       }
     };
     void run();
-    return () => { generation.current += 1; controller.abort(); };
+    return () => { generation.current += 1; controller.abort(); paginationRequest.current?.abort(); };
     // queryRevision deliberately retriggers an identical query after Retry.
   }, [bridge, provider, query, queryRevision]);
 
@@ -155,6 +160,37 @@ function BrowseModpackPicker({ value, onChange }: {
     void command<LocalModpackSelection>('modpacks.chooseLocal').then(local => {
       if (!local.cancelled && local.inspection?.canCreate) onChange({ kind: 'local', local });
     });
+  };
+  const loadMore = async () => {
+    if (!bridge || loadingMore || !canLoadMore) return;
+    const requestGeneration = generation.current;
+    paginationRequest.current?.abort();
+    const controller = new AbortController();
+    paginationRequest.current = controller;
+    setLoadingMore(true);
+    try {
+      const result = await bridge.request<ModpackCatalogResult>('modpacks.search',
+        { provider, ...query, limit: 20, index: projects.length, includeExperimental: false }, controller.signal);
+      if (requestGeneration !== generation.current) return;
+      const existing = new Set(projects.map(project => `${project.provider}:${project.projectId}`));
+      const appended = result.items.filter(project => !existing.has(`${project.provider}:${project.projectId}`));
+      const merged = [...projects, ...appended];
+      setProjects(merged);
+      setCanLoadMore(result.items.length === 20 && appended.length > 0);
+      setDetail(result.detail);
+      setFailedStage(result.failedStage);
+      if (result.state !== 'Ready') setState(toBrowserState(result));
+      reconcileSelection(merged, provider, valueRef.current, onChangeRef.current);
+    } catch (reason) {
+      if (requestGeneration === generation.current) {
+        setState('Failed');
+        setDetail(reason instanceof Error ? reason.message : `${provider} could not load the next page.`);
+        setFailedStage('provider pagination');
+      }
+    } finally {
+      if (paginationRequest.current === controller) paginationRequest.current = null;
+      if (requestGeneration === generation.current) setLoadingMore(false);
+    }
   };
   const status = providerStatuses.find(item => item.provider === provider);
   const pending = state === 'Loading cache' || state === 'Loading provider';
@@ -187,7 +223,7 @@ function BrowseModpackPicker({ value, onChange }: {
       <Button variant="primary" icon={<Search size={14} />} type="submit">Search</Button>
     </form>
     <div className={styles.trendNote}><Info size={13} /><span>{status?.detail ?? `${provider} provider status is loading.`}</span></div>
-    {state === 'Authentication required' && <div className={styles.connectState} role="status"><Box size={22} /><div><strong>CurseForge activation in progress</strong><span>CurseForge integration is being activated for ChunkPilot. Modrinth and local pack import remain available.</span></div></div>}
+    {state === 'Authentication required' && <div className={styles.connectState} role="status"><Box size={22} /><div><strong>CurseForge unavailable</strong><span>This development candidate has no approved native CurseForge credential. Modrinth and local pack import remain available.</span></div></div>}
     {(state === 'Failed' || state === 'Rate limited') && <div className={styles.error} role="alert"><strong>{state === 'Rate limited' ? `${provider} rate limit active` : `${provider} catalog unavailable`}</strong><span>{detail}</span><Button onClick={() => setQueryRevision(revision => revision + 1)}>Retry</Button>{failedStage && <details><summary>Technical details</summary><code>Failed stage: {failedStage}</code></details>}</div>}
     {state === 'Offline cache' && <div className={styles.cacheNotice} role="status">{detail}</div>}
     <div className={styles.layout}>
@@ -216,6 +252,8 @@ function BrowseModpackPicker({ value, onChange }: {
             </button>;
           })}
         </div>}
+        {projects.length > 0 && canLoadMore && <div className={styles.loadMore}><Button disabled={loadingMore}
+          onClick={() => void loadMore()}>{loadingMore ? 'Loading more…' : 'Load more'}</Button></div>}
       </div>
       <aside className={styles.detail}>
         {value?.kind === 'local' && value.local.inspection ? <>
@@ -230,7 +268,7 @@ function BrowseModpackPicker({ value, onChange }: {
             const release = releaseOptions.find(item => item.versionId === versionId);
             if (release) onChange({ kind: 'remote', project: selectedProject, release });
           }} ariaLabel="Exact modpack release" options={releaseOptions.map(release => ({ value: release.versionId, label: `${release.versionName} · Minecraft ${release.minecraftVersion} · ${release.loader}` }))} /></label>
-          {value?.kind === 'remote' && <dl><div><dt>Release</dt><dd>{value.release.releaseChannel}</dd></div><div><dt>Integrity</dt><dd>{value.release.hasIntegrity ? value.project.provider === 'Modrinth' ? 'SHA-1 + SHA-512' : 'Provider SHA-1' : 'Unavailable'}</dd></div><div><dt>Size</dt><dd>{value.release.sizeBytes ? `${(value.release.sizeBytes / 1024 / 1024).toFixed(1)} MB` : 'Unavailable'}</dd></div></dl>}
+          {value?.kind === 'remote' && <><dl><div><dt>Release</dt><dd>{value.release.releaseChannel}</dd></div><div><dt>Server path</dt><dd>{value.release.serverPath ?? 'Still checking'}</dd></div><div><dt>Integrity</dt><dd>{value.release.hasIntegrity ? value.project.provider === 'Modrinth' ? 'SHA-1 + SHA-512' : 'Provider SHA-1 + local SHA-256 after download' : 'Unavailable'}</dd></div><div><dt>Size</dt><dd>{value.release.sizeBytes ? `${(value.release.sizeBytes / 1024 / 1024).toFixed(1)} MB` : 'Unavailable'}</dd></div><div><dt>Published</dt><dd>{value.release.publishedAt ? new Date(value.release.publishedAt).toLocaleDateString() : 'Unavailable'}</dd></div></dl>{value.release.changelog && <details><summary>Release notes</summary><p>{value.release.changelog}</p></details>}</>}
           {value?.kind === 'remote' && !value.release.canCreate && <div className={styles.releaseLimitation} role="status"><strong>Creation unavailable</strong><span>{value.release.limitation || 'This exact release does not have a complete managed server path.'}</span></div>}
           <StatusBadge tone={value?.kind === 'remote' && value.release.canCreate ? 'warning' : 'neutral'}>{value?.kind === 'remote' && value.release.canCreate ? 'Validated during creation' : 'Browse only'}</StatusBadge>
         </> : <div className={styles.empty}><Box size={24} /><strong>{pending ? `Loading ${provider}` : 'Select a modpack'}</strong><span>{pending ? 'Fetching compatible server-pack releases.' : `Choose an exact ${provider} release or import a local pack.`}</span></div>}
@@ -288,7 +326,7 @@ function ProviderLinkPicker({ value, onChange }: {
       <Button type="button" icon={<Clipboard size={14} />} onClick={() => void paste()}>Paste</Button>
       <Button type="submit" variant="primary" icon={<Search size={14} />} disabled={!url.trim() || pending}>{pending ? 'Resolving…' : 'Resolve'}</Button>
     </form>
-    <p className={styles.supportedSources}>Supported: Modrinth modpack project and exact-version links. CurseForge links are recognized and will activate after ChunkPilot receives approved application access.</p>
+    <p className={styles.supportedSources}>Supported: official Modrinth and CurseForge modpack project links and exact-release links. CurseForge resolution requires the approved native credential.</p>
     {error && <div className={styles.error} role="alert"><strong>Could not resolve link</strong><span>{error}</span></div>}
     {remote && <article className={styles.resolvedLink} aria-label="Resolved modpack release">
       <PackImage project={remote.project} large />

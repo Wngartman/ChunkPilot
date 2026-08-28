@@ -202,6 +202,21 @@ public sealed class WebUiContractTests
     }
 
     [Fact]
+    public void Modpack_images_are_restricted_to_exact_provider_https_hosts()
+    {
+        Assert.True(WebUiWindow.IsApprovedModpackImageUri(CatalogProvider.CurseForge,
+            new Uri("https://media.forgecdn.net/avatars/fixture.png")));
+        Assert.True(WebUiWindow.IsApprovedModpackImageUri(CatalogProvider.Modrinth,
+            new Uri("https://cdn.modrinth.com/data/fixture.png")));
+        Assert.False(WebUiWindow.IsApprovedModpackImageUri(CatalogProvider.CurseForge,
+            new Uri("https://forgecdn.net.evil.example/fixture.png")));
+        Assert.False(WebUiWindow.IsApprovedModpackImageUri(CatalogProvider.CurseForge,
+            new Uri("http://media.forgecdn.net/fixture.png")));
+        Assert.False(WebUiWindow.IsApprovedModpackImageUri(CatalogProvider.Modrinth,
+            new Uri("https://media.forgecdn.net/fixture.png")));
+    }
+
+    [Fact]
     public void Lifecycle_requests_use_prompt_acceptance_instead_of_waiting_for_server_readiness()
     {
         Assert.True(WebUiWindow.IsDeferredLifecycleMethod("servers.start"));

@@ -1,0 +1,250 @@
+using System.Net;
+using System.Net.Http.Headers;
+using System.Text;
+using ChunkPilot.Core;
+using ChunkPilot.Infrastructure;
+
+namespace ChunkPilot.UnitTests;
+
+public sealed class CurseForgeApiClientTests
+{
+    [Fact]
+    public async Task Successful_request_is_native_bounded_authenticated_and_exact_host()
+    {
+        var secrets = WithKey();
+        var handler = new Handler(request =>
+        {
+            Assert.Equal(Uri.UriSchemeHttps, request.RequestUri!.Scheme);
+            Assert.Equal(CurseForgeApiClient.ApiHost, request.RequestUri.Host);
+            Assert.Equal("fixture-approved-key", request.Headers.GetValues("x-api-key").Single());
+            Assert.Contains("ChunkPilot", request.Headers.UserAgent.ToString(), StringComparison.Ordinal);
+            return Json("""{"data":{"id":432}}""");
+        });
+        using var client = new CurseForgeApiClient(secrets, new HttpClient(handler));
+
+        using var result = await client.GetJsonAsync("/v1/games/432");
+
+        Assert.Equal(432, result.RootElement.GetProperty("data").GetProperty("id").GetInt32());
+        Assert.Equal(1, handler.Count);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.Unauthorized, CurseForgeFailureKind.Authentication)]
+    [InlineData(HttpStatusCode.Forbidden, CurseForgeFailureKind.Authentication)]
+    [InlineData(HttpStatusCode.NotFound, CurseForgeFailureKind.NotFound)]
+    [InlineData(HttpStatusCode.InternalServerError, CurseForgeFailureKind.Server)]
+    public async Task Provider_statuses_are_mapped_without_response_body_or_credential(
+        HttpStatusCode status,
+        CurseForgeFailureKind expected)
+    {
+        var handler = new Handler(_ => new HttpResponseMessage(status)
+        {
+            Content = new StringContent("sensitive-provider-body")
+        });
+        using var client = new CurseForgeApiClient(WithKey(), new HttpClient(handler));
+
+        var exception = await Assert.ThrowsAsync<CurseForgeApiException>(() =>
+            client.GetJsonAsync("/v1/games/432"));
+
+        Assert.Equal(expected, exception.Kind);
+        Assert.DoesNotContain("fixture-approved-key", exception.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain("sensitive-provider-body", exception.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Rate_limit_retries_once_only_for_a_bounded_retry_after()
+    {
+        var handler = new Handler(_ =>
+        {
+            if (_.Headers.UserAgent.Count == 0) throw new InvalidOperationException();
+            if (_.RequestUri is null) throw new InvalidOperationException();
+            if (_.Method != HttpMethod.Get) throw new InvalidOperationException();
+            if (_.Headers.GetValues("x-api-key").Single() != "fixture-approved-key")
+                throw new InvalidOperationException();
+            return Json("""{"data":[]}""");
+        });
+        handler.Enqueue(new HttpResponseMessage(HttpStatusCode.TooManyRequests)
+        {
+            Headers = { RetryAfter = new RetryConditionHeaderValue(TimeSpan.Zero) }
+        });
+        using var client = new CurseForgeApiClient(WithKey(), new HttpClient(handler));
+
+        using var result = await client.GetJsonAsync("/v1/mods/search?gameId=432");
+
+        Assert.Equal(2, handler.Count);
+        Assert.Equal(0, result.RootElement.GetProperty("data").GetArrayLength());
+    }
+
+    [Fact]
+    public async Task Identical_concurrent_reads_are_deduplicated_only_while_in_flight()
+    {
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var handler = new Handler(async (_, cancellationToken) =>
+        {
+            await release.Task.WaitAsync(cancellationToken);
+            return Json("""{"data":[]}""");
+        });
+        using var client = new CurseForgeApiClient(WithKey(), new HttpClient(handler));
+
+        var first = client.GetJsonAsync("/v1/mods/search?gameId=432");
+        var second = client.GetJsonAsync("/v1/mods/search?gameId=432");
+        await WaitForAsync(() => handler.Count == 1);
+        release.SetResult();
+        using var firstResult = await first;
+        using var secondResult = await second;
+
+        Assert.Equal(1, handler.Count);
+        using var third = await client.GetJsonAsync("/v1/mods/search?gameId=432");
+        Assert.Equal(2, handler.Count);
+    }
+
+    [Fact]
+    public async Task Cancellation_does_not_become_a_false_provider_failure()
+    {
+        var handler = new Handler(async (_, cancellationToken) =>
+        {
+            await Task.Delay(TimeSpan.FromSeconds(30), cancellationToken);
+            return Json("""{"data":[]}""");
+        });
+        using var client = new CurseForgeApiClient(WithKey(), new HttpClient(handler));
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            client.GetJsonAsync("/v1/games/432", cancellation.Token));
+    }
+
+    [Fact]
+    public async Task Transport_timeout_is_distinct()
+    {
+        var handler = new Handler((_, _) => throw new TaskCanceledException("fixture timeout"));
+        using var client = new CurseForgeApiClient(WithKey(), new HttpClient(handler));
+
+        var exception = await Assert.ThrowsAsync<CurseForgeApiException>(() =>
+            client.GetJsonAsync("/v1/games/432"));
+
+        Assert.Equal(CurseForgeFailureKind.Timeout, exception.Kind);
+    }
+
+    [Theory]
+    [InlineData("malformed", "application/json", CurseForgeFailureKind.MalformedResponse)]
+    [InlineData("{}", "text/html", CurseForgeFailureKind.WrongContentType)]
+    public async Task Malformed_or_wrong_content_is_rejected(
+        string body,
+        string contentType,
+        CurseForgeFailureKind kind)
+    {
+        var handler = new Handler(_ => Response(HttpStatusCode.OK, body, contentType));
+        using var client = new CurseForgeApiClient(WithKey(), new HttpClient(handler));
+
+        var exception = await Assert.ThrowsAsync<CurseForgeApiException>(() =>
+            client.GetJsonAsync("/v1/games/432"));
+
+        Assert.Equal(kind, exception.Kind);
+    }
+
+    [Fact]
+    public async Task Declared_oversized_response_is_rejected_before_reading()
+    {
+        var handler = new Handler(_ =>
+        {
+            var response = Json("{}");
+            response.Content.Headers.ContentLength = CurseForgeApiClient.MaximumJsonBytes + 1;
+            return response;
+        });
+        using var client = new CurseForgeApiClient(WithKey(), new HttpClient(handler));
+
+        var exception = await Assert.ThrowsAsync<CurseForgeApiException>(() =>
+            client.GetJsonAsync("/v1/games/432"));
+
+        Assert.Equal(CurseForgeFailureKind.OversizedResponse, exception.Kind);
+    }
+
+    [Fact]
+    public async Task Redirect_and_unapproved_hosts_are_rejected()
+    {
+        var handler = new Handler(_ => new HttpResponseMessage(HttpStatusCode.Redirect)
+        {
+            Headers = { Location = new Uri("https://evil.example/escape") }
+        });
+        using var client = new CurseForgeApiClient(WithKey(), new HttpClient(handler));
+
+        var redirect = await Assert.ThrowsAsync<CurseForgeApiException>(() =>
+            client.GetJsonAsync("/v1/games/432"));
+        var unapproved = await Assert.ThrowsAsync<CurseForgeApiException>(() =>
+            client.SendDownloadAsync(new Uri("https://evil.example/file.jar")));
+
+        Assert.Equal(CurseForgeFailureKind.Redirect, redirect.Kind);
+        Assert.Equal(CurseForgeFailureKind.UnapprovedHost, unapproved.Kind);
+        Assert.True(CurseForgeApiClient.IsApprovedDownloadUri(
+            new Uri("https://mediafilez.forgecdn.net/files/1/file.jar")));
+    }
+
+    [Fact]
+    public async Task Missing_credential_fails_before_network_access()
+    {
+        var handler = new Handler(_ => throw new InvalidOperationException("network must not run"));
+        using var client = new CurseForgeApiClient(new MemorySecrets(), new HttpClient(handler));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => client.GetJsonAsync("/v1/games/432"));
+
+        Assert.Equal(0, handler.Count);
+    }
+
+    private static MemorySecrets WithKey()
+    {
+        var secrets = new MemorySecrets();
+        secrets.SetSecret(CurseForgeUpdateProvider.ApiKeyName, "fixture-approved-key");
+        return secrets;
+    }
+
+    private static HttpResponseMessage Json(string body) =>
+        Response(HttpStatusCode.OK, body, "application/json");
+
+    private static HttpResponseMessage Response(HttpStatusCode status, string body, string contentType) => new(status)
+    {
+        Content = new StringContent(body, Encoding.UTF8, contentType)
+    };
+
+    private static async Task WaitForAsync(Func<bool> condition)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (!condition()) await Task.Delay(5, timeout.Token);
+    }
+
+    private sealed class MemorySecrets : ISecretStore
+    {
+        private readonly Dictionary<string, string> values = new(StringComparer.Ordinal);
+        public void SetSecret(string name, string value) => values[name] = value;
+        public string? GetSecret(string name) => values.GetValueOrDefault(name);
+        public bool Contains(string name) => values.ContainsKey(name);
+        public void Delete(string name) => values.Remove(name);
+    }
+
+    private sealed class Handler : HttpMessageHandler
+    {
+        private readonly Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> response;
+        private readonly Queue<HttpResponseMessage> queued = new();
+        private int count;
+
+        public Handler(Func<HttpRequestMessage, HttpResponseMessage> response)
+            : this((request, _) => Task.FromResult(response(request)))
+        {
+        }
+
+        public Handler(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> response) =>
+            this.response = response;
+
+        public int Count => Volatile.Read(ref count);
+        public void Enqueue(HttpResponseMessage value) => queued.Enqueue(value);
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref count);
+            if (queued.TryDequeue(out var next)) return Task.FromResult(next);
+            return response(request, cancellationToken);
+        }
+    }
+}

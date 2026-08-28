@@ -14,26 +14,36 @@ public sealed class PluginManagementService
     private readonly JarInventoryService jars;
     private readonly AppDataPaths paths;
     private readonly HttpClient http;
+    private readonly CurseForgeApiClient? curseForge;
 
     public PluginManagementService(
         PluginProviderRegistry providers,
         JarInventoryService jars,
         AppDataPaths paths,
-        HttpClient? httpClient = null)
+        HttpClient? httpClient = null,
+        CurseForgeApiClient? curseForge = null)
     {
         this.providers = providers;
         this.jars = jars;
         this.paths = paths;
+        this.curseForge = curseForge;
         http = httpClient ?? new HttpClient { Timeout = TimeSpan.FromMinutes(3) };
     }
 
     public IReadOnlyList<PluginProviderStatus> ProviderStatuses => providers.Statuses;
 
     public Task<IReadOnlyList<PluginProject>> SearchAsync(
-        ServerDefinition server, string search, int limit, CancellationToken cancellationToken = default)
+        ServerDefinition server, string search, int limit, CancellationToken cancellationToken = default) =>
+        SearchAsync(server, search, limit, PluginProviderKind.Modrinth, cancellationToken);
+
+    public Task<IReadOnlyList<PluginProject>> SearchAsync(
+        ServerDefinition server, string search, int limit, PluginProviderKind provider,
+        CancellationToken cancellationToken = default)
     {
         var kind = RequireManagedAddonServer(server);
-        return providers.Get(PluginProviderKind.Modrinth).SearchAsync(new PluginCatalogQuery
+        if (kind == ManagedAddonKind.Plugin && provider == PluginProviderKind.CurseForge)
+            throw new InvalidOperationException("CurseForge Paper/Bukkit plugin discovery is not enabled in this phase.");
+        return providers.Get(provider).SearchAsync(new PluginCatalogQuery
         {
             Kind = kind,
             Search = search,
@@ -45,10 +55,18 @@ public sealed class PluginManagementService
 
     public Task<PluginRelease?> ResolveAsync(
         ServerDefinition server, string projectId, string? versionId = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        ResolveAsync(server, projectId, versionId, PluginProviderKind.Modrinth, cancellationToken);
+
+    public Task<PluginRelease?> ResolveAsync(
+        ServerDefinition server, string projectId, string? versionId,
+        PluginProviderKind provider, CancellationToken cancellationToken = default)
     {
         _ = RequireManagedAddonServer(server);
-        return providers.Get(PluginProviderKind.Modrinth).ResolveReleaseAsync(
+        if (server.Ecosystem is ServerEcosystem.Paper or ServerEcosystem.Purpur or
+            ServerEcosystem.Spigot or ServerEcosystem.Bukkit && provider == PluginProviderKind.CurseForge)
+            throw new InvalidOperationException("CurseForge plugin installation is deliberately unsupported.");
+        return providers.Get(provider).ResolveReleaseAsync(
             projectId, server.MinecraftVersion,
             ProviderLoader(server),
             versionId, cancellationToken);
@@ -66,14 +84,24 @@ public sealed class PluginManagementService
         string projectId,
         string versionId,
         IProgress<ManagedContentProgress>? progress = null,
+        CancellationToken cancellationToken = default) =>
+        await InstallWithReceiptAsync(server, projectId, versionId, progress,
+            PluginProviderKind.Modrinth, cancellationToken).ConfigureAwait(false);
+
+    public async Task<PluginInstallResult> InstallWithReceiptAsync(
+        ServerDefinition server,
+        string projectId,
+        string versionId,
+        IProgress<ManagedContentProgress>? progress,
+        PluginProviderKind provider,
         CancellationToken cancellationToken = default)
     {
         var kind = RequireManagedAddonServer(server);
         Report(progress, ManagedContentOperationStage.ResolvingDependencies,
             "Resolving the exact compatible release and its dependencies.");
-        var release = await ResolveAsync(server, projectId, versionId, cancellationToken).ConfigureAwait(false)
+        var release = await ResolveAsync(server, projectId, versionId, provider, cancellationToken).ConfigureAwait(false)
             ?? throw new InvalidOperationException(
-                $"Modrinth does not publish that exact {kind.ToString().ToLowerInvariant()} release for Minecraft {server.MinecraftVersion} and {ProviderLoader(server)}.");
+                $"{provider} does not publish that exact {kind.ToString().ToLowerInvariant()} release for Minecraft {server.MinecraftVersion} and {ProviderLoader(server)}.");
         if (release.Kind != kind)
             throw new InvalidDataException("The provider release type does not match this server's add-on capability.");
         if (release.ClientRequirement.Equals("ClientOnly", StringComparison.OrdinalIgnoreCase))
@@ -91,6 +119,15 @@ public sealed class PluginManagementService
         ServerDefinition server,
         string projectId,
         string versionId,
+        CancellationToken cancellationToken = default) =>
+        await PlanAsync(server, projectId, versionId, PluginProviderKind.Modrinth, cancellationToken)
+            .ConfigureAwait(false);
+
+    public async Task<PluginInstallPlan> PlanAsync(
+        ServerDefinition server,
+        string projectId,
+        string versionId,
+        PluginProviderKind provider,
         CancellationToken cancellationToken = default)
     {
         _ = RequireManagedAddonServer(server);
@@ -120,7 +157,7 @@ public sealed class PluginManagementService
                 return;
             }
             var release = await ResolveAsync(server, dependencyProjectId, dependencyVersionId,
-                cancellationToken).ConfigureAwait(false);
+                provider, cancellationToken).ConfigureAwait(false);
             if (release is null)
             {
                 problems.Add($"No exact compatible provider release could be resolved for {dependencyProjectId}.");
@@ -129,6 +166,12 @@ public sealed class PluginManagementService
             }
             if (release.ClientRequirement.Equals("ClientOnly", StringComparison.OrdinalIgnoreCase))
                 problems.Add($"{release.VersionName} is client-only and cannot be installed on this dedicated server.");
+            foreach (var incompatible in release.Dependencies.Where(item =>
+                         item.Type.Equals("incompatible", StringComparison.OrdinalIgnoreCase)))
+            {
+                if (inventory.Any(entry => DependencyMatches(entry, incompatible)))
+                    problems.Add($"{release.VersionName} is incompatible with installed add-on {DependencyLabel(incompatible)}.");
+            }
             foreach (var dependency in release.Dependencies.Where(item =>
                          item.Type.Equals("required", StringComparison.OrdinalIgnoreCase)))
             {
@@ -163,11 +206,21 @@ public sealed class PluginManagementService
         string projectId,
         string versionId,
         IProgress<ManagedContentProgress>? progress = null,
+        CancellationToken cancellationToken = default) =>
+        await InstallPlanWithReceiptsAsync(server, projectId, versionId, progress,
+            PluginProviderKind.Modrinth, cancellationToken).ConfigureAwait(false);
+
+    public async Task<PluginInstallPlanResult> InstallPlanWithReceiptsAsync(
+        ServerDefinition server,
+        string projectId,
+        string versionId,
+        IProgress<ManagedContentProgress>? progress,
+        PluginProviderKind provider,
         CancellationToken cancellationToken = default)
     {
         Report(progress, ManagedContentOperationStage.ResolvingDependencies,
             "Resolving the bounded dependency plan.");
-        var plan = await PlanAsync(server, projectId, versionId, cancellationToken).ConfigureAwait(false);
+        var plan = await PlanAsync(server, projectId, versionId, provider, cancellationToken).ConfigureAwait(false);
         if (!plan.CanInstall)
             throw new InvalidOperationException(plan.Problems.Count > 0
                 ? string.Join(" ", plan.Problems)
@@ -222,7 +275,10 @@ public sealed class PluginManagementService
     {
         if (!Uri.TryCreate(release.DownloadUrl, UriKind.Absolute, out var uri) ||
             uri.Scheme != Uri.UriSchemeHttps ||
-            !uri.Host.Equals("cdn.modrinth.com", StringComparison.OrdinalIgnoreCase))
+            (release.Provider == PluginProviderKind.Modrinth
+                ? !uri.Host.Equals("cdn.modrinth.com", StringComparison.OrdinalIgnoreCase)
+                : release.Provider != PluginProviderKind.CurseForge ||
+                  !CurseForgeApiClient.IsApprovedDownloadUri(uri)))
             throw new InvalidDataException("The provider returned an untrusted add-on download location.");
         if (!release.FileName.EndsWith(".jar", StringComparison.OrdinalIgnoreCase) ||
             release.SizeBytes is <= 0 or > JarInventoryService.MaximumJarBytes)
@@ -235,12 +291,18 @@ public sealed class PluginManagementService
         {
             Report(progress, ManagedContentOperationStage.Downloading,
                 $"Downloading {release.FileName}.", 0, 0, release.SizeBytes);
-            using var response = await http.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
-                .ConfigureAwait(false);
+            using var response = release.Provider == PluginProviderKind.CurseForge
+                ? curseForge is not null
+                    ? await curseForge.SendDownloadAsync(uri, cancellationToken).ConfigureAwait(false)
+                    : throw new InvalidOperationException("The native CurseForge download boundary is unavailable.")
+                : await http.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
+                    .ConfigureAwait(false);
             response.EnsureSuccessStatusCode();
             if (response.RequestMessage?.RequestUri is not { } finalUri || finalUri.Scheme != Uri.UriSchemeHttps ||
-                !finalUri.Host.Equals("cdn.modrinth.com", StringComparison.OrdinalIgnoreCase))
-                throw new InvalidDataException("The add-on download redirected outside the trusted Modrinth CDN.");
+                (release.Provider == PluginProviderKind.Modrinth
+                    ? !finalUri.Host.Equals("cdn.modrinth.com", StringComparison.OrdinalIgnoreCase)
+                    : !CurseForgeApiClient.IsApprovedDownloadUri(finalUri)))
+                throw new InvalidDataException("The add-on download left its trusted provider CDN.");
             if (response.Content.Headers.ContentLength is { } length && length != release.SizeBytes)
                 throw new InvalidDataException("The add-on download size does not match provider metadata.");
             await using (var input = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false))
@@ -272,12 +334,19 @@ public sealed class PluginManagementService
                     throw new InvalidDataException("The add-on download ended before its declared size.");
             }
             Report(progress, ManagedContentOperationStage.Verifying,
-                "Verifying the provider SHA-512 hash.", 100, release.SizeBytes, release.SizeBytes);
+                release.Provider == PluginProviderKind.CurseForge
+                    ? "Verifying the provider SHA-1 hash."
+                    : "Verifying the provider SHA-512 hash.", 100, release.SizeBytes, release.SizeBytes);
             await using (var verify = File.OpenRead(temporary))
             {
-                var actual = Convert.ToHexString(await SHA512.HashDataAsync(verify, cancellationToken).ConfigureAwait(false));
-                if (!actual.Equals(release.Sha512, StringComparison.OrdinalIgnoreCase))
-                    throw new InvalidDataException("The add-on download did not match the provider SHA-512 hash.");
+                var actual = release.Provider == PluginProviderKind.CurseForge
+#pragma warning disable CA5350 // CurseForge currently publishes SHA-1/MD5; SHA-1 is provider identity evidence, and a local SHA-256 baseline is also recorded.
+                    ? Convert.ToHexString(await SHA1.HashDataAsync(verify, cancellationToken).ConfigureAwait(false))
+#pragma warning restore CA5350
+                    : Convert.ToHexString(await SHA512.HashDataAsync(verify, cancellationToken).ConfigureAwait(false));
+                var expected = release.Provider == PluginProviderKind.CurseForge ? release.Sha1 : release.Sha512;
+                if (!actual.Equals(expected, StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidDataException("The add-on download did not match the provider hash.");
             }
             Report(progress, ManagedContentOperationStage.InspectingMetadata,
                 "Inspecting the verified add-on metadata without executing it.");
@@ -372,7 +441,8 @@ public sealed class PluginManagementService
         {
             ServerEcosystem.Paper or ServerEcosystem.Purpur or ServerEcosystem.Spigot or ServerEcosystem.Bukkit =>
                 ManagedAddonKind.Plugin,
-            ServerEcosystem.Fabric or ServerEcosystem.NeoForge => ManagedAddonKind.Mod,
+            ServerEcosystem.Fabric or ServerEcosystem.Quilt or ServerEcosystem.Forge or ServerEcosystem.NeoForge =>
+                ManagedAddonKind.Mod,
             _ => throw new InvalidOperationException(
                 "Add-on management is available only for confirmed Paper, Fabric, or NeoForge servers.")
         };
@@ -385,6 +455,8 @@ public sealed class PluginManagementService
     {
         ServerEcosystem.Purpur => "purpur",
         ServerEcosystem.Fabric => "fabric",
+        ServerEcosystem.Quilt => "quilt",
+        ServerEcosystem.Forge => "forge",
         ServerEcosystem.NeoForge => "neoforge",
         _ => "paper"
     };

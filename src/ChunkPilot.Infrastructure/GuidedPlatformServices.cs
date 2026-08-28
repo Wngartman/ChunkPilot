@@ -245,6 +245,12 @@ public interface IGuidedCatalogProvider
     Task<IReadOnlyList<CatalogGameVersion>> GetGameVersionsAsync(
         CancellationToken cancellationToken = default) =>
         Task.FromResult<IReadOnlyList<CatalogGameVersion>>([]);
+
+    Task<CatalogItem?> ResolveProjectAsync(
+        string projectReference,
+        string? exactReleaseReference,
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult<CatalogItem?>(null);
 }
 
 public sealed class GuidedCatalogService
@@ -274,6 +280,18 @@ public sealed class GuidedCatalogService
             return new CatalogProviderStatus(provider, adapter.IsAvailable, adapter.AvailabilityDetail);
         }).ToArray();
 
+    public async Task<CatalogItem?> ResolveProjectAsync(
+        CatalogProvider provider,
+        string projectReference,
+        string? exactReleaseReference,
+        CancellationToken cancellationToken = default)
+    {
+        if (!providers.TryGetValue(provider, out var adapter) || !adapter.IsAvailable)
+            return null;
+        return await adapter.ResolveProjectAsync(projectReference, exactReleaseReference, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
     public async Task<IReadOnlyList<CatalogItem>> BrowseAsync(
         CatalogQuery query,
         CancellationToken cancellationToken = default)
@@ -289,12 +307,16 @@ public sealed class GuidedCatalogService
             {
                 var items = await adapter.BrowseAsync(query, cancellationToken).ConfigureAwait(false);
                 results.AddRange(items);
-                await WriteCacheAsync(adapter.Provider, query, items, cancellationToken).ConfigureAwait(false);
+                if (adapter.Provider != CatalogProvider.CurseForge)
+                    await WriteCacheAsync(adapter.Provider, query, items, cancellationToken).ConfigureAwait(false);
             }
             catch (Exception exception) when (exception is HttpRequestException or IOException or TaskCanceledException)
             {
-                var cached = await ReadCacheAsync(adapter.Provider, query, cancellationToken).ConfigureAwait(false);
-                results.AddRange(cached);
+                if (adapter.Provider != CatalogProvider.CurseForge)
+                {
+                    var cached = await ReadCacheAsync(adapter.Provider, query, cancellationToken).ConfigureAwait(false);
+                    results.AddRange(cached);
+                }
             }
         }
         return CatalogPolicy.Filter(results, query);
@@ -306,6 +328,13 @@ public sealed class GuidedCatalogService
     {
         if (query.Provider is not { } provider)
             throw new ArgumentException("A provider is required for cache browsing.", nameof(query));
+        if (provider == CatalogProvider.CurseForge)
+            return new CatalogBrowseResult
+            {
+                Provider = provider,
+                State = CatalogLoadState.Empty,
+                Detail = "CurseForge API results are not stored under the current third-party terms. Refresh this page while online."
+            };
         var cached = await ReadCacheEnvelopeAsync(provider, query, cancellationToken).ConfigureAwait(false);
         if (cached is null || DateTimeOffset.UtcNow - cached.CreatedAt > offlineCacheLifetime)
             return new CatalogBrowseResult
@@ -349,7 +378,8 @@ public sealed class GuidedCatalogService
         {
             var items = CatalogPolicy.Filter(
                 await adapter.BrowseAsync(query, cancellationToken).ConfigureAwait(false), query);
-            await WriteCacheAsync(provider, query, items, cancellationToken).ConfigureAwait(false);
+            if (provider != CatalogProvider.CurseForge)
+                await WriteCacheAsync(provider, query, items, cancellationToken).ConfigureAwait(false);
             return new CatalogBrowseResult
             {
                 Provider = provider,
@@ -398,10 +428,14 @@ public sealed class GuidedCatalogService
         bool cacheOnly,
         CancellationToken cancellationToken = default)
     {
-        var cached = await ReadVersionInventoryCacheAsync(provider, cancellationToken).ConfigureAwait(false);
+        var cached = provider == CatalogProvider.CurseForge
+            ? null
+            : await ReadVersionInventoryCacheAsync(provider, cancellationToken).ConfigureAwait(false);
         if (cacheOnly)
             return cached ?? VersionInventoryFailure(provider, CatalogLoadState.Empty,
-                "No cached Minecraft version inventory is available.", "cache");
+                provider == CatalogProvider.CurseForge
+                    ? "CurseForge version data is not stored under the current third-party terms."
+                    : "No cached Minecraft version inventory is available.", "cache");
         if (!providers.TryGetValue(provider, out var adapter))
             return cached ?? VersionInventoryFailure(provider, CatalogLoadState.Failed,
                 "No provider adapter is registered.", "provider");
@@ -428,7 +462,8 @@ public sealed class GuidedCatalogService
                 return cached ?? VersionInventoryFailure(provider, CatalogLoadState.Empty,
                     "The provider returned no Minecraft versions.", "provider response");
             var now = DateTimeOffset.UtcNow;
-            await WriteVersionInventoryCacheAsync(provider, versions, now, cancellationToken).ConfigureAwait(false);
+            if (provider != CatalogProvider.CurseForge)
+                await WriteVersionInventoryCacheAsync(provider, versions, now, cancellationToken).ConfigureAwait(false);
             return new CatalogVersionInventory
             {
                 Provider = provider,
@@ -468,6 +503,8 @@ public sealed class GuidedCatalogService
         string failedStage,
         CancellationToken cancellationToken)
     {
+        if (provider == CatalogProvider.CurseForge)
+            return Failure(provider, failureState, detail, failedStage);
         var cached = await BrowseCacheAsync(query, cancellationToken).ConfigureAwait(false);
         if (cached.Items.Count > 0)
             return cached with
@@ -946,69 +983,63 @@ public sealed class ModrinthCatalogProvider : HttpCatalogProvider, IGuidedCatalo
     }
 }
 
-public sealed class CurseForgeCatalogProvider : HttpCatalogProvider, IGuidedCatalogProvider
+public sealed class CurseForgeCatalogProvider : IGuidedCatalogProvider, IDisposable
 {
-    public const string DeveloperModeEnvironmentVariable = "CHUNKPILOT_CURSEFORGE_DEVELOPER_MODE";
-    private readonly ISecretStore secrets;
+    private const int MinecraftGameId = 432;
+    private const int ModpackClassId = 4471;
+    private readonly CurseForgeApiClient api;
+    private readonly bool ownsApi;
 
-    public CurseForgeCatalogProvider(ISecretStore secrets, HttpClient? httpClient = null) : base(httpClient)
+    public CurseForgeCatalogProvider(ISecretStore secrets, HttpClient? httpClient = null)
+        : this(new CurseForgeApiClient(secrets, httpClient), ownsApi: true)
     {
-        this.secrets = secrets;
+    }
+
+    public CurseForgeCatalogProvider(CurseForgeApiClient api)
+        : this(api, ownsApi: false)
+    {
+    }
+
+    private CurseForgeCatalogProvider(CurseForgeApiClient api, bool ownsApi)
+    {
+        this.api = api;
+        this.ownsApi = ownsApi;
     }
 
     public CatalogProvider Provider => CatalogProvider.CurseForge;
-    public bool IsAvailable =>
-        Environment.GetEnvironmentVariable(DeveloperModeEnvironmentVariable) == "1" &&
-        secrets.Contains(CurseForgeUpdateProvider.ApiKeyName);
+    public bool IsAvailable => api.HasCredential;
     public string AvailabilityDetail => IsAvailable
-        ? "Approved CurseForge developer integration is active for this local development session."
-        : "CurseForge integration is being activated for ChunkPilot.";
+        ? "Approved CurseForge access is available for this local native session."
+        : "CurseForge is unavailable because the approved local native credential is missing.";
 
     public async Task<IReadOnlyList<CatalogGameVersion>> GetGameVersionsAsync(
         CancellationToken cancellationToken = default)
     {
-        var key = secrets.GetSecret(CurseForgeUpdateProvider.ApiKeyName);
-        if (string.IsNullOrWhiteSpace(key)) return [];
-        using var request = new HttpRequestMessage(
-            HttpMethod.Get, "https://api.curseforge.com/v1/minecraft/version?sortDescending=true");
-        request.Headers.Add("x-api-key", key);
-        using var response = await Http.SendAsync(
-            request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
-        response.EnsureSuccessStatusCode();
-        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
-        using var document = await JsonDocument.ParseAsync(
-            stream, cancellationToken: cancellationToken).ConfigureAwait(false);
-        if (!document.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array)
-            throw new InvalidDataException("CurseForge's Minecraft-version response was not a version list.");
+        if (!IsAvailable) return [];
+        using var document = await api.GetJsonAsync(
+            "/v1/minecraft/version?sortDescending=true", cancellationToken).ConfigureAwait(false);
+        var data = RequireArray(document.RootElement, "data", "Minecraft-version");
         return data.EnumerateArray().Select(version =>
         {
-            var id = version.TryGetProperty("versionString", out var value) ? value.GetString() ?? "" : "";
+            var id = Text(version, "versionString");
             return new CatalogGameVersion
             {
                 VersionId = id,
                 Kind = ClassifyMinecraftVersion(id),
-                PublishedAt = version.TryGetProperty("dateModified", out var date) &&
-                              date.TryGetDateTimeOffset(out var published) ? published : null,
+                PublishedAt = Date(version, "dateModified"),
                 IsMajor = ClassifyMinecraftVersion(id) == CatalogGameVersionKind.Release
             };
-        }).ToArray();
+        }).Where(version => version.VersionId.Length > 0).Take(10_000).ToArray();
     }
 
     public async Task<IReadOnlyList<CatalogItem>> BrowseAsync(
         CatalogQuery query,
         CancellationToken cancellationToken = default)
     {
-        var key = secrets.GetSecret(CurseForgeUpdateProvider.ApiKeyName);
-        if (string.IsNullOrWhiteSpace(key))
-            return [];
-        var loaderType = query.Loader.ToLowerInvariant() switch
-        {
-            "forge" => 1,
-            "fabric" => 4,
-            "quilt" => 5,
-            "neoforge" => 6,
-            _ => 0
-        };
+        if (!IsAvailable) return [];
+        var loaderType = LoaderType(query.Loader);
+        var categoryId = await ResolveCategoryIdAsync(query.Category, cancellationToken).ConfigureAwait(false);
+        if (!string.IsNullOrWhiteSpace(query.Category) && categoryId is null) return [];
         var sortField = query.Sort switch
         {
             CatalogSort.Downloads => 6,
@@ -1016,176 +1047,354 @@ public sealed class CurseForgeCatalogProvider : HttpCatalogProvider, IGuidedCata
             CatalogSort.Updated => 3,
             _ => 2
         };
-        using var request = new HttpRequestMessage(HttpMethod.Get,
-            "https://api.curseforge.com/v1/mods/search?gameId=432&classId=4471&pageSize=" +
-            Math.Clamp(query.Limit, 1, 50) +
-            "&searchFilter=" + Uri.EscapeDataString(query.Search) +
-            $"&sortField={sortField}&sortOrder=desc" +
-            (string.IsNullOrWhiteSpace(query.MinecraftVersion)
-                ? "" : "&gameVersion=" + Uri.EscapeDataString(query.MinecraftVersion)) +
-            (loaderType == 0 || string.IsNullOrWhiteSpace(query.MinecraftVersion)
-                ? "" : $"&modLoaderType={loaderType}"));
-        request.Headers.Add("x-api-key", key);
-        using var response = await Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
-            .ConfigureAwait(false);
-        response.EnsureSuccessStatusCode();
-        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
-        using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken).ConfigureAwait(false);
-        var unresolved = document.RootElement.GetProperty("data").EnumerateArray().Select(mod =>
+        var path = "/v1/mods/search?gameId=" + MinecraftGameId + "&classId=" + ModpackClassId +
+                   "&pageSize=" + Math.Clamp(query.Limit, 1, 50) +
+                   "&index=" + Math.Max(0, query.Index) +
+                   "&searchFilter=" + Uri.EscapeDataString(query.Search.Trim()) +
+                   $"&sortField={sortField}&sortOrder=desc" +
+                   (string.IsNullOrWhiteSpace(query.MinecraftVersion)
+                       ? "" : "&gameVersion=" + Uri.EscapeDataString(query.MinecraftVersion.Trim())) +
+                    (loaderType == 0 || string.IsNullOrWhiteSpace(query.MinecraftVersion)
+                        ? "" : $"&modLoaderType={loaderType}") +
+                    (categoryId is null ? "" : $"&categoryId={categoryId.Value}");
+        using var document = await api.GetJsonAsync(path, cancellationToken).ConfigureAwait(false);
+        var data = RequireArray(document.RootElement, "data", "search");
+        var items = new List<CatalogItem>();
+        foreach (var project in data.EnumerateArray())
         {
-            var latest = mod.TryGetProperty("latestFiles", out var latestFiles)
-                ? latestFiles.EnumerateArray().ToArray() : [];
-            var versions = latest.Select(file =>
+            cancellationToken.ThrowIfCancellationRequested();
+            var parsed = await ParseProjectAsync(project, query, cancellationToken).ConfigureAwait(false);
+            if (parsed is not null) items.Add(parsed);
+        }
+        return items;
+    }
+
+    private async Task<long?> ResolveCategoryIdAsync(string category, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(category)) return null;
+        using var document = await api.GetJsonAsync(
+            $"/v1/categories?gameId={MinecraftGameId}&classId={ModpackClassId}", cancellationToken)
+            .ConfigureAwait(false);
+        return RequireArray(document.RootElement, "data", "category inventory").EnumerateArray()
+            .Where(item => Text(item, "slug").Equals(category.Trim(), StringComparison.OrdinalIgnoreCase) ||
+                           Text(item, "name").Equals(category.Trim(), StringComparison.OrdinalIgnoreCase))
+            .Select(item => Number(item, "id"))
+            .FirstOrDefault(value => value is > 0);
+    }
+
+    public async Task<CatalogItem?> ResolveProjectAsync(
+        string projectReference,
+        string? exactReleaseReference,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(projectReference);
+        JsonElement project;
+        JsonDocument? searchDocument = null;
+        JsonDocument? projectDocument = null;
+        try
+        {
+            string projectId;
+            if (long.TryParse(projectReference, out var numericId) && numericId > 0)
             {
-                var gameVersions = file.TryGetProperty("gameVersions", out var values)
-                    ? values.EnumerateArray().Select(item => item.GetString() ?? "").ToArray() : [];
-                var serverFileId = file.TryGetProperty("serverPackFileId", out var serverPack) &&
-                                   serverPack.ValueKind == JsonValueKind.Number
-                    ? serverPack.GetInt64() : 0;
-                var channel = file.TryGetProperty("releaseType", out var releaseType)
-                    ? releaseType.GetInt32() switch
-                    {
-                        2 => ReleaseChannel.Beta,
-                        3 => ReleaseChannel.Alpha,
-                        _ => ReleaseChannel.Stable
-                    }
-                    : ReleaseChannel.Stable;
-                return new CatalogVersion
-                {
-                    VersionId = file.GetProperty("id").ToString(),
-                    VersionName = file.TryGetProperty("displayName", out var display)
-                        ? display.GetString() ?? "" : "",
-                    MinecraftVersion = !string.IsNullOrWhiteSpace(query.MinecraftVersion)
-                        ? gameVersions.FirstOrDefault(value => value.Equals(query.MinecraftVersion, StringComparison.OrdinalIgnoreCase)) ?? ""
-                        : gameVersions.FirstOrDefault(value =>
-                            value.StartsWith("1.", StringComparison.Ordinal) ||
-                            value.Length > 0 && char.ToLowerInvariant(value[0]) == 'b') ?? "",
-                    Loader = !string.IsNullOrWhiteSpace(query.Loader)
-                        ? gameVersions.FirstOrDefault(value => value.Equals(query.Loader, StringComparison.OrdinalIgnoreCase)) ?? ""
-                        : gameVersions.FirstOrDefault(value =>
-                            value is "Fabric" or "Forge" or "NeoForge" or "Quilt") ?? "",
-                    ReleaseChannel = channel,
-                    PublishedAt = file.TryGetProperty("fileDate", out var dateValue) &&
-                                  dateValue.TryGetDateTimeOffset(out var date) ? date : null,
-                    HasServerPackage = serverFileId > 0,
-                    DownloadUrl = serverFileId > 0
-                        ? $"curseforge-file:{serverFileId}" : "",
-                    RequiredJavaMajor = JavaRuntimePolicy.TryRequiredMajorForMinecraft(
-                        gameVersions.FirstOrDefault(value =>
-                            value.StartsWith("1.", StringComparison.Ordinal) ||
-                            value.Length > 0 && char.ToLowerInvariant(value[0]) == 'b') ?? "") ?? 0
-                };
-            }).ToArray();
-            return new CatalogItem
+                projectId = numericId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            }
+            else
+            {
+                searchDocument = await api.GetJsonAsync(
+                    $"/v1/mods/search?gameId={MinecraftGameId}&classId={ModpackClassId}&pageSize=50&slug=" +
+                    Uri.EscapeDataString(projectReference.Trim()), cancellationToken).ConfigureAwait(false);
+                var candidates = RequireArray(searchDocument.RootElement, "data", "project lookup")
+                    .EnumerateArray().Where(candidate =>
+                        Text(candidate, "slug").Equals(projectReference, StringComparison.OrdinalIgnoreCase))
+                    .ToArray();
+                if (candidates.Length != 1) return null;
+                projectId = candidates[0].GetProperty("id").ToString();
+            }
+
+            projectDocument = await api.GetJsonAsync(
+                $"/v1/mods/{Uri.EscapeDataString(projectId)}", cancellationToken).ConfigureAwait(false);
+            project = RequireObject(projectDocument.RootElement, "data", "project");
+            if (!Text(project, "id").Equals(projectId, StringComparison.OrdinalIgnoreCase) ||
+                !long.TryParse(projectReference, out _) &&
+                !Text(project, "slug").Equals(projectReference, StringComparison.OrdinalIgnoreCase))
+                return null;
+            if (!IsProjectAvailable(project)) return null;
+
+            IReadOnlyList<JsonElement> files;
+            if (!string.IsNullOrWhiteSpace(exactReleaseReference))
+            {
+                if (!long.TryParse(exactReleaseReference, out var fileId) || fileId <= 0)
+                    return null;
+                using var exact = await api.GetJsonAsync(
+                    $"/v1/mods/{Uri.EscapeDataString(projectId)}/files/{fileId}", cancellationToken)
+                    .ConfigureAwait(false);
+                var file = RequireObject(exact.RootElement, "data", "exact file").Clone();
+                if (Number(file, "modId") is { } parentId &&
+                    !parentId.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                        .Equals(projectId, StringComparison.Ordinal))
+                    return null;
+                files = [file];
+            }
+            else
+            {
+                using var inventory = await api.GetJsonAsync(
+                    $"/v1/mods/{Uri.EscapeDataString(projectId)}/files?pageSize=50&index=0",
+                    cancellationToken).ConfigureAwait(false);
+                files = RequireArray(inventory.RootElement, "data", "file inventory")
+                    .EnumerateArray().Select(file => file.Clone()).ToArray();
+            }
+            return await ParseProjectAsync(project, new CatalogQuery
             {
                 Provider = CatalogProvider.CurseForge,
-                ContentType = CatalogContentType.Modpack,
-                ProjectId = mod.GetProperty("id").ToString(),
-                Slug = mod.TryGetProperty("slug", out var slug) ? slug.GetString() ?? "" : "",
-                Name = mod.GetProperty("name").GetString() ?? "",
-                Author = mod.TryGetProperty("authors", out var authors)
-                    ? string.Join(", ", authors.EnumerateArray().Select(author =>
-                        author.TryGetProperty("name", out var name) ? name.GetString() : null).OfType<string>())
-                    : "",
-                Summary = mod.TryGetProperty("summary", out var summary) ? summary.GetString() ?? "" : "",
-                IconUrl = mod.TryGetProperty("logo", out var logo) && logo.TryGetProperty("thumbnailUrl", out var thumbnail)
-                    ? thumbnail.GetString() ?? "" : "",
-                ProjectUrl = mod.TryGetProperty("links", out var links) && links.TryGetProperty("websiteUrl", out var website)
-                    ? website.GetString() ?? "" : "",
-                DownloadCount = mod.TryGetProperty("downloadCount", out var downloads)
-                    ? downloads.GetInt64() : null,
-                UpdatedAt = mod.TryGetProperty("dateModified", out var updated) &&
-                            updated.TryGetDateTimeOffset(out var date) ? date : null,
-                Categories = mod.TryGetProperty("categories", out var categories)
-                    ? categories.EnumerateArray().Select(category =>
-                        category.TryGetProperty("slug", out var slugValue) ? slugValue.GetString() ?? "" : "")
-                        .Where(value => value.Length > 0).ToArray()
-                    : [],
-                ClientRequirement = ClientRequirement.MatchingPackRequired,
-                InstallationSupport = versions.Any(version => version.HasServerPackage)
-                    ? InstallationSupportState.FullyAutomated
-                    : InstallationSupportState.ClientOnly,
-                Versions = versions
-            };
-        }).ToArray();
-
-        var resolved = new List<CatalogItem>(unresolved.Length);
-        foreach (var item in unresolved)
-        {
-            var versions = new List<CatalogVersion>(item.Versions.Count);
-            foreach (var version in item.Versions)
-            {
-                if (!version.DownloadUrl.StartsWith(
-                        "curseforge-file:", StringComparison.OrdinalIgnoreCase) ||
-                    !long.TryParse(version.DownloadUrl["curseforge-file:".Length..], out var fileId))
-                {
-                    versions.Add(version);
-                    continue;
-                }
-                versions.Add(await ResolveServerPackFileAsync(
-                    key, item.ProjectId, fileId, version, cancellationToken).ConfigureAwait(false));
-            }
-            resolved.Add(item with
-            {
-                Versions = versions,
-                InstallationSupport = versions.Any(version =>
-                    version.HasServerPackage &&
-                    version.DownloadUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
-                    ? InstallationSupportState.FullyAutomated
-                    : InstallationSupportState.ManualPackageRequired
-            });
+                MaximumChannel = ReleaseChannel.Alpha,
+                ServerPackRequired = false,
+                ExcludeClientOnly = false,
+                Limit = 50
+            }, cancellationToken, files).ConfigureAwait(false);
         }
-        return resolved;
+        finally
+        {
+            searchDocument?.Dispose();
+            projectDocument?.Dispose();
+        }
+    }
+
+    private async Task<CatalogItem?> ParseProjectAsync(
+        JsonElement project,
+        CatalogQuery query,
+        CancellationToken cancellationToken,
+        IReadOnlyList<JsonElement>? exactFiles = null)
+    {
+        if (!IsProjectAvailable(project)) return null;
+        var projectId = project.GetProperty("id").ToString();
+        var files = exactFiles ?? (project.TryGetProperty("latestFiles", out var latest) &&
+                                   latest.ValueKind == JsonValueKind.Array
+            ? latest.EnumerateArray().Select(file => file.Clone()).Take(20).ToArray()
+            : []);
+        var versions = new List<CatalogVersion>();
+        foreach (var clientFile in files)
+        {
+            if (!FileAvailable(clientFile)) continue;
+            var candidate = await ResolveClientPackFileAsync(
+                projectId, ParseClientFile(clientFile, query), clientFile, cancellationToken).ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(candidate.ServerPackFileId))
+            {
+                versions.Add(candidate);
+                continue;
+            }
+            versions.Add(await ResolveServerPackFileAsync(
+                projectId, candidate, cancellationToken).ConfigureAwait(false));
+        }
+
+        var support = versions.Any(version => version.HasServerPackage)
+            ? InstallationSupportState.FullyAutomated
+            : versions.Any(version => version.CanGenerateServerCandidate)
+                ? InstallationSupportState.AutomatedWithReview
+            : versions.Count > 0
+                ? InstallationSupportState.ManualPackageRequired
+                : InstallationSupportState.ClientOnly;
+        return new CatalogItem
+        {
+            Provider = CatalogProvider.CurseForge,
+            ContentType = CatalogContentType.Modpack,
+            ProjectId = projectId,
+            Slug = Text(project, "slug"),
+            Name = Text(project, "name"),
+            Author = project.TryGetProperty("authors", out var authors) && authors.ValueKind == JsonValueKind.Array
+                ? string.Join(", ", authors.EnumerateArray().Select(author => Text(author, "name"))
+                    .Where(name => name.Length > 0).Take(20)) : "",
+            Summary = Text(project, "summary"),
+            IconUrl = project.TryGetProperty("logo", out var logo) ? Text(logo, "thumbnailUrl") : "",
+            ProjectUrl = project.TryGetProperty("links", out var links) ? Text(links, "websiteUrl") : "",
+            DownloadCount = Number(project, "downloadCount"),
+            UpdatedAt = Date(project, "dateModified"),
+            Categories = project.TryGetProperty("categories", out var categories) &&
+                         categories.ValueKind == JsonValueKind.Array
+                ? categories.EnumerateArray().Select(category => Text(category, "slug"))
+                    .Where(value => value.Length > 0).Take(50).ToArray() : [],
+            ClientRequirement = ClientRequirement.MatchingPackRequired,
+            InstallationSupport = support,
+            Versions = versions.OrderByDescending(version => version.PublishedAt).ToArray()
+        };
+    }
+
+    private static CatalogVersion ParseClientFile(JsonElement file, CatalogQuery query)
+    {
+        var gameVersions = Strings(file, "gameVersions");
+        var clientFileId = file.GetProperty("id").ToString();
+        var serverPackId = Number(file, "serverPackFileId")?.ToString(
+            System.Globalization.CultureInfo.InvariantCulture) ?? "";
+        var minecraft = !string.IsNullOrWhiteSpace(query.MinecraftVersion)
+            ? gameVersions.FirstOrDefault(value => value.Equals(query.MinecraftVersion,
+                StringComparison.OrdinalIgnoreCase)) ?? ""
+            : gameVersions.FirstOrDefault(IsMinecraftVersion) ?? "";
+        var loader = !string.IsNullOrWhiteSpace(query.Loader)
+            ? gameVersions.FirstOrDefault(value => value.Equals(query.Loader,
+                StringComparison.OrdinalIgnoreCase)) ?? ""
+            : gameVersions.FirstOrDefault(IsLoader) ?? "";
+        return new CatalogVersion
+        {
+            VersionId = clientFileId,
+            ClientFileId = clientFileId,
+            ServerPackFileId = serverPackId,
+            VersionName = Text(file, "displayName") is { Length: > 0 } display
+                ? display : Text(file, "fileName"),
+            MinecraftVersion = minecraft,
+            Loader = loader,
+            ReleaseChannel = ReleaseType(file),
+            PublishedAt = Date(file, "fileDate"),
+            HasServerPackage = false,
+            Available = FileAvailable(file),
+            DistributionAllowed = true,
+            RequiredJavaMajor = JavaRuntimePolicy.TryRequiredMajorForMinecraft(minecraft) ?? 0
+        };
     }
 
     private async Task<CatalogVersion> ResolveServerPackFileAsync(
-        string apiKey,
         string projectId,
-        long fileId,
-        CatalogVersion version,
+        CatalogVersion client,
         CancellationToken cancellationToken)
     {
-        using var request = new HttpRequestMessage(
-            HttpMethod.Get,
-            $"https://api.curseforge.com/v1/mods/{Uri.EscapeDataString(projectId)}/files/{fileId}");
-        request.Headers.Add("x-api-key", apiKey);
-        using var response = await Http.SendAsync(
-            request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
-        response.EnsureSuccessStatusCode();
-        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken)
-            .ConfigureAwait(false);
-        using var document = await JsonDocument.ParseAsync(
-            stream, cancellationToken: cancellationToken).ConfigureAwait(false);
-        var data = document.RootElement.GetProperty("data");
-        var url = data.TryGetProperty("downloadUrl", out var download) &&
-                  download.ValueKind == JsonValueKind.String
-            ? download.GetString() ?? "" : "";
-        var sha1 = "";
-        if (data.TryGetProperty("hashes", out var hashes))
+        using var document = await api.GetJsonAsync(
+            $"/v1/mods/{Uri.EscapeDataString(projectId)}/files/{Uri.EscapeDataString(client.ServerPackFileId)}",
+            cancellationToken).ConfigureAwait(false);
+        var file = RequireObject(document.RootElement, "data", "server-pack file");
+        if (!FileAvailable(file)) return client with { Available = false };
+        var serverId = file.GetProperty("id").ToString();
+        if (!serverId.Equals(client.ServerPackFileId, StringComparison.Ordinal))
+            throw new InvalidDataException("CurseForge returned a contradictory server-pack relationship.");
+        if (Number(file, "modId") is { } parent &&
+            !parent.ToString(System.Globalization.CultureInfo.InvariantCulture).Equals(projectId, StringComparison.Ordinal))
+            throw new InvalidDataException("The CurseForge server-pack file belongs to a different project.");
+        var url = Text(file, "downloadUrl");
+        if (url.Length == 0)
         {
-            foreach (var hash in hashes.EnumerateArray())
-            {
-                if (hash.TryGetProperty("algo", out var algorithm) &&
-                    algorithm.GetInt32() == 1)
-                {
-                    sha1 = hash.GetProperty("value").GetString() ?? "";
-                    break;
-                }
-            }
+            using var resolved = await api.GetJsonAsync(
+                $"/v1/mods/{Uri.EscapeDataString(projectId)}/files/{serverId}/download-url",
+                cancellationToken).ConfigureAwait(false);
+            if (resolved.RootElement.TryGetProperty("data", out var value) && value.ValueKind == JsonValueKind.String)
+                url = value.GetString() ?? "";
         }
-        return version with
+        var approved = Uri.TryCreate(url, UriKind.Absolute, out var uri) &&
+                       CurseForgeApiClient.IsApprovedDownloadUri(uri);
+        var sha1 = Hash(file, 1);
+        var available = approved && sha1.Length == 40 && Number(file, "fileLength") is > 0;
+        return client with
         {
-            VersionId = fileId.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            VersionName = data.TryGetProperty("displayName", out var display)
-                ? display.GetString() ?? version.VersionName : version.VersionName,
-            DownloadUrl = url,
+            DownloadUrl = approved ? url : "",
             Sha1 = sha1,
-            SizeBytes = data.TryGetProperty("fileLength", out var size)
-                ? size.GetInt64() : version.SizeBytes,
-            HasServerPackage = url.StartsWith("https://", StringComparison.OrdinalIgnoreCase) &&
-                               !string.IsNullOrWhiteSpace(sha1)
+            SizeBytes = Number(file, "fileLength"),
+            HasServerPackage = available,
+            Available = FileAvailable(file),
+            DistributionAllowed = approved
         };
     }
+
+    private async Task<CatalogVersion> ResolveClientPackFileAsync(
+        string projectId,
+        CatalogVersion client,
+        JsonElement file,
+        CancellationToken cancellationToken)
+    {
+        var url = Text(file, "downloadUrl");
+        if (url.Length == 0)
+        {
+            using var resolved = await api.GetJsonAsync(
+                $"/v1/mods/{Uri.EscapeDataString(projectId)}/files/{Uri.EscapeDataString(client.ClientFileId)}/download-url",
+                cancellationToken).ConfigureAwait(false);
+            if (resolved.RootElement.TryGetProperty("data", out var value) && value.ValueKind == JsonValueKind.String)
+                url = value.GetString() ?? "";
+        }
+        var approved = Uri.TryCreate(url, UriKind.Absolute, out var uri) &&
+                       CurseForgeApiClient.IsApprovedDownloadUri(uri);
+        var sha1 = Hash(file, 1);
+        var size = Number(file, "fileLength");
+        var fileName = Text(file, "fileName");
+        var canGenerate = approved && sha1.Length == 40 && size is > 0 &&
+                          fileName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) &&
+                          client.MinecraftVersion.Length > 0 && client.Loader.Length > 0;
+        return client with
+        {
+            ClientDownloadUrl = approved ? url : "",
+            ClientSha1 = sha1,
+            ClientSizeBytes = size,
+            CanGenerateServerCandidate = canGenerate
+        };
+    }
+
+    private static JsonElement RequireArray(JsonElement root, string property, string label)
+    {
+        if (!root.TryGetProperty(property, out var value) || value.ValueKind != JsonValueKind.Array)
+            throw new InvalidDataException($"CurseForge's {label} response was not an array.");
+        return value;
+    }
+
+    private static JsonElement RequireObject(JsonElement root, string property, string label)
+    {
+        if (!root.TryGetProperty(property, out var value) || value.ValueKind != JsonValueKind.Object)
+            throw new InvalidDataException($"CurseForge's {label} response was not an object.");
+        return value;
+    }
+
+    internal static bool FileAvailable(JsonElement file) =>
+        !file.TryGetProperty("isAvailable", out var available) || available.ValueKind != JsonValueKind.False;
+
+    private static bool IsProjectAvailable(JsonElement project) =>
+        (!project.TryGetProperty("isAvailable", out var available) || available.ValueKind != JsonValueKind.False) &&
+        (!project.TryGetProperty("allowModDistribution", out var distribution) ||
+         distribution.ValueKind is JsonValueKind.True or JsonValueKind.Null);
+
+    internal static string Hash(JsonElement file, int algorithm) =>
+        file.TryGetProperty("hashes", out var hashes) && hashes.ValueKind == JsonValueKind.Array
+            ? hashes.EnumerateArray().FirstOrDefault(hash =>
+                hash.TryGetProperty("algo", out var algo) && algo.TryGetInt32(out var value) && value == algorithm)
+                is var match && match.ValueKind == JsonValueKind.Object ? Text(match, "value") : ""
+            : "";
+
+    internal static string Text(JsonElement value, string property) =>
+        value.ValueKind == JsonValueKind.Object && value.TryGetProperty(property, out var text) &&
+        text.ValueKind == JsonValueKind.String ? text.GetString() ?? "" :
+        value.ValueKind == JsonValueKind.Object && value.TryGetProperty(property, out text) &&
+        text.ValueKind == JsonValueKind.Number ? text.ToString() : "";
+
+    private static long? Number(JsonElement value, string property) =>
+        value.ValueKind == JsonValueKind.Object && value.TryGetProperty(property, out var number) &&
+        number.TryGetInt64(out var result) ? result : null;
+
+    private static DateTimeOffset? Date(JsonElement value, string property) =>
+        value.ValueKind == JsonValueKind.Object && value.TryGetProperty(property, out var date) &&
+        date.ValueKind == JsonValueKind.String && date.TryGetDateTimeOffset(out var result) ? result : null;
+
+    private static string[] Strings(JsonElement value, string property) =>
+        value.TryGetProperty(property, out var items) && items.ValueKind == JsonValueKind.Array
+            ? items.EnumerateArray().Where(item => item.ValueKind == JsonValueKind.String)
+                .Select(item => item.GetString() ?? "").Where(item => item.Length > 0).ToArray()
+            : [];
+
+    internal static ReleaseChannel ReleaseType(JsonElement file) =>
+        Number(file, "releaseType") switch
+        {
+            1 => ReleaseChannel.Stable,
+            2 => ReleaseChannel.Beta,
+            _ => ReleaseChannel.Alpha
+        };
+
+    private static int LoaderType(string loader) => loader.Trim().ToLowerInvariant() switch
+    {
+        "forge" => 1,
+        "fabric" => 4,
+        "quilt" => 5,
+        "neoforge" => 6,
+        _ => 0
+    };
+
+    internal static bool IsLoader(string value) => value.Equals("Fabric", StringComparison.OrdinalIgnoreCase) ||
+        value.Equals("Forge", StringComparison.OrdinalIgnoreCase) ||
+        value.Equals("NeoForge", StringComparison.OrdinalIgnoreCase) ||
+        value.Equals("Quilt", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsMinecraftVersion(string value) => value.Length > 0 &&
+        (char.IsDigit(value[0]) || char.ToLowerInvariant(value[0]) is 'a' or 'b');
 
     private static CatalogGameVersionKind ClassifyMinecraftVersion(string version)
     {
@@ -1202,6 +1411,11 @@ public sealed class CurseForgeCatalogProvider : HttpCatalogProvider, IGuidedCata
             normalized.Length >= 5 && char.IsDigit(normalized[0]) && normalized.Contains('w'))
             return CatalogGameVersionKind.Snapshot;
         return normalized.Length > 0 ? CatalogGameVersionKind.Release : CatalogGameVersionKind.Unknown;
+    }
+
+    public void Dispose()
+    {
+        if (ownsApi) api.Dispose();
     }
 }
 

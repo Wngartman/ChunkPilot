@@ -193,6 +193,31 @@ public sealed class PublicDistributionContractTests
     }
 
     [Fact]
+    public void CurseForge_credentials_are_ignored_native_only_and_rejected_by_publication_audit()
+    {
+        var ignore = File.ReadAllText(Path.Combine(Root, ".gitignore"));
+        var audit = File.ReadAllText(Path.Combine(Root, "scripts", "audit-publication.ps1"));
+        var portable = File.ReadAllText(Path.Combine(Root, "scripts", "test-portable-package.ps1"));
+        var pipe = File.ReadAllText(Path.Combine(Root, "src", "ChunkPilot.Agent", "AgentPipeServer.cs"));
+        var viewModel = File.ReadAllText(Path.Combine(Root, "src", "ChunkPilot.App", "MainViewModel.Updates.cs"));
+        var webUi = string.Join('\n', Directory.EnumerateFiles(
+            Path.Combine(Root, "src", "ChunkPilot.WebUi", "src"), "*.*", SearchOption.AllDirectories)
+            .Where(path => path.EndsWith(".ts", StringComparison.OrdinalIgnoreCase) ||
+                           path.EndsWith(".tsx", StringComparison.OrdinalIgnoreCase))
+            .Select(File.ReadAllText));
+
+        Assert.Contains(".secrets/", ignore, StringComparison.Ordinal);
+        Assert.Contains("curseforge-api-key*.txt", ignore, StringComparison.Ordinal);
+        Assert.Contains("curseforge-api-key", audit, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("curseforge-api-key", portable, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("\\.secrets?", portable, StringComparison.Ordinal);
+        Assert.DoesNotContain("SetCurseForgeApiKey", pipe, StringComparison.Ordinal);
+        Assert.DoesNotContain("private string curseForgeApiKey", viewModel, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("x-api-key", webUi, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("CURSEFORGE_KEY_FILE", webUi, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Single_file_app_loads_the_tray_icon_from_an_embedded_resource()
     {
         var project = File.ReadAllText(Path.Combine(Root, "src", "ChunkPilot.App", "ChunkPilot.App.csproj"));

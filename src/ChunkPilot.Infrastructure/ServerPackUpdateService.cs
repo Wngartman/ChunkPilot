@@ -180,6 +180,7 @@ public sealed class PackMigrationPlanner
         var persistent = new List<string>();
         var conflicts = new List<string>();
         var explicitPersistent = ReadExplicitPersistentPaths(currentRoot);
+        var providerBaseline = ProviderOwnershipManifest.Read(currentRoot);
         var candidateFiles = Enumerate(candidateRoot).ToDictionary(
             path => PersistentDataClassifier.Normalize(Path.GetRelativePath(candidateRoot, path)),
             StringComparer.OrdinalIgnoreCase);
@@ -195,6 +196,56 @@ public sealed class PackMigrationPlanner
             candidateFiles.TryGetValue(relative, out var newFile);
             var oldHash = await Sha256Async(oldFile, cancellationToken).ConfigureAwait(false);
             var newHash = newFile is null ? "" : await Sha256Async(newFile, cancellationToken).ConfigureAwait(false);
+            var providerModified = providerBaseline.TryGetValue(relative, out var baselineHash) &&
+                                   !oldHash.Equals(baselineHash, StringComparison.OrdinalIgnoreCase);
+
+            if (providerModified && (ownership is FileOwnership.PackManaged or FileOwnership.Unknown))
+            {
+                if (resolution?.Kind == MigrationResolutionKind.NewBaseline)
+                {
+                    changes.Add(new PackFileChange
+                    {
+                        RelativePath = relative,
+                        Ownership = FileOwnership.Unknown,
+                        Change = newFile is null ? "Removed by explicit user decision" : "Selected new pack baseline",
+                        Reason = "The installed provider file was locally modified; the user explicitly selected the target baseline.",
+                        OldSha256 = oldHash,
+                        NewSha256 = newHash
+                    });
+                    continue;
+                }
+                if (resolution?.Kind == MigrationResolutionKind.UseMergedText)
+                {
+                    if (newFile is null || !IsMergeableText(relative, oldFile, newFile))
+                        throw new InvalidDataException($"{relative} is not a bounded text file and cannot use a merged-text decision.");
+                    await File.WriteAllTextAsync(newFile, resolution.MergedContent,
+                        new UTF8Encoding(false), cancellationToken).ConfigureAwait(false);
+                    changes.Add(new PackFileChange
+                    {
+                        RelativePath = relative,
+                        Ownership = FileOwnership.Unknown,
+                        Change = "Applied user-provided merged text",
+                        Reason = "The installed provider file was locally modified and the user supplied the resolved content.",
+                        OldSha256 = oldHash,
+                        NewSha256 = await Sha256Async(newFile, cancellationToken).ConfigureAwait(false)
+                    });
+                    continue;
+                }
+                await CopyAsync(oldFile, Path.Combine(candidateRoot, relative.Replace('/', Path.DirectorySeparatorChar)),
+                    cancellationToken).ConfigureAwait(false);
+                changes.Add(new PackFileChange
+                {
+                    RelativePath = relative,
+                    Ownership = FileOwnership.Unknown,
+                    Change = newFile is null ? "Preserved locally modified provider file" : "Kept local modification pending review",
+                    Reason = "Its current SHA-256 no longer matches the installed provider baseline, so ChunkPilot did not replace or remove it.",
+                    OldSha256 = oldHash,
+                    NewSha256 = newHash
+                });
+                if (resolution is null)
+                    conflicts.Add($"{relative}: locally modified provider file requires Keep old or New baseline review.");
+                continue;
+            }
 
             if (ownership == FileOwnership.Persistent)
             {
@@ -800,6 +851,8 @@ public sealed class ServerPackUpdateService
     private readonly LoaderInstallationService loaderInstaller;
     private readonly ModrinthPackServerService modrinthPacks;
     private readonly ManagedJavaRuntimeService? managedJava;
+    private readonly CurseForgeApiClient? curseForge;
+    private readonly CurseForgePackService? curseForgePacks;
     private readonly HttpClient http;
 
     public ServerPackUpdateService(
@@ -811,7 +864,9 @@ public sealed class ServerPackUpdateService
         WorldManager worlds,
         LoaderInstallationService? loaderInstaller = null,
         HttpClient? client = null,
-        ManagedJavaRuntimeService? managedJava = null)
+        ManagedJavaRuntimeService? managedJava = null,
+        CurseForgeApiClient? curseForge = null,
+        CurseForgePackService? curseForgePacks = null)
     {
         this.paths = paths;
         this.store = store;
@@ -821,6 +876,10 @@ public sealed class ServerPackUpdateService
         this.worlds = worlds;
         this.loaderInstaller = loaderInstaller ?? new LoaderInstallationService(new LoaderMetadataService());
         this.managedJava = managedJava;
+        this.curseForge = curseForge;
+        this.curseForgePacks = curseForgePacks ?? (curseForge is null
+            ? null
+            : new CurseForgePackService(curseForge, loaders: this.loaderInstaller));
         modrinthPacks = new ModrinthPackServerService(loaderInstaller: this.loaderInstaller);
         http = client ?? new HttpClient { Timeout = TimeSpan.FromMinutes(30) };
         if (http.DefaultRequestHeaders.UserAgent.Count == 0)
@@ -847,7 +906,7 @@ public sealed class ServerPackUpdateService
             Detail = target.DownloadUrl,
             LogPath = logPath
         });
-        await DownloadAsync(target, download, progress, request.OperationId, logPath, cancellationToken)
+        await DownloadAsync(source.Provider, target, download, progress, request.OperationId, logPath, cancellationToken)
             .ConfigureAwait(false);
         progress?.Report(new UpdateProgress
         {
@@ -929,7 +988,7 @@ public sealed class ServerPackUpdateService
             if (!File.Exists(download))
             {
                 Report(UpdateOperationState.Downloading, "Downloading target server pack", 25, target.DownloadUrl);
-                await DownloadAsync(target, download, progress, request.OperationId, logPath, cancellationToken)
+                await DownloadAsync(source.Provider, target, download, progress, request.OperationId, logPath, cancellationToken)
                     .ConfigureAwait(false);
             }
             else
@@ -973,6 +1032,22 @@ public sealed class ServerPackUpdateService
                     InstallerVersion = installedPack.InstallerVersion,
                     RequiredJavaMajor = JavaRuntimePolicy.RequiredMajorForMinecraft(minecraft),
                     PackageType = "mrpack"
+                };
+            }
+            else if (target.PackageType.Equals("curseforge-manifest", StringComparison.OrdinalIgnoreCase))
+            {
+                if (source.Provider != UpdateProvider.CurseForge || curseForgePacks is null)
+                    throw new InvalidDataException("Only an exact CurseForge release may use the generated manifest update path.");
+                var installedPack = await curseForgePacks.MaterializeAndInstallAsync(
+                    download, candidate, server.Executable, logPath, cancellationToken).ConfigureAwait(false);
+                target = target with
+                {
+                    MinecraftVersion = installedPack.Manifest.MinecraftVersion,
+                    Loader = installedPack.Ecosystem.ToString(),
+                    LoaderVersion = installedPack.LoaderVersion,
+                    InstallerVersion = installedPack.InstallerVersion,
+                    RequiredJavaMajor = JavaRuntimePolicy.RequiredMajorForMinecraft(installedPack.Manifest.MinecraftVersion),
+                    PackageType = "curseforge-manifest"
                 };
             }
             else if (target.PackageType.Equals("fabric-server-launcher", StringComparison.OrdinalIgnoreCase) ||
@@ -1021,6 +1096,9 @@ public sealed class ServerPackUpdateService
             else
                 await ManagedServerInstaller.ExtractZipSafeAsync(download, candidate, cancellationToken).ConfigureAwait(false);
             NormalizeSinglePackageRoot(candidate);
+            if (source.Provider == UpdateProvider.CurseForge)
+                await ProviderOwnershipManifest.WriteAsync(candidate, "CurseForge", cancellationToken)
+                    .ConfigureAwait(false);
 
             Report(UpdateOperationState.PlanningMigration, "Classifying persistent and pack-managed data", 65, "");
             var worldRoots = worlds.List(server).Select(world => Path.GetRelativePath(server.RootPath, world.FolderPath))
@@ -1093,7 +1171,8 @@ public sealed class ServerPackUpdateService
             {
                 InstalledVersionId = target.VersionId,
                 InstalledVersionName = target.VersionName,
-                InstalledFileId = target.VersionId,
+                InstalledFileId = string.IsNullOrWhiteSpace(target.ProviderFileId)
+                    ? target.VersionId : target.ProviderFileId,
                 MinecraftVersion = active.MinecraftVersion,
                 Loader = active.Loader,
                 LoaderVersion = active.LoaderVersion,
@@ -1419,6 +1498,7 @@ public sealed class ServerPackUpdateService
     }
 
     private async Task DownloadAsync(
+        UpdateProvider provider,
         PackVersionInfo target,
         string destination,
         IProgress<UpdateProgress>? progress,
@@ -1440,10 +1520,21 @@ public sealed class ServerPackUpdateService
         var downloadUri = new Uri(target.DownloadUrl, UriKind.Absolute);
         if (downloadUri.Scheme != Uri.UriSchemeHttps)
             throw new InvalidOperationException("Server-pack update downloads require HTTPS.");
-        using var response = await http.GetAsync(downloadUri, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
-            .ConfigureAwait(false);
-        response.EnsureSuccessStatusCode();
+        using var response = provider == UpdateProvider.CurseForge
+            ? curseForge is null
+                ? throw new InvalidOperationException("The native CurseForge update download boundary is unavailable.")
+                : await curseForge.SendDownloadAsync(downloadUri, cancellationToken).ConfigureAwait(false)
+            : await http.GetAsync(downloadUri, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
+                .ConfigureAwait(false);
+        if (provider != UpdateProvider.CurseForge) response.EnsureSuccessStatusCode();
         var total = response.Content.Headers.ContentLength ?? target.FileSize;
+        if (provider == UpdateProvider.CurseForge && target.FileSize is not > 0)
+            throw new InvalidDataException("The CurseForge update does not have a declared package size.");
+        if (target.FileSize > ServerImportInspectionService.MaximumCompressedBytes)
+            throw new InvalidDataException("The provider update does not have a safe declared package size.");
+        if (target.FileSize is > 0 && response.Content.Headers.ContentLength is { } responseLength &&
+            responseLength != target.FileSize.Value)
+            throw new InvalidDataException("The provider update response size changed after review.");
         await using var input = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
         await using var output = new FileStream(destination, FileMode.Create, FileAccess.Write, FileShare.None,
             128 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
@@ -1455,6 +1546,8 @@ public sealed class ServerPackUpdateService
         {
             await output.WriteAsync(buffer.AsMemory(0, read), cancellationToken).ConfigureAwait(false);
             bytes += read;
+            if (bytes > (target.FileSize ?? ServerImportInspectionService.MaximumCompressedBytes))
+                throw new InvalidDataException("The provider update exceeded its declared package size.");
             progress?.Report(new UpdateProgress
             {
                 OperationId = operationId,
@@ -1468,6 +1561,8 @@ public sealed class ServerPackUpdateService
                 LogPath = logPath
             });
         }
+        if (target.FileSize is > 0 && bytes != target.FileSize.Value)
+            throw new InvalidDataException("The provider update ended before its declared package size.");
         await output.FlushAsync(cancellationToken).ConfigureAwait(false);
     }
 

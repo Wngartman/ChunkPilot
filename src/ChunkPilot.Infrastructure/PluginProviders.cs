@@ -50,6 +50,211 @@ public sealed class HangarUnavailablePluginProvider : IPluginCatalogProvider
         CancellationToken cancellationToken = default) => Task.FromResult<PluginRelease?>(null);
 }
 
+public sealed class CurseForgePluginProvider : IPluginCatalogProvider
+{
+    private const int MinecraftGameId = 432;
+    private const int ModClassId = 6;
+    private readonly CurseForgeApiClient api;
+
+    public CurseForgePluginProvider(CurseForgeApiClient api) => this.api = api;
+
+    public PluginProviderKind Provider => PluginProviderKind.CurseForge;
+    public PluginProviderStatus Status => new(Provider, api.HasCredential,
+        api.HasCredential
+            ? "Official CurseForge mod metadata is available on demand for this local native session."
+            : "CurseForge mods are unavailable because the approved local native credential is missing.");
+
+    public async Task<IReadOnlyList<PluginProject>> SearchAsync(
+        PluginCatalogQuery query,
+        CancellationToken cancellationToken = default)
+    {
+        if (query.Kind != ManagedAddonKind.Mod || !api.HasCredential) return [];
+        var loaderType = LoaderType(query.Loader);
+        if (loaderType == 0) return [];
+        var path = $"/v1/mods/search?gameId={MinecraftGameId}&classId={ModClassId}" +
+                   $"&pageSize={Math.Clamp(query.Limit, 1, 40)}&index=0&sortField=6&sortOrder=desc" +
+                   "&searchFilter=" + Uri.EscapeDataString(query.Search.Trim()) +
+                   "&gameVersion=" + Uri.EscapeDataString(query.MinecraftVersion.Trim()) +
+                   $"&modLoaderType={loaderType}";
+        using var document = await api.GetJsonAsync(path, cancellationToken).ConfigureAwait(false);
+        if (!document.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array)
+            throw new InvalidDataException("CurseForge's mod search response was malformed.");
+        return data.EnumerateArray()
+            .Where(ProjectAvailable)
+            .Select(project => new PluginProject
+            {
+                Kind = ManagedAddonKind.Mod,
+                Provider = Provider,
+                ProjectId = project.GetProperty("id").ToString(),
+                Slug = Text(project, "slug"),
+                Name = Text(project, "name"),
+                Author = project.TryGetProperty("authors", out var authors) &&
+                         authors.ValueKind == JsonValueKind.Array
+                    ? string.Join(", ", authors.EnumerateArray().Select(author => Text(author, "name"))
+                        .Where(value => value.Length > 0).Take(20)) : "",
+                Summary = Text(project, "summary"),
+                IconUrl = project.TryGetProperty("logo", out var logo) ? Text(logo, "thumbnailUrl") : "",
+                ProjectUrl = project.TryGetProperty("links", out var links) ? Text(links, "websiteUrl") : "",
+                Downloads = Long(project, "downloadCount"),
+                UpdatedAt = Date(project, "dateModified"),
+                ServerSide = "unknown",
+                ClientSide = "unknown",
+                ClientRequirement = "Unknown"
+            })
+            .Where(project => project.ProjectId.Length > 0 && project.Name.Length > 0)
+            .ToArray();
+    }
+
+    public async Task<PluginRelease?> ResolveReleaseAsync(
+        string projectId,
+        string minecraftVersion,
+        string loader,
+        string? versionId = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (!api.HasCredential || !long.TryParse(projectId, out var numericProject) || numericProject <= 0)
+            return null;
+        var loaderType = LoaderType(loader);
+        if (loaderType == 0) return null;
+        using (var projectDocument = await api.GetJsonAsync(
+                   $"/v1/mods/{numericProject}", cancellationToken).ConfigureAwait(false))
+        {
+            if (!projectDocument.RootElement.TryGetProperty("data", out var project) ||
+                project.ValueKind != JsonValueKind.Object || Long(project, "id") != numericProject ||
+                Long(project, "gameId") != MinecraftGameId || Long(project, "classId") != ModClassId ||
+                !ProjectAvailable(project))
+                return null;
+        }
+        IReadOnlyList<JsonElement> files;
+        if (!string.IsNullOrWhiteSpace(versionId))
+        {
+            if (!long.TryParse(versionId, out var numericFile) || numericFile <= 0) return null;
+            using var exact = await api.GetJsonAsync(
+                $"/v1/mods/{numericProject}/files/{numericFile}", cancellationToken).ConfigureAwait(false);
+            if (!exact.RootElement.TryGetProperty("data", out var file) || file.ValueKind != JsonValueKind.Object)
+                return null;
+            files = [file.Clone()];
+        }
+        else
+        {
+            using var inventory = await api.GetJsonAsync(
+                $"/v1/mods/{numericProject}/files?gameVersion=" + Uri.EscapeDataString(minecraftVersion) +
+                $"&modLoaderType={loaderType}&pageSize=50&index=0", cancellationToken).ConfigureAwait(false);
+            if (!inventory.RootElement.TryGetProperty("data", out var values) ||
+                values.ValueKind != JsonValueKind.Array) return null;
+            files = values.EnumerateArray().Select(value => value.Clone()).ToArray();
+        }
+
+        foreach (var file in files.Where(CurseForgeCatalogProvider.FileAvailable)
+                     .OrderBy(file => ReleaseRank(CurseForgeCatalogProvider.ReleaseType(file)))
+                     .ThenByDescending(file => Date(file, "fileDate")))
+        {
+            if (Long(file, "modId") is { } parent && parent != numericProject) continue;
+            var gameVersions = Strings(file, "gameVersions");
+            if (!gameVersions.Contains(minecraftVersion, StringComparer.OrdinalIgnoreCase) ||
+                !gameVersions.Contains(loader, StringComparer.OrdinalIgnoreCase)) continue;
+            var fileId = file.GetProperty("id").ToString();
+            var url = Text(file, "downloadUrl");
+            if (url.Length == 0)
+            {
+                using var resolved = await api.GetJsonAsync(
+                    $"/v1/mods/{numericProject}/files/{fileId}/download-url", cancellationToken)
+                    .ConfigureAwait(false);
+                if (resolved.RootElement.TryGetProperty("data", out var download) &&
+                    download.ValueKind == JsonValueKind.String)
+                    url = download.GetString() ?? "";
+            }
+            if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) ||
+                !CurseForgeApiClient.IsApprovedDownloadUri(uri)) continue;
+            var fileName = Text(file, "fileName");
+            var sha1 = CurseForgeCatalogProvider.Hash(file, 1);
+            var size = Long(file, "fileLength") ?? 0;
+            if (!fileName.EndsWith(".jar", StringComparison.OrdinalIgnoreCase) ||
+                sha1.Length != 40 || size is <= 0 or > JarInventoryService.MaximumJarBytes) continue;
+            var dependencies = file.TryGetProperty("dependencies", out var relationValues) &&
+                               relationValues.ValueKind == JsonValueKind.Array
+                ? relationValues.EnumerateArray().Select(relation => new PluginDependency
+                {
+                    ProjectId = Long(relation, "modId")?.ToString(
+                        System.Globalization.CultureInfo.InvariantCulture) ?? "",
+                    Type = RelationType(Long(relation, "relationType"))
+                }).Where(relation => relation.ProjectId.Length > 0).Take(128).ToArray()
+                : [];
+            return new PluginRelease
+            {
+                Kind = ManagedAddonKind.Mod,
+                Provider = Provider,
+                ProjectId = numericProject.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                VersionId = fileId,
+                VersionName = Text(file, "displayName") is { Length: > 0 } display
+                    ? display : fileName,
+                MinecraftVersion = minecraftVersion,
+                Loader = loader,
+                ReleaseChannel = CurseForgeCatalogProvider.ReleaseType(file).ToString().ToLowerInvariant(),
+                PublishedAt = Date(file, "fileDate") ?? DateTimeOffset.MinValue,
+                DownloadUrl = url,
+                FileName = fileName,
+                SizeBytes = size,
+                Sha1 = sha1,
+                ServerSide = "unknown",
+                ClientSide = "unknown",
+                ClientRequirement = "Unknown",
+                Dependencies = dependencies
+            };
+        }
+        return null;
+    }
+
+    private static bool ProjectAvailable(JsonElement project) =>
+        (!project.TryGetProperty("isAvailable", out var available) || available.ValueKind != JsonValueKind.False) &&
+        (!project.TryGetProperty("allowModDistribution", out var distribution) ||
+         distribution.ValueKind is JsonValueKind.True or JsonValueKind.Null);
+
+    private static int LoaderType(string loader) => loader.Trim().ToLowerInvariant() switch
+    {
+        "forge" => 1,
+        "fabric" => 4,
+        "quilt" => 5,
+        "neoforge" => 6,
+        _ => 0
+    };
+
+    private static int ReleaseRank(ReleaseChannel channel) => channel switch
+    {
+        ReleaseChannel.Stable => 0,
+        ReleaseChannel.Beta => 1,
+        _ => 2
+    };
+
+    private static string RelationType(long? value) => value switch
+    {
+        1 => "embedded",
+        2 => "optional",
+        3 => "required",
+        4 => "tool",
+        5 => "incompatible",
+        6 => "include",
+        _ => "unknown"
+    };
+
+    private static string Text(JsonElement value, string property) =>
+        value.TryGetProperty(property, out var result) && result.ValueKind == JsonValueKind.String
+            ? result.GetString() ?? "" : "";
+
+    private static long? Long(JsonElement value, string property) =>
+        value.TryGetProperty(property, out var result) && result.TryGetInt64(out var number)
+            ? number : null;
+
+    private static DateTimeOffset? Date(JsonElement value, string property) =>
+        value.TryGetProperty(property, out var result) && result.ValueKind == JsonValueKind.String &&
+        result.TryGetDateTimeOffset(out var date) ? date : null;
+
+    private static string[] Strings(JsonElement value, string property) =>
+        value.TryGetProperty(property, out var result) && result.ValueKind == JsonValueKind.Array
+            ? result.EnumerateArray().Where(item => item.ValueKind == JsonValueKind.String)
+                .Select(item => item.GetString() ?? "").ToArray() : [];
+}
+
 public sealed class ModrinthPluginProvider : IPluginCatalogProvider
 {
     internal static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(5);

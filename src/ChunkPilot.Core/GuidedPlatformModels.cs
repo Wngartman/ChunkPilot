@@ -474,6 +474,16 @@ public sealed record CatalogVersion
     public long? SizeBytes { get; init; }
     public string Changelog { get; init; } = "";
     public bool HasServerPackage { get; init; }
+    /// <summary>The exact provider client-pack file selected by the user.</summary>
+    public string ClientFileId { get; init; } = "";
+    /// <summary>The provider-designated server-pack file, when one exists.</summary>
+    public string ServerPackFileId { get; init; } = "";
+    public string ClientDownloadUrl { get; init; } = "";
+    public string ClientSha1 { get; init; } = "";
+    public long? ClientSizeBytes { get; init; }
+    public bool CanGenerateServerCandidate { get; init; }
+    public bool Available { get; init; } = true;
+    public bool DistributionAllowed { get; init; } = true;
     public int RequiredJavaMajor { get; init; }
 }
 
@@ -510,6 +520,7 @@ public sealed record CatalogQuery
     public bool? AllowsVanillaClients { get; init; }
     public string Category { get; init; } = "";
     public int Limit { get; init; } = 50;
+    public int Index { get; init; }
     public CatalogSort Sort { get; init; } = CatalogSort.Updated;
 }
 
@@ -587,6 +598,11 @@ public sealed record CatalogVersionInventoryRequest(
     CatalogProvider Provider,
     bool CacheOnly = false);
 
+public sealed record CatalogProjectRequest(
+    CatalogProvider Provider,
+    string ProjectReference,
+    string? ExactReleaseReference = null);
+
 public sealed record LoaderInstallPlan
 {
     public InstallSourceType Loader { get; init; }
@@ -636,7 +652,8 @@ public static class CatalogPolicy
             (query.Provider is null || item.Provider == query.Provider) &&
             (string.IsNullOrWhiteSpace(query.Search) ||
              item.Name.Contains(query.Search, StringComparison.OrdinalIgnoreCase) ||
-             item.Summary.Contains(query.Search, StringComparison.OrdinalIgnoreCase)) &&
+             item.Summary.Contains(query.Search, StringComparison.OrdinalIgnoreCase) ||
+             item.Author.Contains(query.Search, StringComparison.OrdinalIgnoreCase)) &&
             (string.IsNullOrWhiteSpace(query.Category) ||
              item.Categories.Contains(query.Category, StringComparer.OrdinalIgnoreCase)) &&
             (query.AllowsVanillaClients is null ||

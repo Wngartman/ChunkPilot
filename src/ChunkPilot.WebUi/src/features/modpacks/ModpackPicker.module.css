@@ -11,6 +11,7 @@
 .layout { min-height: 330px; display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(245px, .8fr); border: 1px solid var(--cp-border); background: var(--cp-input); }
 .list { min-width: 0; max-height: 390px; overflow: auto; border-right: 1px solid var(--cp-border); }
 .virtualContent { position: relative; width: 100%; }
+.loadMore { display: flex; justify-content: center; padding: 10px; border-bottom: 1px solid var(--cp-border); background: var(--cp-surface); }
 .project { width: 100%; min-height: 76px; display: grid; grid-template-columns: 46px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 9px 11px; border: 0; border-bottom: 1px solid var(--cp-border); background: var(--cp-surface); color: var(--cp-text); text-align: left; }
 .virtualProject { position: absolute; inset: 0 0 auto; }
 .project:hover { background: var(--cp-surface-raised); }

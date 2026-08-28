@@ -525,6 +525,14 @@ public sealed class AgentPipeServer
                     await guidedCatalog.BrowseDetailedAsync(input, cancellationToken).ConfigureAwait(false),
                     ProtocolJson.Options);
             }
+            case "ResolveCatalogProject":
+            {
+                var input = Deserialize<CatalogProjectRequest>(request);
+                return JsonSerializer.SerializeToElement(
+                    await guidedCatalog.ResolveProjectAsync(input.Provider, input.ProjectReference,
+                        input.ExactReleaseReference, cancellationToken).ConfigureAwait(false),
+                    ProtocolJson.Options);
+            }
             case "BrowseCatalog":
             {
                 var input = Deserialize<CatalogQuery>(request);
@@ -1225,7 +1233,8 @@ public sealed class AgentPipeServer
                 var input = Deserialize<PluginSearchRequest>(request);
                 var server = supervisor.Get(input.ServerId).Definition;
                 return JsonSerializer.SerializeToElement(
-                    await plugins.SearchAsync(server, input.Search, input.Limit, cancellationToken).ConfigureAwait(false),
+                    await plugins.SearchAsync(server, input.Search, input.Limit, input.Provider, cancellationToken)
+                        .ConfigureAwait(false),
                     ProtocolJson.Options);
             }
             case "ServerDeletionPreflight":
@@ -1254,7 +1263,8 @@ public sealed class AgentPipeServer
                 var input = Deserialize<PluginReleaseRequest>(request);
                 var server = supervisor.Get(input.ServerId).Definition;
                 return JsonSerializer.SerializeToElement(
-                    await plugins.ResolveAsync(server, input.ProjectId, cancellationToken: cancellationToken).ConfigureAwait(false),
+                    await plugins.ResolveAsync(server, input.ProjectId, null, input.Provider, cancellationToken)
+                        .ConfigureAwait(false),
                     ProtocolJson.Options);
             }
             case "ListWorlds":
@@ -1573,7 +1583,7 @@ public sealed class AgentPipeServer
                     "installing a verified plugin release",
                     input.RestartIfRunning,
                     token => plugins.InstallWithReceiptAsync(
-                        managed.Definition, input.ProjectId, input.VersionId, null, token),
+                        managed.Definition, input.ProjectId, input.VersionId, null, input.Provider, token),
                     (result, _) =>
                     {
                         jars.RollbackInstall(managed.Definition, result.Receipt);
@@ -1589,7 +1599,8 @@ public sealed class AgentPipeServer
                 var input = Deserialize<PluginProviderPlanRequest>(request);
                 var managed = supervisor.Get(input.ServerId);
                 return JsonSerializer.SerializeToElement(
-                    await plugins.PlanAsync(managed.Definition, input.ProjectId, input.VersionId, cancellationToken)
+                    await plugins.PlanAsync(managed.Definition, input.ProjectId, input.VersionId, input.Provider,
+                        cancellationToken)
                         .ConfigureAwait(false), ProtocolJson.Options);
             }
             case "InstallPluginProviderPlan":
@@ -1600,7 +1611,7 @@ public sealed class AgentPipeServer
                     "installing a verified add-on dependency plan",
                     input.RestartIfRunning,
                     token => plugins.InstallPlanWithReceiptsAsync(
-                        managed.Definition, input.ProjectId, input.VersionId, null, token),
+                        managed.Definition, input.ProjectId, input.VersionId, null, input.Provider, token),
                     (result, _) =>
                     {
                         plugins.RollbackPlan(managed.Definition, result);
@@ -1790,17 +1801,6 @@ public sealed class AgentPipeServer
                 await store.UpsertUpdatePreferencesAsync(input, cancellationToken).ConfigureAwait(false);
                 return JsonSerializer.SerializeToElement(
                     OperationResult.Ok("Update preferences saved."),
-                    ProtocolJson.Options);
-            }
-            case "SetCurseForgeApiKey":
-            {
-                var input = Deserialize<SettingsValueRequest>(request);
-                if (!input.Key.Equals("curseforge-api-key", StringComparison.Ordinal))
-                    throw new ArgumentException("The secret key name is invalid.");
-                cancellationToken.ThrowIfCancellationRequested();
-                secrets.SetSecret(input.Key, input.Value);
-                return JsonSerializer.SerializeToElement(
-                    OperationResult.Ok("CurseForge API key encrypted for the current Windows user."),
                     ProtocolJson.Options);
             }
             case "HasCurseForgeApiKey":

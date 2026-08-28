@@ -12,12 +12,16 @@ if (args.Length > 0 && args[0].Equals("certify-loader", StringComparison.Ordinal
 if (args.Length > 0 && args[0].Equals("certify-terraria", StringComparison.OrdinalIgnoreCase))
     return await CertifyTerrariaAsync(args.Skip(1).ToArray());
 
+if (args.Length > 0 && args[0].Equals("smoke-curseforge", StringComparison.OrdinalIgnoreCase))
+    return await SmokeCurseForgeAsync(args.Skip(1).ToArray());
+
 if (args.Length == 0 || !args[0].Equals("certify-vanilla", StringComparison.OrdinalIgnoreCase))
 {
     Console.Error.WriteLine("Usage: ChunkPilot.Certification certify-vanilla --all [options]");
     Console.Error.WriteLine("       ChunkPilot.Certification certify-paper [--all-stable | --version <id>] [--build <id>] [options]");
     Console.Error.WriteLine("       ChunkPilot.Certification certify-loader --platform <Fabric|Quilt|Forge|NeoForge|LegacyFabric|Ornithe> [--all-stable | --version <id>] [--loader <id>] [options]");
     Console.Error.WriteLine("       ChunkPilot.Certification certify-terraria [--cache <path>] [--timeout-seconds <seconds>]");
+    Console.Error.WriteLine("       ChunkPilot.Certification smoke-curseforge [--report <path>]");
     Console.Error.WriteLine("Runtime execution additionally requires --accept-minecraft-eula-for-certification.");
     return 64;
 }
@@ -142,6 +146,137 @@ static IReadOnlyDictionary<int, string> ReadJavaPaths(IReadOnlyList<string> argu
         result[major] = Path.GetFullPath(parts[1]);
     }
     return result;
+}
+
+static async Task<int> SmokeCurseForgeAsync(string[] values)
+{
+    var repository = FindRepositoryRoot();
+    var reportPath = Path.GetFullPath(Read(values, "--report") ??
+        Path.Combine(repository, "artifacts", "curseforge-live-smoke", "summary.json"));
+    var isolatedRoot = Path.Combine(Path.GetTempPath(), "ChunkPilot-curseforge-live-" + Guid.NewGuid().ToString("N"));
+    var results = new List<object>();
+    Directory.CreateDirectory(isolatedRoot);
+    try
+    {
+        var paths = new AppDataPaths(Path.Combine(isolatedRoot, "data"), Path.Combine(isolatedRoot, "servers"));
+        paths.EnsureCreated();
+        var secrets = new DpapiSecretStore(paths);
+        var provisioned = new CurseForgeCredentialProvisioner(secrets).ProvisionFromEnvironment();
+        results.Add(new { category = "credential present", status = provisioned.Imported ? "PASSED" : "UNAVAILABLE" });
+        Console.WriteLine($"credential present: {(provisioned.Imported ? "PASSED" : "UNAVAILABLE")}");
+        if (!provisioned.Imported)
+        {
+            await WriteCurseForgeSmokeReportAsync(reportPath, results);
+            return 3;
+        }
+
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+        using var api = new CurseForgeApiClient(secrets);
+        using (await api.GetJsonAsync("/v1/games/432", cancellation.Token))
+        {
+            results.Add(new { category = "authentication and Minecraft identity", status = "PASSED" });
+            Console.WriteLine("authentication and Minecraft identity: PASSED");
+        }
+        using (await api.GetJsonAsync("/v1/categories?gameId=432&classId=4471", cancellation.Token))
+        {
+            results.Add(new { category = "category inventory", status = "PASSED" });
+            Console.WriteLine("category inventory: PASSED");
+        }
+
+        using var provider = new CurseForgeCatalogProvider(api);
+        var versions = await provider.GetGameVersionsAsync(cancellation.Token);
+        results.Add(new { category = "Minecraft version inventory", status = versions.Count > 0 ? "PASSED" : "FAILED", count = versions.Count });
+        Console.WriteLine($"Minecraft version inventory: {(versions.Count > 0 ? "PASSED" : "FAILED")} ({versions.Count})");
+
+        var packs = await provider.BrowseAsync(new CatalogQuery
+        {
+            Provider = CatalogProvider.CurseForge,
+            Search = "All the Mods",
+            MaximumChannel = ReleaseChannel.Stable,
+            ServerPackRequired = false,
+            ExcludeClientOnly = false,
+            Limit = 5,
+            Sort = CatalogSort.Relevance
+        }, cancellation.Token);
+        results.Add(new { category = "modpack search", status = packs.Count > 0 ? "PASSED" : "FAILED", count = packs.Count });
+        Console.WriteLine($"modpack search: {(packs.Count > 0 ? "PASSED" : "FAILED")} ({packs.Count})");
+        var selected = packs.FirstOrDefault(pack => pack.Versions.Count > 0);
+        if (selected is null)
+        {
+            results.Add(new { category = "exact project and file", status = "UNAVAILABLE" });
+            results.Add(new { category = "official server-pack relationship", status = "UNAVAILABLE" });
+            results.Add(new { category = "recognized CurseForge link", status = "UNAVAILABLE" });
+        }
+        else
+        {
+            var exact = selected.Versions[0];
+            var resolved = await provider.ResolveProjectAsync(selected.ProjectId, exact.ClientFileId, cancellation.Token);
+            results.Add(new { category = "exact project and file", status = resolved is not null ? "PASSED" : "FAILED" });
+            Console.WriteLine($"exact project and file: {(resolved is not null ? "PASSED" : "FAILED")}");
+            var official = packs.SelectMany(pack => pack.Versions).Any(file => file.HasServerPackage);
+            results.Add(new { category = "official server-pack relationship", status = official ? "PASSED" : "UNAVAILABLE" });
+            Console.WriteLine($"official server-pack relationship: {(official ? "PASSED" : "UNAVAILABLE")}");
+            var link = $"https://www.curseforge.com/minecraft/modpacks/{Uri.EscapeDataString(selected.Slug)}" +
+                       $"/files/{Uri.EscapeDataString(exact.ClientFileId)}";
+            var linkParsed = ProviderLinkParser.TryParse(link, out var reference, out _) &&
+                             reference is { Provider: CatalogProvider.CurseForge, Kind: ProviderLinkKind.ExactRelease };
+            results.Add(new { category = "recognized CurseForge link", status = linkParsed ? "PASSED" : "FAILED" });
+            Console.WriteLine($"recognized CurseForge link: {(linkParsed ? "PASSED" : "FAILED")}");
+        }
+
+        try
+        {
+            using var _ = await api.GetJsonAsync("/v1/mods/0", cancellation.Token);
+            results.Add(new { category = "not-found error mapping", status = "FAILED" });
+            Console.WriteLine("not-found error mapping: FAILED");
+        }
+        catch (CurseForgeApiException exception) when (exception.Kind == CurseForgeFailureKind.NotFound)
+        {
+            results.Add(new { category = "not-found error mapping", status = "PASSED" });
+            Console.WriteLine("not-found error mapping: PASSED");
+        }
+
+        await WriteCurseForgeSmokeReportAsync(reportPath, results);
+        return results.Any(result => JsonSerializer.Serialize(result).Contains("\"FAILED\"", StringComparison.Ordinal)) ? 2 : 0;
+    }
+    catch (CurseForgeApiException exception)
+    {
+        var category = exception.Kind == CurseForgeFailureKind.Authentication
+            ? "provider accepted/rejected" : "provider endpoint";
+        results.Add(new { category, status = "FAILED", failure = exception.Kind.ToString() });
+        Console.Error.WriteLine($"{category}: FAILED ({exception.Kind})");
+        await WriteCurseForgeSmokeReportAsync(reportPath, results);
+        return 69;
+    }
+    catch (Exception exception) when (exception is HttpRequestException or IOException or InvalidDataException or
+                                       InvalidOperationException or OperationCanceledException)
+    {
+        results.Add(new { category = "provider endpoint", status = "FAILED", failure = exception.GetType().Name });
+        Console.Error.WriteLine($"provider endpoint: FAILED ({exception.GetType().Name})");
+        await WriteCurseForgeSmokeReportAsync(reportPath, results);
+        return 69;
+    }
+    finally
+    {
+        var full = Path.GetFullPath(isolatedRoot);
+        var temporary = Path.GetFullPath(Path.GetTempPath());
+        if (full.StartsWith(temporary, StringComparison.OrdinalIgnoreCase) &&
+            Path.GetFileName(full).StartsWith("ChunkPilot-curseforge-live-", StringComparison.Ordinal) &&
+            Directory.Exists(full))
+            Directory.Delete(full, recursive: true);
+    }
+}
+
+static async Task WriteCurseForgeSmokeReportAsync(string reportPath, IReadOnlyList<object> results)
+{
+    Directory.CreateDirectory(Path.GetDirectoryName(reportPath)!);
+    await File.WriteAllTextAsync(reportPath, JsonSerializer.Serialize(new
+    {
+        reviewedAt = DateTimeOffset.UtcNow,
+        provider = "CurseForge",
+        results
+    }, new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true }),
+        new System.Text.UTF8Encoding(false));
 }
 
 static string FindRepositoryRoot()

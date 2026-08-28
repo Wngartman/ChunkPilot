@@ -29,6 +29,8 @@ services.AddSingleton<BackupService>();
 services.AddSingleton<JarInventoryService>();
 services.AddSingleton<IPluginCatalogProvider>(provider =>
     new ModrinthPluginProvider(provider.GetRequiredService<AppDataPaths>()));
+services.AddSingleton<IPluginCatalogProvider>(provider =>
+    new CurseForgePluginProvider(provider.GetRequiredService<CurseForgeApiClient>()));
 services.AddSingleton<IPluginCatalogProvider, HangarUnavailablePluginProvider>();
 services.AddSingleton<PluginProviderRegistry>();
 services.AddSingleton<PluginManagementService>();
@@ -44,6 +46,8 @@ services.AddSingleton<WhitelistService>();
 services.AddSingleton<ConnectionTestService>();
 services.AddSingleton<RamArgumentService>();
 services.AddSingleton<ISecretStore, DpapiSecretStore>();
+services.AddSingleton<CurseForgeCredentialProvisioner>();
+services.AddSingleton<CurseForgeApiClient>();
 services.AddSingleton<ServerCapabilityDetectionService>();
 services.AddSingleton<CanonicalPathLockManager>();
 services.AddSingleton<DatapackService>();
@@ -64,7 +68,8 @@ services.AddSingleton<IGuidedCatalogProvider>(provider =>
     new BuiltInServerCatalogProvider(CatalogProvider.Purpur, InstallSourceType.Purpur,
         provider.GetRequiredService<ServerDownloadCatalog>()));
 services.AddSingleton<IGuidedCatalogProvider, ModrinthCatalogProvider>();
-services.AddSingleton<IGuidedCatalogProvider, CurseForgeCatalogProvider>();
+services.AddSingleton<IGuidedCatalogProvider>(provider =>
+    new CurseForgeCatalogProvider(provider.GetRequiredService<CurseForgeApiClient>()));
 services.AddSingleton<IGuidedCatalogProvider>(_ =>
     new UnavailableCatalogProvider(CatalogProvider.Ftb,
         "Official FTB browsing is unavailable because no supported public server-pack API is configured."));
@@ -72,7 +77,8 @@ services.AddSingleton<GuidedCatalogService>();
 services.AddSingleton<IUpdateProviderAdapter, PaperMcUpdateProvider>();
 services.AddSingleton<IUpdateProviderAdapter, ManagedLoaderUpdateProvider>();
 services.AddSingleton<IUpdateProviderAdapter, ModrinthUpdateProvider>();
-services.AddSingleton<IUpdateProviderAdapter, CurseForgeUpdateProvider>();
+services.AddSingleton<IUpdateProviderAdapter>(provider =>
+    new CurseForgeUpdateProvider(provider.GetRequiredService<CurseForgeApiClient>()));
 services.AddSingleton<IUpdateProviderAdapter, GitHubReleasesUpdateProvider>();
 services.AddSingleton<IUpdateProviderAdapter, DirectManifestUpdateProvider>();
 services.AddSingleton<IUpdateProviderAdapter, LocalPackageHistoryUpdateProvider>();
@@ -138,6 +144,16 @@ services.AddSingleton<AutomationWorker>();
 await using var provider = services.BuildServiceProvider();
 var store = provider.GetRequiredService<ChunkPilotStore>();
 await store.InitializeAsync().ConfigureAwait(false);
+var credentialProvisioner = provider.GetRequiredService<CurseForgeCredentialProvisioner>();
+var credentialProvisioning = credentialProvisioner.ProvisionFromEnvironment();
+if (credentialProvisioning.SourcePresent)
+{
+    var credentialLog = provider.GetRequiredService<ILoggerFactory>().CreateLogger("CurseForgeCredential");
+    if (credentialProvisioning.Imported)
+        credentialLog.LogInformation("The approved local CurseForge credential was imported into native protected storage.");
+    else
+        credentialLog.LogWarning("The approved local CurseForge credential source was rejected.");
+}
 var updateService = provider.GetRequiredService<ServerPackUpdateService>();
 _ = await updateService.RecoverInterruptedOperationsAsync().ConfigureAwait(false);
 

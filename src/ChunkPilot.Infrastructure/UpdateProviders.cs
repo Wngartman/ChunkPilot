@@ -379,32 +379,33 @@ public sealed class ModrinthUpdateProvider : IUpdateProviderAdapter
         };
 }
 
-public sealed class CurseForgeUpdateProvider : IUpdateProviderAdapter
+public sealed class CurseForgeUpdateProvider : IUpdateProviderAdapter, IDisposable
 {
     public const string ApiKeyName = "curseforge-api-key";
-    private readonly HttpClient http;
-    private readonly ISecretStore secrets;
+    private readonly CurseForgeApiClient api;
+    private readonly bool ownsApi;
     public UpdateProvider Provider => UpdateProvider.CurseForge;
 
     public CurseForgeUpdateProvider(ISecretStore secrets, HttpClient? client = null)
     {
-        this.secrets = secrets;
-        http = client ?? UpdateHttp.Create();
+        api = new CurseForgeApiClient(secrets, client);
+        ownsApi = true;
     }
+
+    public CurseForgeUpdateProvider(CurseForgeApiClient api) => this.api = api;
 
     public async Task<IReadOnlyList<PackVersionInfo>> GetVersionsAsync(
         UpdateSource source,
         UpdatePreferences preferences,
         CancellationToken cancellationToken = default)
     {
-        var apiKey = secrets.GetSecret(ApiKeyName);
-        if (string.IsNullOrWhiteSpace(apiKey))
+        if (!api.HasCredential)
             throw new InvalidOperationException("CurseForge update checking is unavailable until an API key is configured.");
         if (!long.TryParse(source.ProjectId, out _))
             throw new InvalidOperationException("CurseForge requires the numeric project ID.");
-        using var document = await GetAsync(
-            $"https://api.curseforge.com/v1/mods/{Uri.EscapeDataString(source.ProjectId)}/files?pageSize=50",
-            apiKey, cancellationToken).ConfigureAwait(false);
+        using var document = await api.GetJsonAsync(
+            $"/v1/mods/{Uri.EscapeDataString(source.ProjectId)}/files?pageSize=50&index=0",
+            cancellationToken).ConfigureAwait(false);
         var parents = document.RootElement.GetProperty("data").EnumerateArray()
             .Where(item =>
             {
@@ -414,19 +415,46 @@ public sealed class CurseForgeUpdateProvider : IUpdateProviderAdapter
                         parsed.MinecraftVersion.Equals(source.MinecraftVersion, StringComparison.OrdinalIgnoreCase)) &&
                        (string.IsNullOrWhiteSpace(source.Loader) ||
                         parsed.Loader.Equals(source.Loader, StringComparison.OrdinalIgnoreCase));
-            })
-            .Where(item => item.TryGetProperty("serverPackFileId", out var fileId) &&
-                           fileId.ValueKind == JsonValueKind.Number && fileId.GetInt64() > 0)
-            .ToArray();
+            }).ToArray();
         var results = new List<PackVersionInfo>();
         foreach (var parent in parents)
         {
-            var serverPackId = parent.GetProperty("serverPackFileId").GetInt64();
-            using var serverPack = await GetAsync(
-                $"https://api.curseforge.com/v1/mods/{Uri.EscapeDataString(source.ProjectId)}/files/{serverPackId}",
-                apiKey, cancellationToken).ConfigureAwait(false);
             var parentVersion = ParseFile(source, parent);
-            var package = ParseFile(source, serverPack.RootElement.GetProperty("data"));
+            PackVersionInfo package;
+            long fileId = 0;
+            var official = parent.TryGetProperty("serverPackFileId", out var officialId) &&
+                           officialId.ValueKind == JsonValueKind.Number && officialId.TryGetInt64(out fileId) && fileId > 0;
+            if (official)
+            {
+                using var serverPack = await api.GetJsonAsync(
+                    $"/v1/mods/{Uri.EscapeDataString(source.ProjectId)}/files/{fileId}",
+                    cancellationToken).ConfigureAwait(false);
+                var serverFile = serverPack.RootElement.GetProperty("data");
+                if (!CurseForgeCatalogProvider.FileAvailable(serverFile) ||
+                    serverFile.TryGetProperty("modId", out var parentProject) &&
+                    !parentProject.ToString().Equals(source.ProjectId, StringComparison.Ordinal))
+                    continue;
+                package = ParseFile(source, serverFile);
+            }
+            else
+            {
+                if (!CurseForgeCatalogProvider.FileAvailable(parent)) continue;
+                package = parentVersion with { PackageType = "curseforge-manifest" };
+                fileId = long.Parse(parentVersion.ProviderFileId, System.Globalization.CultureInfo.InvariantCulture);
+            }
+            if (string.IsNullOrWhiteSpace(package.DownloadUrl))
+            {
+                using var resolved = await api.GetJsonAsync(
+                    $"/v1/mods/{Uri.EscapeDataString(source.ProjectId)}/files/{fileId}/download-url",
+                    cancellationToken).ConfigureAwait(false);
+                if (resolved.RootElement.TryGetProperty("data", out var download) &&
+                    download.ValueKind == JsonValueKind.String)
+                    package = package with { DownloadUrl = download.GetString() ?? "" };
+            }
+            if (!Uri.TryCreate(package.DownloadUrl, UriKind.Absolute, out var downloadUri) ||
+                !CurseForgeApiClient.IsApprovedDownloadUri(downloadUri) || package.Sha1.Length != 40 ||
+                package.FileSize is not > 0)
+                continue;
             results.Add(package with
             {
                 VersionId = parentVersion.VersionId,
@@ -439,20 +467,6 @@ public sealed class CurseForgeUpdateProvider : IUpdateProviderAdapter
             });
         }
         return results.OrderByDescending(version => version.PublishedAt).ToArray();
-    }
-
-    private async Task<JsonDocument> GetAsync(
-        string url,
-        string apiKey,
-        CancellationToken cancellationToken)
-    {
-        using var request = new HttpRequestMessage(HttpMethod.Get, url);
-        request.Headers.Add("x-api-key", apiKey);
-        using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
-            .ConfigureAwait(false);
-        response.EnsureSuccessStatusCode();
-        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
-        return await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
     private static PackVersionInfo ParseFile(UpdateSource source, JsonElement item)
@@ -471,6 +485,7 @@ public sealed class CurseForgeUpdateProvider : IUpdateProviderAdapter
         {
             PackId = source.ProjectId,
             VersionId = item.GetProperty("id").ToString(),
+            ProviderFileId = item.GetProperty("id").ToString(),
             VersionName = item.TryGetProperty("displayName", out var display)
                 ? display.GetString() ?? "" : item.GetProperty("fileName").GetString() ?? "",
             ReleaseChannel = item.TryGetProperty("releaseType", out var releaseType)
@@ -500,6 +515,11 @@ public sealed class CurseForgeUpdateProvider : IUpdateProviderAdapter
         value.Equals("NeoForge", StringComparison.OrdinalIgnoreCase) ||
         value.Equals("Fabric", StringComparison.OrdinalIgnoreCase) ||
         value.Equals("Quilt", StringComparison.OrdinalIgnoreCase);
+
+    public void Dispose()
+    {
+        if (ownsApi) api.Dispose();
+    }
 }
 
 public sealed class GitHubReleasesUpdateProvider : IUpdateProviderAdapter

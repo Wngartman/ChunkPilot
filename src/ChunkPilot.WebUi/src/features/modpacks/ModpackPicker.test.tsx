@@ -62,11 +62,11 @@ describe('modpack provider browser', () => {
     expect(container.querySelector('img')?.getAttribute('src')).toBe('data:image/png;base64,AA==');
   });
 
-  it('shows the application activation boundary instead of asking an end user for a key', async () => {
+  it('shows the native credential boundary instead of asking an end user for a key', async () => {
     render(<ModpackPicker value={null} onChange={() => undefined} />);
     fireEvent.click(await screen.findByRole('tab', { name: /CurseForge/ }));
-    expect(await screen.findByText('CurseForge activation in progress')).toBeTruthy();
-    expect(screen.getAllByText(/being activated for ChunkPilot/).length).toBeGreaterThan(0);
+    expect(await screen.findByText('CurseForge unavailable')).toBeTruthy();
+    expect(screen.getAllByText(/native CurseForge credential/).length).toBeGreaterThan(0);
     expect(screen.queryByText(/API key/i)).toBeNull();
     expect(screen.queryByText('No matching server pack')).toBeNull();
   });
@@ -88,14 +88,14 @@ describe('modpack provider browser', () => {
     expect(screen.getByText('Resolved the exact release from the provider link.')).toBeTruthy();
   });
 
-  it('recognizes CurseForge links but exposes no user credential prompt while activation is external', async () => {
+  it('recognizes CurseForge links but exposes no user credential prompt', async () => {
     render(<ModpackPicker initialMode="Link" value={null} onChange={() => undefined} />);
     fireEvent.change(screen.getByRole('textbox', { name: 'Provider project link' }), {
       target: { value: `${'https:'}//www.curseforge.com/minecraft/modpacks/statech-industry-2` }
     });
     fireEvent.click(screen.getByRole('button', { name: 'Resolve' }));
 
-    expect(await screen.findByText(/CurseForge integration is being activated/)).toBeTruthy();
+    expect(await screen.findByText(/native CurseForge credential is missing/)).toBeTruthy();
     expect(screen.queryByText(/API key/i)).toBeNull();
   });
 
@@ -160,6 +160,29 @@ describe('modpack provider browser', () => {
     await Promise.resolve();
     expect(screen.queryByRole('button', { name: /Old result/ })).toBeNull();
     expect(screen.getByRole('button', { name: /New result/ })).toBeTruthy();
+  });
+
+  it('loads the next provider page with an exact index and keeps the first page', async () => {
+    const fixture = new FixtureBridge('running');
+    const first = Array.from({ length: 20 }, (_, index) => catalogProject(`pack-${index}`, `Pack ${index}`));
+    const bridge: BridgeAdapter = {
+      request: async <T,>(method: BridgeMethod, params: Record<string, unknown> = {}) => {
+        calls.push({ method, params });
+        if (method === 'modpacks.cache') return { provider: 'Modrinth', state: 'Empty', items: [], detail: '', failedStage: '', retrievedAt: null, fromCache: true, stale: false } as T;
+        if (method === 'modpacks.search' && params.index === 20) return { provider: 'Modrinth', state: 'Ready', items: [catalogProject('pack-20', 'Pack 20')], detail: 'Ready.', failedStage: '', retrievedAt: null, fromCache: false, stale: false } as T;
+        if (method === 'modpacks.search') return { provider: 'Modrinth', state: 'Ready', items: first, detail: 'Ready.', failedStage: '', retrievedAt: null, fromCache: false, stale: false } as T;
+        return fixture.request<T>(method, params);
+      },
+      subscribe: listener => fixture.subscribe(listener),
+      dispose: () => fixture.dispose()
+    };
+    useAppStore.setState({ bridge });
+    render(<ModpackPicker value={null} onChange={() => undefined} />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Load more' }));
+
+    await waitFor(() => expect(calls.some(call => call.method === 'modpacks.search' && call.params.index === 20)).toBe(true));
+    expect(screen.queryByRole('button', { name: 'Load more' })).toBeNull();
   });
 });
 

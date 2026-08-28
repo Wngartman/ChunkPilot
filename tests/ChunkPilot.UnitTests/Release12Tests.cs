@@ -273,7 +273,7 @@ public sealed class Release12Tests : IDisposable
         {
             Assert.Equal("secret", request.Headers.GetValues("x-api-key").Single());
             if (request.RequestUri!.AbsolutePath.EndsWith("/files/222", StringComparison.Ordinal))
-                return Json("""{"data":{"id":222,"fileName":"fixture-server.zip","displayName":"server","fileDate":"2026-07-24T12:00:00Z","releaseType":1,"gameVersions":[],"downloadUrl":"https://cdn/server.zip","fileLength":12,"hashes":[{"algo":1,"value":"abc"}]}}""");
+                return Json("""{"data":{"id":222,"modId":123,"fileName":"fixture-server.zip","displayName":"server","fileDate":"2026-07-24T12:00:00Z","releaseType":1,"gameVersions":[],"downloadUrl":"https://mediafilez.forgecdn.net/files/222/fixture-server.zip","fileLength":12,"hashes":[{"algo":1,"value":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}}""");
             return Json("""{"data":[{"id":111,"fileName":"client.zip","displayName":"Pack 2","fileDate":"2026-07-24T12:00:00Z","releaseType":1,"gameVersions":["1.21.1","NeoForge"],"serverPackFileId":222,"hashes":[]}]}""");
         });
         var provider = new CurseForgeUpdateProvider(secrets, new HttpClient(handler));
@@ -285,8 +285,35 @@ public sealed class Release12Tests : IDisposable
                 Loader = "NeoForge"
             }, new UpdatePreferences()));
         Assert.Equal("111", result.VersionId);
-        Assert.Equal("https://cdn/server.zip", result.DownloadUrl);
-        Assert.Equal("abc", result.Sha1);
+        Assert.Equal("222", result.ProviderFileId);
+        Assert.Equal("https://mediafilez.forgecdn.net/files/222/fixture-server.zip", result.DownloadUrl);
+        Assert.Equal("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", result.Sha1);
+    }
+
+    [Fact]
+    public async Task CurseForge_update_inventory_keeps_exact_client_release_when_generation_is_required()
+    {
+        var secrets = new MemorySecrets();
+        secrets.SetSecret(CurseForgeUpdateProvider.ApiKeyName, "secret");
+        var handler = new StubHandler(request =>
+        {
+            Assert.Equal("secret", request.Headers.GetValues("x-api-key").Single());
+            return Json("""{"data":[{"id":333,"modId":123,"fileName":"client.zip","displayName":"Generated Pack 3","fileDate":"2026-07-25T12:00:00Z","releaseType":1,"isAvailable":true,"gameVersions":["1.21.1","NeoForge"],"downloadUrl":"https://mediafilez.forgecdn.net/files/333/client.zip","fileLength":25,"hashes":[{"algo":1,"value":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}]}]}""");
+        });
+        var provider = new CurseForgeUpdateProvider(secrets, new HttpClient(handler));
+
+        var result = Assert.Single(await provider.GetVersionsAsync(
+            Source(UpdateProvider.CurseForge) with
+            {
+                ProjectId = "123",
+                MinecraftVersion = "1.21.1",
+                Loader = "NeoForge"
+            }, new UpdatePreferences()));
+
+        Assert.Equal("333", result.VersionId);
+        Assert.Equal("333", result.ProviderFileId);
+        Assert.Equal("curseforge-manifest", result.PackageType);
+        Assert.Equal("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", result.Sha1);
     }
 
     [Fact]

@@ -81,7 +81,7 @@ public partial class WebUiWindow : Window
     private readonly WebUiLegacyArtifactTokenStore legacyArtifactTokens = new();
     private readonly WebUiWorldSourceTokenStore worldSourceTokens = new();
     private readonly CreationWorldSourceService creationWorldSources = new();
-    private readonly HttpClient modpackImages = new() { Timeout = TimeSpan.FromSeconds(20) };
+    private readonly HttpClient modpackImages;
     private readonly PlayerHeadImageService playerHeads = new();
 
     public WebUiWindow(MainViewModel viewModel, AgentClient client)
@@ -93,6 +93,14 @@ public partial class WebUiWindow : Window
         creation = new AgentVanillaCreationGateway(client);
         paperCreation = new AgentPaperCreationGateway(client);
         loaderCreation = new AgentManagedLoaderCreationGateway(client);
+        modpackImages = new HttpClient(new SocketsHttpHandler
+        {
+            AllowAutoRedirect = false,
+            UseCookies = false,
+            ConnectTimeout = TimeSpan.FromSeconds(5),
+            AutomaticDecompression = System.Net.DecompressionMethods.GZip |
+                                     System.Net.DecompressionMethods.Deflate
+        }, disposeHandler: true) { Timeout = TimeSpan.FromSeconds(20) };
         modpackImages.DefaultRequestHeaders.UserAgent.ParseAdd(
             "ChunkPilot/1.3.0 (local Windows Minecraft server manager)");
         DataContext = viewModel;
@@ -432,7 +440,8 @@ public partial class WebUiWindow : Window
                 var results = await client.SendAsync<IReadOnlyList<PluginProject>>("PluginSearch",
                     new PluginSearchRequest(RequireServer(parameters).Definition.Id,
                         parameters["search"]?.GetValue<string>()?.Trim() ?? "",
-                        RequiredInt(parameters, "limit", 1, 40, 20))).ConfigureAwait(true);
+                        RequiredInt(parameters, "limit", 1, 40, 20),
+                        ParseAddonProvider(parameters))).ConfigureAwait(true);
                 // Provider image URLs are intentionally not sent to the renderer. Production CSP
                 // permits only app-local images; a future native image cache can add them safely.
                 return JsonSerializer.SerializeToNode(results.Select(project => new
@@ -457,7 +466,8 @@ public partial class WebUiWindow : Window
                 Select(parameters);
                 var release = await client.SendAsync<PluginRelease?>("PluginRelease",
                     new PluginReleaseRequest(RequireServer(parameters).Definition.Id,
-                        RequiredString(parameters, "projectId", 80))).ConfigureAwait(true);
+                        RequiredString(parameters, "projectId", 80),
+                        ParseAddonProvider(parameters))).ConfigureAwait(true);
                 return JsonSerializer.SerializeToNode(release is null ? null : new
                 {
                     provider = release.Provider.ToString(),
@@ -470,7 +480,9 @@ public partial class WebUiWindow : Window
                     publishedAt = release.PublishedAt,
                     fileName = release.FileName,
                     sizeBytes = release.SizeBytes,
-                    integrity = release.Sha512.Length == 128 ? "sha512" : "unavailable",
+                    integrity = release.Sha512.Length == 128 ? "sha512" :
+                        release.Provider == PluginProviderKind.CurseForge && release.Sha1.Length == 40
+                            ? "sha1" : "unavailable",
                     serverSide = release.ServerSide,
                     clientSide = release.ClientSide,
                     clientRequirement = release.ClientRequirement,
@@ -490,7 +502,8 @@ public partial class WebUiWindow : Window
                         parameters["restartIfRunning"]?.GetValue<bool?>() ?? false,
                         Guid.TryParse(OptionalString(parameters, "operationId", 64), out var operationId)
                             ? operationId
-                            : Guid.NewGuid())).ConfigureAwait(true);
+                            : Guid.NewGuid(),
+                        ParseAddonProvider(parameters))).ConfigureAwait(true);
                 EnsureContentOperationObserver(result);
                 return JsonSerializer.SerializeToNode(result, WebUiProtocol.Json);
             }
@@ -501,7 +514,8 @@ public partial class WebUiWindow : Window
                 var result = await client.SendAsync<PluginInstallPlan>("PlanPluginProviderRelease",
                     new PluginProviderPlanRequest(RequireServer(parameters).Definition.Id,
                         RequiredString(parameters, "projectId", 80),
-                        RequiredString(parameters, "versionId", 80))).ConfigureAwait(true);
+                        RequiredString(parameters, "versionId", 80),
+                        ParseAddonProvider(parameters))).ConfigureAwait(true);
                 return JsonSerializer.SerializeToNode(result, WebUiProtocol.Json);
             }
             case "plugins.installPlan":
@@ -516,7 +530,8 @@ public partial class WebUiWindow : Window
                         parameters["restartIfRunning"]?.GetValue<bool?>() ?? false,
                         Guid.TryParse(OptionalString(parameters, "operationId", 64), out var operationId)
                             ? operationId
-                            : Guid.NewGuid())).ConfigureAwait(true);
+                            : Guid.NewGuid(),
+                        ParseAddonProvider(parameters))).ConfigureAwait(true);
                 EnsureContentOperationObserver(result);
                 return JsonSerializer.SerializeToNode(result, WebUiProtocol.Json);
             }
@@ -1444,6 +1459,7 @@ public partial class WebUiWindow : Window
             ServerPackRequired = true,
             ExcludeClientOnly = true,
             Limit = RequiredInt(parameters, "limit", 1, 20, 20),
+            Index = RequiredInt(parameters, "index", 0, 10_000, 0),
             Sort = sort
         };
         var result = await client.SendAsync<CatalogBrowseResult>(
@@ -1468,10 +1484,8 @@ public partial class WebUiWindow : Window
         CancellationToken cancellationToken)
     {
         var reference = ProviderLinkParser.Parse(RequiredString(parameters, "url", 2048));
-        if (reference.Provider == CatalogProvider.CurseForge)
-            throw new InvalidOperationException(
-                "CurseForge integration is being activated for ChunkPilot. Modrinth links and local pack imports are available now.");
-
+        if (reference.ContentType != CatalogContentType.Modpack)
+            throw new InvalidOperationException("That is a CurseForge mod link. Open this server's Mods page to review exact compatible files.");
         var query = new CatalogQuery
         {
             Provider = reference.Provider,
@@ -1484,15 +1498,25 @@ public partial class WebUiWindow : Window
             Limit = 20,
             Sort = CatalogSort.Relevance
         };
-        var result = await client.SendAsync<CatalogBrowseResult>(
-            "BrowseCatalogDetailed", query, cancellationToken).ConfigureAwait(true);
-        if (result.State is CatalogLoadState.AuthenticationRequired or CatalogLoadState.RateLimited or CatalogLoadState.Failed)
-            throw new InvalidOperationException(result.Detail);
-
-        var item = result.Items.FirstOrDefault(candidate =>
+        CatalogItem? item;
+        if (reference.Provider == CatalogProvider.CurseForge)
+        {
+            item = await client.SendAsync<CatalogItem?>("ResolveCatalogProject",
+                new CatalogProjectRequest(reference.Provider, reference.ProjectReference,
+                    reference.ReleaseReference), cancellationToken).ConfigureAwait(true);
+        }
+        else
+        {
+            var result = await client.SendAsync<CatalogBrowseResult>(
+                "BrowseCatalogDetailed", query, cancellationToken).ConfigureAwait(true);
+            if (result.State is CatalogLoadState.AuthenticationRequired or CatalogLoadState.RateLimited or CatalogLoadState.Failed)
+                throw new InvalidOperationException(result.Detail);
+            item = result.Items.FirstOrDefault(candidate =>
                        candidate.ProjectId.Equals(reference.ProjectReference, StringComparison.OrdinalIgnoreCase) ||
-                       candidate.Slug.Equals(reference.ProjectReference, StringComparison.OrdinalIgnoreCase))
-                   ?? throw new InvalidOperationException("The provider project could not be resolved from that link.");
+                       candidate.Slug.Equals(reference.ProjectReference, StringComparison.OrdinalIgnoreCase));
+        }
+        if (item is null)
+            throw new InvalidOperationException("The provider project could not be resolved from that link.");
         var release = reference.ReleaseReference is { } exact
             ? item.Versions.FirstOrDefault(candidate =>
                 candidate.VersionId.Equals(exact, StringComparison.OrdinalIgnoreCase))
@@ -1535,13 +1559,14 @@ public partial class WebUiWindow : Window
 
     private static object ToWebModpackRelease(CatalogItem item, CatalogVersion version)
     {
-        var canCreate = item.Provider == CatalogProvider.Modrinth &&
-                        version.HasServerPackage && version.Sha1.Length == 40 &&
-                        version.Sha512.Length == 128 && version.SizeBytes is > 0;
-        var limitation = canCreate ? "" : item.Provider == CatalogProvider.CurseForge
-            ? "CurseForge integration is being activated for ChunkPilot. Import a local server pack or use Modrinth for now."
-            : !version.HasServerPackage
-                ? "This release does not expose a dedicated server package."
+        var official = version.HasServerPackage && version.Sha1.Length == 40 &&
+                        version.SizeBytes is > 0 &&
+                        (item.Provider == CatalogProvider.CurseForge || version.Sha512.Length == 128);
+        var generated = item.Provider == CatalogProvider.CurseForge && version.CanGenerateServerCandidate &&
+                        version.ClientSha1.Length == 40 && version.ClientSizeBytes is > 0;
+        var canCreate = official || generated;
+        var limitation = canCreate ? "" : !version.HasServerPackage && !version.CanGenerateServerCandidate
+                ? "No supportable official server pack or exact generated-server input was found."
                 : "This release is missing the complete integrity metadata required for managed creation.";
         return new
         {
@@ -1551,12 +1576,18 @@ public partial class WebUiWindow : Window
             version.Loader,
             releaseChannel = version.ReleaseChannel.ToString(),
             version.PublishedAt,
-            version.SizeBytes,
+            sizeBytes = generated ? version.ClientSizeBytes : version.SizeBytes,
             version.Changelog,
             version.RequiredJavaMajor,
-            hasIntegrity = version.Sha1.Length == 40 &&
-                           (item.Provider == CatalogProvider.CurseForge || version.Sha512.Length == 128),
+            version.ClientFileId,
+            version.ServerPackFileId,
+            hasIntegrity = generated ? version.ClientSha1.Length == 40 :
+                version.Sha1.Length == 40 &&
+                (item.Provider == CatalogProvider.CurseForge || version.Sha512.Length == 128),
             canCreate,
+            serverPath = official ? "Official server pack" : generated
+                ? "ChunkPilot can generate and validate a server candidate"
+                : "No supportable server setup found",
             limitation
         };
     }
@@ -1575,13 +1606,16 @@ public partial class WebUiWindow : Window
             return JsonSerializer.SerializeToNode(new { dataUrl = (string?)null }, WebUiProtocol.Json);
         if (modpackImageCache.TryGetValue(item.IconUrl, out var cached))
             return JsonSerializer.SerializeToNode(new { dataUrl = cached }, WebUiProtocol.Json);
-        if (!Uri.TryCreate(item.IconUrl, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps ||
-            !(provider == CatalogProvider.Modrinth && uri.IdnHost.Equals("cdn.modrinth.com", StringComparison.OrdinalIgnoreCase) ||
-              provider == CatalogProvider.CurseForge && uri.IdnHost.Equals("media.forgecdn.net", StringComparison.OrdinalIgnoreCase)))
+        if (!Uri.TryCreate(item.IconUrl, UriKind.Absolute, out var uri) ||
+            !IsApprovedModpackImageUri(provider, uri))
             return JsonSerializer.SerializeToNode(new { dataUrl = (string?)null }, WebUiProtocol.Json);
         using var response = await modpackImages.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead)
             .ConfigureAwait(true);
+        if ((int)response.StatusCode is >= 300 and < 400)
+            throw new InvalidDataException("Provider image redirects are not followed outside the approved boundary.");
         response.EnsureSuccessStatusCode();
+        if (response.RequestMessage?.RequestUri is not { } final || !IsApprovedModpackImageUri(provider, final))
+            throw new InvalidDataException("The provider image left its approved HTTPS host boundary.");
         var mediaType = response.Content.Headers.ContentType?.MediaType?.ToLowerInvariant();
         if (mediaType is not ("image/png" or "image/jpeg" or "image/webp"))
             throw new InvalidDataException("The provider image did not use a supported image format.");
@@ -1619,6 +1653,19 @@ public partial class WebUiWindow : Window
             modpackImageCache.Remove(modpackImageCache.Keys.First());
         modpackImageCache[item.IconUrl] = dataUrl;
         return JsonSerializer.SerializeToNode(new { dataUrl }, WebUiProtocol.Json);
+    }
+
+    internal static bool IsApprovedModpackImageUri(CatalogProvider provider, Uri? uri)
+    {
+        if (uri is null || uri.Scheme != Uri.UriSchemeHttps || !uri.IsDefaultPort) return false;
+        var host = uri.IdnHost.TrimEnd('.');
+        return provider switch
+        {
+            CatalogProvider.Modrinth => host.Equals("cdn.modrinth.com", StringComparison.OrdinalIgnoreCase),
+            CatalogProvider.CurseForge => host.Equals("forgecdn.net", StringComparison.OrdinalIgnoreCase) ||
+                                          host.EndsWith(".forgecdn.net", StringComparison.OrdinalIgnoreCase),
+            _ => false
+        };
     }
 
     private async Task<JsonNode?> ChooseLocalServerImportAsync(JsonObject parameters)
@@ -2156,7 +2203,8 @@ public partial class WebUiWindow : Window
                 reviewed.SourceSizeBytes != selected.Inspection.SourceSizeBytes ||
                 !reviewed.Sha256.Equals(selected.Inspection.Sha256, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException("The selected local server source changed after review. Choose it again.");
-            if (reviewed.SourceKind != ServerImportSourceKind.ModrinthPack)
+            if (reviewed.SourceKind is not (ServerImportSourceKind.ModrinthPack or
+                ServerImportSourceKind.CurseForgePack))
             {
                 if (initialWorld is not null)
                     throw new ArgumentException("A complete imported server source already owns its world layout. Choose Create new world for that path, or create a managed server from a version or pack and upload the world there.");
@@ -2195,57 +2243,91 @@ public partial class WebUiWindow : Window
                     new BeginServerImportRequest(importPlan), cancellationToken).ConfigureAwait(true);
                 return importStarted.OperationId;
             }
-            var inspection = await client.SendAsync<ModrinthPackInspection>("InspectModrinthPack",
-                new ModrinthPackInspectRequest(selected.Path), cancellationToken).ConfigureAwait(true);
-            if (!inspection.CanCreate) throw new ArgumentException(inspection.Limitation);
-            plan = CommonPlan(new ModpackCreationPlan
+            if (reviewed.SourceKind == ServerImportSourceKind.CurseForgePack)
             {
-                SourceKind = ModpackCreationSource.LocalMrpack,
-                Source = selected.Path,
-                Provider = UpdateProvider.LocalPackageHistory,
-                ProjectName = inspection.Name,
-                VersionId = inspection.VersionName,
-                VersionName = inspection.VersionName,
-                MinecraftVersion = inspection.MinecraftVersion,
-                RequiredJavaMajor = inspection.RequiredJavaMajor,
-                ExpectedSha512 = inspection.ArchiveSha512,
-                ExpectedSizeBytes = inspection.ArchiveSizeBytes
-            });
+                plan = CommonPlan(new ModpackCreationPlan
+                {
+                    SourceKind = ModpackCreationSource.LocalCurseForgeManifest,
+                    Source = selected.Path,
+                    Provider = UpdateProvider.CurseForge,
+                    ProjectName = reviewed.DisplayName,
+                    VersionName = Path.GetFileNameWithoutExtension(selected.Path),
+                    MinecraftVersion = reviewed.MinecraftVersion,
+                    Loader = reviewed.Platform,
+                    LoaderVersion = reviewed.LoaderVersion,
+                    RequiredJavaMajor = reviewed.RequiredJavaMajor,
+                    ExpectedSha256 = reviewed.Sha256,
+                    ExpectedSizeBytes = reviewed.SourceSizeBytes
+                });
+            }
+            else
+            {
+                var inspection = await client.SendAsync<ModrinthPackInspection>("InspectModrinthPack",
+                    new ModrinthPackInspectRequest(selected.Path), cancellationToken).ConfigureAwait(true);
+                if (!inspection.CanCreate) throw new ArgumentException(inspection.Limitation);
+                plan = CommonPlan(new ModpackCreationPlan
+                {
+                    SourceKind = ModpackCreationSource.LocalMrpack,
+                    Source = selected.Path,
+                    Provider = UpdateProvider.LocalPackageHistory,
+                    ProjectName = inspection.Name,
+                    VersionId = inspection.VersionName,
+                    VersionName = inspection.VersionName,
+                    MinecraftVersion = inspection.MinecraftVersion,
+                    Loader = inspection.Loader,
+                    LoaderVersion = inspection.LoaderVersion,
+                    RequiredJavaMajor = inspection.RequiredJavaMajor,
+                    ExpectedSha512 = inspection.ArchiveSha512,
+                    ExpectedSizeBytes = inspection.ArchiveSizeBytes
+                });
+            }
         }
         else
         {
             if (!Enum.TryParse<CatalogProvider>(OptionalString(parameters, "modpackProvider", 32), true,
                     out var provider))
                 provider = CatalogProvider.Modrinth;
-            if (provider != CatalogProvider.Modrinth)
-                throw new ArgumentException(
-                    "This provider can be browsed, but ChunkPilot cannot yet create from its server-pack format. Choose a verified Modrinth release or import a reviewed local .mrpack.");
+            if (provider is not (CatalogProvider.Modrinth or CatalogProvider.CurseForge))
+                throw new ArgumentException("Select a supported modpack provider.");
             var projectId = RequiredString(parameters, "modpackProjectId", 80);
             var versionId = RequiredString(parameters, "modpackVersionId", 80);
             if (!modpackCatalog.TryGetValue(CatalogKey(provider, projectId), out var project))
                 throw new ArgumentException("Refresh the selected provider catalog before creating this pack.");
             var release = project.Versions.FirstOrDefault(version =>
                 version.VersionId.Equals(versionId, StringComparison.OrdinalIgnoreCase) &&
-                version.HasServerPackage && version.Sha1.Length == 40 && version.Sha512.Length == 128 &&
-                version.SizeBytes is > 0)
-                ?? throw new ArgumentException("Select an exact integrity-verifiable Modrinth release.");
+                (version.HasServerPackage && version.Sha1.Length == 40 &&
+                 (provider == CatalogProvider.CurseForge || version.Sha512.Length == 128) &&
+                 version.SizeBytes is > 0 ||
+                 provider == CatalogProvider.CurseForge && version.CanGenerateServerCandidate &&
+                 version.ClientSha1.Length == 40 && version.ClientSizeBytes is > 0))
+                ?? throw new ArgumentException("Select an exact integrity-verifiable provider release with a supportable server path.");
+            var generatedCandidate = provider == CatalogProvider.CurseForge && !release.HasServerPackage;
             plan = CommonPlan(new ModpackCreationPlan
             {
-                SourceKind = ModpackCreationSource.Modrinth,
-                Source = release.DownloadUrl,
-                Provider = UpdateProvider.Modrinth,
+                SourceKind = provider == CatalogProvider.CurseForge
+                    ? generatedCandidate
+                        ? ModpackCreationSource.CurseForgeGeneratedCandidate
+                        : ModpackCreationSource.CurseForgeOfficialServerPack
+                    : ModpackCreationSource.Modrinth,
+                Source = generatedCandidate ? release.ClientDownloadUrl : release.DownloadUrl,
+                Provider = provider == CatalogProvider.CurseForge
+                    ? UpdateProvider.CurseForge : UpdateProvider.Modrinth,
                 ProjectId = project.ProjectId,
+                ProjectSlug = project.Slug,
                 ProjectName = project.Name,
                 VersionId = release.VersionId,
+                ServerPackFileId = release.ServerPackFileId,
                 VersionName = release.VersionName,
                 ReleaseChannel = release.ReleaseChannel,
                 MinecraftVersion = release.MinecraftVersion,
+                Loader = release.Loader,
+                LoaderVersion = release.LoaderVersion,
                 RequiredJavaMajor = release.RequiredJavaMajor > 0
                     ? release.RequiredJavaMajor
                     : JavaRuntimePolicy.RequiredMajorForMinecraft(release.MinecraftVersion),
-                ExpectedSha1 = release.Sha1,
+                ExpectedSha1 = generatedCandidate ? release.ClientSha1 : release.Sha1,
                 ExpectedSha512 = release.Sha512,
-                ExpectedSizeBytes = release.SizeBytes
+                ExpectedSizeBytes = generatedCandidate ? release.ClientSizeBytes : release.SizeBytes
             });
         }
 
@@ -2718,6 +2800,16 @@ public partial class WebUiWindow : Window
         if (value.Length > maximumLength)
             throw new ArgumentException($"{name} is too long.");
         return value;
+    }
+
+    private static PluginProviderKind ParseAddonProvider(JsonObject values)
+    {
+        var raw = OptionalString(values, "provider", 32);
+        if (string.IsNullOrWhiteSpace(raw)) return PluginProviderKind.Modrinth;
+        if (!Enum.TryParse<PluginProviderKind>(raw, true, out var provider) ||
+            provider is not (PluginProviderKind.Modrinth or PluginProviderKind.CurseForge))
+            throw new ArgumentException("The add-on provider is invalid.");
+        return provider;
     }
 
     private static string RawString(JsonObject values, string name, int maximumLength)

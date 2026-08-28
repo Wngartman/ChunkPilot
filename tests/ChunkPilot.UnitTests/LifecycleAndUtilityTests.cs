@@ -71,6 +71,59 @@ public sealed class LifecycleAndUtilityTests
     }
 
     [Fact]
+    public void Secret_redaction_covers_CurseForge_header_and_json_forms()
+    {
+        var sentinel = string.Concat("CURSE", "FORGE-SENTINEL-", Guid.NewGuid().ToString("N"));
+        var value = SecretRedactor.Redact(
+            $"x-api-key: {sentinel} {{\"x-api-key\":\"{sentinel}\",\"apiKey\":\"{sentinel}\"}}");
+
+        Assert.DoesNotContain(sentinel, value, StringComparison.Ordinal);
+        Assert.Equal(3, value.Split("<redacted>", StringSplitOptions.None).Length - 1);
+    }
+
+    [Fact]
+    public void Synthetic_CurseForge_key_never_survives_export_or_package_surfaces()
+    {
+        var sentinel = string.Concat("CF", "-LEAK-SENTINEL-", Guid.NewGuid().ToString("N"));
+        var root = Path.Combine(Path.GetTempPath(), "ChunkPilot-cf-sentinel-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var raw = $"x-api-key: {sentinel} {{\"credential\":\"{sentinel}\"}}";
+            var redacted = SecretRedactor.Redact(raw);
+            var surfaces = new[]
+            {
+                "logs/provider.log",
+                "diagnostics/bundle.json",
+                "frontend/snapshot.json",
+                "state/provider.json",
+                "package/provider-status.txt",
+                "test-results/results.trx",
+                "docs/generated-provider.md",
+                "artifacts/provider-evidence.json"
+            };
+            foreach (var relative in surfaces)
+            {
+                var path = Path.Combine(root, relative.Replace('/', Path.DirectorySeparatorChar));
+                Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+                File.WriteAllText(path, redacted);
+            }
+
+            var leaked = Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)
+                .Where(path => File.ReadAllText(path).Contains(sentinel, StringComparison.Ordinal))
+                .Select(path => Path.GetRelativePath(root, path))
+                .ToArray();
+            Assert.Empty(leaked);
+            Assert.All(Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories), path =>
+                Assert.Contains("<redacted>", File.ReadAllText(path), StringComparison.Ordinal));
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
     public void Statistics_downsampling_preserves_bounds_and_aggregates_real_values()
     {
         var samples = Enumerable.Range(0, 1_000).Select(index => new StatisticsSample

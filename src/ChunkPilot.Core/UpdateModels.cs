@@ -96,6 +96,7 @@ public sealed record UpdateSource
     public UpdateProvider Provider { get; init; }
     public string ProjectName { get; init; } = "";
     public string ProjectId { get; init; } = "";
+    public string ProjectSlug { get; init; } = "";
     public string InstalledVersionId { get; init; } = "";
     public string InstalledVersionName { get; init; } = "";
     public string InstalledFileId { get; init; } = "";
@@ -118,6 +119,8 @@ public sealed record PackVersionInfo
 {
     public string PackId { get; init; } = "";
     public string VersionId { get; init; } = "";
+    /// <summary>The exact downloadable provider file; may differ from the logical client release ID.</summary>
+    public string ProviderFileId { get; init; } = "";
     public string VersionName { get; init; } = "";
     public ReleaseChannel ReleaseChannel { get; init; }
     public DateTimeOffset PublishedAt { get; init; }

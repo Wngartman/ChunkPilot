@@ -9,6 +9,8 @@ public sealed class ProviderLinkParserTests
     [InlineData("https://www.modrinth.com/modpack/prominence-2-rpg/version/abc_DEF-12", CatalogProvider.Modrinth, ProviderLinkKind.ExactRelease, "prominence-2-rpg", "abc_DEF-12")]
     [InlineData("https://www.curseforge.com/minecraft/modpacks/statech-industry-2", CatalogProvider.CurseForge, ProviderLinkKind.Project, "statech-industry-2", null)]
     [InlineData("https://www.curseforge.com/minecraft/modpacks/statech-industry-2/files/6721493", CatalogProvider.CurseForge, ProviderLinkKind.ExactRelease, "statech-industry-2", "6721493")]
+    [InlineData("https://www.curseforge.com/minecraft/mc-mods/sodium", CatalogProvider.CurseForge, ProviderLinkKind.Project, "sodium", null)]
+    [InlineData("https://www.curseforge.com/minecraft/mc-mods/sodium/files/12345", CatalogProvider.CurseForge, ProviderLinkKind.ExactRelease, "sodium", "12345")]
     public void Parses_allowlisted_project_and_exact_release_urls(string url, CatalogProvider provider,
         ProviderLinkKind kind, string project, string? release)
     {

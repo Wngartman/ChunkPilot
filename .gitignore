@@ -41,6 +41,9 @@ src/ChunkPilot.WebUi/*.tsbuildinfo
 *.rar
 
 # Local secrets and signing material
+.secrets/
+curseforge-api-key*.txt
+!docs/examples/curseforge-api-key.example.txt
 .env
 .env.*
 !.env.example

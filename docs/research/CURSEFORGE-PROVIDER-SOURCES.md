@@ -1,0 +1,87 @@
+# CurseForge provider source record
+
+Research date: 2026-08-27
+
+Only official CurseForge/Overwolf sources define the provider. ChunkPilot does not scrape CurseForge pages,
+infer unlisted files, synthesize CDN URLs, or treat a client manifest as proof of a dedicated-server package.
+
+## Authoritative sources
+
+| Topic | Official source | Provider consequence |
+|---|---|---|
+| Authentication, base URL, pagination | [REST API](https://docs.curseforge.com/rest-api/) | HTTPS `api.curseforge.com`, `x-api-key`, page size 1–50, total indexed results no greater than 10,000 |
+| Developer approval | [API key application](https://support.curseforge.com/support/solutions/articles/9000208346) | Missing or rejected credential is `AuthenticationRequired`; no network request is attempted without a native secret |
+| Credential and data restrictions | [Third-party API terms](https://support.curseforge.com/support/solutions/articles/9000207405-curseforge-3rd-party-api-terms-and-conditions) | No public key, no proxy workaround, no persistent CurseForge response cache under the general terms, bounded local development only |
+| Author distribution consent | [Project Distribution Toggle](https://support.curseforge.com/en/support/solutions/articles/9000207877) | `allowModDistribution != true`, unavailable project/file, or missing authorized download URL is a hard unsupported/distribution result |
+| Direct download authentication | [CDN authentication announcement](https://blog.curseforge.com/introducing-api-key-authentication-for-curseforge-file-downloads/) | Download requests must use only official returned URLs and the approved authentication behavior; no guessed ForgeCDN path |
+
+## Endpoint contracts used
+
+| Operation | Official REST route | ChunkPilot use |
+|---|---|---|
+| Minecraft versions | `GET /v1/minecraft/version` | Filter choices and exact version labels; never compatibility proof by itself |
+| Search projects | `GET /v1/mods/search` | Minecraft game ID `432`; modpacks class ID `4471`; bounded search, game version, loader, sort, index, and page size |
+| Exact project | `GET /v1/mods/{modId}` and bounded batch equivalent where applicable | Numeric project identity, slug/name/author/summary, official link/icon, distribution and availability state |
+| Project files | `GET /v1/mods/{modId}/files` | Exact release history and filtering; never use only `latestFiles` as complete history |
+| Exact file | `GET /v1/mods/{modId}/files/{fileId}` | Immutable file identity, channel, dates, size, hashes, game versions, loader, dependencies, availability, `isServerPack`, and `serverPackFileId` |
+| Download URL | `GET /v1/mods/{modId}/files/{fileId}/download-url` | Resolve an official authorized URL when `downloadUrl` is absent; reject non-HTTPS or non-approved hosts |
+
+The REST schema defines file relation types as embedded library `1`, optional dependency `2`, required
+dependency `3`, tool `4`, incompatible `5`, and include `6`. The provider preserves these distinctions;
+required dependencies block an incomplete plan, optional dependencies remain disclosed, and incompatible
+relations are explicit conflicts rather than silent exclusions.
+
+The schema defines release type `1` release, `2` beta, and `3` alpha; loader values include Forge `1`, Fabric
+`4`, Quilt `5`, and NeoForge `6`. ChunkPilot stores both the API enum evidence and game-version strings and
+does not guess a loader when they conflict or are absent.
+
+## Server-pack support rule
+
+An official candidate is directly supportable only when all of these are established from exact responses:
+
+1. The numeric project and selected client file are available and distribution is allowed.
+2. The selected file has a positive `serverPackFileId`.
+3. The exact referenced server-pack file is available and has an official HTTPS download route.
+4. Minecraft version and loader evidence are compatible with ChunkPilot's supported managed-loader path.
+5. Size is bounded and at least one provider hash is present; current CurseForge file hashes are SHA-1 or
+   MD5, so ChunkPilot records the provider hash and also computes its own SHA-256 after download.
+6. Archive preflight finds no traversal, reparse, absolute, reserved-device, ADS, case-collision, or bounded
+   expansion violation.
+
+Client-only files, packs whose server pack is absent/unavailable, author-disabled distribution, arbitrary
+scripts, unknown launch contracts, and manifests requiring guessed artifacts are `Unsupported` with the exact
+reason. A local archive can still be inspected independently, but its origin is not promoted to verified
+CurseForge identity without exact project and file evidence.
+
+## Generated candidate rule
+
+ChunkPilot may offer a generated server candidate only when the selected exact file manifest and all required
+artifact identities can be resolved through official API responses, every required file is available for
+third-party distribution, the loader has an existing verified headless installation path, and the resulting
+plan needs no arbitrary downloaded script. The UI must label this as **Generated server candidate**, show the
+evidence and limitations before install, and keep it distinct from an **Official server pack**.
+
+The provider must not convert incomplete metadata into a best guess. Missing exact identity, unavailable
+required downloads, unknown loader/bootstrap behavior, or client-only configuration produces a truthful
+unsupported result.
+
+## HTTP and failure policy
+
+- Only `https://api.curseforge.com` is accepted for metadata. Redirects are disabled for API calls.
+- Download redirects are followed manually with a small bound and an explicit allowlist derived from official
+  returned CurseForge hosts; credentials are never forwarded to an unapproved host.
+- Metadata responses must be JSON with bounded bytes and expected schema. Archive responses are streamed.
+- 401/403 map to authentication/policy unavailable; 404 to exact identity unavailable; 408/timeouts and 5xx
+  to temporary provider failure; 429 honors bounded `Retry-After` once and then reports rate limiting.
+- General third-party terms currently prohibit saving/caching API data. CurseForge persistent/offline cache
+  remains disabled unless application-specific written terms authorize it. In-memory request coalescing may
+  retain only live-task state, not provider response data after completion.
+- Cancellation propagates through metadata, downloads, hashing, extraction, loader resolution, validation,
+  and activation. No cancellation is translated into a failed install or a completed package.
+
+## Production status
+
+The typed and locally approved provider may be exercised only through the native developer credential gate.
+Public production activation remains **PUBLIC CREDENTIAL DELIVERY STILL GATED**; see
+`docs/architecture/CURSEFORGE-CREDENTIAL-DELIVERY.md` for the unblocking evidence required.
+

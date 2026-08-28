@@ -59,7 +59,8 @@ public sealed record BeginManagedContentInstallRequest(
     string VersionId,
     bool IncludeDependencies,
     bool RestartIfRunning = false,
-    Guid OperationId = default);
+    Guid OperationId = default,
+    PluginProviderKind Provider = PluginProviderKind.Modrinth);
 
 public sealed record ManagedContentOperationRequest(Guid OperationId);
 public sealed record ManagedContentOperationsRequest(Guid? ServerId = null);

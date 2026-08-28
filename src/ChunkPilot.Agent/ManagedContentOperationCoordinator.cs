@@ -33,7 +33,7 @@ public sealed class ManagedContentOperationCoordinator
             if (operations.TryGetValue(operationId, out var existing))
                 return existing.Read();
             if (operations.Values.Any(operation => operation.IsActiveFor(
-                    request.ServerId, request.ProjectId, request.VersionId)))
+                    request.ServerId, request.ProjectId, request.VersionId, request.Provider)))
                 throw new InvalidOperationException("That exact add-on release already has an active operation.");
 
             PruneCompletedOperations();
@@ -115,7 +115,7 @@ public sealed class ManagedContentOperationCoordinator
 
             var inventory = jars.Inventory(managed.Definition);
             var target = inventory.FirstOrDefault(entry =>
-                entry.Provider == PluginProviderKind.Modrinth &&
+                entry.Provider == request.Provider &&
                 entry.ProviderProjectId.Equals(request.ProjectId, StringComparison.OrdinalIgnoreCase) &&
                 entry.ProviderVersionId.Equals(request.VersionId, StringComparison.OrdinalIgnoreCase));
             if (target is null)
@@ -141,7 +141,8 @@ public sealed class ManagedContentOperationCoordinator
         IProgress<ManagedContentProgress> progress)
     {
         var result = await plugins.InstallWithReceiptAsync(
-            server, request.ProjectId, request.VersionId, progress, cancellationToken).ConfigureAwait(false);
+            server, request.ProjectId, request.VersionId, progress, request.Provider, cancellationToken)
+            .ConfigureAwait(false);
         return new InstalledResult(result, null);
     }
 
@@ -152,7 +153,8 @@ public sealed class ManagedContentOperationCoordinator
         IProgress<ManagedContentProgress> progress)
     {
         var result = await plugins.InstallPlanWithReceiptsAsync(
-            server, request.ProjectId, request.VersionId, progress, cancellationToken).ConfigureAwait(false);
+            server, request.ProjectId, request.VersionId, progress, request.Provider, cancellationToken)
+            .ConfigureAwait(false);
         return new InstalledResult(null, result);
     }
 
@@ -178,7 +180,7 @@ public sealed class ManagedContentOperationCoordinator
                 Kind = request.IncludeDependencies
                     ? ManagedContentOperationKind.InstallAddonPlan
                     : ManagedContentOperationKind.InstallAddon,
-                Provider = "Modrinth",
+                Provider = request.Provider.ToString(),
                 ProjectId = request.ProjectId,
                 VersionId = request.VersionId,
                 StartedAtUtc = DateTimeOffset.UtcNow,
@@ -190,10 +192,15 @@ public sealed class ManagedContentOperationCoordinator
         public CancellationTokenSource Cancellation { get; } = new();
         public Task? Task { get; set; }
 
-        public bool IsActiveFor(Guid serverId, string projectId, string versionId)
+        public bool IsActiveFor(
+            Guid serverId,
+            string projectId,
+            string versionId,
+            PluginProviderKind provider)
         {
             lock (gate)
                 return !snapshot.IsTerminal && snapshot.ServerId == serverId &&
+                    snapshot.Provider.Equals(provider.ToString(), StringComparison.OrdinalIgnoreCase) &&
                     snapshot.ProjectId.Equals(projectId, StringComparison.OrdinalIgnoreCase) &&
                     snapshot.VersionId.Equals(versionId, StringComparison.OrdinalIgnoreCase);
         }
