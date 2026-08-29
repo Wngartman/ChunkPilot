@@ -24,6 +24,31 @@ exception: the currently reviewed third-party terms do not authorize persistent 
 ChunkPilot coalesces only identical in-flight requests and reports that no offline CurseForge cache exists.
 Searches are bounded, client-only entries are excluded by default, and no continuous polling occurs.
 
+CurseForge browse results are presentation data, not reusable install authority. Exact remote creation and
+mod/dependency review each establish a bounded, short-lived Agent authorization. Creation authorization is bound to
+the project/client/server-file tuple, approved artifact integrity, platform/Java identity and any generated
+dependency graph. Managed-content authorization is additionally bound to one server and the SHA-256 digest of
+the complete ordered plan. Both are one-use, expire, reject replay or retargeting, and are revoked when their App
+selection is cancelled or replaced. Materialization consumes the Agent's deep-copied plan without a second
+provider metadata resolution.
+
+One-use authorization is not coupled to a fallible acknowledgement frame. Creation and managed-content begin
+carry client-generated operation IDs. After an ambiguous local transport failure, the App performs an exact-ID
+Agent lookup and reattaches to matching accepted work; only an explicit miss permits replay of the same request.
+Agent begin handlers serialize authorization consumption and operation registration, make identical replays
+idempotent, and reject a reused ID with changed provider, release, server, destination, or behavior fields.
+
+CurseForge whole-pack updates use operation-time provider preflight rather than a renderer-held plan capability.
+Before local cache or snapshot work, the Agent validates exact linked numeric identity and replaces URL, size,
+hashes, filename, package type and platform fields with current approved preflight evidence. The trusted
+generated-plan property cannot be serialized from or to the App. Other providers keep their existing native
+identity and integrity contracts.
+
+The same preflight supplies storage authority. Before downloading the client manifest, ChunkPilot reserves its
+exact provider size plus a margin. Before an update snapshot or package transfer, it aggregates snapshot, cache,
+candidate-expansion, and sealed generated-dependency bytes by their actual storage volume. A renderer-supplied
+small size cannot bypass this forecast, and arithmetic saturates rather than wrapping.
+
 Official references: [Fabric server install](https://fabricmc.net/use/server/), [Quilt server install](https://quiltmc.org/en/install/server/), [NeoForge server install](https://docs.neoforged.net/user/docs/server/), [Modrinth search API](https://docs.modrinth.com/api/operations/searchprojects/), [CurseForge API](https://docs.curseforge.com/rest-api/).
 
 CurseForge provider contracts are developer-gated. A local developer provisions the repository-local

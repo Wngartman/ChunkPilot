@@ -225,6 +225,7 @@ public sealed class PluginManagementService
             throw new InvalidOperationException(plan.Problems.Count > 0
                 ? string.Join(" ", plan.Problems)
                 : "Every exact release in this dependency plan is already installed.");
+        EnsureDestinationOwnership(server, plan.Releases, jars.Inventory(server));
         var installed = new List<PluginInstallResult>();
         try
         {
@@ -260,6 +261,68 @@ public sealed class PluginManagementService
         }
     }
 
+    /// <summary>
+    /// Installs the exact dependency-first CurseForge plan previously retained by the Agent's
+    /// one-time authorization registry. Provider metadata is deliberately not resolved again;
+    /// compatibility, inventory, dependency order, and download evidence are rechecked locally.
+    /// </summary>
+    public async Task<PluginInstallPlanResult> InstallExactPlanWithReceiptsAsync(
+        ServerDefinition server,
+        string rootProjectId,
+        string rootVersionId,
+        PluginInstallPlan exactPlan,
+        IProgress<ManagedContentProgress>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        Report(progress, ManagedContentOperationStage.ResolvingDependencies,
+            "Revalidating the exact reviewed CurseForge dependency plan.");
+        var plan = ValidateExactCurseForgePlan(server, rootProjectId, rootVersionId, exactPlan);
+        var installed = new List<PluginInstallResult>();
+        try
+        {
+            foreach (var release in plan.Releases)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var inventory = jars.Inventory(server);
+                if (inventory.Any(entry => ExactReleaseMatches(entry, release)))
+                    continue;
+                var incompatible = release.Dependencies
+                    .Where(dependency => dependency.Type.Equals("incompatible", StringComparison.OrdinalIgnoreCase))
+                    .Where(dependency => inventory.Any(entry => ExactDependencyMatches(entry, dependency)))
+                    .Select(DependencyLabel)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+                if (incompatible.Length > 0)
+                    throw new InvalidOperationException(
+                        $"The reviewed plan is incompatible with installed add-on(s): {string.Join(", ", incompatible)}.");
+                var unresolved = RequiredDependenciesNotProvenExact(inventory, release);
+                if (unresolved.Count > 0)
+                    throw new InvalidOperationException(
+                        $"The reviewed dependency order could not prove: {string.Join(", ", unresolved)}.");
+                installed.Add(await InstallResolvedAsync(server, release, inventory, cancellationToken, progress)
+                    .ConfigureAwait(false));
+            }
+            return new PluginInstallPlanResult(plan, installed);
+        }
+        catch (Exception installFailure)
+        {
+            var rollbackFailures = new List<Exception>();
+            foreach (var result in installed.AsEnumerable().Reverse())
+            {
+                try { jars.RollbackInstall(server, result.Receipt); }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException)
+                {
+                    rollbackFailures.Add(exception);
+                }
+            }
+            if (rollbackFailures.Count > 0)
+                throw new AggregateException(
+                    "The exact reviewed add-on plan failed and one or more installed files could not be rolled back. Recovery evidence was preserved.",
+                    new[] { installFailure }.Concat(rollbackFailures));
+            throw;
+        }
+    }
+
     public void RollbackPlan(ServerDefinition server, PluginInstallPlanResult result)
     {
         foreach (var installed in result.Installed.Reverse())
@@ -273,6 +336,7 @@ public sealed class PluginManagementService
         CancellationToken cancellationToken,
         IProgress<ManagedContentProgress>? progress)
     {
+        EnsureDestinationOwnership(server, [release], inventory);
         if (!Uri.TryCreate(release.DownloadUrl, UriKind.Absolute, out var uri) ||
             uri.Scheme != Uri.UriSchemeHttps ||
             (release.Provider == PluginProviderKind.Modrinth
@@ -352,16 +416,17 @@ public sealed class PluginManagementService
                 "Inspecting the verified add-on metadata without executing it.");
             var stagedJar = Path.Combine(staging, SafeFileName(release.FileName));
             File.Move(temporary, stagedJar);
-            var existing = inventory.FirstOrDefault(entry =>
+            var currentInventory = jars.Inventory(server);
+            EnsureDestinationOwnership(server, [release], currentInventory);
+            var existing = currentInventory.FirstOrDefault(entry =>
                 entry.Provider == release.Provider &&
                 entry.ProviderProjectId.Equals(release.ProjectId, StringComparison.OrdinalIgnoreCase));
-            jars.RecordProviderProvenance(server, stagedJar, release);
             Report(progress, ManagedContentOperationStage.Staging,
                 "Staging the verified add-on for reversible activation.");
             Report(progress, ManagedContentOperationStage.Installing,
                 "Installing the verified add-on through the Agent-owned transaction.");
-            var receipt = await jars.InstallWithReceiptAsync(
-                server, stagedJar, existing?.RelativePath, cancellationToken).ConfigureAwait(false);
+            var receipt = await jars.InstallReviewedProviderWithReceiptAsync(
+                server, stagedJar, release, existing, cancellationToken).ConfigureAwait(false);
             Report(progress, ManagedContentOperationStage.PendingRestart,
                 "The verified add-on is installed and awaits authoritative restart/load verification.");
             return new PluginInstallResult(release, receipt);
@@ -413,6 +478,179 @@ public sealed class PluginManagementService
             .Take(JarInventoryService.MaximumDependencies)
             .ToArray();
     }
+
+    private PluginInstallPlan ValidateExactCurseForgePlan(
+        ServerDefinition server,
+        string rootProjectId,
+        string rootVersionId,
+        PluginInstallPlan exactPlan)
+    {
+        ArgumentNullException.ThrowIfNull(exactPlan);
+        var kind = RequireManagedAddonServer(server);
+        if (kind != ManagedAddonKind.Mod || !PositiveProviderId(rootProjectId) ||
+            !PositiveProviderId(rootVersionId) || !exactPlan.CanInstall ||
+            exactPlan.Releases.Count > 64 || exactPlan.Authorization is not null)
+            throw new InvalidDataException("The authorized CurseForge dependency plan is incomplete or out of scope.");
+
+        var expectedLoader = ProviderLoader(server);
+        var releases = new PluginRelease[exactPlan.Releases.Count];
+        var projectIds = new HashSet<string>(StringComparer.Ordinal);
+        var destinationFileNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        for (var index = 0; index < releases.Length; index++)
+        {
+            var release = exactPlan.Releases[index] ?? throw new InvalidDataException(
+                "The authorized CurseForge dependency plan contains an empty release.");
+            if (release.Provider != PluginProviderKind.CurseForge || release.Kind != kind ||
+                !PositiveProviderId(release.ProjectId) || !PositiveProviderId(release.VersionId) ||
+                !projectIds.Add(release.ProjectId) ||
+                !release.MinecraftVersion.Equals(server.MinecraftVersion, StringComparison.OrdinalIgnoreCase) ||
+                !release.Loader.Equals(expectedLoader, StringComparison.OrdinalIgnoreCase) ||
+                release.ClientRequirement.Equals("ClientOnly", StringComparison.OrdinalIgnoreCase) ||
+                !Uri.TryCreate(release.DownloadUrl, UriKind.Absolute, out var uri) ||
+                !CurseForgeApiClient.IsApprovedDownloadUri(uri) ||
+                release.FileName.Length is <= 4 or > 180 ||
+                !Path.GetFileName(release.FileName).Equals(release.FileName, StringComparison.Ordinal) ||
+                release.FileName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 ||
+                !release.FileName.EndsWith(".jar", StringComparison.OrdinalIgnoreCase) ||
+                release.SizeBytes is <= 0 or > JarInventoryService.MaximumJarBytes ||
+                release.Sha1.Length != 40 || !release.Sha1.All(Uri.IsHexDigit) ||
+                release.Sha512.Length != 0 || release.Dependencies.Count > 128)
+                throw new InvalidDataException(
+                    "The authorized CurseForge dependency plan contradicts the server or provider evidence.");
+            if (!destinationFileNames.Add(release.FileName))
+                throw new InvalidDataException(
+                    "The authorized CurseForge dependency plan assigns the same destination JAR filename to multiple releases.");
+
+            var dependencies = new PluginDependency[release.Dependencies.Count];
+            for (var dependencyIndex = 0; dependencyIndex < dependencies.Length; dependencyIndex++)
+            {
+                var dependency = release.Dependencies[dependencyIndex] ?? throw new InvalidDataException(
+                    "The authorized CurseForge dependency plan contains an empty dependency.");
+                if (!PositiveProviderId(dependency.ProjectId) || dependency.VersionId.Length != 0 ||
+                    dependency.FileName.Length != 0 || dependency.Type is not
+                        ("required" or "optional" or "embedded" or "tool" or "incompatible"))
+                    throw new InvalidDataException(
+                        "The authorized CurseForge dependency plan contains unsupported dependency evidence.");
+                dependencies[dependencyIndex] = dependency with { };
+            }
+            releases[index] = release with { Dependencies = dependencies };
+        }
+
+        var root = releases[^1];
+        if (!root.ProjectId.Equals(rootProjectId, StringComparison.Ordinal) ||
+            !root.VersionId.Equals(rootVersionId, StringComparison.Ordinal))
+            throw new InvalidDataException(
+                "The authorized CurseForge dependency plan does not end with the exact reviewed root release.");
+
+        var releasesByProject = releases.ToDictionary(release => release.ProjectId, StringComparer.Ordinal);
+        var reachableProjects = new HashSet<string>(StringComparer.Ordinal) { root.ProjectId };
+        var pendingProjects = new Stack<string>();
+        pendingProjects.Push(root.ProjectId);
+        while (pendingProjects.TryPop(out var projectId))
+        {
+            foreach (var required in releasesByProject[projectId].Dependencies.Where(dependency =>
+                         dependency.Type.Equals("required", StringComparison.OrdinalIgnoreCase)))
+            {
+                if (releasesByProject.ContainsKey(required.ProjectId) && reachableProjects.Add(required.ProjectId))
+                    pendingProjects.Push(required.ProjectId);
+            }
+        }
+        if (reachableProjects.Count != releases.Length)
+            throw new InvalidDataException(
+                "The authorized CurseForge dependency plan contains a release outside the root dependency closure.");
+
+        var inventory = jars.Inventory(server);
+        EnsureDestinationOwnership(server, releases, inventory);
+        var priorReleases = new List<PluginRelease>();
+        foreach (var release in releases)
+        {
+            foreach (var incompatible in release.Dependencies.Where(dependency =>
+                         dependency.Type.Equals("incompatible", StringComparison.OrdinalIgnoreCase)))
+            {
+                if (inventory.Any(entry => ExactDependencyMatches(entry, incompatible)) ||
+                    releases.Any(candidate => !candidate.ProjectId.Equals(release.ProjectId, StringComparison.Ordinal) &&
+                        ExactDependencyMatches(candidate, incompatible)))
+                    throw new InvalidOperationException(
+                        $"The reviewed plan conflicts with {DependencyLabel(incompatible)}.");
+            }
+            foreach (var required in release.Dependencies.Where(dependency =>
+                         dependency.Type.Equals("required", StringComparison.OrdinalIgnoreCase)))
+            {
+                if (inventory.Any(entry => ExactDependencyMatches(entry, required)) ||
+                    priorReleases.Any(candidate => ExactDependencyMatches(candidate, required)))
+                    continue;
+                throw new InvalidOperationException(
+                    $"The reviewed plan does not place required dependency {DependencyLabel(required)} before {release.FileName}.");
+            }
+            priorReleases.Add(release);
+        }
+
+        return new PluginInstallPlan { Releases = releases, Problems = [], Authorization = null };
+    }
+
+    /// <summary>
+    /// Proves every provider target is either vacant or an authoritative update of that same
+    /// provider project. This runs for the whole exact plan before its first download and again
+    /// immediately before each activation, so a filename alone never grants replacement rights.
+    /// </summary>
+    private static void EnsureDestinationOwnership(
+        ServerDefinition server,
+        IReadOnlyList<PluginRelease> releases,
+        IReadOnlyList<ModPluginEntry> inventory)
+    {
+        foreach (var release in releases)
+        {
+            var collisions = inventory.Where(entry =>
+                    entry.FileName.Equals(release.FileName, StringComparison.OrdinalIgnoreCase))
+                .ToArray();
+            if (collisions.Length > 1 || collisions.Any(entry =>
+                    entry.Provider != release.Provider ||
+                    !entry.ProviderProjectId.Equals(release.ProjectId, StringComparison.Ordinal)))
+                throw new InvalidOperationException(
+                    $"The destination JAR filename '{release.FileName}' is already owned by a local or different-project add-on. Nothing was changed.");
+
+        }
+    }
+
+    private static IReadOnlyList<string> RequiredDependenciesNotProvenExact(
+        IReadOnlyList<ModPluginEntry> inventory,
+        PluginRelease release) => release.Dependencies
+        .Where(dependency => dependency.Type.Equals("required", StringComparison.OrdinalIgnoreCase))
+        .Where(dependency => !inventory.Any(entry => ExactDependencyMatches(entry, dependency)))
+        .Select(DependencyLabel)
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .Take(JarInventoryService.MaximumDependencies)
+        .ToArray();
+
+    private static bool ExactReleaseMatches(ModPluginEntry entry, PluginRelease release) =>
+        entry.Provider == release.Provider &&
+        entry.ProviderProjectId.Equals(release.ProjectId, StringComparison.Ordinal) &&
+        entry.ProviderVersionId.Equals(release.VersionId, StringComparison.Ordinal);
+
+    private static bool ExactDependencyMatches(ModPluginEntry entry, PluginDependency dependency)
+    {
+        if (!entry.ProviderProjectId.Equals(dependency.ProjectId, StringComparison.Ordinal) &&
+            !entry.Id.Equals(dependency.ProjectId, StringComparison.Ordinal))
+            return false;
+        return dependency.VersionId.Length == 0 ||
+               entry.ProviderVersionId.Equals(dependency.VersionId, StringComparison.Ordinal);
+    }
+
+    private static bool ExactDependencyMatches(PluginRelease release, PluginDependency dependency)
+    {
+        if (!release.ProjectId.Equals(dependency.ProjectId, StringComparison.Ordinal) &&
+            !release.FileName.Equals(Path.GetFileName(dependency.FileName), StringComparison.OrdinalIgnoreCase))
+            return false;
+        return dependency.VersionId.Length == 0 || release.VersionId.Equals(dependency.VersionId, StringComparison.Ordinal);
+    }
+
+    private static bool PositiveProviderId(string value) =>
+        value.Length is > 0 and <= 80 && long.TryParse(
+            value,
+            System.Globalization.NumberStyles.None,
+            System.Globalization.CultureInfo.InvariantCulture,
+            out var parsed) && parsed > 0 &&
+        parsed.ToString(System.Globalization.CultureInfo.InvariantCulture).Equals(value, StringComparison.Ordinal);
 
     private static bool DependencyMatches(ModPluginEntry entry, PluginDependency dependency)
     {

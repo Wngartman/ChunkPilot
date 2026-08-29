@@ -138,6 +138,125 @@ public sealed class CurseForgePackServiceTests
     }
 
     [Fact]
+    public async Task Reviewed_generated_plan_materializes_exact_files_without_provider_metadata_reresolution()
+    {
+        var root = TempRoot();
+        try
+        {
+            var required = "reviewed-mod"u8.ToArray();
+            var loader = "fabric-loader"u8.ToArray();
+            var archive = Pack(root, Manifest([
+                new { projectID = 10, fileID = 100, required = true },
+                new { projectID = 30, fileID = 300, required = false }
+            ]));
+            var reviewed = CurseForgeGeneratedPackPlanService.Seal(new CurseForgeGeneratedPackPlan
+            {
+                MinecraftVersion = "1.20.1",
+                Loader = "Fabric",
+                LoaderVersion = "0.15.11",
+                RequiredFiles =
+                [
+                    new CurseForgeGeneratedFilePlan
+                    {
+                        ProjectId = "10",
+                        FileId = "100",
+                        FileName = "reviewed.jar",
+                        DownloadUrl = "https://mediafilez.forgecdn.net/files/100/reviewed.jar",
+                        SizeBytes = required.LongLength,
+                        ProviderSha1 = Sha1(required),
+                        RequiredBy =
+                        [
+                            new CurseForgeGeneratedFileEvidence
+                            {
+                                Relation = CurseForgeGeneratedFileRelation.ManifestRequired,
+                                RequestedFileId = "100"
+                            }
+                        ]
+                    }
+                ],
+                OptionalExclusions =
+                [
+                    new CurseForgeGeneratedOptionalExclusion
+                    {
+                        ProjectId = "30",
+                        FileId = "300",
+                        Relation = CurseForgeGeneratedOptionalRelation.ManifestOptional
+                    }
+                ],
+                TotalResolvedBytes = required.LongLength
+            });
+            var handler = new FixtureHandler(request =>
+            {
+                var uri = request.RequestUri!;
+                if (uri.Host.Equals(CurseForgeApiClient.ApiHost, StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException("Reviewed materialization must not re-resolve provider metadata.");
+                if (uri.Host.EndsWith("forgecdn.net", StringComparison.OrdinalIgnoreCase))
+                    return Bytes(required);
+                if (uri.AbsolutePath == "/v2/versions/loader/1.20.1")
+                    return Json(new[] { new { loader = new { version = "0.15.11" } } });
+                if (uri.AbsolutePath == "/v2/versions/installer")
+                    return Json(new[] { new { version = "1.0.1", stable = true } });
+                if (uri.AbsolutePath.EndsWith("/server/jar", StringComparison.Ordinal)) return Bytes(loader);
+                throw new InvalidOperationException(uri.ToString());
+            });
+            var secrets = new MemorySecrets();
+            secrets.SetSecret(CurseForgeUpdateProvider.ApiKeyName, "fixture-key");
+            using var http = new HttpClient(handler, disposeHandler: false);
+            using var api = new CurseForgeApiClient(secrets, handler);
+            var service = new CurseForgePackService(api,
+                loaders: new LoaderInstallationService(new LoaderMetadataService(http), http));
+            var destination = Path.Combine(root, "reviewed-candidate");
+            Directory.CreateDirectory(destination);
+            var java = Path.Combine(root, "java.exe");
+            await File.WriteAllBytesAsync(java, [1]);
+
+            var result = await service.MaterializeAndInstallAsync(archive, destination, java,
+                Path.Combine(root, "loader.log"), reviewed);
+
+            Assert.Equal(0, handler.ApiRequests);
+            Assert.Equal(1, handler.CdnRequests);
+            Assert.Equal(100, Assert.Single(result.MaterializedFiles).FileId);
+            Assert.True(File.Exists(Path.Combine(destination, "mods", "reviewed.jar")));
+            Assert.Contains("30/300", result.SkippedOptionalProjects);
+            var evidence = await File.ReadAllTextAsync(Path.Combine(destination, ".chunkpilot",
+                "curseforge-pack-evidence.json"));
+            Assert.Contains(reviewed.Digest, evidence, StringComparison.Ordinal);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public async Task Reviewed_generated_plan_digest_drift_fails_before_download_or_destination_write()
+    {
+        var root = TempRoot();
+        try
+        {
+            var archive = Pack(root, Manifest([new { projectID = 10, fileID = 100, required = true }]));
+            var original = ExactPlan("first.jar", 5, new string('a', 40));
+            var drifted = original with
+            {
+                RequiredFiles = [original.RequiredFiles[0] with { FileName = "drifted.jar" }]
+            };
+            var handler = new FixtureHandler(_ => throw new InvalidOperationException("No request expected."));
+            var secrets = new MemorySecrets();
+            secrets.SetSecret(CurseForgeUpdateProvider.ApiKeyName, "fixture-key");
+            using var api = new CurseForgeApiClient(secrets, handler);
+            var destination = Path.Combine(root, "drift-candidate");
+            Directory.CreateDirectory(destination);
+
+            var failure = await Assert.ThrowsAsync<InvalidDataException>(() =>
+                new CurseForgePackService(api).MaterializeAndInstallAsync(archive, destination,
+                    Path.Combine(root, "java.exe"), Path.Combine(root, "loader.log"), drifted));
+
+            Assert.Contains("digest", failure.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(0, handler.ApiRequests);
+            Assert.Equal(0, handler.CdnRequests);
+            Assert.Empty(Directory.EnumerateFileSystemEntries(destination));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
     public async Task Generated_candidate_blocks_known_incompatible_manifest_pair_without_downloading()
     {
         var root = TempRoot();
@@ -331,6 +450,35 @@ public sealed class CurseForgePackServiceTests
 #pragma warning restore CA5350
     }
 
+    private static CurseForgeGeneratedPackPlan ExactPlan(string fileName, long size, string sha1) =>
+        CurseForgeGeneratedPackPlanService.Seal(new CurseForgeGeneratedPackPlan
+        {
+            MinecraftVersion = "1.20.1",
+            Loader = "Fabric",
+            LoaderVersion = "0.15.11",
+            RequiredFiles =
+            [
+                new CurseForgeGeneratedFilePlan
+                {
+                    ProjectId = "10",
+                    FileId = "100",
+                    FileName = fileName,
+                    DownloadUrl = $"https://mediafilez.forgecdn.net/files/100/{fileName}",
+                    SizeBytes = size,
+                    ProviderSha1 = sha1,
+                    RequiredBy =
+                    [
+                        new CurseForgeGeneratedFileEvidence
+                        {
+                            Relation = CurseForgeGeneratedFileRelation.ManifestRequired,
+                            RequestedFileId = "100"
+                        }
+                    ]
+                }
+            ],
+            TotalResolvedBytes = size
+        });
+
     private static string TempRoot()
     {
         var root = Path.Combine(Path.GetTempPath(), "ChunkPilot-cf-pack-" + Guid.NewGuid().ToString("N"));
@@ -350,13 +498,17 @@ public sealed class CurseForgePackServiceTests
     private sealed class FixtureHandler(Func<HttpRequestMessage, HttpResponseMessage> response) : HttpMessageHandler
     {
         private int cdnRequests;
+        private int apiRequests;
         public int CdnRequests => cdnRequests;
+        public int ApiRequests => apiRequests;
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,
             CancellationToken cancellationToken)
         {
             if (request.RequestUri!.Host.EndsWith("forgecdn.net", StringComparison.OrdinalIgnoreCase))
                 Interlocked.Increment(ref cdnRequests);
+            if (request.RequestUri.Host.Equals(CurseForgeApiClient.ApiHost, StringComparison.OrdinalIgnoreCase))
+                Interlocked.Increment(ref apiRequests);
             var result = response(request);
             result.RequestMessage ??= request;
             return Task.FromResult(result);

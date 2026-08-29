@@ -26,5 +26,6 @@
     <ProjectReference Include="..\..\src\ChunkPilot.Core\ChunkPilot.Core.csproj" />
     <ProjectReference Include="..\..\src\ChunkPilot.Infrastructure\ChunkPilot.Infrastructure.csproj" />
     <ProjectReference Include="..\..\src\ChunkPilot.App\ChunkPilot.App.csproj" />
+    <ProjectReference Include="..\..\src\ChunkPilot.Certification\ChunkPilot.Certification.csproj" />
   </ItemGroup>
 </Project>

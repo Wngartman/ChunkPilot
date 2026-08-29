@@ -1791,6 +1791,8 @@ public sealed class ManagedJavaRuntimeService
         };
         start.ArgumentList.Add("-XshowSettings:properties");
         start.ArgumentList.Add("-version");
+        ChildProcessEnvironmentPolicy.Apply(start);
+        CurseForgeCredentialEnvironment.RemoveFromChild(start);
         using var process = Process.Start(start) ??
                             throw new InvalidOperationException("Windows did not start the Java health check.");
         var outputTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
@@ -2217,6 +2219,8 @@ public sealed class LoaderInstallationService
         start.ArgumentList.Add(payload);
         foreach (var argument in SplitArguments(plan.InstallerArgument))
             start.ArgumentList.Add(argument);
+        ChildProcessEnvironmentPolicy.Apply(start);
+        CurseForgeCredentialEnvironment.RemoveFromChild(start);
         using var process = Process.Start(start) ??
                             throw new InvalidOperationException("Windows did not start the loader installer.");
         var stdout = process.StandardOutput.ReadToEndAsync(cancellationToken);

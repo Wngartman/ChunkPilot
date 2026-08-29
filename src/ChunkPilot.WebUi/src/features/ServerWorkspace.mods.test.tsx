@@ -295,4 +295,68 @@ describe('Fabric mod management', () => {
     expect(screen.queryByText('alpha.jar · 1,024 B')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Install complete verified plan' })).toBeNull();
   });
+
+  it('revokes an exact CurseForge dependency-plan authorization when the reviewed selection is cleared', async () => {
+    window.history.replaceState({}, '', '/?fixture=curseforge&page=servers&tab=content');
+    const fixture = new FixtureBridge('curseforge');
+    const authorizationIds = [
+      '55555555-5555-4555-8555-555555555555',
+      '66666666-6666-4666-8666-666666666666'
+    ];
+    let planIndex = 0;
+    const digest = 'a'.repeat(64);
+    const rootRelease: PluginRelease = {
+      provider: 'CurseForge', kind: 'Mod', projectId: 'waystones', versionId: 'waystones-exact',
+      versionName: '1.0.0', minecraftVersion: '26.2', loader: 'fabric', releaseChannel: 'release',
+      publishedAt: '2026-08-29T12:00:00Z', fileName: 'waystones.jar', sizeBytes: 2_048,
+      integrity: 'sha1', serverSide: 'required', clientSide: 'optional', clientRequirement: 'ClientOptional',
+      dependencies: [{ projectId: 'balm', versionId: 'balm-exact', fileName: 'balm.jar', type: 'required' }]
+    };
+    const dependencyRelease: PluginRelease = {
+      ...rootRelease, projectId: 'balm', versionId: 'balm-exact', versionName: '2.0.0', fileName: 'balm.jar',
+      sizeBytes: 1_024, dependencies: []
+    };
+    const bridge: BridgeAdapter = {
+      request: async <T,>(method: BridgeMethod, params: Record<string, unknown> = {}) => {
+        calls.push({ method, params });
+        if (method === 'mods.release') return rootRelease as T;
+        if (method === 'mods.plan') return {
+          releases: [dependencyRelease, rootRelease], problems: [], canInstall: true,
+          authorization: { authorizationId: authorizationIds[planIndex++], digest }
+        } as T;
+        if (method === 'mods.installPlan') throw new Error('The native request was rejected before acceptance.');
+        if (method === 'content.invalidatePlan') return { revoked: true } as T;
+        return fixture.request<T>(method, params);
+      },
+      subscribe: listener => fixture.subscribe(listener),
+      dispose: () => fixture.dispose()
+    };
+    const snapshot = structuredClone(fixtures.fabric);
+    snapshot.plugins = [];
+    useAppStore.setState({ snapshot, bridge, busy: new Set(), pendingOperations: new Map(), completedOperations: new Set(), error: null });
+    const server = snapshot.servers[0];
+    render(<NavigationGuardProvider><ServerWorkspace serverId={server.id} /></NavigationGuardProvider>);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Browse' }));
+    fireEvent.click(await screen.findByRole('tab', { name: 'CurseForge' }));
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search official CurseForge mods' }), { target: { value: 'waystones' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    fireEvent.click(await screen.findByRole('button', { name: /Lithium/ }));
+    expect(await screen.findByRole('button', { name: 'Install complete verified plan' })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Modrinth' }));
+    await waitFor(() => expect(calls).toContainEqual({
+      method: 'content.invalidatePlan', params: { authorizationId: authorizationIds[0] }
+    }));
+    expect(screen.queryByRole('button', { name: 'Install complete verified plan' })).toBeNull();
+
+    fireEvent.click(screen.getByRole('tab', { name: 'CurseForge' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    fireEvent.click(await screen.findByRole('button', { name: /Lithium/ }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Install complete verified plan' }));
+    fireEvent.click(screen.getByRole('button', { name: /Install plan/ }));
+    await waitFor(() => expect(calls).toContainEqual({
+      method: 'content.invalidatePlan', params: { authorizationId: authorizationIds[1] }
+    }));
+  });
 });

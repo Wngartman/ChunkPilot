@@ -68,7 +68,7 @@ public sealed partial class ServerImportInspectionService
         await using var stream = new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.Read,
             128 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
         using var archive = new ZipArchive(stream, ZipArchiveMode.Read, leaveOpen: false);
-        var entries = ValidateArchive(archive);
+        var entries = ValidateArchive(archive, cancellationToken);
 
         if (extension == ".jar")
             return InspectJar(info, sha256, entries, archive);
@@ -85,7 +85,7 @@ public sealed partial class ServerImportInspectionService
         await using var stream = new FileStream(archivePath, FileMode.Open, FileAccess.Read, FileShare.Read,
             128 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
         using var archive = new ZipArchive(stream, ZipArchiveMode.Read, leaveOpen: false);
-        var entries = ValidateArchive(archive);
+        var entries = ValidateArchive(archive, cancellationToken);
         foreach (var validated in entries)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -207,7 +207,48 @@ public sealed partial class ServerImportInspectionService
         };
     }
 
-    private static IReadOnlyList<ValidatedEntry> ValidateArchive(ZipArchive archive)
+    internal static ArchiveExpansionForecast ForecastArchiveExpansion(
+        string archivePath,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(archivePath);
+        var fullPath = Path.GetFullPath(archivePath);
+        var info = new FileInfo(fullPath);
+        if (!info.Exists)
+            throw new FileNotFoundException("The provider archive was not found.", fullPath);
+        if (info.Attributes.HasFlag(FileAttributes.ReparsePoint))
+            throw new InvalidDataException(
+                "The provider archive must be a regular file rather than a symbolic link or reparse point.");
+        if (info.Length is <= 0 or > MaximumCompressedBytes)
+            throw new InvalidDataException(
+                "The provider archive is empty or exceeds ChunkPilot's 4 GB review limit.");
+
+        using var stream = new FileStream(
+            fullPath,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read,
+            128 * 1024,
+            FileOptions.RandomAccess);
+        using var archive = new ZipArchive(stream, ZipArchiveMode.Read, leaveOpen: false);
+        var entries = ValidateArchive(archive, cancellationToken);
+        long expandedBytes = 0;
+        var fileCount = 0;
+        foreach (var entry in entries)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (entry.IsDirectory)
+                continue;
+            expandedBytes = StorageSpaceGuard.SaturatingAdd(
+                expandedBytes, entry.Entry.Length);
+            fileCount++;
+        }
+        return new ArchiveExpansionForecast(expandedBytes, fileCount);
+    }
+
+    private static IReadOnlyList<ValidatedEntry> ValidateArchive(
+        ZipArchive archive,
+        CancellationToken cancellationToken = default)
     {
         if (archive.Entries.Count is <= 0 or > MaximumEntries)
             throw new InvalidDataException($"The package must contain from 1 through {MaximumEntries:N0} entries.");
@@ -216,6 +257,7 @@ public sealed partial class ServerImportInspectionService
         long expanded = 0;
         foreach (var entry in archive.Entries)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             RejectLink(entry);
             var isDirectory = entry.FullName.EndsWith('/') || entry.FullName.EndsWith('\\');
             var normalized = ValidateRelativePath(entry.FullName, isDirectory);
@@ -223,16 +265,34 @@ public sealed partial class ServerImportInspectionService
                 throw new InvalidDataException($"Duplicate or case-colliding archive destination: {normalized}.");
             if (!isDirectory)
             {
-                expanded = checked(expanded + entry.Length);
+                expanded = StorageSpaceGuard.SaturatingAdd(expanded, entry.Length);
                 if (expanded > MaximumExpandedBytes)
                     throw new InvalidDataException("The package exceeds ChunkPilot's 16 GB expanded-size limit.");
                 if (entry.Length > 0 && (entry.CompressedLength <= 0 ||
                                          entry.Length / (double)entry.CompressedLength > MaximumCompressionRatio))
                     throw new InvalidDataException($"Archive entry exceeds the compression-ratio limit: {normalized}.");
             }
+            ValidateEntryCanOpen(entry, normalized);
             result.Add(new(entry, normalized, isDirectory));
         }
         return result;
+    }
+
+    private static void ValidateEntryCanOpen(ZipArchiveEntry entry, string normalized)
+    {
+        if (entry.IsEncrypted)
+            throw new InvalidDataException(
+                $"Archive entry uses encrypted, unsupported, or malformed metadata: {normalized}.");
+        try
+        {
+            using var stream = entry.Open();
+        }
+        catch (Exception exception) when (exception is InvalidDataException or NotSupportedException)
+        {
+            throw new InvalidDataException(
+                $"Archive entry uses encrypted, unsupported, or malformed metadata: {normalized}.",
+                exception);
+        }
     }
 
     private static string ValidateRelativePath(string value, bool isDirectory)
@@ -352,6 +412,8 @@ public sealed partial class ServerImportInspectionService
     }
 
     private sealed record ValidatedEntry(ZipArchiveEntry Entry, string NormalizedPath, bool IsDirectory);
+
+    internal readonly record struct ArchiveExpansionForecast(long ExpandedSizeBytes, int FileCount);
 
     [GeneratedRegex(@"(?<!\d)(?<mc>(?:1\.\d+(?:\.\d+)?)|(?:b1\.\d+(?:\.\d+)?))(?:[-_](?<loader>\d+(?:\.\d+)+))?", RegexOptions.IgnoreCase)]
     private static partial Regex VersionRegex();

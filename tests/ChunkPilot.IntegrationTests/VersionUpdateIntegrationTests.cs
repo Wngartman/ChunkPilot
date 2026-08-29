@@ -1,5 +1,7 @@
+using System.Diagnostics;
 using System.IO.Compression;
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using ChunkPilot.Agent;
 using ChunkPilot.Core;
@@ -137,12 +139,12 @@ public sealed class VersionUpdateIntegrationTests : IAsyncLifetime
         };
         await store.UpsertUpdateSourceAsync(source);
         var package = CreateUpdatePackage("cf-preflight-gate.zip", "normal");
-        var request = Request(definition.Id, package, "500-client") with
+        var request = Request(definition.Id, package, "500") with
         {
-            TargetVersion = Request(definition.Id, package, "500-client").TargetVersion with
+            TargetVersion = Request(definition.Id, package, "500").TargetVersion with
             {
                 PackId = "123",
-                ProviderFileId = "501-server",
+                ProviderFileId = "501",
                 PackageType = "curseforge-server-pack",
                 LoaderVersion = ""
             }
@@ -155,8 +157,8 @@ public sealed class VersionUpdateIntegrationTests : IAsyncLifetime
         Assert.Contains("fixture exact manifest rejection", error.Message, StringComparison.Ordinal);
         Assert.Equal(request.OperationId, preflight.Request!.OperationId);
         Assert.Equal("123", preflight.Request.ProjectId);
-        Assert.Equal("500-client", preflight.Request.ClientFileId);
-        Assert.Equal("501-server", preflight.Request.ExpectedServerPackFileId);
+        Assert.Equal("500", preflight.Request.ClientFileId);
+        Assert.Equal("501", preflight.Request.ExpectedServerPackFileId);
         Assert.Empty(await store.GetVersionSnapshotsAsync(definition.Id));
         Assert.Equal("world-v1", await File.ReadAllTextAsync(
             Path.Combine(definition.RootPath, "world", "level.dat")));
@@ -294,6 +296,440 @@ public sealed class VersionUpdateIntegrationTests : IAsyncLifetime
             Path.Combine(definition.RootPath, "mods", "old-pack.jar")));
         Assert.Equal("world-v1", await File.ReadAllTextAsync(
             Path.Combine(definition.RootPath, "world", "level.dat")));
+    }
+
+    [Fact(Timeout = 45_000)]
+    public async Task CurseForge_preflight_rejection_occurs_before_reviewed_download_reuse_lookup()
+    {
+        var definition = await CreateOldServerAsync();
+        var source = Source(definition.Id) with
+        {
+            Provider = UpdateProvider.CurseForge,
+            ProjectId = "123",
+            InstalledVersionId = "400",
+            InstalledFileId = "401"
+        };
+        var target = new PackVersionInfo
+        {
+            PackId = "123",
+            VersionId = "500",
+            ProviderFileId = "501",
+            VersionName = "reviewed target",
+            MinecraftVersion = "1.21.1",
+            Loader = "NeoForge",
+            DownloadUrl = "https://forged.invalid/not-used.zip",
+            FileSize = 1,
+            Sha1 = new string('0', 40),
+            PackageType = "jar"
+        };
+        var reviewedOperationId = Guid.NewGuid();
+        var request = new UpdateInstallRequest
+        {
+            OperationId = Guid.NewGuid(),
+            ServerId = definition.Id,
+            TargetVersion = target,
+            ReviewedOperationId = reviewedOperationId,
+            ConfirmedMigrationWarnings = true
+        };
+        var authorization = new ReviewedUpdateArtifactAuthorization(
+            reviewedOperationId,
+            definition.Id,
+            UpdateProvider.CurseForge,
+            source.ProjectId,
+            target.VersionId,
+            target.ProviderFileId);
+        var preflight = new RejectingCurseForgePreflight();
+
+        var error = await Assert.ThrowsAsync<InvalidDataException>(() =>
+            CreateUpdateService(preflight).PrepareAndSwitchAsync(
+                definition, source, request, reuseAuthorization: authorization));
+
+        Assert.Contains("fixture exact manifest rejection", error.Message, StringComparison.Ordinal);
+        Assert.NotNull(preflight.Request);
+        Assert.Null(await store.GetRecordedUpdateDownloadAsync(reviewedOperationId));
+        Assert.Empty(await store.GetVersionSnapshotsAsync(definition.Id));
+    }
+
+    [Fact]
+    public void CurseForge_official_preflight_replaces_forged_operational_artifact_fields()
+    {
+        var operationId = Guid.NewGuid();
+        var source = Source(Guid.NewGuid()) with
+        {
+            Provider = UpdateProvider.CurseForge,
+            ProjectId = "123"
+        };
+        var target = new PackVersionInfo
+        {
+            PackId = "123",
+            VersionId = "500",
+            ProviderFileId = "501",
+            VersionName = "display label",
+            MinecraftVersion = "1.21.1",
+            Loader = "NeoForge",
+            DownloadUrl = "https://attacker.invalid/forged.jar",
+            FileSize = 1,
+            Sha1 = new string('1', 40),
+            Sha256 = new string('2', 64),
+            Sha512 = new string('3', 128),
+            FileName = "forged.jar",
+            PackageType = "jar",
+            DeclaredFiles = ["untrusted-entry"]
+        };
+        var result = ReadyOfficialPreflight(operationId) with
+        {
+            ServerPackDownloadUrl =
+                "https://mediafilez.forgecdn.net/files/501/actual-server.zip",
+            ServerPackSha1 = new string('a', 40),
+            ServerPackSizeBytes = 42
+        };
+
+        var canonical = ServerPackUpdateService.CanonicalizeCurseForgeTarget(
+            source, target, result, operationId);
+
+        Assert.Equal("123", canonical.PackId);
+        Assert.Equal("500", canonical.VersionId);
+        Assert.Equal("501", canonical.ProviderFileId);
+        Assert.Equal(result.ServerPackDownloadUrl, canonical.DownloadUrl);
+        Assert.Equal(42, canonical.FileSize);
+        Assert.Equal(new string('a', 40), canonical.Sha1);
+        Assert.Empty(canonical.Sha256);
+        Assert.Empty(canonical.Sha512);
+        Assert.Equal("actual-server.zip", canonical.FileName);
+        Assert.Equal("zip", canonical.PackageType);
+        Assert.Empty(canonical.DeclaredFiles);
+        Assert.Equal("display label", canonical.VersionName);
+    }
+
+    [Fact]
+    public void CurseForge_official_preflight_rejects_a_contradictory_generated_dependency_plan()
+    {
+        var operationId = Guid.NewGuid();
+        var source = Source(Guid.NewGuid()) with
+        {
+            Provider = UpdateProvider.CurseForge,
+            ProjectId = "123"
+        };
+        var target = new PackVersionInfo
+        {
+            PackId = "123",
+            VersionId = "500",
+            ProviderFileId = "501",
+            MinecraftVersion = "1.21.1",
+            Loader = "NeoForge"
+        };
+        var result = ReadyOfficialPreflight(operationId) with
+        {
+            GeneratedPackPlan = GeneratedPlan()
+        };
+
+        Assert.Throws<InvalidDataException>(() =>
+            ServerPackUpdateService.CanonicalizeCurseForgeTarget(
+                source, target, result, operationId));
+    }
+
+    [Fact]
+    public void Trusted_CurseForge_generated_plan_is_neither_emitted_to_nor_accepted_from_json()
+    {
+        var trustedPlan = GeneratedPlan();
+        var target = new PackVersionInfo
+        {
+            PackId = "123",
+            VersionId = "500",
+            ProviderFileId = "500",
+            TrustedCurseForgeGeneratedPlan = trustedPlan
+        };
+
+        var serialized = JsonSerializer.Serialize(target, ProtocolJson.Options);
+        Assert.DoesNotContain("trustedCurseForgeGeneratedPlan", serialized, StringComparison.OrdinalIgnoreCase);
+
+        var forged = JsonSerializer.Serialize(new
+        {
+            packId = "123",
+            versionId = "500",
+            providerFileId = "500",
+            trustedCurseForgeGeneratedPlan = trustedPlan
+        }, ProtocolJson.Options);
+        var deserialized = JsonSerializer.Deserialize<PackVersionInfo>(forged, ProtocolJson.Options);
+
+        Assert.NotNull(deserialized);
+        Assert.Null(deserialized.TrustedCurseForgeGeneratedPlan);
+    }
+
+    [Fact]
+    public void CurseForge_generated_preflight_canonicalizes_to_the_verified_client_artifact()
+    {
+        var operationId = Guid.NewGuid();
+        var source = Source(Guid.NewGuid()) with
+        {
+            Provider = UpdateProvider.CurseForge,
+            ProjectId = "123"
+        };
+        var target = new PackVersionInfo
+        {
+            PackId = "123",
+            VersionId = "500",
+            ProviderFileId = "500",
+            VersionName = "generated target",
+            MinecraftVersion = "1.21.1",
+            Loader = "NeoForge",
+            DownloadUrl = "https://attacker.invalid/forged.zip",
+            FileSize = 1,
+            Sha1 = new string('1', 40),
+            Sha256 = new string('2', 64),
+            Sha512 = new string('3', 128),
+            FileName = "forged.jar",
+            PackageType = "jar"
+        };
+        var result = ReadyOfficialPreflight(operationId) with
+        {
+            ServerPackFileId = "",
+            ServerPackDownloadUrl = "",
+            ServerPackSha1 = "",
+            ServerPackSizeBytes = null,
+            GeneratedPackPlan = GeneratedPlan()
+        };
+
+        var canonical = ServerPackUpdateService.CanonicalizeCurseForgeTarget(
+            source, target, result, operationId);
+
+        Assert.Equal(result.ClientFileId, canonical.ProviderFileId);
+        Assert.Equal(result.ClientDownloadUrl, canonical.DownloadUrl);
+        Assert.Equal(result.ClientSizeBytes, canonical.FileSize);
+        Assert.Equal(result.ClientSha1, canonical.Sha1);
+        Assert.Equal(result.ClientSha256, canonical.Sha256);
+        Assert.Empty(canonical.Sha512);
+        Assert.Equal("actual-client.zip", canonical.FileName);
+        Assert.Equal("curseforge-manifest", canonical.PackageType);
+        Assert.Equal(result.GeneratedPackPlan!.Digest,
+            canonical.TrustedCurseForgeGeneratedPlan!.Digest);
+    }
+
+    [Fact]
+    public void CurseForge_generated_update_without_exact_dependency_plan_is_rejected()
+    {
+        var operationId = Guid.NewGuid();
+        var source = Source(Guid.NewGuid()) with
+        {
+            Provider = UpdateProvider.CurseForge,
+            ProjectId = "123"
+        };
+        var target = new PackVersionInfo
+        {
+            PackId = "123",
+            VersionId = "500",
+            ProviderFileId = "500",
+            MinecraftVersion = "1.21.1",
+            Loader = "NeoForge"
+        };
+        var result = ReadyOfficialPreflight(operationId) with
+        {
+            ServerPackFileId = "",
+            ServerPackDownloadUrl = "",
+            ServerPackSha1 = "",
+            ServerPackSizeBytes = null,
+            GeneratedPackPlan = null
+        };
+
+        Assert.Throws<InvalidDataException>(() =>
+            ServerPackUpdateService.CanonicalizeCurseForgeTarget(
+                source, target, result, operationId));
+    }
+
+    [Fact(Timeout = 30_000)]
+    public async Task CurseForge_generated_update_forecast_includes_the_sealed_dependency_plan_before_snapshot()
+    {
+        var definition = await CreateOldServerAsync();
+        var source = Source(definition.Id) with
+        {
+            Provider = UpdateProvider.CurseForge,
+            ProjectId = "123",
+            InstalledVersionId = "400",
+            InstalledFileId = "401"
+        };
+        await store.UpsertUpdateSourceAsync(source);
+        var operationId = Guid.NewGuid();
+        var ordering = new List<string>();
+        const long generatedBytes = 2L * 1024 * 1024 * 1024;
+        var preflight = new RecordingCurseForgePreflight(
+            request => ReadyOfficialPreflight(request.OperationId) with
+            {
+                ServerPackFileId = "",
+                ServerPackDownloadUrl = "",
+                ServerPackSha1 = "",
+                ServerPackSizeBytes = null,
+                GeneratedPackPlan = GeneratedPlan(generatedBytes)
+            }, ordering);
+        var request = new UpdateInstallRequest
+        {
+            OperationId = operationId,
+            ServerId = definition.Id,
+            TargetVersion = new PackVersionInfo
+            {
+                PackId = "123",
+                VersionId = "500",
+                ProviderFileId = "500",
+                VersionName = "Generated target",
+                MinecraftVersion = "1.21.1",
+                Loader = "NeoForge"
+            }
+        };
+        var storage = new FixedStorageSpaceProbe(2L * 1024 * 1024 * 1024);
+
+        var error = await Assert.ThrowsAsync<IOException>(() =>
+            CreateUpdateService(preflight, storageSpace: storage)
+                .PrepareAndSwitchAsync(definition, source, request));
+
+        Assert.Contains("Server update candidate staging", error.Message,
+            StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(["preflight"], ordering);
+        Assert.Empty(await store.GetVersionSnapshotsAsync(definition.Id));
+        Assert.Equal("world-v1", await File.ReadAllTextAsync(
+            Path.Combine(definition.RootPath, "world", "level.dat")));
+    }
+
+    [Fact(Timeout = 45_000)]
+    public async Task CurseForge_archive_expansion_is_forecast_exactly_before_snapshot_or_server_mutation()
+    {
+        var definition = await CreateOldServerAsync();
+        var source = Source(definition.Id) with
+        {
+            Provider = UpdateProvider.CurseForge,
+            ProjectId = "123",
+            InstalledVersionId = "400",
+            InstalledFileId = "401"
+        };
+        await store.UpsertUpdateSourceAsync(source);
+
+        var package = Path.Combine(root, "high-expansion-server-pack.zip");
+        const uint compressedBytes = 4 * 1024 * 1024;
+        const uint expandedBytes = 768 * 1024 * 1024;
+        CreateSyntheticArchive(
+            package,
+            "server/server.jar",
+            compressedBytes,
+            expandedBytes);
+        var packageBytes = await File.ReadAllBytesAsync(package);
+#pragma warning disable CA5350 // The fixture mirrors CurseForge's provider SHA-1; local SHA-256 is retained for reuse evidence.
+        var packageSha1 = Convert.ToHexString(SHA1.HashData(packageBytes)).ToLowerInvariant();
+#pragma warning restore CA5350
+        var packageSha256 = Convert.ToHexString(SHA256.HashData(packageBytes)).ToLowerInvariant();
+        var packageSize = packageBytes.LongLength;
+        var reviewedOperationId = Guid.NewGuid();
+        var operationId = Guid.NewGuid();
+        var ordering = new List<string>();
+        var providerUrl = "https://mediafilez.forgecdn.net/files/501/high-expansion-server-pack.zip";
+        var reviewedTarget = new PackVersionInfo
+        {
+            PackId = "123",
+            VersionId = "500",
+            ProviderFileId = "501",
+            VersionName = "High expansion target",
+            MinecraftVersion = "1.21.1",
+            Loader = "NeoForge",
+            LoaderVersion = "21.1.200",
+            DownloadUrl = providerUrl,
+            FileName = "high-expansion-server-pack.zip",
+            FileSize = packageSize,
+            Sha1 = packageSha1,
+            PackageType = "zip"
+        };
+        var request = new UpdateInstallRequest
+        {
+            OperationId = operationId,
+            ServerId = definition.Id,
+            ReviewedOperationId = reviewedOperationId,
+            ConfirmedMigrationWarnings = true,
+            TargetVersion = reviewedTarget
+        };
+        var authorization = new ReviewedUpdateArtifactAuthorization(
+            reviewedOperationId,
+            definition.Id,
+            UpdateProvider.CurseForge,
+            source.ProjectId,
+            reviewedTarget.VersionId,
+            reviewedTarget.ProviderFileId);
+        var reviewedCache = Path.Combine(paths.UpdateCache, $"local-{reviewedOperationId:N}.package");
+        File.Copy(package, reviewedCache);
+        await store.RecordUpdateDownloadAsync(
+            reviewedOperationId,
+            definition.Id,
+            UpdateProvider.CurseForge,
+            reviewedTarget,
+            packageSize,
+            packageSha256,
+            "Verified");
+        var preflight = new RecordingCurseForgePreflight(
+            incoming => ReadyOfficialPreflight(incoming.OperationId) with
+            {
+                ProjectId = incoming.ProjectId,
+                ClientFileId = incoming.ClientFileId,
+                ServerPackFileId = incoming.ExpectedServerPackFileId,
+                ServerPackDownloadUrl = providerUrl,
+                ServerPackSha1 = packageSha1,
+                ServerPackSizeBytes = packageSize
+            }, ordering);
+        var storage = new FixedStorageSpaceProbe(1_500L * 1024 * 1024);
+        var candidate = Path.Combine(
+            Directory.GetParent(definition.RootPath)!.FullName,
+            $".chunkpilot-update-{operationId:N}");
+        var previous = Path.Combine(
+            Directory.GetParent(definition.RootPath)!.FullName,
+            $".chunkpilot-previous-{operationId:N}");
+
+        var error = await Assert.ThrowsAsync<IOException>(() =>
+            CreateUpdateService(preflight, storageSpace: storage)
+                .PrepareAndSwitchAsync(
+                    definition,
+                    source,
+                    request,
+                    reuseAuthorization: authorization));
+
+        Assert.Contains("Server update candidate staging", error.Message,
+            StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(["preflight"], ordering);
+        var verifiedReuse = Assert.IsType<RecordedUpdateDownload>(
+            await store.GetRecordedUpdateDownloadAsync(operationId));
+        Assert.Equal("Verified reuse from migration review", verifiedReuse.Status);
+        Assert.Empty(await store.GetVersionSnapshotsAsync(definition.Id));
+        Assert.Empty(Directory.EnumerateFiles(paths.VersionSnapshots, "*", SearchOption.AllDirectories));
+        Assert.False(Directory.Exists(candidate));
+        Assert.False(Directory.Exists(previous));
+        Assert.Equal("world-v1", await File.ReadAllTextAsync(
+            Path.Combine(definition.RootPath, "world", "level.dat")));
+        Assert.Equal("old-pack-v1", await File.ReadAllTextAsync(
+            Path.Combine(definition.RootPath, "mods", "old-pack.jar")));
+        Assert.True(File.Exists(reviewedCache));
+    }
+
+    [Fact]
+    public void CurseForge_canonicalization_rejects_project_client_and_server_file_relationship_mismatches()
+    {
+        var operationId = Guid.NewGuid();
+        var source = Source(Guid.NewGuid()) with
+        {
+            Provider = UpdateProvider.CurseForge,
+            ProjectId = "123"
+        };
+        var target = new PackVersionInfo
+        {
+            PackId = "123",
+            VersionId = "500",
+            ProviderFileId = "501",
+            MinecraftVersion = "1.21.1",
+            Loader = "NeoForge"
+        };
+        var ready = ReadyOfficialPreflight(operationId);
+
+        Assert.Throws<InvalidDataException>(() =>
+            ServerPackUpdateService.CanonicalizeCurseForgeTarget(
+                source, target with { PackId = "999" }, ready, operationId));
+        Assert.Throws<InvalidDataException>(() =>
+            ServerPackUpdateService.CanonicalizeCurseForgeTarget(
+                source, target, ready with { ClientFileId = "999" }, operationId));
+        Assert.Throws<InvalidDataException>(() =>
+            ServerPackUpdateService.CanonicalizeCurseForgeTarget(
+                source, target, ready with { ServerPackFileId = "999" }, operationId));
     }
 
     [Fact]
@@ -483,6 +919,13 @@ public sealed class VersionUpdateIntegrationTests : IAsyncLifetime
             SourceUrl = "https://provider.invalid/cf-source-url-sentinel.zip"
         };
         var package = CreateUpdatePackage("cf-file-name-sentinel.zip", "normal");
+        var packageBytes = await File.ReadAllBytesAsync(package);
+#pragma warning disable CA5350 // The fixture mirrors CurseForge's provider SHA-1; local SHA-256 is asserted below.
+        var packageSha1 = Convert.ToHexString(SHA1.HashData(packageBytes)).ToLowerInvariant();
+#pragma warning restore CA5350
+        var packageSha256 = Convert.ToHexString(SHA256.HashData(packageBytes)).ToLowerInvariant();
+        var canonicalUrl = "https://mediafilez.forgecdn.net/files/501/canonical-server.zip";
+        var ordering = new List<string>();
         var request = Request(definition.Id, package, "500") with
         {
             TargetVersion = Request(definition.Id, package, "500").TargetVersion with
@@ -490,14 +933,48 @@ public sealed class VersionUpdateIntegrationTests : IAsyncLifetime
                 PackId = "123",
                 ProviderFileId = "501",
                 VersionName = "cf-new-version-label-sentinel",
-                FileName = "cf-file-name-sentinel.zip",
-                Sha1 = new string('a', 40)
+                Loader = "NeoForge",
+                DownloadUrl = "https://attacker.invalid/forged.jar",
+                FileName = "forged.jar",
+                FileSize = 1,
+                Sha1 = new string('a', 40),
+                Sha256 = new string('b', 64),
+                Sha512 = new string('c', 128),
+                PackageType = "jar"
             }
         };
+        var preflight = new RecordingCurseForgePreflight(
+            incoming => ReadyOfficialPreflight(incoming.OperationId) with
+            {
+                ProjectId = incoming.ProjectId,
+                ClientFileId = incoming.ClientFileId,
+                ServerPackFileId = incoming.ExpectedServerPackFileId,
+                ClientSizeBytes = packageBytes.LongLength,
+                ServerPackDownloadUrl = canonicalUrl,
+                ServerPackSha1 = packageSha1,
+                ServerPackSizeBytes = packageBytes.LongLength
+            }, ordering);
+        var secrets = new MemorySecrets();
+        secrets.SetSecret(CurseForgeUpdateProvider.ApiKeyName, "fixture-key");
+        using var api = new CurseForgeApiClient(
+            secrets,
+            new RecordingDownloadHandler(requestMessage =>
+            {
+                ordering.Add("download");
+                Assert.Equal(canonicalUrl, requestMessage.RequestUri!.AbsoluteUri);
+                Assert.Equal("fixture-key", requestMessage.Headers.GetValues("x-api-key").Single());
+                return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                {
+                    RequestMessage = requestMessage,
+                    Content = new ByteArrayContent(packageBytes)
+                };
+            }));
 
-        var result = await CreateUpdateService().DownloadAndVerifyOnlyAsync(definition, source, request);
+        var result = await CreateUpdateService(preflight, api)
+            .DownloadAndVerifyOnlyAsync(definition, source, request);
 
         Assert.True(result.Success, result.Message);
+        Assert.Equal(["preflight", "download"], ordering);
         var cache = Assert.Single(Directory.EnumerateFiles(paths.UpdateCache));
         Assert.Equal($"local-{request.OperationId:N}.package", Path.GetFileName(cache));
         await using var connection = new SqliteConnection($"Data Source={paths.DatabasePath}");
@@ -513,7 +990,7 @@ public sealed class VersionUpdateIntegrationTests : IAsyncLifetime
         Assert.Empty(reader.GetString(0));
         Assert.Empty(reader.GetString(1));
         Assert.Empty(reader.GetString(2));
-        Assert.Equal(request.TargetVersion.Sha256, reader.GetString(3));
+        Assert.Equal(packageSha256, reader.GetString(3));
         Assert.Empty(reader.GetString(4));
     }
 
@@ -602,6 +1079,64 @@ public sealed class VersionUpdateIntegrationTests : IAsyncLifetime
     }
 
     [Fact(Timeout = 45_000)]
+    public async Task Snapshot_rejects_a_reparse_tree_before_creating_any_output()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+        var definition = await CreateOldServerAsync();
+        var foreign = Path.Combine(root, "foreign-snapshot-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(foreign);
+        var foreignWorld = Path.Combine(foreign, "r.0.0.mca");
+        await File.WriteAllBytesAsync(foreignWorld, new byte[4_096]);
+        var link = Path.Combine(definition.RootPath, "linked-world");
+        CreateJunction(link, foreign);
+        try
+        {
+            using var exclusive = new FileStream(
+                foreignWorld, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+
+            await Assert.ThrowsAsync<InvalidDataException>(() =>
+                new VersionSnapshotService(paths, store).CreateAsync(
+                    definition, Source(definition.Id), "unsafe reparse fixture"));
+
+            Assert.False(Directory.Exists(
+                Path.Combine(paths.VersionSnapshots, definition.Id.ToString("D"))));
+        }
+        finally
+        {
+            DeleteJunction(link);
+        }
+    }
+
+    [Fact(Timeout = 45_000)]
+    public async Task Snapshot_rejects_an_oversized_inventory_before_creating_any_output()
+    {
+        var definition = await CreateOldServerAsync();
+
+        await Assert.ThrowsAsync<InvalidDataException>(() =>
+            new VersionSnapshotService(paths, store, maximumInventoryEntries: 1).CreateAsync(
+                definition, Source(definition.Id), "entry limit fixture"));
+
+        Assert.False(Directory.Exists(
+            Path.Combine(paths.VersionSnapshots, definition.Id.ToString("D"))));
+    }
+
+    [Fact(Timeout = 45_000)]
+    public async Task Snapshot_honors_pre_cancellation_before_creating_any_output()
+    {
+        var definition = await CreateOldServerAsync();
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            new VersionSnapshotService(paths, store).CreateAsync(
+                definition, Source(definition.Id), "cancelled fixture", cancellation.Token));
+
+        Assert.False(Directory.Exists(
+            Path.Combine(paths.VersionSnapshots, definition.Id.ToString("D"))));
+    }
+
+    [Fact(Timeout = 45_000)]
     public async Task Interrupted_post_switch_update_recovers_retained_previous_directory()
     {
         var definition = await CreateOldServerAsync();
@@ -662,18 +1197,106 @@ public sealed class VersionUpdateIntegrationTests : IAsyncLifetime
         };
     }
 
+    private static void CreateJunction(string link, string target)
+    {
+        using var process = Process.Start(new ProcessStartInfo(
+            "cmd.exe", $"/c mklink /J \"{link}\" \"{target}\"")
+        {
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true
+        }) ?? throw new InvalidOperationException("cmd.exe could not be started to create a junction.");
+        process.WaitForExit(20_000);
+        if (process.ExitCode != 0 || !Directory.Exists(link) ||
+            (File.GetAttributes(link) & FileAttributes.ReparsePoint) == 0)
+            throw new InvalidOperationException("The test junction could not be created on this filesystem.");
+    }
+
+    private static void DeleteJunction(string path)
+    {
+        if (Directory.Exists(path) &&
+            (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
+            Directory.Delete(path);
+    }
+
     private ManagedServer CreateManaged(ServerDefinition definition) =>
         new(definition, new ProcessStatisticsProvider(), new MinecraftStatusClient(),
             store, paths, loggerFactory.CreateLogger<ManagedServer>(), consoleCapacity: 2_000);
 
     private ServerPackUpdateService CreateUpdateService(
-        ICurseForgeModpackPreflightService? curseForgePreflight = null)
+        ICurseForgeModpackPreflightService? curseForgePreflight = null,
+        CurseForgeApiClient? curseForge = null,
+        IStorageSpaceProbe? storageSpace = null)
     {
         var snapshots = new VersionSnapshotService(paths, store);
         return new ServerPackUpdateService(paths, store, snapshots, new PackMigrationPlanner(),
             new ServerDetectionService(new JavaDiscoveryService()),
             new WorldManager(paths, new SafeFileService(paths)),
-            curseForgePreflight: curseForgePreflight);
+            curseForge: curseForge,
+            curseForgePreflight: curseForgePreflight,
+            storageSpace: storageSpace);
+    }
+
+    private static CurseForgeModpackPreflightResult ReadyOfficialPreflight(Guid operationId) => new()
+    {
+        OperationId = operationId,
+        ProjectId = "123",
+        ClientFileId = "500",
+        ServerPackFileId = "501",
+        State = CatalogReleasePreflightState.Ready,
+        Detail = "fixture ready",
+        MinecraftVersion = "1.21.1",
+        Loader = "NeoForge",
+        LoaderVersion = "21.1.200",
+        RequiredJavaMajor = 21,
+        ClientDownloadUrl = "https://mediafilez.forgecdn.net/files/500/actual-client.zip",
+        ClientSha1 = new string('d', 40),
+        ClientSha256 = new string('e', 64),
+        ClientSizeBytes = 21,
+        ServerPackDownloadUrl = "https://mediafilez.forgecdn.net/files/501/actual-server.zip",
+        ServerPackSha1 = new string('f', 40),
+        ServerPackSizeBytes = 22
+    };
+
+    private static CurseForgeGeneratedPackPlan GeneratedPlan(long totalBytes = 1_024)
+    {
+        const long maximumFileBytes = 512L * 1024 * 1024;
+        var files = new List<CurseForgeGeneratedFilePlan>();
+        var remaining = totalBytes;
+        var index = 0;
+        while (remaining > 0)
+        {
+            var size = Math.Min(remaining, maximumFileBytes);
+            files.Add(new CurseForgeGeneratedFilePlan
+            {
+                ProjectId = (700 + index).ToString(System.Globalization.CultureInfo.InvariantCulture),
+                FileId = (701 + index).ToString(System.Globalization.CultureInfo.InvariantCulture),
+                FileName = $"generated-fixture-{index}.jar",
+                DownloadUrl = $"https://mediafilez.forgecdn.net/files/{701 + index}/generated-fixture.jar",
+                SizeBytes = size,
+                ProviderSha1 = new string((char)('a' + index), 40),
+                RequiredBy =
+                [
+                    new CurseForgeGeneratedFileEvidence
+                    {
+                        Relation = CurseForgeGeneratedFileRelation.ManifestRequired,
+                        RequestedFileId = (701 + index).ToString(
+                            System.Globalization.CultureInfo.InvariantCulture)
+                    }
+                ]
+            });
+            remaining -= size;
+            index++;
+        }
+        return CurseForgeGeneratedPackPlanService.Seal(new CurseForgeGeneratedPackPlan
+        {
+            MinecraftVersion = "1.21.1",
+            Loader = "NeoForge",
+            LoaderVersion = "21.1.200",
+            TotalResolvedBytes = totalBytes,
+            RequiredFiles = files
+        });
     }
 
     private string CreateUpdatePackage(string name, string mode)
@@ -690,6 +1313,63 @@ public sealed class VersionUpdateIntegrationTests : IAsyncLifetime
         ZipFile.CreateFromDirectory(staging, package);
         Directory.Delete(staging, recursive: true);
         return package;
+    }
+
+    private static void CreateSyntheticArchive(
+        string path,
+        string entryName,
+        uint compressedBytes,
+        uint expandedBytes)
+    {
+        var name = Encoding.UTF8.GetBytes(entryName);
+        using var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+        using var writer = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: true);
+
+        writer.Write(0x04034b50u);
+        writer.Write((ushort)20);
+        writer.Write((ushort)0);
+        writer.Write((ushort)8);
+        writer.Write((ushort)0);
+        writer.Write((ushort)0);
+        writer.Write(0u);
+        writer.Write(compressedBytes);
+        writer.Write(expandedBytes);
+        writer.Write(checked((ushort)name.Length));
+        writer.Write((ushort)0);
+        writer.Write(name);
+        writer.Flush();
+        stream.Position = checked(stream.Position + compressedBytes);
+
+        var centralOffset = checked((uint)stream.Position);
+        writer.Write(0x02014b50u);
+        writer.Write((ushort)20);
+        writer.Write((ushort)20);
+        writer.Write((ushort)0);
+        writer.Write((ushort)8);
+        writer.Write((ushort)0);
+        writer.Write((ushort)0);
+        writer.Write(0u);
+        writer.Write(compressedBytes);
+        writer.Write(expandedBytes);
+        writer.Write(checked((ushort)name.Length));
+        writer.Write((ushort)0);
+        writer.Write((ushort)0);
+        writer.Write((ushort)0);
+        writer.Write((ushort)0);
+        writer.Write(0u);
+        writer.Write(0u);
+        writer.Write(name);
+        writer.Flush();
+        var centralSize = checked((uint)(stream.Position - centralOffset));
+
+        writer.Write(0x06054b50u);
+        writer.Write((ushort)0);
+        writer.Write((ushort)0);
+        writer.Write((ushort)1);
+        writer.Write((ushort)1);
+        writer.Write(centralSize);
+        writer.Write(centralOffset);
+        writer.Write((ushort)0);
     }
 
     private static UpdateSource Source(Guid serverId) => new()
@@ -782,6 +1462,47 @@ public sealed class VersionUpdateIntegrationTests : IAsyncLifetime
                 Detail = "fixture exact manifest rejection"
             });
         }
+    }
+
+    private sealed class RecordingCurseForgePreflight(
+        Func<CurseForgeModpackPreflightRequest, CurseForgeModpackPreflightResult> result,
+        ICollection<string> ordering) : ICurseForgeModpackPreflightService
+    {
+        public Task<CurseForgeModpackPreflightResult> InspectAsync(
+            CurseForgeModpackPreflightRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            ordering.Add("preflight");
+            return Task.FromResult(result(request));
+        }
+    }
+
+    private sealed class RecordingDownloadHandler(
+        Func<HttpRequestMessage, HttpResponseMessage> response) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult(response(request));
+        }
+    }
+
+    private sealed class MemorySecrets : ISecretStore
+    {
+        private readonly Dictionary<string, string> values = new(StringComparer.Ordinal);
+        public bool Contains(string key) => values.ContainsKey(key);
+        public void SetSecret(string key, string value) => values[key] = value;
+        public string? GetSecret(string key) => values.GetValueOrDefault(key);
+        public void Delete(string key) => values.Remove(key);
+    }
+
+    private sealed class FixedStorageSpaceProbe(long availableBytes) : IStorageSpaceProbe
+    {
+        public StorageVolumeSpace GetSpace(string path) =>
+            new("fixture-volume", availableBytes);
     }
 
     public async Task DisposeAsync()

@@ -143,6 +143,8 @@ public sealed partial class JavaDiscoveryService
                     CreateNoWindow = true
                 }
             };
+            ChildProcessEnvironmentPolicy.Apply(process.StartInfo);
+            CurseForgeCredentialEnvironment.RemoveFromChild(process.StartInfo);
             process.Start();
             var stdout = process.StandardOutput.ReadToEndAsync(cancellationToken);
             var stderr = process.StandardError.ReadToEndAsync(cancellationToken);

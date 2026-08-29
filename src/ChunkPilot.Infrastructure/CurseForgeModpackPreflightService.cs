@@ -25,15 +25,21 @@ public sealed class CurseForgeModpackPreflightService : ICurseForgeModpackPrefli
     private readonly AppDataPaths paths;
     private readonly CurseForgeApiClient api;
     private readonly CurseForgePackManifestReader manifestReader;
+    private readonly CurseForgeGeneratedPackPlanService generatedPlans;
+    private readonly IStorageSpaceProbe storageSpace;
 
     public CurseForgeModpackPreflightService(
         AppDataPaths paths,
         CurseForgeApiClient api,
-        CurseForgePackManifestReader? manifestReader = null)
+        CurseForgePackManifestReader? manifestReader = null,
+        CurseForgeGeneratedPackPlanService? generatedPlans = null,
+        IStorageSpaceProbe? storageSpace = null)
     {
         this.paths = paths;
         this.api = api;
         this.manifestReader = manifestReader ?? new CurseForgePackManifestReader();
+        this.generatedPlans = generatedPlans ?? new CurseForgeGeneratedPackPlanService(api);
+        this.storageSpace = storageSpace ?? SystemStorageSpaceProbe.Instance;
     }
 
     public async Task<CurseForgeModpackPreflightResult> InspectAsync(
@@ -60,6 +66,15 @@ public sealed class CurseForgeModpackPreflightService : ICurseForgeModpackPrefli
         try
         {
             var file = await ResolveExactClientFileAsync(request, cancellationToken).ConfigureAwait(false);
+            StorageSpaceGuard.EnsureAvailable(
+                storageSpace,
+                [
+                    new StorageSpaceRequirement(
+                        stagingRoot,
+                        "CurseForge client-manifest preflight staging",
+                        StorageSpaceGuard.SaturatingAdd(
+                            file.SizeBytes, StorageSpaceGuard.DownloadSafetyReserveBytes))
+                ]);
             var localSha256 = await DownloadAndVerifyAsync(file, archivePath, cancellationToken)
                 .ConfigureAwait(false);
             CurseForgePackManifest manifest;
@@ -85,9 +100,28 @@ public sealed class CurseForgeModpackPreflightService : ICurseForgeModpackPrefli
                     "This exact client manifest uses a Minecraft version with no supported managed Java requirement.");
             }
 
+            var serverPack = request.ExpectedServerPackFileId.Length == 0
+                ? null
+                : await ResolveExactServerPackAsync(
+                    request.ProjectId, request.ExpectedServerPackFileId, cancellationToken).ConfigureAwait(false);
+            CurseForgeGeneratedPackPlan? generatedPlan = null;
+            if (serverPack is null)
+            {
+                try
+                {
+                    generatedPlan = await generatedPlans.ResolveAsync(manifest, cancellationToken)
+                        .ConfigureAwait(false);
+                }
+                catch (InvalidDataException exception)
+                {
+                    return Result(request, file, localSha256, CatalogReleasePreflightState.Unsupported,
+                        $"This exact client archive cannot produce a safe generated server candidate: {exception.Message}",
+                        manifest, requiredJava.Value);
+                }
+            }
             return Result(request, file, localSha256, CatalogReleasePreflightState.Ready,
                 $"Verified the exact client manifest: {manifest.Loader} {manifest.LoaderVersion} for Minecraft {manifest.MinecraftVersion}.",
-                manifest, requiredJava.Value);
+                manifest, requiredJava.Value, serverPack, generatedPlan);
         }
         finally
         {
@@ -150,6 +184,46 @@ public sealed class CurseForgeModpackPreflightService : ICurseForgeModpackPrefli
             downloadUri, sha1, size.Value);
     }
 
+    private async Task<ExactServerPack> ResolveExactServerPackAsync(
+        string projectId,
+        string serverPackFileId,
+        CancellationToken cancellationToken)
+    {
+        using var fileDocument = await api.GetJsonAsync(
+            $"/v1/mods/{Uri.EscapeDataString(projectId)}/files/{Uri.EscapeDataString(serverPackFileId)}",
+            cancellationToken).ConfigureAwait(false);
+        var file = RequireObject(fileDocument.RootElement, "data", "server-pack file");
+        if (!Text(file, "id").Equals(serverPackFileId, StringComparison.Ordinal) ||
+            !Text(file, "modId").Equals(projectId, StringComparison.Ordinal) ||
+            !True(file, "isAvailable"))
+            throw new InvalidDataException("CurseForge returned a contradictory or unavailable server-pack file identity.");
+
+        var fileName = Text(file, "fileName");
+        var size = Number(file, "fileLength");
+        var sha1 = CurseForgeCatalogProvider.Hash(file, 1).Trim().ToLowerInvariant();
+        if (!fileName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) ||
+            size is null or <= 0 or > ServerImportInspectionService.MaximumCompressedBytes ||
+            sha1.Length != 40 || !sha1.All(Uri.IsHexDigit))
+            throw new InvalidDataException(
+                "The exact CurseForge server-pack file lacks a bounded ZIP identity and provider SHA-1.");
+
+        var downloadUrl = Text(file, "downloadUrl");
+        if (downloadUrl.Length == 0)
+        {
+            using var downloadDocument = await api.GetJsonAsync(
+                $"/v1/mods/{Uri.EscapeDataString(projectId)}/files/{Uri.EscapeDataString(serverPackFileId)}/download-url",
+                cancellationToken).ConfigureAwait(false);
+            if (downloadDocument.RootElement.TryGetProperty("data", out var value) &&
+                value.ValueKind == JsonValueKind.String)
+                downloadUrl = value.GetString() ?? "";
+        }
+        if (!Uri.TryCreate(downloadUrl, UriKind.Absolute, out var downloadUri) ||
+            !CurseForgeApiClient.IsApprovedDownloadUri(downloadUri))
+            throw new InvalidDataException("The exact CurseForge server-pack file has no approved CDN download.");
+
+        return new ExactServerPack(downloadUri, sha1, size.Value);
+    }
+
     private async Task<string> DownloadAndVerifyAsync(
         ExactClientFile file,
         string archivePath,
@@ -195,7 +269,9 @@ public sealed class CurseForgeModpackPreflightService : ICurseForgeModpackPrefli
         CatalogReleasePreflightState state,
         string detail,
         CurseForgePackManifest? manifest = null,
-        int requiredJavaMajor = 0) => new()
+        int requiredJavaMajor = 0,
+        ExactServerPack? serverPack = null,
+        CurseForgeGeneratedPackPlan? generatedPlan = null) => new()
         {
             OperationId = request.OperationId,
             ProjectId = request.ProjectId,
@@ -210,7 +286,11 @@ public sealed class CurseForgeModpackPreflightService : ICurseForgeModpackPrefli
             ClientDownloadUrl = file.DownloadUri.AbsoluteUri,
             ClientSha1 = file.Sha1,
             ClientSha256 = localSha256,
-            ClientSizeBytes = file.SizeBytes
+            ClientSizeBytes = file.SizeBytes,
+            ServerPackDownloadUrl = serverPack?.DownloadUri.AbsoluteUri ?? "",
+            ServerPackSha1 = serverPack?.Sha1 ?? "",
+            ServerPackSizeBytes = serverPack?.SizeBytes,
+            GeneratedPackPlan = generatedPlan
         };
 
     private static void DeleteOwnedStaging(string stagingRoot, string stagingParent, Guid operationId)
@@ -252,4 +332,6 @@ public sealed class CurseForgeModpackPreflightService : ICurseForgeModpackPrefli
         Uri DownloadUri,
         string Sha1,
         long SizeBytes);
+
+    private sealed record ExactServerPack(Uri DownloadUri, string Sha1, long SizeBytes);
 }

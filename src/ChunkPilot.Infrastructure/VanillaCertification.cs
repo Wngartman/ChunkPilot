@@ -532,6 +532,8 @@ public sealed class VanillaRuntimeCertifier : IVanillaRuntimeCertifier, IAsyncDi
             };
             foreach (var argument in new[] { "-Xms256M", "-Xmx1024M", "-jar", artifact, version.LaunchProfile.Arguments })
                 if (!string.IsNullOrWhiteSpace(argument)) start.ArgumentList.Add(argument);
+            ChildProcessEnvironmentPolicy.Apply(start);
+            CurseForgeCredentialEnvironment.RemoveFromChild(start);
             process = Process.Start(start) ?? throw new InvalidOperationException("Windows did not start the owned Java process.");
             void ReadLine(string source, string? line)
             {
@@ -685,6 +687,8 @@ public sealed class VanillaRuntimeCertifier : IVanillaRuntimeCertifier, IAsyncDi
         };
         start.ArgumentList.Add("-XshowSettings:properties");
         start.ArgumentList.Add("-version");
+        ChildProcessEnvironmentPolicy.Apply(start);
+        CurseForgeCredentialEnvironment.RemoveFromChild(start);
         using var process = Process.Start(start) ??
             throw new InvalidOperationException("Windows did not start the explicitly supplied Java health check.");
         var outputTask = process.StandardOutput.ReadToEndAsync(cancellationToken);

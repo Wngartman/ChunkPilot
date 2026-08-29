@@ -90,6 +90,8 @@ public sealed class TerrariaRuntimeCertifier
             start.ArgumentList.Add("-noupnp");
             start.ArgumentList.Add("-ip");
             start.ArgumentList.Add("127.0.0.1");
+            ChildProcessEnvironmentPolicy.Apply(start);
+            CurseForgeCredentialEnvironment.RemoveFromChild(start);
             progress?.Report($"Launching Terraria {release.Version} on loopback port {port}");
             process = new Process { StartInfo = start, EnableRaisingEvents = true };
             if (!process.Start()) throw new InvalidOperationException("TerrariaServer.exe did not start.");

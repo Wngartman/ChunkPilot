@@ -197,39 +197,58 @@ public sealed class CurseForgePackManifestReader
 /// </summary>
 public sealed class CurseForgePackService
 {
-    private const int MaximumResolvedFiles = 2_000;
-    private const long MaximumResolvedBytes = 8L * 1024 * 1024 * 1024;
     private static readonly HashSet<string> AllowedOverrideRoots = new(StringComparer.OrdinalIgnoreCase)
     {
         "config", "defaultconfigs"
     };
 
     private readonly CurseForgePackManifestReader reader;
-    private readonly CurseForgePluginProvider mods;
     private readonly CurseForgeApiClient api;
     private readonly LoaderInstallationService loaders;
+    private readonly CurseForgeGeneratedPackPlanService plans;
 
     public CurseForgePackService(
         CurseForgeApiClient api,
         CurseForgePackManifestReader? reader = null,
         CurseForgePluginProvider? mods = null,
-        LoaderInstallationService? loaders = null)
+        LoaderInstallationService? loaders = null,
+        CurseForgeGeneratedPackPlanService? plans = null)
     {
         this.api = api;
         this.reader = reader ?? new CurseForgePackManifestReader();
-        this.mods = mods ?? new CurseForgePluginProvider(api);
         this.loaders = loaders ?? new LoaderInstallationService(new LoaderMetadataService());
+        this.plans = plans ?? new CurseForgeGeneratedPackPlanService(api, mods);
     }
 
     public Task<CurseForgePackManifest> InspectAsync(string archivePath, CancellationToken cancellationToken = default) =>
         reader.ReadAsync(archivePath, cancellationToken);
 
-    public async Task<CurseForgePackLaunchResult> MaterializeAndInstallAsync(
+    public Task<CurseForgePackLaunchResult> MaterializeAndInstallAsync(
         string archivePath,
         string destinationRoot,
         string javaPath,
         string logPath,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        MaterializeAndInstallCoreAsync(archivePath, destinationRoot, javaPath, logPath, null,
+            cancellationToken);
+
+    public Task<CurseForgePackLaunchResult> MaterializeAndInstallAsync(
+        string archivePath,
+        string destinationRoot,
+        string javaPath,
+        string logPath,
+        CurseForgeGeneratedPackPlan reviewedPlan,
+        CancellationToken cancellationToken = default) =>
+        MaterializeAndInstallCoreAsync(archivePath, destinationRoot, javaPath, logPath,
+            reviewedPlan ?? throw new ArgumentNullException(nameof(reviewedPlan)), cancellationToken);
+
+    private async Task<CurseForgePackLaunchResult> MaterializeAndInstallCoreAsync(
+        string archivePath,
+        string destinationRoot,
+        string javaPath,
+        string logPath,
+        CurseForgeGeneratedPackPlan? reviewedPlan,
+        CancellationToken cancellationToken)
     {
         if (!api.HasCredential)
             throw new InvalidOperationException("CurseForge is unavailable because the approved local native credential is missing.");
@@ -237,6 +256,9 @@ public sealed class CurseForgePackService
         if (!Directory.Exists(destination) || Directory.EnumerateFileSystemEntries(destination).Any())
             throw new IOException("The generated CurseForge candidate must start in an empty operation-owned staging directory.");
         var manifest = await reader.ReadAsync(archivePath, cancellationToken).ConfigureAwait(false);
+        var exactPlan = reviewedPlan is null
+            ? null
+            : CurseForgeGeneratedPackPlanService.ValidateAndClone(reviewedPlan, manifest);
         var isolated = destination + $".cfpack-materialized-{Guid.NewGuid():N}";
         Directory.CreateDirectory(isolated);
         try
@@ -244,8 +266,13 @@ public sealed class CurseForgePackService
             await ServerImportInspectionService.ExtractAsync(archivePath, isolated, cancellationToken).ConfigureAwait(false);
             var ignoredOverrides = await CopySafeOverridesAsync(isolated, destination, manifest.OverridesDirectory,
                 cancellationToken).ConfigureAwait(false);
-            var (resolved, optional) = await ResolveFilesAsync(manifest, cancellationToken).ConfigureAwait(false);
-            var materialized = await DownloadFilesAsync(resolved, destination, cancellationToken).ConfigureAwait(false);
+            exactPlan ??= await plans.ResolveAsync(manifest, cancellationToken).ConfigureAwait(false);
+            var materialized = await DownloadFilesAsync(
+                exactPlan.RequiredFiles, destination, cancellationToken).ConfigureAwait(false);
+            var optional = exactPlan.OptionalExclusions.Select(exclusion => exclusion.FileId.Length > 0
+                    ? $"{exclusion.ProjectId}/{exclusion.FileId}"
+                    : exclusion.ProjectId)
+                .Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
             var installed = await loaders.InstallAsync(manifest.Loader, manifest.MinecraftVersion,
                 manifest.LoaderVersion, javaPath, destination, logPath, cancellationToken).ConfigureAwait(false);
             var target = string.IsNullOrWhiteSpace(installed.ArgumentsFile)
@@ -261,10 +288,13 @@ public sealed class CurseForgePackService
                 manifest.LoaderVersion,
                 generatedAtUtc = DateTimeOffset.UtcNow,
                 validationState = "pending-first-launch",
+                generatedPlanDigest = exactPlan.Digest,
+                exactPlan.TotalResolvedBytes,
+                exactPlan.OptionalReviewSummary,
                 materializedFiles = materialized
                     .Select(file => CreateInstalledFileEvidence(destination, file))
                     .ToArray(),
-                skippedOptionalProjectCount = optional.Count,
+                skippedOptionalProjectCount = optional.Length,
                 ignoredOverridePathCount = ignoredOverrides.Count
             };
             await File.WriteAllTextAsync(Path.Combine(evidenceRoot, "curseforge-pack-evidence.json"),
@@ -278,80 +308,6 @@ public sealed class CurseForgePackService
         finally
         {
             TryDeleteOwnedDirectory(isolated);
-        }
-    }
-
-    private async Task<(IReadOnlyList<(PluginRelease Release, bool ManifestEntry)> Releases,
-        IReadOnlyList<string> Optional)> ResolveFilesAsync(
-        CurseForgePackManifest manifest,
-        CancellationToken cancellationToken)
-    {
-        var resolved = new Dictionary<string, (PluginRelease Release, bool ManifestEntry)>(StringComparer.Ordinal);
-        var visiting = new HashSet<string>(StringComparer.Ordinal);
-        var optional = new HashSet<string>(StringComparer.Ordinal);
-        var incompatible = new List<(string Owner, string Target)>();
-        foreach (var entry in manifest.Files)
-        {
-            if (!entry.Required)
-            {
-                optional.Add($"{entry.ProjectId}/{entry.FileId}");
-                continue;
-            }
-            await VisitAsync(entry.ProjectId.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                entry.FileId.ToString(System.Globalization.CultureInfo.InvariantCulture), true).ConfigureAwait(false);
-        }
-        foreach (var relation in incompatible)
-            if (resolved.ContainsKey(relation.Target))
-                throw new InvalidDataException(
-                    $"CurseForge project {relation.Owner} declares project {relation.Target} incompatible with this candidate.");
-        return (resolved.Values.ToArray(), optional.Order(StringComparer.Ordinal).ToArray());
-
-        async Task VisitAsync(string projectId, string? fileId, bool manifestEntry)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (resolved.ContainsKey(projectId)) return;
-            if (resolved.Count >= MaximumResolvedFiles)
-                throw new InvalidDataException($"The CurseForge dependency graph exceeds {MaximumResolvedFiles:N0} exact files.");
-            if (!visiting.Add(projectId)) return; // Cycle: the exact project is already being resolved once.
-            try
-            {
-                var release = await mods.ResolveReleaseAsync(projectId, manifest.MinecraftVersion,
-                    manifest.Loader.ToString(), fileId, cancellationToken).ConfigureAwait(false)
-                    ?? throw new InvalidDataException(
-                        $"Required CurseForge project/file {projectId}/{fileId ?? "compatible release"} is unavailable, restricted, or incompatible.");
-                if (!release.ProjectId.Equals(projectId, StringComparison.Ordinal) ||
-                    fileId is not null && !release.VersionId.Equals(fileId, StringComparison.Ordinal))
-                    throw new InvalidDataException("CurseForge returned contradictory exact dependency identity.");
-                resolved.Add(projectId, (release, manifestEntry));
-                foreach (var dependency in release.Dependencies)
-                {
-                    switch (dependency.Type.ToLowerInvariant())
-                    {
-                        case "required":
-                            await VisitAsync(dependency.ProjectId,
-                                string.IsNullOrWhiteSpace(dependency.VersionId) ? null : dependency.VersionId,
-                                false).ConfigureAwait(false);
-                            break;
-                        case "optional":
-                            optional.Add(dependency.ProjectId);
-                            break;
-                        case "incompatible":
-                            incompatible.Add((projectId, dependency.ProjectId));
-                            break;
-                        case "embedded":
-                        case "include":
-                        case "tool":
-                            break;
-                        default:
-                            throw new InvalidDataException(
-                                $"CurseForge returned an unknown dependency relationship for project {projectId}.");
-                    }
-                }
-            }
-            finally
-            {
-                visiting.Remove(projectId);
-            }
         }
     }
 
@@ -374,7 +330,7 @@ public sealed class CurseForgePackService
     }
 
     private async Task<IReadOnlyList<CurseForgeMaterializedFile>> DownloadFilesAsync(
-        IReadOnlyList<(PluginRelease Release, bool ManifestEntry)> releases,
+        IReadOnlyList<CurseForgeGeneratedFilePlan> releases,
         string destination,
         CancellationToken cancellationToken)
     {
@@ -383,14 +339,13 @@ public sealed class CurseForgePackService
         var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var result = new List<CurseForgeMaterializedFile>(releases.Count);
         long totalBytes = 0;
-        foreach (var item in releases.OrderBy(item => item.Release.ProjectId, StringComparer.Ordinal))
+        foreach (var release in releases)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var release = item.Release;
             if (!names.Add(release.FileName))
                 throw new InvalidDataException($"CurseForge files collide on the Windows destination name {release.FileName}.");
             totalBytes = checked(totalBytes + release.SizeBytes);
-            if (totalBytes > MaximumResolvedBytes)
+            if (totalBytes > CurseForgeGeneratedPackPlanService.MaximumResolvedBytes)
                 throw new InvalidDataException("The generated CurseForge candidate exceeds the 8 GiB resolved-file limit.");
             if (!Uri.TryCreate(release.DownloadUrl, UriKind.Absolute, out var uri) ||
                 !CurseForgeApiClient.IsApprovedDownloadUri(uri))
@@ -398,7 +353,7 @@ public sealed class CurseForgePackService
             var target = Path.Combine(modsRoot, release.FileName);
             using var response = await api.SendDownloadAsync(uri, cancellationToken).ConfigureAwait(false);
             if (response.Content.Headers.ContentLength is { } declared && declared != release.SizeBytes)
-                throw new InvalidDataException($"CurseForge file {release.VersionId} changed size after review.");
+                throw new InvalidDataException($"CurseForge file {release.FileId} changed size after review.");
             await using (var input = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false))
             await using (var output = new FileStream(target, FileMode.CreateNew, FileAccess.Write, FileShare.None,
                              128 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan))
@@ -411,26 +366,29 @@ public sealed class CurseForgePackService
                     if (read == 0) break;
                     copied = checked(copied + read);
                     if (copied > release.SizeBytes)
-                        throw new InvalidDataException($"CurseForge file {release.VersionId} exceeded its declared size.");
+                        throw new InvalidDataException($"CurseForge file {release.FileId} exceeded its declared size.");
                     await output.WriteAsync(buffer.AsMemory(0, read), cancellationToken).ConfigureAwait(false);
                 }
                 if (copied != release.SizeBytes)
-                    throw new InvalidDataException($"CurseForge file {release.VersionId} ended before its declared size.");
+                    throw new InvalidDataException($"CurseForge file {release.FileId} ended before its declared size.");
             }
 #pragma warning disable CA5350 // CurseForge publishes SHA-1 as provider identity; every accepted file also receives a local SHA-256 baseline below.
             var actualSha1 = Hash(target, SHA1.Create());
 #pragma warning restore CA5350
-            if (!actualSha1.Equals(release.Sha1, StringComparison.OrdinalIgnoreCase))
+            if (!actualSha1.Equals(release.ProviderSha1, StringComparison.OrdinalIgnoreCase))
             {
                 File.Delete(target);
-                throw new InvalidDataException($"CurseForge SHA-1 verification failed for exact file {release.VersionId}.");
+                throw new InvalidDataException($"CurseForge SHA-1 verification failed for exact file {release.FileId}.");
             }
             var localSha256 = Hash(target, SHA256.Create());
             result.Add(new CurseForgeMaterializedFile(long.Parse(release.ProjectId,
                     System.Globalization.CultureInfo.InvariantCulture),
-                long.Parse(release.VersionId, System.Globalization.CultureInfo.InvariantCulture),
-                PersistentDataClassifier.Normalize(Path.GetRelativePath(destination, target)), release.Sha1,
-                localSha256, new FileInfo(target).Length, item.ManifestEntry, "unknown-until-staged-validation"));
+                long.Parse(release.FileId, System.Globalization.CultureInfo.InvariantCulture),
+                PersistentDataClassifier.Normalize(Path.GetRelativePath(destination, target)), release.ProviderSha1,
+                localSha256, new FileInfo(target).Length,
+                release.RequiredBy.Any(evidence =>
+                    evidence.Relation == CurseForgeGeneratedFileRelation.ManifestRequired),
+                "unknown-until-staged-validation"));
         }
         return result;
     }

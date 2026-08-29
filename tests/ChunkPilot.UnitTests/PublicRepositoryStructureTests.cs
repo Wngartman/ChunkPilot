@@ -16,7 +16,7 @@ public sealed class PublicRepositoryStructureTests
         };
         var allowedFiles = new HashSet<string>(StringComparer.Ordinal)
         {
-            ".editorconfig", ".gitattributes", ".gitignore", "AGENTS.md", "CHANGELOG.md",
+            ".editorconfig", ".gitattributes", ".gitignore", ".gitleaksignore", "AGENTS.md", "CHANGELOG.md",
             "ChunkPilot.sln", "CONTRIBUTING.md", "Directory.Build.props", "Directory.Build.targets",
             "Directory.Packages.props", "global.json", "README.md", "SECURITY.md"
         };

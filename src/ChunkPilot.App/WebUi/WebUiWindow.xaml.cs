@@ -25,7 +25,8 @@ public partial class WebUiWindow : Window
     internal static readonly TimeSpan ActivePresentationRefreshInterval = TimeSpan.FromSeconds(1);
     internal static readonly TimeSpan QuiescentPresentationRefreshInterval = TimeSpan.FromSeconds(3);
     internal static bool RequiresFullPresentationRefresh(string method) =>
-        method is not "workspace.load" and not "players.head" and not "help.openExternal" &&
+        method is not "workspace.load" and not "players.head" and not "help.openExternal" and
+            not "modpacks.invalidatePreflight" and not "content.invalidatePlan" &&
         !method.StartsWith("connectivity.", StringComparison.Ordinal);
     internal static bool IsDeferredLifecycleMethod(string method) =>
         method is "servers.start" or "servers.stop" or "servers.restart";
@@ -67,6 +68,8 @@ public partial class WebUiWindow : Window
     private readonly HashSet<Guid> observedContentOperations = [];
     private readonly HashSet<Guid> observedUpdateOperations = [];
     private readonly Dictionary<string, CatalogItem> modpackCatalog = new(StringComparer.OrdinalIgnoreCase);
+    private readonly CurseForgePreflightEvidenceStore curseForgePreflightEvidence = new();
+    private readonly CurseForgeManagedContentPlanEvidenceStore curseForgeContentPlanEvidence = new();
     private Guid sessionId;
     private string sessionCapability = "";
     private bool refreshInProgress;
@@ -300,14 +303,28 @@ public partial class WebUiWindow : Window
         "plugins.plan" or "mods.plan" or
         "plugins.install" or "mods.install" or
         "plugins.installPlan" or "mods.installPlan" or
-        "content.operations";
+        "content.operations" or "content.invalidatePlan";
 
     private async Task<JsonNode?> DispatchAddonRequestAsync(
         string method,
         JsonObject parameters,
         CancellationToken cancellationToken)
     {
-        var serverId = RequireCurrentAddonServer(parameters, cancellationToken);
+        if (method == "content.invalidatePlan")
+        {
+            if (!Guid.TryParse(RequiredString(parameters, "authorizationId", 64), out var authorizationId) ||
+                authorizationId == Guid.Empty)
+                throw new ArgumentException("A valid dependency-plan authorization ID is required.");
+            curseForgeContentPlanEvidence.InvalidateIfAuthorizationId(authorizationId);
+            await RevokeCurseForgeContentPlanAsync(authorizationId).ConfigureAwait(true);
+            return Accepted(method);
+        }
+
+        var deferCancellationForExactCleanup = method is
+            "plugins.plan" or "mods.plan" or "plugins.installPlan" or "mods.installPlan";
+        var serverId = RequireCurrentAddonServer(
+            parameters,
+            deferCancellationForExactCleanup ? CancellationToken.None : cancellationToken);
         switch (method)
         {
             case "plugins.providers":
@@ -359,19 +376,60 @@ public partial class WebUiWindow : Window
             case "plugins.plan":
             case "mods.plan":
             {
-                var plan = await ExecuteFencedAddonMetadataRequestAsync(
-                    serverId,
-                    () => viewModel.SelectedServer?.Definition.Id,
-                    token => client.SendAsync<PluginInstallPlan>(
-                        "PlanPluginProviderRelease",
-                        new PluginProviderPlanRequest(
-                            serverId,
-                            RequiredString(parameters, "projectId", 80),
-                            RequiredString(parameters, "versionId", 80),
-                            ParseAddonProvider(parameters)),
-                        token),
-                    cancellationToken).ConfigureAwait(true);
-                return JsonSerializer.SerializeToNode(plan, WebUiProtocol.Json);
+                var projectId = RequiredString(parameters, "projectId", 80);
+                var versionId = RequiredString(parameters, "versionId", 80);
+                var provider = ParseAddonProvider(parameters);
+                var invalidation = curseForgeContentPlanEvidence.InvalidateWithEvidence();
+                await RevokeCurseForgeContentPlanAsync(invalidation.AuthorizationId).ConfigureAwait(true);
+                Guid? provisionalAuthorization = null;
+                try
+                {
+                    var plan = await ExecuteFencedAddonMetadataRequestAsync(
+                        serverId,
+                        () => viewModel.SelectedServer?.Definition.Id,
+                        async token =>
+                        {
+                            var result = await client.SendAsync<PluginInstallPlan>(
+                                "PlanPluginProviderRelease",
+                                new PluginProviderPlanRequest(
+                                    serverId, projectId, versionId, provider),
+                                token).ConfigureAwait(true);
+                            provisionalAuthorization = result.Authorization?.AuthorizationId;
+                            return result;
+                        },
+                        cancellationToken).ConfigureAwait(true);
+                    if (provider == PluginProviderKind.CurseForge && plan.CanInstall)
+                    {
+                        var authorization = plan.Authorization ?? throw new InvalidDataException(
+                            "The reviewed CurseForge dependency plan lacks its exact Agent authorization.");
+                        if (!curseForgeContentPlanEvidence.TryCommit(
+                                invalidation.Generation, serverId, provider, projectId, versionId,
+                                authorization, out _))
+                            throw new InvalidOperationException(
+                                "The selected add-on release changed while its dependency plan was loading. Review it again.");
+                    }
+                    else
+                    {
+                        if (plan.Authorization is not null)
+                            throw new InvalidDataException(
+                                "Only an installable CurseForge dependency plan may carry Agent authorization.");
+                        if (!curseForgeContentPlanEvidence.IsCurrent(invalidation.Generation))
+                            throw new InvalidOperationException(
+                                "The selected add-on release changed while its dependency plan was loading. Review it again.");
+                    }
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var response = JsonSerializer.SerializeToNode(plan, WebUiProtocol.Json);
+                    provisionalAuthorization = null;
+                    return response;
+                }
+                finally
+                {
+                    if (provisionalAuthorization is { } authorizationId)
+                    {
+                        curseForgeContentPlanEvidence.InvalidateIfAuthorizationId(authorizationId);
+                        await RevokeCurseForgeContentPlanAsync(authorizationId).ConfigureAwait(true);
+                    }
+                }
             }
             case "plugins.install":
             case "mods.install":
@@ -379,25 +437,87 @@ public partial class WebUiWindow : Window
             case "mods.installPlan":
             {
                 var includeDependencies = method.EndsWith("installPlan", StringComparison.Ordinal);
-                var result = await ExecuteFencedAddonInstallRequestAsync(
-                    serverId,
-                    () => viewModel.SelectedServer?.Definition.Id,
-                    token => client.SendAsync<ManagedContentOperationSnapshot>(
-                        "BeginManagedContentInstall",
-                        new BeginManagedContentInstallRequest(
-                            serverId,
-                            RequiredString(parameters, "projectId", 80),
-                            RequiredString(parameters, "versionId", 80),
-                            includeDependencies,
-                            parameters["restartIfRunning"]?.GetValue<bool?>() ?? false,
-                            Guid.TryParse(OptionalString(parameters, "operationId", 64), out var operationId)
-                                ? operationId
-                                : Guid.NewGuid(),
-                            ParseAddonProvider(parameters)),
-                        token),
-                    EnsureContentOperationObserver,
-                    cancellationToken).ConfigureAwait(true);
-                return JsonSerializer.SerializeToNode(result, WebUiProtocol.Json);
+                Guid? authorizationToRevoke = TryReadManagedContentPlanAuthorizationId(parameters);
+                try
+                {
+                    var projectId = RequiredString(parameters, "projectId", 80);
+                    var versionId = RequiredString(parameters, "versionId", 80);
+                    var provider = ParseAddonProvider(parameters);
+                    ManagedContentPlanAuthorization? planAuthorization;
+                    try
+                    {
+                        planAuthorization = ParseManagedContentPlanAuthorization(parameters);
+                    }
+                    catch (ArgumentException)
+                    {
+                        authorizationToRevoke = curseForgeContentPlanEvidence.InvalidateIfSelection(
+                            serverId, provider, projectId, versionId);
+                        throw;
+                    }
+
+                    if (includeDependencies && provider == PluginProviderKind.CurseForge)
+                    {
+                        if (planAuthorization is null)
+                        {
+                            authorizationToRevoke = curseForgeContentPlanEvidence.InvalidateIfSelection(
+                                serverId, provider, projectId, versionId);
+                            throw new InvalidOperationException(
+                                "CurseForge dependency installation requires the exact reviewed plan authorization.");
+                        }
+                        authorizationToRevoke = planAuthorization.AuthorizationId;
+                        _ = curseForgeContentPlanEvidence.Consume(
+                            serverId, provider, projectId, versionId, planAuthorization);
+                    }
+                    else if (planAuthorization is not null)
+                    {
+                        authorizationToRevoke = planAuthorization.AuthorizationId;
+                        curseForgeContentPlanEvidence.InvalidateIfAuthorizationId(
+                            planAuthorization.AuthorizationId);
+                        throw new ArgumentException(
+                            "A dependency-plan authorization is valid only for a CurseForge dependency installation.");
+                    }
+
+                    var operationId = RequireClientOperationId(
+                        parameters, "managed-content");
+                    var request = new BeginManagedContentInstallRequest(
+                        serverId,
+                        projectId,
+                        versionId,
+                        includeDependencies,
+                        parameters["restartIfRunning"]?.GetValue<bool?>() ?? false,
+                        operationId,
+                        provider,
+                        planAuthorization);
+                    var result = await ExecuteFencedAddonInstallRequestAsync(
+                        serverId,
+                        () => viewModel.SelectedServer?.Definition.Id,
+                        async token =>
+                        {
+                            var accepted = await AgentOperationAcceptance.BeginManagedContentInstallAsync(
+                                request,
+                                beginToken => client.SendAsync<ManagedContentOperationSnapshot>(
+                                    "BeginManagedContentInstall", request, beginToken),
+                                fenceToken => client.SendAsync<ManagedContentCancellationFenceResult>(
+                                    "CancelOrFenceManagedContentOperation",
+                                    request,
+                                    fenceToken),
+                                token).ConfigureAwait(true);
+                            // A successful Agent response means the exact one-time plan was consumed.
+                            authorizationToRevoke = null;
+                            return accepted;
+                        },
+                        EnsureContentOperationObserver,
+                        cancellationToken).ConfigureAwait(true);
+                    return JsonSerializer.SerializeToNode(result, WebUiProtocol.Json);
+                }
+                finally
+                {
+                    if (authorizationToRevoke is { } authorizationId)
+                    {
+                        curseForgeContentPlanEvidence.InvalidateIfAuthorizationId(authorizationId);
+                        await RevokeCurseForgeContentPlanAsync(authorizationId).ConfigureAwait(true);
+                    }
+                }
             }
             case "content.operations":
             {
@@ -512,9 +632,16 @@ public partial class WebUiWindow : Window
                 return snapshots.Capture(viewModel);
             case "snapshot.selectServer":
                 if (TryServer(parameters, out var selected))
+                {
+                    await InvalidateCurseForgeContentPlanForServerChangeAsync(
+                        selected?.Definition.Id).ConfigureAwait(true);
                     viewModel.SelectServerCommand.Execute(selected);
+                }
                 else
+                {
+                    await InvalidateCurseForgeContentPlanForServerChangeAsync(null).ConfigureAwait(true);
                     viewModel.NavigateCommand.Execute("Servers");
+                }
                 return snapshots.Capture(viewModel);
             case "window.drag":
                 DragFromWebUi();
@@ -632,6 +759,9 @@ public partial class WebUiWindow : Window
                 return await PreflightCurseForgeModpackAsync(parameters, CancellationToken.None).ConfigureAwait(true);
             case "modpacks.image":
                 return await LoadModpackImageAsync(parameters, CancellationToken.None).ConfigureAwait(true);
+            case "modpacks.invalidatePreflight":
+                await InvalidateCurseForgePreflightAsync().ConfigureAwait(true);
+                return Accepted(method);
             case "modpacks.chooseLocal":
                 return await ChooseLocalServerImportAsync(parameters).ConfigureAwait(true);
             case "creation.chooseLegacyArtifact":
@@ -1740,6 +1870,14 @@ public partial class WebUiWindow : Window
         JsonObject parameters,
         CancellationToken cancellationToken)
     {
+        var invalidation = curseForgePreflightEvidence.InvalidateWithEvidence();
+        await RevokeCurseForgePreflightAsync(invalidation.OperationId).ConfigureAwait(true);
+        var evidenceGeneration = invalidation.Generation;
+        if (!Guid.TryParse(RequiredString(parameters, "reviewId", 64), out var reviewId) ||
+            reviewId == Guid.Empty)
+            throw new ArgumentException("The CurseForge selection review identity is invalid.");
+        var selectionMethod = CurseForgePreflightEvidence.RequireSelectionMethod(
+            RequiredString(parameters, "modpackSelectionMethod", 16));
         var projectId = RequiredString(parameters, "projectId", 80);
         var versionId = RequiredString(parameters, "versionId", 80);
         var key = CatalogKey(CatalogProvider.CurseForge, projectId);
@@ -1755,29 +1893,52 @@ public partial class WebUiWindow : Window
               release.ClientSizeBytes is > 0))
             throw new ArgumentException("This exact CurseForge release has no integrity-verifiable server path.");
 
+        var preflightOperationId = Guid.NewGuid();
+        await using var revocation = new CurseForgePreflightRevocationLease(
+            preflightOperationId,
+            async operationId =>
+            {
+                curseForgePreflightEvidence.InvalidateIfOperationId(operationId);
+                await RevokeCurseForgePreflightAsync(operationId).ConfigureAwait(true);
+            });
         var result = await client.SendAsync<CurseForgeModpackPreflightResult>(
             "PreflightCurseForgeModpack",
             new CurseForgeModpackPreflightRequest(
-                Guid.NewGuid(), project.ProjectId, release.ClientFileId, release.ServerPackFileId),
+                preflightOperationId, project.ProjectId, release.ClientFileId, release.ServerPackFileId),
             cancellationToken).ConfigureAwait(true);
         if (!result.ProjectId.Equals(project.ProjectId, StringComparison.Ordinal) ||
             !result.ClientFileId.Equals(release.ClientFileId, StringComparison.Ordinal) ||
             !result.ServerPackFileId.Equals(release.ServerPackFileId, StringComparison.Ordinal) ||
-            result.OperationId == Guid.Empty)
+            result.OperationId != preflightOperationId)
             throw new InvalidDataException("CurseForge preflight returned a contradictory release identity.");
+        if (result.State != CatalogReleasePreflightState.Ready)
+            revocation.Complete();
 
-        var updated = release with
+        cancellationToken.ThrowIfCancellationRequested();
+        CurseForgePreflightEvidence? evidence = null;
+        if (result.State == CatalogReleasePreflightState.Ready &&
+            !curseForgePreflightEvidence.TryCommit(
+                evidenceGeneration, reviewId, selectionMethod, project, release, result,
+                DateTimeOffset.UtcNow, out evidence))
         {
-            MinecraftVersion = result.State == CatalogReleasePreflightState.Ready
-                ? result.MinecraftVersion : release.MinecraftVersion,
-            Loader = result.State == CatalogReleasePreflightState.Ready ? result.Loader : release.Loader,
-            LoaderVersion = result.State == CatalogReleasePreflightState.Ready ? result.LoaderVersion : "",
-            RequiredJavaMajor = result.State == CatalogReleasePreflightState.Ready
-                ? result.RequiredJavaMajor : release.RequiredJavaMajor,
+            throw new InvalidOperationException(
+                "The selected CurseForge release changed while inspection was running. Inspect it again.");
+        }
+        if (result.State != CatalogReleasePreflightState.Ready &&
+            !curseForgePreflightEvidence.IsCurrent(evidenceGeneration))
+        {
+            throw new InvalidOperationException(
+                "The selected CurseForge release changed while inspection was running. Inspect it again.");
+        }
+
+        var updated = (evidence?.ApplyTo(release) ?? release with
+        {
             ClientDownloadUrl = result.ClientDownloadUrl,
             ClientSha1 = result.ClientSha1,
             ClientSha256 = result.ClientSha256,
-            ClientSizeBytes = result.ClientSizeBytes,
+            ClientSizeBytes = result.ClientSizeBytes
+        }) with
+        {
             CreationPreflightState = result.State,
             CreationPreflightDetail = result.Detail
         };
@@ -1788,7 +1949,60 @@ public partial class WebUiWindow : Window
                     ? updated : candidate).ToArray()
         };
         modpackCatalog[key] = project;
-        return JsonSerializer.SerializeToNode(ToWebModpackRelease(project, updated), WebUiProtocol.Json);
+        cancellationToken.ThrowIfCancellationRequested();
+        var response = JsonSerializer.SerializeToNode(
+            ToWebModpackRelease(project, updated), WebUiProtocol.Json);
+        revocation.Complete();
+        return response;
+    }
+
+    private async Task InvalidateCurseForgePreflightAsync()
+    {
+        var invalidation = curseForgePreflightEvidence.InvalidateWithEvidence();
+        await RevokeCurseForgePreflightAsync(invalidation.OperationId).ConfigureAwait(true);
+    }
+
+    private async Task RevokeCurseForgePreflightAsync(Guid? operationId)
+    {
+        if (operationId is not { } exactOperationId || exactOperationId == Guid.Empty)
+            return;
+        try
+        {
+            _ = await client.SendAsync<OperationResult>(
+                "RevokeCurseForgeModpackPreflight",
+                new RevokeCurseForgeModpackPreflightRequest(exactOperationId),
+                CancellationToken.None).ConfigureAwait(true);
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            // Revocation is exact and idempotent. If the Agent is reconnecting, its short monotonic
+            // authorization lifetime remains the fail-closed boundary and no creation can use a
+            // locally invalidated review.
+        }
+    }
+
+    private async Task InvalidateCurseForgeContentPlanForServerChangeAsync(Guid? selectedServerId)
+    {
+        var invalidation = curseForgeContentPlanEvidence.InvalidateForServerChange(selectedServerId);
+        await RevokeCurseForgeContentPlanAsync(invalidation.AuthorizationId).ConfigureAwait(true);
+    }
+
+    private async Task RevokeCurseForgeContentPlanAsync(Guid? authorizationId)
+    {
+        if (authorizationId is not { } exactAuthorizationId || exactAuthorizationId == Guid.Empty)
+            return;
+        try
+        {
+            _ = await client.SendAsync<OperationResult>(
+                "RevokeCurseForgeManagedContentPlan",
+                new RevokeManagedContentPlanAuthorizationRequest(exactAuthorizationId),
+                CancellationToken.None).ConfigureAwait(true);
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            // The Agent authorization remains short-lived and one-time if it is reconnecting.
+            // Local evidence is already gone, so the renderer cannot submit it through this App.
+        }
     }
 
     private static object ToWebModpackProject(CatalogItem item) => new
@@ -2297,8 +2511,7 @@ public partial class WebUiWindow : Window
 
     private JsonNode? BeginCreationOperation(JsonObject parameters)
     {
-        if (!Guid.TryParse(RequiredString(parameters, "operationId", 64), out var operationId))
-            throw new ArgumentException("A valid client-generated creation operation ID is required.");
+        var operationId = RequireClientOperationId(parameters, "creation");
         if (creationOperations.ContainsKey(operationId))
             return PromptAcceptedOperation(operationId);
 
@@ -2396,6 +2609,10 @@ public partial class WebUiWindow : Window
         JsonObject parameters,
         CancellationToken cancellationToken)
     {
+        var creationStarted = false;
+        Guid? exactCurseForgeAuthorization = null;
+        try
+        {
         if (parameters["eulaAccepted"]?.GetValue<bool>() is not true)
             throw new ArgumentException("You must deliberately accept the Minecraft EULA before creation.");
         if (parameters["experimentalAccepted"]?.GetValue<bool>() is not true)
@@ -2404,9 +2621,11 @@ public partial class WebUiWindow : Window
         var initialWorld = await ConsumeInitialWorldAsync(parameters, cancellationToken).ConfigureAwait(true);
 
         ModpackCreationPlan plan;
+        (Guid ReviewId, string SelectionMethod, string ProjectId, string ClientFileId)? curseForgeReview = null;
         var localToken = OptionalString(parameters, "localPackToken", 128);
         if (!string.IsNullOrWhiteSpace(localToken))
         {
+            await InvalidateCurseForgePreflightAsync().ConfigureAwait(true);
             var selected = localImportTokens.Consume(localToken);
             var reviewed = await client.SendAsync<ServerImportInspection>("InspectServerImport",
                 new ServerImportInspectRequest(selected.Path), cancellationToken).ConfigureAwait(true);
@@ -2504,58 +2723,81 @@ public partial class WebUiWindow : Window
                 throw new ArgumentException("Select a supported modpack provider.");
             var projectId = RequiredString(parameters, "modpackProjectId", 80);
             var versionId = RequiredString(parameters, "modpackVersionId", 80);
-            if (!modpackCatalog.TryGetValue(CatalogKey(provider, projectId), out var project))
-                throw new ArgumentException("Refresh the selected provider catalog before creating this pack.");
-            var release = project.Versions.FirstOrDefault(version =>
-                version.VersionId.Equals(versionId, StringComparison.OrdinalIgnoreCase) &&
-                (provider != CatalogProvider.CurseForge ||
-                 version.CreationPreflightState == CatalogReleasePreflightState.Ready &&
-                 version.LoaderVersion.Length > 0 && version.ClientSha256.Length == 64) &&
-                (version.HasServerPackage && version.Sha1.Length == 40 &&
-                 (provider == CatalogProvider.CurseForge || version.Sha512.Length == 128) &&
-                 version.SizeBytes is > 0 ||
-                 provider == CatalogProvider.CurseForge && version.CanGenerateServerCandidate &&
-                 version.ClientSha1.Length == 40 && version.ClientSizeBytes is > 0))
-                ?? throw new ArgumentException("Select an exact integrity-verifiable provider release with a supportable server path.");
-            var generatedCandidate = provider == CatalogProvider.CurseForge && !release.HasServerPackage;
-            plan = CommonPlan(new ModpackCreationPlan
+            if (provider == CatalogProvider.CurseForge)
             {
-                SourceKind = provider == CatalogProvider.CurseForge
-                    ? generatedCandidate
-                        ? ModpackCreationSource.CurseForgeGeneratedCandidate
-                        : ModpackCreationSource.CurseForgeOfficialServerPack
-                    : ModpackCreationSource.Modrinth,
-                Source = generatedCandidate ? release.ClientDownloadUrl : release.DownloadUrl,
-                Provider = provider == CatalogProvider.CurseForge
-                    ? UpdateProvider.CurseForge : UpdateProvider.Modrinth,
-                ProjectId = project.ProjectId,
-                ProjectSlug = project.Slug,
-                ProjectName = project.Name,
-                VersionId = release.VersionId,
-                ServerPackFileId = release.ServerPackFileId,
-                VersionName = release.VersionName,
-                ReleaseChannel = release.ReleaseChannel,
-                MinecraftVersion = release.MinecraftVersion,
-                Loader = release.Loader,
-                LoaderVersion = release.LoaderVersion,
-                RequiredJavaMajor = release.RequiredJavaMajor > 0
-                    ? release.RequiredJavaMajor
-                    : JavaRuntimePolicy.RequiredMajorForMinecraft(release.MinecraftVersion),
-                ExpectedSha1 = generatedCandidate ? release.ClientSha1 : release.Sha1,
-                ExpectedSha256 = generatedCandidate ? release.ClientSha256 : "",
-                ExpectedSha512 = release.Sha512,
-                ExpectedSizeBytes = generatedCandidate ? release.ClientSizeBytes : release.SizeBytes,
-                VerifiedClientArchiveSha256 = provider == CatalogProvider.CurseForge
-                    ? release.ClientSha256 : ""
-            });
+                if (!Guid.TryParse(RequiredString(parameters, "modpackReviewId", 64), out var reviewId) ||
+                    reviewId == Guid.Empty)
+                    throw new ArgumentException("The CurseForge selection review identity is invalid.");
+                var selectionMethod = CurseForgePreflightEvidence.RequireSelectionMethod(
+                    RequiredString(parameters, "modpackSelectionMethod", 16));
+                var preflightEvidence = curseForgePreflightEvidence.Require(
+                    reviewId, selectionMethod, projectId, versionId, DateTimeOffset.UtcNow);
+                exactCurseForgeAuthorization = preflightEvidence.OperationId;
+                curseForgeReview = (reviewId, selectionMethod, projectId, versionId);
+                plan = preflightEvidence.Bind(CommonPlan(new ModpackCreationPlan()));
+            }
+            else
+            {
+                await InvalidateCurseForgePreflightAsync().ConfigureAwait(true);
+                if (!modpackCatalog.TryGetValue(CatalogKey(provider, projectId), out var project))
+                    throw new ArgumentException("Refresh the selected provider catalog before creating this pack.");
+                var release = project.Versions.FirstOrDefault(version =>
+                    version.VersionId.Equals(versionId, StringComparison.OrdinalIgnoreCase) &&
+                    version.HasServerPackage && version.Sha1.Length == 40 &&
+                    version.Sha512.Length == 128 && version.SizeBytes is > 0)
+                    ?? throw new ArgumentException(
+                        "Select an exact integrity-verifiable provider release with a supportable server path.");
+                plan = CommonPlan(new ModpackCreationPlan
+                {
+                    SourceKind = ModpackCreationSource.Modrinth,
+                    Source = release.DownloadUrl,
+                    Provider = UpdateProvider.Modrinth,
+                    ProjectId = project.ProjectId,
+                    ProjectSlug = project.Slug,
+                    ProjectName = project.Name,
+                    VersionId = release.VersionId,
+                    VersionName = release.VersionName,
+                    ReleaseChannel = release.ReleaseChannel,
+                    MinecraftVersion = release.MinecraftVersion,
+                    Loader = release.Loader,
+                    LoaderVersion = release.LoaderVersion,
+                    RequiredJavaMajor = release.RequiredJavaMajor > 0
+                        ? release.RequiredJavaMajor
+                        : JavaRuntimePolicy.RequiredMajorForMinecraft(release.MinecraftVersion),
+                    ExpectedSha1 = release.Sha1,
+                    ExpectedSha512 = release.Sha512,
+                    ExpectedSizeBytes = release.SizeBytes
+                });
+            }
         }
 
         var problems = plan.Problems();
         if (problems.Count > 0)
             throw new ArgumentException(string.Join(" ", problems));
-        var started = await client.SendAsync<InstallOperationRequest>("BeginModpackCreation",
-            new BeginModpackCreationRequest(plan), cancellationToken).ConfigureAwait(true);
-        return started.OperationId;
+        if (curseForgeReview is { } review)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var consumed = curseForgePreflightEvidence.Consume(
+                review.ReviewId, review.SelectionMethod, review.ProjectId, review.ClientFileId,
+                DateTimeOffset.UtcNow);
+            if (consumed.OperationId != plan.PreflightOperationId)
+                throw new InvalidOperationException(
+                    "The CurseForge preflight authorization changed before creation could begin.");
+            exactCurseForgeAuthorization = consumed.OperationId;
+            plan = consumed.Bind(plan);
+        }
+        var startedOperationId = await AgentOperationAcceptance.BeginModpackCreationAsync(
+            plan,
+            token => client.SendAsync<InstallOperationRequest>(
+                "BeginModpackCreation", new BeginModpackCreationRequest(plan), token),
+            token => client.SendAsync<ModpackCreationCancellationFenceResult>(
+                "CancelOrFenceModpackCreation",
+                new CancelOrFenceModpackCreationRequest(plan),
+                token),
+            cancellationToken).ConfigureAwait(true);
+        creationStarted = true;
+        exactCurseForgeAuthorization = null;
+        return startedOperationId;
 
         ModpackCreationPlan CommonPlan(ModpackCreationPlan source) => source with
         {
@@ -2579,6 +2821,20 @@ public partial class WebUiWindow : Window
             ExperimentalRuntimeRiskAccepted = true,
             InitialWorld = initialWorld
         };
+        }
+        catch (StaleCurseForgePreflightException exception)
+        {
+            exactCurseForgeAuthorization ??= exception.OperationId;
+            throw;
+        }
+        finally
+        {
+            if (!creationStarted && exactCurseForgeAuthorization is { } operationId)
+            {
+                curseForgePreflightEvidence.InvalidateIfOperationId(operationId);
+                await RevokeCurseForgePreflightAsync(operationId).ConfigureAwait(true);
+            }
+        }
     }
 
     private async Task<Guid> BeginManagedLoaderCreationAsync(
@@ -3091,6 +3347,15 @@ public partial class WebUiWindow : Window
     internal static JsonNode PromptAcceptedOperation(Guid operationId) =>
         JsonSerializer.SerializeToNode(new { accepted = true, operationId }, WebUiProtocol.Json)!;
 
+    internal static Guid RequireClientOperationId(JsonObject values, string operationKind)
+    {
+        if (!Guid.TryParse(RequiredString(values, "operationId", 64), out var operationId) ||
+            operationId == Guid.Empty)
+            throw new ArgumentException(
+                $"A non-empty client-generated {operationKind} operation ID is required.");
+        return operationId;
+    }
+
     private static string RequiredString(JsonObject values, string name, int maximumLength)
     {
         var value = OptionalString(values, name, maximumLength);
@@ -3115,6 +3380,53 @@ public partial class WebUiWindow : Window
             provider is not (PluginProviderKind.Modrinth or PluginProviderKind.CurseForge))
             throw new ArgumentException("The add-on provider is invalid.");
         return provider;
+    }
+
+    internal static ManagedContentPlanAuthorization? ParseManagedContentPlanAuthorization(
+        JsonObject parameters)
+    {
+        if (!parameters.TryGetPropertyValue("planAuthorization", out var node) || node is null)
+            return null;
+        if (node is not JsonObject authorization ||
+            authorization.Count != 2 ||
+            authorization.Any(pair => pair.Key is not ("authorizationId" or "digest")))
+            throw new ArgumentException(
+                "The dependency-plan authorization must contain only an authorizationId and digest.");
+
+        var authorizationIdText = AuthorizationText("authorizationId", 64);
+        if (!Guid.TryParse(authorizationIdText, out var authorizationId) || authorizationId == Guid.Empty)
+            throw new ArgumentException("The dependency-plan authorization identity is invalid.");
+        var digest = AuthorizationText("digest", 64);
+        if (digest.Length != 64 || digest.Any(character => !Uri.IsHexDigit(character)))
+            throw new ArgumentException("The dependency-plan authorization digest is invalid.");
+
+        return new ManagedContentPlanAuthorization
+        {
+            AuthorizationId = authorizationId,
+            Digest = digest.ToLowerInvariant()
+        };
+
+        string AuthorizationText(string name, int maximumLength)
+        {
+            if (authorization[name] is not JsonValue value ||
+                !value.TryGetValue<string>(out var text) ||
+                string.IsNullOrWhiteSpace(text))
+                throw new ArgumentException($"The dependency-plan {name} is required.");
+            text = text.Trim();
+            if (text.Length > maximumLength)
+                throw new ArgumentException($"The dependency-plan {name} is too long.");
+            return text;
+        }
+    }
+
+    private static Guid? TryReadManagedContentPlanAuthorizationId(JsonObject parameters)
+    {
+        if (parameters["planAuthorization"] is not JsonObject authorization ||
+            authorization["authorizationId"] is not JsonValue value ||
+            !value.TryGetValue<string>(out var text) ||
+            !Guid.TryParse(text, out var authorizationId) || authorizationId == Guid.Empty)
+            return null;
+        return authorizationId;
     }
 
     private static string RawString(JsonObject values, string name, int maximumLength)
@@ -3206,6 +3518,11 @@ public partial class WebUiWindow : Window
     private void OnClosing(object? sender, CancelEventArgs e)
     {
         refreshTimer.Stop();
+        var planInvalidation = curseForgeContentPlanEvidence.InvalidateWithEvidence();
+        if (planInvalidation.AuthorizationId is { } authorizationId)
+            client.TrySendOneWay(
+                "RevokeCurseForgeManagedContentPlan",
+                new RevokeManagedContentPlanAuthorizationRequest(authorizationId));
         if (Application.Current is not App application || application.IsUnexpectedExit || sessionId == Guid.Empty)
             return;
         client.TrySendOneWay("SafeApplicationExit",

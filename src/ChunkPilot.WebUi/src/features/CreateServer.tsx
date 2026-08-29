@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Archive, Box, Check, ChevronLeft, ChevronRight, FolderOpen, Gamepad2, Globe2, HardDrive, Info, Plus, SlidersHorizontal, Wifi } from '../design-system/Icons';
 import { Button, TextInput } from '../design-system/Primitives';
 import { useAppStore } from '../state/store';
@@ -7,7 +7,9 @@ import { MemoryControl } from './memory/MemoryControl';
 import { formatMemory } from './memory/memory';
 import { VersionBrowser } from './versions/VersionBrowser';
 import type { MinecraftVersionCatalog } from './versions/types';
-import { ModpackPicker, type ModpackSelection } from './modpacks/ModpackPicker';
+import { ModpackPicker, type ModpackSelection, type ModpackSelectionChangeProvider,
+  type ModpackSelectionChangeReason } from './modpacks/ModpackPicker';
+import type { CurseForgeCreationReviewParameters, CurseForgeModpackPreflightParameters, ModpackSelectionMethod } from '../bridge/types';
 import { isFixtureMode } from '../fixtures/mode';
 import styles from './CreateServer.module.css';
 
@@ -25,6 +27,13 @@ interface LoaderBuildCatalog { platform: LoaderPlatform; available: boolean; mes
 interface LegacyArtifactSelection { cancelled: boolean; token: string; fileName: string; minecraftVersion: string; sizeBytes: number; sha256: string; matchesOfficialHash: boolean; identityEvidence: string; expiresAt: string; }
 type WorldMode = 'New' | 'Upload';
 interface ExistingWorldSelection { cancelled: boolean; token: string; displayName: string; kind: 'Folder' | 'ZipArchive'; worldName: string; sourceSizeBytes: number; expandedSizeBytes: number; fileCount: number; includesNether: boolean; includesEnd: boolean; expiresAt: string; }
+type RemoteModpackSelection = Extract<ModpackSelection, { kind: 'remote' }>;
+interface CurseForgeReviewState {
+  reviewId: string;
+  key: string;
+  expiresAtMs: number | null;
+  selection: RemoteModpackSelection;
+}
 
 const isLoaderPlatform = (value: CreationPlatform): value is LoaderPlatform =>
   value !== 'Vanilla' && value !== 'Paper' && value !== 'Modpack';
@@ -33,6 +42,27 @@ const supportsHistoricalFileImport = (version: import('./versions/types').Minecr
   !version.hasServerArtifact && ['1.0', 'b1.8', 'b1.8.1'].includes(version.id) &&
   version.javaMajor === 8 && version.launchProfile.kind !== 'Unknown';
 const StatusPill = ({ text }: { text: string }) => <span className={styles.legacyArtifactBadge}>{text}</span>;
+const curseForgeReviewLifetimeMs = 14 * 60_000;
+const curseForgeReviewKey = (selectionMethod: ModpackSelectionMethod, selection: RemoteModpackSelection) =>
+  `${selectionMethod}:${selection.project.projectId}:${selection.release.versionId}`;
+const requireCurseForgePreflight = (selection: RemoteModpackSelection): RemoteModpackSelection => {
+  const release = {
+    ...selection.release,
+    canCreate: false,
+    preflightState: 'Required' as const,
+    preflightDetail: 'This exact selection must be inspected again.',
+    limitation: 'Inspecting the exact client manifest is required before this release can be created.'
+  };
+  return {
+    ...selection,
+    project: {
+      ...selection.project,
+      versions: selection.project.versions.map(candidate =>
+        candidate.versionId === release.versionId ? release : candidate)
+    },
+    release
+  };
+};
 
 const stages = [
   ['Game', 'Choose what to host'], ['Version', 'Choose Minecraft'], ['Performance', 'Set memory'], ['Server details', 'Name and identity'], ['Storage', 'Choose location'], ['Connectivity', 'Choose next step'], ['Review', 'Confirm and create']
@@ -72,6 +102,10 @@ export function CreateServerPage({ onDone, onOpenProviderSettings }: { onDone: (
   const [loaderBuildError, setLoaderBuildError] = useState('');
   const [experimentalAccepted, setExperimentalAccepted] = useState(false);
   const [modpack, setModpack] = useState<ModpackSelection | null>(null);
+  const [modpackReviewId, setModpackReviewId] = useState('');
+  const modpackReviewIdRef = useRef('');
+  const curseForgeReviewRef = useRef<CurseForgeReviewState | null>(null);
+  const nativeReviewInvalidationRef = useRef<Promise<void>>(Promise.resolve());
   const [legacyArtifact, setLegacyArtifact] = useState<LegacyArtifactSelection | null>(null);
   const [legacyArtifactError, setLegacyArtifactError] = useState('');
   const [worldMode, setWorldMode] = useState<WorldMode>('New');
@@ -79,8 +113,34 @@ export function CreateServerPage({ onDone, onOpenProviderSettings }: { onDone: (
   const [worldError, setWorldError] = useState('');
   const [catalogRequest, setCatalogRequest] = useState(0);
   const submittedOperationId = useRef('');
+  const remoteModpackSelectionMethod: ModpackSelectionMethod = modpackChoice === 'Link' ? 'Link' : 'Browse';
+  const invalidateModpackReview = useCallback(() => {
+    curseForgeReviewRef.current = null;
+    modpackReviewIdRef.current = '';
+    setModpackReviewId('');
+    const activeBridge = bridge;
+    nativeReviewInvalidationRef.current = nativeReviewInvalidationRef.current
+      .catch(() => undefined)
+      .then(async () => {
+        if (activeBridge) await activeBridge.request('modpacks.invalidatePreflight');
+      })
+      .catch(() => undefined);
+  }, [bridge]);
+  const startCurseForgeReview = useCallback((selection: RemoteModpackSelection) => {
+    const reviewedSelection = requireCurseForgePreflight(selection);
+    const reviewId = crypto.randomUUID();
+    curseForgeReviewRef.current = {
+      reviewId,
+      key: curseForgeReviewKey(remoteModpackSelectionMethod, reviewedSelection),
+      expiresAtMs: null,
+      selection: reviewedSelection
+    };
+    modpackReviewIdRef.current = reviewId;
+    setModpackReviewId(reviewId);
+    setModpack(reviewedSelection);
+  }, [remoteModpackSelectionMethod]);
   const remotePreflightKey = modpack?.kind === 'remote' && modpack.project.provider === 'CurseForge'
-    ? `${modpack.project.projectId}:${modpack.release.versionId}` : '';
+    ? `${modpackReviewId}:${remoteModpackSelectionMethod}:${modpack.project.projectId}:${modpack.release.versionId}` : '';
   const remotePreflightState = modpack?.kind === 'remote' && modpack.project.provider === 'CurseForge'
     ? modpack.release.preflightState : undefined;
   const worldUploadUnavailable = platform === 'Modpack' && modpack?.kind === 'local' &&
@@ -92,35 +152,81 @@ export function CreateServerPage({ onDone, onOpenProviderSettings }: { onDone: (
     setWorldError('');
   }, [worldUploadUnavailable]);
   useEffect(() => {
-    if (!bridge || !remotePreflightKey) return;
+    if (!bridge || !remotePreflightKey || !modpackReviewId) return;
     const selected = modpack?.kind === 'remote' ? modpack : null;
     if (!selected || selected.project.provider !== 'CurseForge' ||
       selected.release.preflightState !== 'Required') return;
     const projectId = selected.project.projectId;
     const versionId = selected.release.versionId;
+    const reviewId = modpackReviewId;
+    const modpackSelectionMethod = remoteModpackSelectionMethod;
     const controller = new AbortController();
-    void bridge.request<import('../bridge/types').ModpackRelease>('modpacks.preflight',
-      { projectId, versionId }, controller.signal).then(release => {
-        if (controller.signal.aborted) return;
+    const preflightParameters: CurseForgeModpackPreflightParameters = {
+      projectId, versionId, reviewId, modpackSelectionMethod
+    };
+    void (async () => {
+      try {
+        await nativeReviewInvalidationRef.current;
+        if (controller.signal.aborted || modpackReviewIdRef.current !== reviewId) return;
+        const release = await bridge.request<import('../bridge/types').ModpackRelease>(
+          'modpacks.preflight', preflightParameters, controller.signal);
+        if (controller.signal.aborted || modpackReviewIdRef.current !== reviewId) return;
+        const reviewedSelection: RemoteModpackSelection = {
+          ...selected,
+          project: {
+            ...selected.project,
+            versions: selected.project.versions.map(candidate =>
+              candidate.versionId === versionId ? release : candidate)
+          },
+          release
+        };
+        if (release.preflightState === 'Ready' && curseForgeReviewRef.current?.reviewId === reviewId) {
+          curseForgeReviewRef.current = {
+            ...curseForgeReviewRef.current,
+            expiresAtMs: Date.now() + curseForgeReviewLifetimeMs,
+            selection: reviewedSelection
+          };
+        } else if (curseForgeReviewRef.current?.reviewId === reviewId) {
+          curseForgeReviewRef.current = null;
+        }
         setModpack(current => current?.kind === 'remote' &&
-          current.project.projectId === projectId && current.release.versionId === versionId
-          ? { ...current, project: { ...current.project, versions: current.project.versions.map(candidate =>
-            candidate.versionId === versionId ? release : candidate) }, release }
+          current.project.provider === 'CurseForge' && current.project.projectId === projectId &&
+          current.release.versionId === versionId && modpackReviewIdRef.current === reviewId
+          ? reviewedSelection
           : current);
-      }).catch(reason => {
-        if (controller.signal.aborted) return;
+      } catch (reason) {
+        if (controller.signal.aborted || modpackReviewIdRef.current !== reviewId) return;
+        if (curseForgeReviewRef.current?.reviewId === reviewId)
+          curseForgeReviewRef.current = null;
         const limitation = reason instanceof Error ? reason.message
           : 'The exact CurseForge client manifest could not be inspected.';
         setModpack(current => current?.kind === 'remote' &&
-          current.project.projectId === projectId && current.release.versionId === versionId
+          current.project.provider === 'CurseForge' && current.project.projectId === projectId &&
+          current.release.versionId === versionId && modpackReviewIdRef.current === reviewId
           ? { ...current, release: { ...current.release, canCreate: false, preflightState: 'Failed', limitation } }
           : current);
-      });
+      }
+    })();
     return () => controller.abort();
-    // The exact identity and native state own one cancellable preflight. A failed result remains
-    // blocked; deliberately choosing the catalog release again restores Required and retries it.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bridge, remotePreflightKey, remotePreflightState]);
+    // The exact native invalidation is serialized ahead of the next preflight so an older clear
+    // request cannot arrive late and erase newly returned evidence.
+  }, [bridge, modpackReviewId, remoteModpackSelectionMethod, remotePreflightKey, remotePreflightState]);
+  useEffect(() => {
+    const review = curseForgeReviewRef.current;
+    if (submitted || operationId || remotePreflightState !== 'Ready' || !review?.expiresAtMs ||
+      review.reviewId !== modpackReviewId) return;
+    const timer = window.setTimeout(() => {
+      if (submittedOperationId.current) return;
+      const current = curseForgeReviewRef.current;
+      if (!current || current.reviewId !== review.reviewId || !current.expiresAtMs ||
+        current.expiresAtMs > Date.now()) return;
+      const selection = current.selection;
+      invalidateModpackReview();
+      startCurseForgeReview(selection);
+    }, Math.max(0, review.expiresAtMs - Date.now()) + 25);
+    return () => window.clearTimeout(timer);
+  }, [invalidateModpackReview, modpackReviewId, operationId, remotePreflightState,
+    startCurseForgeReview, submitted]);
   useEffect(() => {
     if (!bridge || operationId) return;
     let active = true;
@@ -257,18 +363,34 @@ export function CreateServerPage({ onDone, onOpenProviderSettings }: { onDone: (
     : selectedVersion?.support === 'Experimental';
   const hasExactSelection = platform === 'Modpack' ? modpack !== null && (modpack.kind === 'local'
     ? Boolean(modpack.local.inspection?.canCreate) && ((modpack.local.inspection?.launchCandidates.length ?? 0) <= 1 || Boolean(modpack.local.launchRelativePath))
-    : modpack.release.canCreate) : (selectedVersion?.selectable === true || (platform === 'Vanilla' && legacyArtifact?.minecraftVersion === selectedVersion?.id)) && (platform === 'Vanilla' ||
+    : modpack.release.canCreate && (modpack.project.provider !== 'CurseForge' || Boolean(modpackReviewId))) : (selectedVersion?.selectable === true || (platform === 'Vanilla' && legacyArtifact?.minecraftVersion === selectedVersion?.id)) && (platform === 'Vanilla' ||
     (platform === 'Paper' ? selectedPaperBuild?.selectable === true : selectedLoaderBuild?.selectable === true));
   const canNext = (step === 0 && (primaryChoice !== 'Modpacks' || Boolean(modpackChoice))) || (step === 1 && hasExactSelection) || (step === 2 && initialRamMb <= ramMb) || (step === 3 && name.trim().length > 0) || (step === 4 && destination?.available === true && (worldMode === 'New' || existingWorld !== null)) || step === 5 || (step === 6 && eula && (!requiresExperimentalAck || experimentalAccepted));
   const chooseFolder = () => void command<{ path: string }>('creation.chooseFolder', { startingPath: instanceRoot }).then(result => setInstanceRoot(result.path));
   const create = () => {
     if (!bridge || !eula || submitted || submittedOperationId.current || (platform !== 'Modpack' && !selectedVersion) || !hasExactSelection || initialRamMb > ramMb || (requiresExperimentalAck && !experimentalAccepted)) return;
+    const selectedCurseForge = modpack?.kind === 'remote' && modpack.project.provider === 'CurseForge'
+      ? modpack : null;
+    if (selectedCurseForge) {
+      const review = curseForgeReviewRef.current;
+      if (!review || review.reviewId !== modpackReviewId ||
+          review.key !== curseForgeReviewKey(remoteModpackSelectionMethod, selectedCurseForge) ||
+          !review.expiresAtMs || review.expiresAtMs <= Date.now()) {
+        invalidateModpackReview();
+        startCurseForgeReview(selectedCurseForge);
+        return;
+      }
+    }
     const requestedOperationId = crypto.randomUUID();
     submittedOperationId.current = requestedOperationId;
     window.sessionStorage.setItem('chunkpilot.creation.operation', requestedOperationId);
     setSubmitted(true);
     setOperationId(requestedOperationId);
-    void bridge.request<{ operationId: string }>('creation.begin', { operationId: requestedOperationId, platform, name: name.trim(), versionId, buildId: selectedPaperBuild?.id, loaderVersion: selectedLoaderBuild?.loaderVersion, modpackProvider: modpack?.kind === 'remote' ? modpack.project.provider : undefined, modpackProjectId: modpack?.kind === 'remote' ? modpack.project.projectId : undefined, modpackVersionId: modpack?.kind === 'remote' ? modpack.release.versionId : undefined, localPackToken: modpack?.kind === 'local' ? modpack.local.token : undefined, importManagementMode: modpack?.kind === 'local' ? modpack.local.managementMode : undefined, importLaunchCandidate: modpack?.kind === 'local' ? modpack.local.launchRelativePath : undefined, legacyArtifactToken: legacyArtifact?.token, initialWorldToken: worldMode === 'Upload' ? existingWorld?.token : undefined, minimumRamMb: initialRamMb, maximumRamMb: ramMb, port, networking, instanceRoot, experimentalAccepted, eulaAccepted: true })
+    const curseForgeReview: CurseForgeCreationReviewParameters | Record<string, never> =
+      modpack?.kind === 'remote' && modpack.project.provider === 'CurseForge'
+        ? { modpackReviewId, modpackSelectionMethod: remoteModpackSelectionMethod }
+        : {};
+    void bridge.request<{ operationId: string }>('creation.begin', { operationId: requestedOperationId, platform, name: name.trim(), versionId, buildId: selectedPaperBuild?.id, loaderVersion: selectedLoaderBuild?.loaderVersion, modpackProvider: modpack?.kind === 'remote' ? modpack.project.provider : undefined, modpackProjectId: modpack?.kind === 'remote' ? modpack.project.projectId : undefined, modpackVersionId: modpack?.kind === 'remote' ? modpack.release.versionId : undefined, ...curseForgeReview, localPackToken: modpack?.kind === 'local' ? modpack.local.token : undefined, importManagementMode: modpack?.kind === 'local' ? modpack.local.managementMode : undefined, importLaunchCandidate: modpack?.kind === 'local' ? modpack.local.launchRelativePath : undefined, legacyArtifactToken: legacyArtifact?.token, initialWorldToken: worldMode === 'Upload' ? existingWorld?.token : undefined, minimumRamMb: initialRamMb, maximumRamMb: ramMb, port, networking, instanceRoot, experimentalAccepted, eulaAccepted: true })
       .then(result => { if (result.operationId !== requestedOperationId) throw new Error('ChunkPilot returned an unexpected creation operation identity.'); })
       .catch(() => { /* Progress polling owns the authoritative terminal result even if the acceptance response was lost. */ });
   };
@@ -278,7 +400,7 @@ export function CreateServerPage({ onDone, onOpenProviderSettings }: { onDone: (
     focusDisclosure.current = false;
     window.requestAnimationFrame(() => disclosureRef.current?.querySelector<HTMLElement>('button, select')?.focus());
   }, [primaryChoice]);
-  const clearDownstream = () => { setCatalog(null); setVersionId(''); setPaperBuildId(null); setLoaderVersion(''); setModpack(null); setLegacyArtifact(null); setLegacyArtifactError(''); setExperimentalAccepted(false); };
+  const clearDownstream = () => { setCatalog(null); setVersionId(''); setPaperBuildId(null); setLoaderVersion(''); setModpack(null); invalidateModpackReview(); setLegacyArtifact(null); setLegacyArtifactError(''); setExperimentalAccepted(false); };
   const choosePlatform = (next: CreationPlatform) => { setPlatform(next); clearDownstream(); };
   const choosePrimary = (next: PrimaryChoice) => {
     focusDisclosure.current = true;
@@ -304,6 +426,36 @@ export function CreateServerPage({ onDone, onOpenProviderSettings }: { onDone: (
       .then(result => { if (!result.cancelled) { setExistingWorld(result); setWorldMode('Upload'); } })
       .catch(error => setWorldError(error instanceof Error ? error.message : 'The selected world could not be reviewed.'));
   };
+  const selectModpack = (selection: ModpackSelection | null, reason: ModpackSelectionChangeReason,
+    sourceProvider: ModpackSelectionChangeProvider) => {
+    const curseForge = selection?.kind === 'remote' && selection.project.provider === 'CurseForge'
+      ? selection : null;
+    if (curseForge) {
+      const key = curseForgeReviewKey(remoteModpackSelectionMethod, curseForge);
+      const cached = curseForgeReviewRef.current;
+      if (cached?.key === key && cached.expiresAtMs && cached.expiresAtMs > Date.now()) {
+        modpackReviewIdRef.current = cached.reviewId;
+        setModpackReviewId(cached.reviewId);
+        setModpack(cached.selection);
+      } else {
+        if (cached) invalidateModpackReview();
+        else {
+          modpackReviewIdRef.current = '';
+          setModpackReviewId('');
+        }
+        startCurseForgeReview(curseForge);
+      }
+    } else {
+      modpackReviewIdRef.current = '';
+      setModpackReviewId('');
+      if (reason === 'local' || sourceProvider === 'CurseForge' && reason !== 'provider-navigation')
+        invalidateModpackReview();
+      setModpack(selection);
+    }
+    if (!name.trim() && selection?.kind === 'local' && selection.local.inspection?.name)
+      setName(selection.local.inspection.name);
+    setExperimentalAccepted(false);
+  };
   const body = step === 0 ? <div className={styles.gameSelection}><div className={styles.primaryChoices}>
     <button className={`${styles.choice} ${styles.primaryChoice}`} aria-pressed={primaryChoice === 'Vanilla'} data-selected={primaryChoice === 'Vanilla'} onClick={() => choosePrimary('Vanilla')}><span className={styles.choiceIcon}><Gamepad2 size={19} /></span><span><strong>Vanilla</strong><p>Unmodified Minecraft using the official dedicated server.</p></span><span className={styles.radio} /></button>
     <button className={`${styles.choice} ${styles.primaryChoice}`} aria-pressed={primaryChoice === 'Plugins'} data-selected={primaryChoice === 'Plugins'} onClick={() => choosePrimary('Plugins')}><span className={styles.choiceIcon}><Box size={19} /></span><span><strong>Plugins</strong><p>Performance-focused Minecraft with server-side plugins.</p></span><span className={styles.radio} /></button>
@@ -322,7 +474,7 @@ export function CreateServerPage({ onDone, onOpenProviderSettings }: { onDone: (
     {modpackChoice === 'Custom' && <label className={styles.loaderDisclosure}>Loader<select aria-label="Custom modded server loader" value={isLoaderPlatform(platform) ? platform : 'Fabric'} onChange={event => choosePlatform(event.target.value as LoaderPlatform)}><option value="Fabric">Fabric</option><option value="NeoForge">NeoForge</option><option value="Forge">Forge</option><option value="Quilt">Quilt</option><option value="LegacyFabric">Legacy Fabric — Experimental</option><option value="Ornithe">Ornithe — Experimental</option></select></label>}
   </div>}
   <div className={styles.readinessFacts}><div><Check size={14} /><span><strong>Managed Java</strong><small>A compatible runtime is selected automatically.</small></span></div><div><HardDrive size={14} /><span><strong>Persistent storage</strong><small>Your world lives outside the application folder.</small></span></div><div><Globe2 size={14} /><span><strong>Private by default</strong><small>Creation does not open your firewall or router.</small></span></div></div></div>
-  : step === 1 ? platform === 'Modpack' ? <ModpackPicker value={modpack} initialMode={modpackChoice} onOpenProviderSettings={onOpenProviderSettings} onChange={selection => { setModpack(selection); if (!name.trim() && selection?.kind === 'local' && selection.local.inspection?.name) setName(selection.local.inspection.name); setExperimentalAccepted(false); }} /> : <>{catalogError ? <div className={styles.catalogError}><p className={styles.error}>{catalogError}</p><Button onClick={() => setCatalogRequest(value => value + 1)}>Retry official catalog</Button></div> : catalog ? <>{versionId && !selectedVersion && <p className={styles.error}>Your previous selection is no longer in the current catalog. Choose a version again.</p>}<VersionBrowser catalog={catalog} value={versionId} allowUnavailableSelection={platform === 'Vanilla' ? supportsHistoricalFileImport : undefined} onChange={version => { setVersionId(version.id); setPaperBuildId(null); setLoaderVersion(''); setLegacyArtifact(null); setLegacyArtifactError(''); setExperimentalAccepted(false); }} compact={platform !== 'Vanilla'} />{platform === 'Vanilla' && selectedVersion && supportsHistoricalFileImport(selectedVersion) && <section className={styles.legacyArtifact}><div><strong>Original server files required</strong><p>Mojang's current metadata no longer publishes this dedicated-server JAR. Choose your own legitimate copy; ChunkPilot inspects and hashes it without running it, copies it through managed staging, and leaves the source unchanged.</p></div>{legacyArtifact ? <div className={styles.legacyArtifactResult}><span><strong>{legacyArtifact.fileName}</strong><small>{(legacyArtifact.sizeBytes / 1024 / 1024).toFixed(1)} MB · SHA-256 {legacyArtifact.sha256.slice(0, 12)}…</small></span><StatusPill text="Reviewed locally" /><Button onClick={chooseLegacyArtifact}>Replace</Button></div> : <Button variant="primary" onClick={chooseLegacyArtifact}>Choose server JAR</Button>}{legacyArtifact && <p>{legacyArtifact.identityEvidence}</p>}{legacyArtifactError && <p className={styles.error}>{legacyArtifactError}</p>}</section>}{platform === 'Paper' && selectedVersion && <PaperBuildPicker catalog={paperBuildCatalog} value={paperBuildId} error={paperBuildError} onChange={setPaperBuildId} />}{isLoaderPlatform(platform) && selectedVersion && <LoaderBuildPicker platform={platform} catalog={loaderBuildCatalog} value={loaderVersion} error={loaderBuildError} onChange={setLoaderVersion} />}</> : <p className={styles.loading}>Loading the official {platform === 'Paper' ? 'PaperMC' : isLoaderPlatform(platform) ? loaderTitle(platform) : 'Minecraft'} version inventory…</p>}</>
+  : step === 1 ? platform === 'Modpack' ? <ModpackPicker value={modpack} initialMode={modpackChoice} onOpenProviderSettings={onOpenProviderSettings} onChange={selectModpack} /> : <>{catalogError ? <div className={styles.catalogError}><p className={styles.error}>{catalogError}</p><Button onClick={() => setCatalogRequest(value => value + 1)}>Retry official catalog</Button></div> : catalog ? <>{versionId && !selectedVersion && <p className={styles.error}>Your previous selection is no longer in the current catalog. Choose a version again.</p>}<VersionBrowser catalog={catalog} value={versionId} allowUnavailableSelection={platform === 'Vanilla' ? supportsHistoricalFileImport : undefined} onChange={version => { setVersionId(version.id); setPaperBuildId(null); setLoaderVersion(''); setLegacyArtifact(null); setLegacyArtifactError(''); setExperimentalAccepted(false); }} compact={platform !== 'Vanilla'} />{platform === 'Vanilla' && selectedVersion && supportsHistoricalFileImport(selectedVersion) && <section className={styles.legacyArtifact}><div><strong>Original server files required</strong><p>Mojang's current metadata no longer publishes this dedicated-server JAR. Choose your own legitimate copy; ChunkPilot inspects and hashes it without running it, copies it through managed staging, and leaves the source unchanged.</p></div>{legacyArtifact ? <div className={styles.legacyArtifactResult}><span><strong>{legacyArtifact.fileName}</strong><small>{(legacyArtifact.sizeBytes / 1024 / 1024).toFixed(1)} MB · SHA-256 {legacyArtifact.sha256.slice(0, 12)}…</small></span><StatusPill text="Reviewed locally" /><Button onClick={chooseLegacyArtifact}>Replace</Button></div> : <Button variant="primary" onClick={chooseLegacyArtifact}>Choose server JAR</Button>}{legacyArtifact && <p>{legacyArtifact.identityEvidence}</p>}{legacyArtifactError && <p className={styles.error}>{legacyArtifactError}</p>}</section>}{platform === 'Paper' && selectedVersion && <PaperBuildPicker catalog={paperBuildCatalog} value={paperBuildId} error={paperBuildError} onChange={setPaperBuildId} />}{isLoaderPlatform(platform) && selectedVersion && <LoaderBuildPicker platform={platform} catalog={loaderBuildCatalog} value={loaderVersion} error={loaderBuildError} onChange={setLoaderVersion} />}</> : <p className={styles.loading}>Loading the official {platform === 'Paper' ? 'PaperMC' : isLoaderPlatform(platform) ? loaderTitle(platform) : 'Minecraft'} version inventory…</p>}</>
   : step === 2 ? <><div className={styles.memoryIntro}><strong>Memory</strong><p>Most small {platform} servers run well with 2–4 GB. Choose a preset or enter an exact amount.</p></div><MemoryControl valueMib={ramMb} onChange={value => { setRamMb(value); if (initialRamMb > value) setInitialRamMb(value); }} hostTotalBytes={hostTotalBytes} ariaLabel="Maximum server memory" /><details className={styles.advanced}><summary>Advanced memory details</summary><p>Initial memory is reserved when Java starts. It must not exceed the maximum.</p><MemoryControl valueMib={initialRamMb} onChange={setInitialRamMb} hostTotalBytes={hostTotalBytes} ariaLabel="Initial server memory" minimumMib={256} maximumMib={ramMb} /></details><div className={styles.notice}><Info size={16} /><span>{platform === 'Modpack' && modpack ? `This pack requires Java ${modpack.kind === 'remote' ? modpack.release.requiredJavaMajor : modpack.local.inspection?.requiredJavaMajor}. ChunkPilot will verify the pack manifest and exact loader before activation.` : selectedVersion?.javaMajor ? `${platform} ${selectedVersion.id} requires Java ${selectedVersion.javaMajor}. ChunkPilot will use a compatible managed runtime or install one during creation.` : 'Choose a version to establish the required Java runtime.'}</span></div></>
   : step === 3 ? <div className={styles.form}><div className={styles.field}><label htmlFor="serverName">Server name</label><TextInput id="serverName" value={name} onChange={event => setName(event.target.value)} placeholder="My Minecraft Server" autoFocus /><small>This changes ChunkPilot's display name. It does not rename a world.</small></div><div className={styles.field}><label htmlFor="serverPort">Server port</label><TextInput id="serverPort" type="number" min={1} max={65535} value={port} onChange={event => setPort(Number(event.target.value))} /><small>Port availability remains unknown until startup. Creation does not open the firewall or router.</small></div></div>
   : step === 4 ? <div className={styles.storageLayout}><div className={styles.field}><label>Managed server location</label><div className={styles.inline}><TextInput value={(destination?.path ?? instanceRoot) || 'ChunkPilot managed servers'} readOnly /><Button icon={<FolderOpen size={14} />} onClick={chooseFolder}>Choose parent folder</Button></div><small>{destination?.message ?? 'Enter a server name to establish the exact destination.'}</small>{destination && !destination.available && <p className={styles.error}>{destination.message}</p>}</div><section className={styles.worldSource} aria-labelledby="world-source-heading"><header><div><strong id="world-source-heading">Starting world</strong><p>Generate a fresh world on first start, or copy an established world into the managed server transaction.</p></div></header><div className={styles.worldChoices}><button type="button" aria-pressed={worldMode === 'New'} data-selected={worldMode === 'New'} onClick={() => { setWorldMode('New'); setWorldError(''); }}><span className={styles.worldChoiceIcon}><Plus size={17} /></span><span><strong>Create new world</strong><small>Minecraft generates a fresh world when this server starts.</small></span><span className={styles.radio} /></button><button type="button" aria-pressed={worldMode === 'Upload'} data-selected={worldMode === 'Upload'} disabled={worldUploadUnavailable} onClick={() => setWorldMode('Upload')}><span className={styles.worldChoiceIcon}><Archive size={17} /></span><span><strong>Upload World</strong><small>Copy one existing world from a folder or ZIP. The source stays unchanged.</small></span><span className={styles.radio} /></button></div>{worldUploadUnavailable && <div className={styles.notice}><Info size={16} /><span>This complete imported server source already owns its world layout. To use a different world, create from a Minecraft version or provider pack instead.</span></div>}{worldMode === 'Upload' && !worldUploadUnavailable && <div className={styles.worldUpload}>{existingWorld ? <div className={styles.worldResult}><span><strong>{existingWorld.worldName}</strong><small>{existingWorld.displayName} · {existingWorld.fileCount.toLocaleString()} files · {formatBytes(existingWorld.expandedSizeBytes)}{existingWorld.includesNether || existingWorld.includesEnd ? ` · ${existingWorld.includesNether ? 'Nether' : ''}${existingWorld.includesNether && existingWorld.includesEnd ? ' + ' : ''}${existingWorld.includesEnd ? 'End' : ''} included` : ''}</small></span><StatusPill text="Reviewed locally" /><Button onClick={() => chooseWorld(existingWorld.kind === 'Folder' ? 'folder' : 'zip')}>Replace</Button></div> : <><p>Choose the world folder itself, a parent containing one main world, or a ZIP with one main <code>level.dat</code>. Separate Paper Nether and End folders are included when they sit beside the main world.</p><div className={styles.worldActions}><Button variant="primary" icon={<FolderOpen size={14} />} onClick={() => chooseWorld('folder')}>Choose world folder</Button><Button icon={<Archive size={14} />} onClick={() => chooseWorld('zip')}>Choose world ZIP</Button></div></>}{worldError && <p className={styles.error}>{worldError}</p>}<small>ChunkPilot rejects ambiguous multi-world sources, links, unsafe ZIP paths, and archives over the review limits. A stale <code>session.lock</code> is not copied.</small></div>}</section></div>

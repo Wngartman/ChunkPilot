@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Diagnostics;
 using ChunkPilot.Infrastructure;
 using ChunkPilot.Core;
+using ChunkPilot.Certification;
 
 if (args.Length > 0 && args[0].Equals("certify-paper", StringComparison.OrdinalIgnoreCase))
     return await CertifyPaperAsync(args.Skip(1).ToArray());
@@ -16,6 +17,9 @@ if (args.Length > 0 && args[0].Equals("certify-terraria", StringComparison.Ordin
 if (args.Length > 0 && args[0].Equals("smoke-curseforge", StringComparison.OrdinalIgnoreCase))
     return await SmokeCurseForgeAsync(args.Skip(1).ToArray());
 
+if (args.Length > 0 && args[0].Equals("certify-curseforge-runtime", StringComparison.OrdinalIgnoreCase))
+    return await CurseForgeRuntimeCertificationCommand.RunAsync(args.Skip(1).ToArray());
+
 if (args.Length == 0 || !args[0].Equals("certify-vanilla", StringComparison.OrdinalIgnoreCase))
 {
     Console.Error.WriteLine("Usage: ChunkPilot.Certification certify-vanilla --all [options]");
@@ -23,6 +27,7 @@ if (args.Length == 0 || !args[0].Equals("certify-vanilla", StringComparison.Ordi
     Console.Error.WriteLine("       ChunkPilot.Certification certify-loader --platform <Fabric|Quilt|Forge|NeoForge|LegacyFabric|Ornithe> [--all-stable | --version <id>] [--loader <id>] [options]");
     Console.Error.WriteLine("       ChunkPilot.Certification certify-terraria [--cache <path>] [--timeout-seconds <seconds>]");
     Console.Error.WriteLine("       ChunkPilot.Certification smoke-curseforge [--report <path>]");
+    CurseForgeRuntimeCertificationCommand.WriteUsage();
     Console.Error.WriteLine("Runtime execution additionally requires --accept-minecraft-eula-for-certification.");
     return 64;
 }

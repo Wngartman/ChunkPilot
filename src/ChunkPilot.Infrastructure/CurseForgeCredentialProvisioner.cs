@@ -33,6 +33,13 @@ public sealed class CurseForgeCredentialProvisioner(ISecretStore secrets)
     public const string KeyFileEnvironmentVariable = "CHUNKPILOT_CURSEFORGE_KEY_FILE";
     public const string DefaultKeyFilePath = @"D:\ChunkPilot\.secrets\curseforge-api-key.txt";
     internal const int MaximumKeyFileBytes = 4 * 1024;
+    private readonly Action<ReadOnlyMemory<byte>>? plaintextBufferClearedForTesting;
+
+    internal CurseForgeCredentialProvisioner(
+        ISecretStore secrets,
+        Action<ReadOnlyMemory<byte>> plaintextBufferClearedForTesting)
+        : this(secrets) =>
+        this.plaintextBufferClearedForTesting = plaintextBufferClearedForTesting;
 
     public Task<CurseForgeCredentialProvisioningResult> ProvisionFromEnvironmentAsync(
         CurseForgeApiClient api,
@@ -73,39 +80,35 @@ public sealed class CurseForgeCredentialProvisioner(ISecretStore secrets)
                 ExistingCredentialPreserved: hadExistingCredential);
         }
 
-        byte[] bytes;
+        byte[]? bytes = null;
         var length = 0;
         try
         {
-            using var input = new FileStream(sourcePath, FileMode.Open, FileAccess.Read, FileShare.Read,
-                bufferSize: 4096, FileOptions.SequentialScan);
             bytes = new byte[MaximumKeyFileBytes + 1];
-            while (length < bytes.Length)
+            try
             {
-                var read = await input.ReadAsync(bytes.AsMemory(length, bytes.Length - length), cancellationToken)
-                    .ConfigureAwait(false);
-                if (read == 0)
-                    break;
-                length += read;
+                using var input = new FileStream(sourcePath, FileMode.Open, FileAccess.Read, FileShare.Read,
+                    bufferSize: 4096, FileOptions.SequentialScan);
+                while (length < bytes.Length)
+                {
+                    var read = await input.ReadAsync(bytes.AsMemory(length, bytes.Length - length), cancellationToken)
+                        .ConfigureAwait(false);
+                    if (read == 0)
+                        break;
+                    length += read;
+                }
             }
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-        {
-            return new(true, false, "The approved CurseForge credential file could not be read.",
-                ExistingCredentialPreserved: hadExistingCredential);
-        }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                return new(true, false, "The approved CurseForge credential file could not be read.",
+                    ExistingCredentialPreserved: hadExistingCredential);
+            }
 
-        if (length > MaximumKeyFileBytes)
-        {
-            CryptographicOperations.ZeroMemory(bytes);
-            return new(true, false, "The approved CurseForge credential file exceeds its bounded size.",
-                ExistingCredentialPreserved: hadExistingCredential);
-        }
-        Array.Resize(ref bytes, length);
+            if (length > MaximumKeyFileBytes)
+                return new(true, false, "The approved CurseForge credential file exceeds its bounded size.",
+                    ExistingCredentialPreserved: hadExistingCredential);
 
-        try
-        {
-            var key = Encoding.UTF8.GetString(bytes).Trim();
+            var key = Encoding.UTF8.GetString(bytes.AsSpan(0, length)).Trim();
             if (!IsValidKey(key))
                 return new(true, false,
                     "The approved CurseForge credential file is not one non-empty credential value.",
@@ -129,7 +132,11 @@ public sealed class CurseForgeCredentialProvisioner(ISecretStore secrets)
         }
         finally
         {
-            CryptographicOperations.ZeroMemory(bytes);
+            if (bytes is not null)
+            {
+                CryptographicOperations.ZeroMemory(bytes);
+                plaintextBufferClearedForTesting?.Invoke(bytes);
+            }
         }
     }
 

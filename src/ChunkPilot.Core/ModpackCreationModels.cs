@@ -9,6 +9,73 @@ public enum ModpackCreationSource
     LocalMrpack
 }
 
+public enum CurseForgeGeneratedFileRelation
+{
+    ManifestRequired,
+    RequiredDependency
+}
+
+public enum CurseForgeGeneratedOptionalRelation
+{
+    ManifestOptional,
+    OptionalDependency
+}
+
+/// <summary>
+/// One provider-resolved reason that an exact file must be present in a generated CurseForge
+/// server candidate. Multiple reasons are retained so a manifest root that is also a dependency
+/// never loses either piece of review evidence.
+/// </summary>
+public sealed record CurseForgeGeneratedFileEvidence
+{
+    public CurseForgeGeneratedFileRelation Relation { get; init; }
+    public string DeclaredByProjectId { get; init; } = "";
+    public string RequestedFileId { get; init; } = "";
+}
+
+/// <summary>One exact immutable download selected during native CurseForge preflight.</summary>
+public sealed record CurseForgeGeneratedFilePlan
+{
+    public string ProjectId { get; init; } = "";
+    public string FileId { get; init; } = "";
+    public string FileName { get; init; } = "";
+    public string DownloadUrl { get; init; } = "";
+    public long SizeBytes { get; init; }
+    public string ProviderSha1 { get; init; } = "";
+    public IReadOnlyList<CurseForgeGeneratedFileEvidence> RequiredBy { get; init; } = [];
+}
+
+/// <summary>
+/// A file or dependency excluded only because the reviewed manifest or provider relationship
+/// explicitly marked it optional. ChunkPilot never invents client-only exclusions.
+/// </summary>
+public sealed record CurseForgeGeneratedOptionalExclusion
+{
+    public string ProjectId { get; init; } = "";
+    public string FileId { get; init; } = "";
+    public CurseForgeGeneratedOptionalRelation Relation { get; init; }
+    public string DeclaredByProjectId { get; init; } = "";
+}
+
+/// <summary>
+/// Agent-produced exact generated-pack plan. Its digest covers every field and ordered child
+/// record; the one-time Agent authorization supplies the trusted copy to creation.
+/// </summary>
+public sealed record CurseForgeGeneratedPackPlan
+{
+    public const int CurrentSchemaVersion = 1;
+
+    public int SchemaVersion { get; init; } = CurrentSchemaVersion;
+    public string MinecraftVersion { get; init; } = "";
+    public string Loader { get; init; } = "";
+    public string LoaderVersion { get; init; } = "";
+    public IReadOnlyList<CurseForgeGeneratedFilePlan> RequiredFiles { get; init; } = [];
+    public IReadOnlyList<CurseForgeGeneratedOptionalExclusion> OptionalExclusions { get; init; } = [];
+    public long TotalResolvedBytes { get; init; }
+    public string OptionalReviewSummary { get; init; } = "";
+    public string Digest { get; init; } = "";
+}
+
 /// <summary>
 /// One exact, reviewed Modrinth-format server-pack selection. Provider identity belongs to the
 /// outer catalog selection and is intentionally separate from modrinth.index.json, which does not
@@ -41,6 +108,17 @@ public sealed record ModpackCreationPlan
     /// present in the server-pack relationship or the API game-version labels.
     /// </summary>
     public string VerifiedClientArchiveSha256 { get; init; } = "";
+    /// <summary>
+    /// Agent-lifetime authorization identity returned by the exact CurseForge preflight. It is
+    /// consumed once when creation starts and is intentionally distinct from the installation
+    /// operation identity.
+    /// </summary>
+    public Guid? PreflightOperationId { get; init; }
+    /// <summary>
+    /// Trusted Agent-side plan attached only while a one-time generated-candidate authorization is
+    /// consumed. Provider metadata is never re-resolved during materialization.
+    /// </summary>
+    public CurseForgeGeneratedPackPlan? CurseForgeGeneratedPlan { get; init; }
     public string ServerName { get; init; } = "";
     public VanillaEulaAcceptance Eula { get; init; } = new();
     public int MaxPlayers { get; init; } = 10;
@@ -80,10 +158,14 @@ public sealed record ModpackCreationPlan
                 string.IsNullOrWhiteSpace(ServerPackFileId))
                 problems.Add("The official CurseForge server-pack relationship is incomplete.");
             if ((SourceKind is ModpackCreationSource.CurseForgeOfficialServerPack or
-                    ModpackCreationSource.CurseForgeGeneratedCandidate) &&
+                     ModpackCreationSource.CurseForgeGeneratedCandidate) &&
                 (VerifiedClientArchiveSha256.Length != 64 ||
                  VerifiedClientArchiveSha256.Any(character => !Uri.IsHexDigit(character))))
                 problems.Add("The exact CurseForge client manifest was not verified before creation.");
+            if ((SourceKind is ModpackCreationSource.CurseForgeOfficialServerPack or
+                     ModpackCreationSource.CurseForgeGeneratedCandidate) &&
+                PreflightOperationId.GetValueOrDefault() == Guid.Empty)
+                problems.Add("The exact CurseForge preflight authorization is missing.");
         }
         else if (SourceKind == ModpackCreationSource.LocalCurseForgeManifest)
         {
@@ -121,12 +203,19 @@ public sealed record ModpackCreationPlan
 
 public sealed record BeginModpackCreationRequest(ModpackCreationPlan Plan);
 public sealed record ModpackCreationsResult(IReadOnlyList<InstallOperationSnapshot> Operations);
+public sealed record CancelOrFenceModpackCreationRequest(ModpackCreationPlan Plan);
+public sealed record ModpackCreationCancellationFenceResult(
+    bool FenceEstablished,
+    bool BlockedBeforeStart,
+    InstallOperationSnapshot? Operation);
 
 public sealed record CurseForgeModpackPreflightRequest(
     Guid OperationId,
     string ProjectId,
     string ClientFileId,
     string ExpectedServerPackFileId);
+
+public sealed record RevokeCurseForgeModpackPreflightRequest(Guid OperationId);
 
 public sealed record CurseForgeModpackPreflightResult
 {
@@ -144,6 +233,19 @@ public sealed record CurseForgeModpackPreflightResult
     public string ClientSha1 { get; init; } = "";
     public string ClientSha256 { get; init; } = "";
     public long ClientSizeBytes { get; init; }
+    /// <summary>
+    /// Exact official-server-pack download evidence resolved by the Agent during preflight. These
+    /// fields remain empty for a safely generated candidate, whose source is the verified client
+    /// archive above.
+    /// </summary>
+    public string ServerPackDownloadUrl { get; init; } = "";
+    public string ServerPackSha1 { get; init; } = "";
+    public long? ServerPackSizeBytes { get; init; }
+    /// <summary>
+    /// Present only for a generated candidate. The Agent registry deep-copies and binds this exact
+    /// plan before returning it; creation receives that stored copy rather than trusting the App.
+    /// </summary>
+    public CurseForgeGeneratedPackPlan? GeneratedPackPlan { get; init; }
 }
 
 public sealed record ModrinthPackInspectRequest(string ArchivePath);

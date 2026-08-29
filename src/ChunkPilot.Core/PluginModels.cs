@@ -105,11 +105,19 @@ public sealed record PluginProviderInstallPlanRequest(
     string ProjectId,
     string VersionId,
     bool RestartIfRunning = false,
-    PluginProviderKind Provider = PluginProviderKind.Modrinth);
+    PluginProviderKind Provider = PluginProviderKind.Modrinth,
+    ManagedContentPlanAuthorization? PlanAuthorization = null);
+public sealed record ManagedContentPlanAuthorization
+{
+    public Guid AuthorizationId { get; init; }
+    public string Digest { get; init; } = "";
+}
+public sealed record RevokeManagedContentPlanAuthorizationRequest(Guid AuthorizationId);
 public sealed record PluginInstallPlan
 {
     public IReadOnlyList<PluginRelease> Releases { get; init; } = [];
     public IReadOnlyList<string> Problems { get; init; } = [];
+    public ManagedContentPlanAuthorization? Authorization { get; init; }
     public bool CanInstall => Releases.Count > 0 && Problems.Count == 0;
 }
 public sealed record PluginRemoveRequest(Guid ServerId, string RelativePath, bool RestartIfRunning = false);

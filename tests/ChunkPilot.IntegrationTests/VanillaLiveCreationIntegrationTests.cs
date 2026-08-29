@@ -407,6 +407,7 @@ public sealed class VanillaLiveCreationIntegrationTests : IDisposable
             var services = new ServiceCollection();
             services.AddLogging(builder => builder.SetMinimumLevel(LogLevel.Warning));
             services.AddSingleton(paths);
+            services.AddSingleton(CertificationUpdateFaultInjector.CreateFromEnvironment(paths));
             services.AddSingleton<ChunkPilotStore>();
             services.AddSingleton<ProcessStatisticsProvider>();
             services.AddSingleton<MinecraftStatusClient>();
@@ -475,6 +476,8 @@ public sealed class VanillaLiveCreationIntegrationTests : IDisposable
             services.AddSingleton<ManagedInstanceCopyService>();
             services.AddSingleton<ServerDeletionCoordinator>();
             services.AddSingleton<InstallationCoordinator>();
+            services.AddSingleton<CurseForgeCreationAuthorizationRegistry>();
+            services.AddSingleton<CurseForgeManagedContentPlanAuthorizationRegistry>();
             services.AddSingleton<ManagedContentOperationCoordinator>();
             services.AddSingleton<ServerUpdateCoordinator>();
             // Router mapping is wired so the pipe surface is complete, but the network view is empty:

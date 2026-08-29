@@ -19,6 +19,11 @@ public sealed class MigrationReviewRequiredException : InvalidOperationException
     public MigrationPlan Plan { get; }
 }
 
+internal readonly record struct ServerUpdateStorageForecast(
+    long SnapshotRequiredBytes,
+    long CandidateRequiredBytes,
+    long CacheRequiredBytes);
+
 /// <summary>
 /// Agent-issued authorization to reuse one exact, operation-scoped download after a terminal
 /// migration review. Callers must not construct this from an unvalidated UI request.
@@ -181,6 +186,16 @@ public static class PersistentDataClassifier
 
 public sealed class PackMigrationPlanner
 {
+    private readonly int maximumInventoryEntries;
+
+    public PackMigrationPlanner(
+        int maximumInventoryEntries = BoundedServerFileInventory.MaximumEntries)
+    {
+        if (maximumInventoryEntries is <= 0 or > BoundedServerFileInventory.MaximumEntries)
+            throw new ArgumentOutOfRangeException(nameof(maximumInventoryEntries));
+        this.maximumInventoryEntries = maximumInventoryEntries;
+    }
+
     public async Task<MigrationPlan> BuildAndApplyAsync(
         string currentRoot,
         string candidateRoot,
@@ -191,21 +206,33 @@ public sealed class PackMigrationPlanner
         var changes = new List<PackFileChange>();
         var persistent = new List<string>();
         var conflicts = new List<string>();
-        var explicitPersistent = ReadExplicitPersistentPaths(currentRoot);
+        var currentInventory = BoundedServerFileInventory.Capture(
+            currentRoot, maximumInventoryEntries, cancellationToken);
+        var candidateInventory = BoundedServerFileInventory.Capture(
+            candidateRoot, maximumInventoryEntries, cancellationToken);
+        var explicitPersistent = ReadExplicitPersistentPaths(currentInventory);
         var providerBaseline = ProviderOwnershipManifest.Read(currentRoot);
-        var candidateFiles = Enumerate(candidateRoot).ToDictionary(
-            path => PersistentDataClassifier.Normalize(Path.GetRelativePath(candidateRoot, path)),
+        var currentFiles = currentInventory.Files.ToDictionary(
+            file => file.RelativePath,
+            StringComparer.OrdinalIgnoreCase);
+        var candidateFiles = candidateInventory.Files.ToDictionary(
+            file => file.RelativePath,
             StringComparer.OrdinalIgnoreCase);
 
-        foreach (var oldFile in Enumerate(currentRoot))
+        foreach (var oldEntry in currentInventory.Files)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var relative = PersistentDataClassifier.Normalize(Path.GetRelativePath(currentRoot, oldFile));
+            BoundedServerFileInventory.ValidateUnchanged(oldEntry);
+            var oldFile = oldEntry.FullPath;
+            var relative = oldEntry.RelativePath;
             var ownership = PersistentDataClassifier.Classify(relative, worldRoots, explicitPersistent);
             MigrationResolution? resolution = null;
             if (resolutions is not null)
                 resolutions.TryGetValue(relative, out resolution);
-            candidateFiles.TryGetValue(relative, out var newFile);
+            candidateFiles.TryGetValue(relative, out var newEntry);
+            if (newEntry is not null)
+                BoundedServerFileInventory.ValidateUnchanged(newEntry);
+            var newFile = newEntry?.FullPath;
             var oldHash = await Sha256Async(oldFile, cancellationToken).ConfigureAwait(false);
             var newHash = newFile is null ? "" : await Sha256Async(newFile, cancellationToken).ConfigureAwait(false);
             var providerModified = providerBaseline.TryGetValue(relative, out var baselineHash) &&
@@ -372,16 +399,18 @@ public sealed class PackMigrationPlanner
 
         foreach (var pair in candidateFiles)
         {
-            var old = Path.Combine(currentRoot, pair.Key.Replace('/', Path.DirectorySeparatorChar));
-            if (!File.Exists(old))
+            if (!currentFiles.ContainsKey(pair.Key))
+            {
+                BoundedServerFileInventory.ValidateUnchanged(pair.Value);
                 changes.Add(new PackFileChange
                 {
                     RelativePath = pair.Key,
                     Ownership = PersistentDataClassifier.Classify(pair.Key, worldRoots, explicitPersistent),
                     Change = "Added by new pack",
                     Reason = "The target server pack introduced this file.",
-                    NewSha256 = await Sha256Async(pair.Value, cancellationToken).ConfigureAwait(false)
+                    NewSha256 = await Sha256Async(pair.Value.FullPath, cancellationToken).ConfigureAwait(false)
                 });
+            }
         }
 
         return new MigrationPlan
@@ -392,18 +421,19 @@ public sealed class PackMigrationPlanner
         };
     }
 
-    private static IEnumerable<string> Enumerate(string root) =>
-        Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)
-            .Where(path => !new FileInfo(path).Attributes.HasFlag(FileAttributes.ReparsePoint));
-
-    private static IReadOnlyCollection<string> ReadExplicitPersistentPaths(string root)
+    private static IReadOnlyCollection<string> ReadExplicitPersistentPaths(
+        ServerFileInventory inventory)
     {
-        var path = Path.Combine(root, ".chunkpilot", "persistent-paths.json");
-        if (!File.Exists(path))
+        var entry = inventory.Files.FirstOrDefault(file =>
+            file.RelativePath.Equals(
+                ".chunkpilot/persistent-paths.json", StringComparison.OrdinalIgnoreCase));
+        if (entry is null)
             return [];
         try
         {
-            var values = JsonSerializer.Deserialize<string[]>(File.ReadAllText(path), ProtocolJson.Options) ?? [];
+            BoundedServerFileInventory.ValidateUnchanged(entry);
+            var values = JsonSerializer.Deserialize<string[]>(
+                File.ReadAllText(entry.FullPath), ProtocolJson.Options) ?? [];
             return values.Select(PersistentDataClassifier.Normalize)
                 .Where(value => value.Length > 0 &&
                                 !value.Equals("..", StringComparison.Ordinal) &&
@@ -413,7 +443,8 @@ public sealed class PackMigrationPlanner
         }
         catch (JsonException exception)
         {
-            throw new InvalidDataException($"Persistent-path metadata is invalid: {path}", exception);
+            throw new InvalidDataException(
+                $"Persistent-path metadata is invalid: {entry.RelativePath}", exception);
         }
     }
 
@@ -453,11 +484,18 @@ public sealed class VersionSnapshotService
 {
     private readonly AppDataPaths paths;
     private readonly ChunkPilotStore store;
+    private readonly int maximumInventoryEntries;
 
-    public VersionSnapshotService(AppDataPaths paths, ChunkPilotStore store)
+    public VersionSnapshotService(
+        AppDataPaths paths,
+        ChunkPilotStore store,
+        int maximumInventoryEntries = BoundedServerFileInventory.MaximumEntries)
     {
+        if (maximumInventoryEntries is <= 0 or > BoundedServerFileInventory.MaximumEntries)
+            throw new ArgumentOutOfRangeException(nameof(maximumInventoryEntries));
         this.paths = paths;
         this.store = store;
+        this.maximumInventoryEntries = maximumInventoryEntries;
     }
 
     public async Task<VersionSnapshot> CreateAsync(
@@ -466,6 +504,8 @@ public sealed class VersionSnapshotService
         string reason,
         CancellationToken cancellationToken = default)
     {
+        var inventory = BoundedServerFileInventory.Capture(
+            server.RootPath, maximumInventoryEntries, cancellationToken);
         var id = Guid.NewGuid();
         var directory = Path.Combine(paths.VersionSnapshots, server.Id.ToString("D"));
         Directory.CreateDirectory(directory);
@@ -485,16 +525,17 @@ public sealed class VersionSnapshotService
                 128 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
             using (var archive = new ZipArchive(output, ZipArchiveMode.Create, leaveOpen: true))
             {
-                foreach (var file in Directory.EnumerateFiles(server.RootPath, "*", SearchOption.AllDirectories))
+                foreach (var inventoried in inventory.Files)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    if (new FileInfo(file).Attributes.HasFlag(FileAttributes.ReparsePoint))
-                        throw new IOException($"Version snapshots refuse reparse-point files: {file}");
-                    var relative = PersistentDataClassifier.Normalize(Path.GetRelativePath(server.RootPath, file));
+                    BoundedServerFileInventory.ValidateUnchanged(inventoried);
+                    var file = inventoried.FullPath;
+                    var relative = inventoried.RelativePath;
                     if (IsContentObjectCandidate(relative))
                     {
                         contentObjects.Add(await StoreContentObjectAsync(directory, file, relative, cancellationToken)
                             .ConfigureAwait(false));
+                        BoundedServerFileInventory.ValidateUnchanged(inventoried);
                         continue;
                     }
                     var entry = archive.CreateEntry(relative, CompressionLevel.Optimal);
@@ -509,8 +550,15 @@ public sealed class VersionSnapshotService
                     {
                         await destination.WriteAsync(buffer.AsMemory(0, read), cancellationToken).ConfigureAwait(false);
                         hash.AppendData(buffer, 0, read);
-                        length += read;
+                        length = StorageSpaceGuard.SaturatingAdd(length, read);
+                        if (length > inventoried.Length)
+                            throw new IOException(
+                                $"The server file grew while its snapshot was being created: {relative}.");
                     }
+                    BoundedServerFileInventory.ValidateUnchanged(inventoried);
+                    if (length != inventoried.Length)
+                        throw new IOException(
+                            $"The server file changed size while its snapshot was being created: {relative}.");
                     entries.Add(new BackupManifestEntry(relative, length,
                         Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant()));
                 }
@@ -881,6 +929,7 @@ public sealed class ServerPackUpdateService
     private readonly CurseForgeApiClient? curseForge;
     private readonly CurseForgePackService? curseForgePacks;
     private readonly ICurseForgeModpackPreflightService? curseForgePreflight;
+    private readonly IStorageSpaceProbe storageSpace;
     private readonly HttpClient http;
 
     public ServerPackUpdateService(
@@ -895,7 +944,8 @@ public sealed class ServerPackUpdateService
         ManagedJavaRuntimeService? managedJava = null,
         CurseForgeApiClient? curseForge = null,
         CurseForgePackService? curseForgePacks = null,
-        ICurseForgeModpackPreflightService? curseForgePreflight = null)
+        ICurseForgeModpackPreflightService? curseForgePreflight = null,
+        IStorageSpaceProbe? storageSpace = null)
     {
         this.paths = paths;
         this.store = store;
@@ -910,6 +960,7 @@ public sealed class ServerPackUpdateService
             ? null
             : new CurseForgePackService(curseForge, loaders: this.loaderInstaller));
         this.curseForgePreflight = curseForgePreflight;
+        this.storageSpace = storageSpace ?? SystemStorageSpaceProbe.Instance;
         modrinthPacks = new ModrinthPackServerService(loaderInstaller: this.loaderInstaller);
         http = client ?? new HttpClient { Timeout = TimeSpan.FromMinutes(30) };
         if (http.DefaultRequestHeaders.UserAgent.Count == 0)
@@ -925,8 +976,24 @@ public sealed class ServerPackUpdateService
     {
         Validate(server, source, request);
         var target = request.TargetVersion;
-        var download = CachePath(source.Provider, target, request.OperationId);
         var logPath = Path.Combine(paths.Staging, $"update-{request.OperationId:N}.log");
+        if (source.Provider == UpdateProvider.CurseForge)
+        {
+            progress?.Report(new UpdateProgress
+            {
+                OperationId = request.OperationId,
+                State = UpdateOperationState.Querying,
+                CurrentStep = "Verifying the exact CurseForge client manifest identity",
+                Percent = 5,
+                Detail = target.VersionId,
+                LogPath = logPath
+            });
+            target = await EstablishCurseForgeTargetAsync(
+                    source, target, request.OperationId, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        var download = CachePath(source.Provider, target, request.OperationId);
+        ValidateDownloadFreeSpace(download, target);
         progress?.Report(new UpdateProgress
         {
             OperationId = request.OperationId,
@@ -995,7 +1062,6 @@ public sealed class ServerPackUpdateService
     {
         Validate(server, source, request);
         var target = request.TargetVersion;
-        ValidateFreeSpace(server, target);
         var parent = Directory.GetParent(server.RootPath)?.FullName
                      ?? throw new IOException("The server root must have a parent directory.");
         var candidate = Path.Combine(parent, $".chunkpilot-update-{request.OperationId:N}");
@@ -1022,17 +1088,15 @@ public sealed class ServerPackUpdateService
             RecordedUpdateDownload? reusedDownload = null;
             string? reusedDownloadSha256 = null;
             var download = CachePath(source.Provider, target, request.OperationId);
+            ValidateFreeSpace(
+                server, target,
+                cacheDownloadRequired: reuseAuthorization is null && !File.Exists(download),
+                cancellationToken: cancellationToken);
             if (reuseAuthorization is not null)
             {
                 (download, reusedDownload, reusedDownloadSha256) = await ResolveReviewedDownloadAsync(
                     server, source, target, request, reuseAuthorization, cancellationToken).ConfigureAwait(false);
             }
-            Report(UpdateOperationState.Snapshotting, "Creating verified full rollback snapshot", 10, "");
-            var snapshot = await snapshots.CreateAsync(server, source,
-                source.Provider == UpdateProvider.CurseForge
-                    ? CurseForgePersistencePolicy.LocalSnapshotDescription
-                    : $"Pre-update snapshot before {target.VersionName}", cancellationToken).ConfigureAwait(false);
-            previousSnapshot = snapshot;
             if (reusedDownload is not null)
             {
                 Report(UpdateOperationState.Verifying,
@@ -1065,10 +1129,37 @@ public sealed class ServerPackUpdateService
             }
             var downloadSha256 = reusedDownloadSha256 ??
                 await PackMigrationPlanner.Sha256Async(download, cancellationToken).ConfigureAwait(false);
+            long verifiedPackageStagingBytes;
+            try
+            {
+                verifiedPackageStagingBytes = ForecastVerifiedPackageStagingBytes(
+                    download, target, cancellationToken);
+            }
+            catch (InvalidDataException)
+            {
+                await store.RecordUpdateDownloadAsync(request.OperationId, server.Id, source.Provider, target,
+                    new FileInfo(download).Length, downloadSha256, "Rejected: archive inspection failed",
+                    CancellationToken.None).ConfigureAwait(false);
+                File.Delete(download);
+                throw;
+            }
             await store.RecordUpdateDownloadAsync(request.OperationId, server.Id, source.Provider, target,
                 new FileInfo(download).Length, downloadSha256,
                 reusedDownload is null ? "Verified" : "Verified reuse from migration review",
                 cancellationToken).ConfigureAwait(false);
+            ValidateFreeSpace(
+                server,
+                target,
+                cacheDownloadRequired: false,
+                cancellationToken: cancellationToken,
+                verifiedPackageStagingBytes: verifiedPackageStagingBytes);
+
+            Report(UpdateOperationState.Snapshotting, "Creating verified full rollback snapshot", 47, "");
+            var snapshot = await snapshots.CreateAsync(server, source,
+                source.Provider == UpdateProvider.CurseForge
+                    ? CurseForgePersistencePolicy.LocalSnapshotDescription
+                    : $"Pre-update snapshot before {target.VersionName}", cancellationToken).ConfigureAwait(false);
+            previousSnapshot = snapshot;
 
             Directory.CreateDirectory(candidate);
             Report(UpdateOperationState.Extracting, "Extracting target package into isolated candidate", 52, candidate);
@@ -1093,8 +1184,12 @@ public sealed class ServerPackUpdateService
             {
                 if (source.Provider != UpdateProvider.CurseForge || curseForgePacks is null)
                     throw new InvalidDataException("Only an exact CurseForge release may use the generated manifest update path.");
+                var generatedPlan = target.TrustedCurseForgeGeneratedPlan
+                                    ?? throw new InvalidDataException(
+                                        "The generated CurseForge update lost its exact native preflight plan.");
                 var installedPack = await curseForgePacks.MaterializeAndInstallAsync(
-                    download, candidate, server.Executable, logPath, cancellationToken).ConfigureAwait(false);
+                    download, candidate, server.Executable, logPath, generatedPlan, cancellationToken)
+                    .ConfigureAwait(false);
                 target = target with
                 {
                     MinecraftVersion = installedPack.Manifest.MinecraftVersion,
@@ -1667,22 +1762,31 @@ public sealed class ServerPackUpdateService
         if (curseForgePreflight is null)
             throw new InvalidOperationException(
                 "The native CurseForge client-manifest preflight boundary is unavailable.");
-        var projectId = string.IsNullOrWhiteSpace(target.PackId) ? source.ProjectId : target.PackId;
-        var clientFileId = target.VersionId;
-        var expectedServerPackFileId = target.PackageType.Equals(
-            "curseforge-manifest", StringComparison.OrdinalIgnoreCase)
-            ? ""
-            : target.ProviderFileId;
+        var identity = RequireCurseForgeTargetIdentity(source, target);
         var result = await curseForgePreflight.InspectAsync(
             new CurseForgeModpackPreflightRequest(
-                operationId, projectId, clientFileId, expectedServerPackFileId), cancellationToken)
+                operationId, identity.ProjectId, identity.ClientFileId,
+                identity.ExpectedServerPackFileId), cancellationToken)
             .ConfigureAwait(false);
-        if (!result.ProjectId.Equals(projectId, StringComparison.Ordinal) ||
-            !result.ClientFileId.Equals(clientFileId, StringComparison.Ordinal) ||
-            !result.ServerPackFileId.Equals(expectedServerPackFileId, StringComparison.Ordinal) ||
-            result.OperationId != operationId)
+        return CanonicalizeCurseForgeTarget(source, target, result, operationId);
+    }
+
+    internal static PackVersionInfo CanonicalizeCurseForgeTarget(
+        UpdateSource source,
+        PackVersionInfo target,
+        CurseForgeModpackPreflightResult result,
+        Guid operationId)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(target);
+        ArgumentNullException.ThrowIfNull(result);
+        var identity = RequireCurseForgeTargetIdentity(source, target);
+        if (result.OperationId != operationId ||
+            !result.ProjectId.Equals(identity.ProjectId, StringComparison.Ordinal) ||
+            !result.ClientFileId.Equals(identity.ClientFileId, StringComparison.Ordinal) ||
+            !result.ServerPackFileId.Equals(identity.ExpectedServerPackFileId, StringComparison.Ordinal))
             throw new InvalidDataException(
-                "CurseForge update preflight returned a contradictory project or file identity.");
+                "CurseForge update preflight returned a contradictory project, client file, or server-pack relationship.");
         if (result.State != CatalogReleasePreflightState.Ready ||
             string.IsNullOrWhiteSpace(result.MinecraftVersion) ||
             string.IsNullOrWhiteSpace(result.Loader) ||
@@ -1699,15 +1803,148 @@ public sealed class ServerPackUpdateService
             !target.Loader.Equals(result.Loader, StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException(
                 "The exact CurseForge client manifest disagrees with the reviewed loader family.");
+
+        var clientUri = RequireCurseForgeArtifact(
+            result.ClientDownloadUrl, result.ClientSizeBytes, result.ClientSha1,
+            "client manifest");
+        if (result.ClientSha256.Length != 64 || result.ClientSha256.Any(character => !Uri.IsHexDigit(character)))
+            throw new InvalidDataException(
+                "The exact CurseForge client manifest lacks its verified local SHA-256 evidence.");
+
+        var official = identity.ExpectedServerPackFileId.Length > 0;
+        Uri artifactUri;
+        string artifactFileId;
+        long artifactSize;
+        string artifactSha1;
+        string artifactSha256;
+        string packageType;
+        CurseForgeGeneratedPackPlan? generatedPlan = null;
+        if (official)
+        {
+            if (result.GeneratedPackPlan is not null)
+                throw new InvalidDataException(
+                    "The official CurseForge server-pack preflight returned a contradictory generated dependency plan.");
+            artifactUri = RequireCurseForgeArtifact(
+                result.ServerPackDownloadUrl,
+                result.ServerPackSizeBytes.GetValueOrDefault(),
+                result.ServerPackSha1,
+                "official server pack");
+            artifactFileId = result.ServerPackFileId;
+            artifactSize = result.ServerPackSizeBytes!.Value;
+            artifactSha1 = result.ServerPackSha1;
+            artifactSha256 = "";
+            packageType = "zip";
+        }
+        else
+        {
+            if (result.ServerPackDownloadUrl.Length > 0 || result.ServerPackSha1.Length > 0 ||
+                result.ServerPackSizeBytes is not null)
+                throw new InvalidDataException(
+                    "The generated CurseForge update preflight returned contradictory official server-pack evidence.");
+            artifactUri = clientUri;
+            artifactFileId = result.ClientFileId;
+            artifactSize = result.ClientSizeBytes;
+            artifactSha1 = result.ClientSha1;
+            artifactSha256 = result.ClientSha256;
+            packageType = "curseforge-manifest";
+            generatedPlan = result.GeneratedPackPlan is null
+                ? throw new InvalidDataException(
+                    "The generated CurseForge update preflight lacks its exact dependency plan.")
+                : CurseForgeGeneratedPackPlanService.ValidateAndClone(result.GeneratedPackPlan);
+            if (!generatedPlan.MinecraftVersion.Equals(result.MinecraftVersion, StringComparison.Ordinal) ||
+                !generatedPlan.Loader.Equals(result.Loader, StringComparison.Ordinal) ||
+                !generatedPlan.LoaderVersion.Equals(result.LoaderVersion, StringComparison.Ordinal))
+                throw new InvalidDataException(
+                    "The generated CurseForge update plan contradicts its verified platform identity.");
+        }
+
         return target with
         {
-            PackId = projectId,
+            PackId = result.ProjectId,
+            VersionId = result.ClientFileId,
+            ProviderFileId = artifactFileId,
+            DownloadUrl = artifactUri.AbsoluteUri,
+            FileSize = artifactSize,
+            Sha1 = artifactSha1.ToLowerInvariant(),
+            Sha256 = artifactSha256.ToLowerInvariant(),
+            Sha512 = "",
+            FileName = CanonicalCurseForgeFileName(artifactUri, artifactFileId),
+            PackageType = packageType,
+            DeclaredFiles = [],
+            TrustedCurseForgeGeneratedPlan = generatedPlan,
             MinecraftVersion = result.MinecraftVersion,
             Loader = result.Loader,
             LoaderVersion = result.LoaderVersion,
             RequiredJavaMajor = result.RequiredJavaMajor
         };
     }
+
+    private static CurseForgeUpdateTargetIdentity RequireCurseForgeTargetIdentity(
+        UpdateSource source,
+        PackVersionInfo target)
+    {
+        if (source.Provider != UpdateProvider.CurseForge || !PositiveCurseForgeId(source.ProjectId))
+            throw new InvalidDataException(
+                "A CurseForge update requires the exact numeric linked project identity.");
+        if (!string.IsNullOrWhiteSpace(target.PackId) &&
+            !target.PackId.Equals(source.ProjectId, StringComparison.Ordinal))
+            throw new InvalidDataException(
+                "The CurseForge update target belongs to a different linked project.");
+        if (!PositiveCurseForgeId(target.VersionId) || !PositiveCurseForgeId(target.ProviderFileId))
+            throw new InvalidDataException(
+                "The CurseForge update target lacks exact positive client and provider file identities.");
+        var expectedServerPackFileId = target.ProviderFileId.Equals(
+            target.VersionId, StringComparison.Ordinal)
+            ? ""
+            : target.ProviderFileId;
+        return new CurseForgeUpdateTargetIdentity(
+            source.ProjectId, target.VersionId, expectedServerPackFileId);
+    }
+
+    private static Uri RequireCurseForgeArtifact(
+        string downloadUrl,
+        long size,
+        string sha1,
+        string label)
+    {
+        if (!Uri.TryCreate(downloadUrl, UriKind.Absolute, out var uri) ||
+            !CurseForgeApiClient.IsApprovedDownloadUri(uri) ||
+            size <= 0 || size > ServerImportInspectionService.MaximumCompressedBytes ||
+            sha1.Length != 40 || sha1.Any(character => !Uri.IsHexDigit(character)))
+            throw new InvalidDataException(
+                $"The exact CurseForge {label} lacks an approved URL, bounded size, or provider SHA-1.");
+        return uri;
+    }
+
+    private static string CanonicalCurseForgeFileName(Uri uri, string fileId)
+    {
+        string fileName;
+        try
+        {
+            fileName = Uri.UnescapeDataString(Path.GetFileName(uri.AbsolutePath));
+        }
+        catch (UriFormatException)
+        {
+            fileName = "";
+        }
+        if (string.IsNullOrWhiteSpace(fileName) || fileName.Length > 240 ||
+            fileName.Any(character => Path.GetInvalidFileNameChars().Contains(character)) ||
+            !fileName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+            return $"curseforge-{fileId}.zip";
+        return fileName;
+    }
+
+    private static bool PositiveCurseForgeId(string value) =>
+        long.TryParse(
+            value,
+            System.Globalization.NumberStyles.None,
+            System.Globalization.CultureInfo.InvariantCulture,
+            out var parsed) && parsed > 0;
+
+    private sealed record CurseForgeUpdateTargetIdentity(
+        string ProjectId,
+        string ClientFileId,
+        string ExpectedServerPackFileId);
 
     private static void ValidateCandidate(string candidate, ServerDefinition definition)
     {
@@ -1835,27 +2072,120 @@ public sealed class ServerPackUpdateService
             throw new InvalidOperationException("The update source and request must match the selected server.");
         if (!source.HasIdentifiedBaseline)
             throw new InvalidOperationException("Identify the installed baseline before updating.");
-        if (string.IsNullOrWhiteSpace(request.TargetVersion.DownloadUrl))
+        if (source.Provider != UpdateProvider.CurseForge &&
+            string.IsNullOrWhiteSpace(request.TargetVersion.DownloadUrl))
             throw new InvalidOperationException("The target version has no download URL.");
     }
 
-    private void ValidateFreeSpace(ServerDefinition server, PackVersionInfo target)
+    private void ValidateDownloadFreeSpace(string downloadPath, PackVersionInfo target)
     {
-        var currentBytes = Directory.EnumerateFiles(server.RootPath, "*", SearchOption.AllDirectories)
-            .Sum(path => new FileInfo(path).Length);
         var packageBytes = Math.Max(target.FileSize ?? 0, 64L * 1024 * 1024);
-        var snapshotRequired = checked(currentBytes + packageBytes + 512L * 1024 * 1024);
-        var snapshotDrive = new DriveInfo(Path.GetPathRoot(paths.VersionSnapshots)!);
-        if (snapshotDrive.AvailableFreeSpace < snapshotRequired)
-            throw new IOException(
-                $"Snapshot/update storage needs about {snapshotRequired / 1024d / 1024d / 1024d:F1} GB free; " +
-                $"{snapshotDrive.AvailableFreeSpace / 1024d / 1024d / 1024d:F1} GB is available.");
-        var candidateRequired = checked(packageBytes * 5 + 512L * 1024 * 1024);
-        var serverDrive = new DriveInfo(Path.GetPathRoot(server.RootPath)!);
-        if (serverDrive.AvailableFreeSpace < candidateRequired)
-            throw new IOException(
-                $"Server staging needs about {candidateRequired / 1024d / 1024d / 1024d:F1} GB free; " +
-                $"{serverDrive.AvailableFreeSpace / 1024d / 1024d / 1024d:F1} GB is available.");
+        StorageSpaceGuard.EnsureAvailable(
+            storageSpace,
+            [
+                new StorageSpaceRequirement(
+                    downloadPath,
+                    "Update package cache",
+                    StorageSpaceGuard.SaturatingAdd(
+                        packageBytes, StorageSpaceGuard.DownloadSafetyReserveBytes))
+            ]);
+    }
+
+    private void ValidateFreeSpace(
+        ServerDefinition server,
+        PackVersionInfo target,
+        bool cacheDownloadRequired,
+        CancellationToken cancellationToken,
+        long? verifiedPackageStagingBytes = null)
+    {
+        var inventory = BoundedServerFileInventory.Capture(
+            server.RootPath, cancellationToken: cancellationToken);
+        var packageBytes = Math.Max(target.FileSize ?? 0, 64L * 1024 * 1024);
+        var forecast = CalculateStorageForecast(
+            inventory.TotalBytes,
+            packageBytes,
+            target.TrustedCurseForgeGeneratedPlan,
+            cacheDownloadRequired,
+            verifiedPackageStagingBytes);
+        StorageSpaceGuard.EnsureAvailable(
+            storageSpace,
+            [
+                new StorageSpaceRequirement(
+                    paths.VersionSnapshots, "Verified rollback snapshot", forecast.SnapshotRequiredBytes),
+                new StorageSpaceRequirement(
+                    server.RootPath, "Server update candidate staging", forecast.CandidateRequiredBytes),
+                new StorageSpaceRequirement(
+                    paths.UpdateCache, "Update package cache", forecast.CacheRequiredBytes)
+            ]);
+    }
+
+    internal static ServerUpdateStorageForecast CalculateStorageForecast(
+        long currentServerBytes,
+        long packageBytes,
+        CurseForgeGeneratedPackPlan? generatedPlan,
+        bool cacheDownloadRequired,
+        long? verifiedPackageStagingBytes = null)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(currentServerBytes);
+        ArgumentOutOfRangeException.ThrowIfNegative(packageBytes);
+        if (verifiedPackageStagingBytes is < 0)
+            throw new ArgumentOutOfRangeException(nameof(verifiedPackageStagingBytes));
+        var generatedBytes = generatedPlan is null
+            ? 0
+            : CurseForgeGeneratedPackPlanService.ValidateAndClone(generatedPlan).TotalResolvedBytes;
+        var snapshotRequired = StorageSpaceGuard.SaturatingAdd(
+            currentServerBytes, StorageSpaceGuard.SafetyReserveBytes);
+        var packageStagingBytes = verifiedPackageStagingBytes ??
+                                  StorageSpaceGuard.SaturatingMultiply(packageBytes, 5);
+        var candidateRequired = StorageSpaceGuard.SaturatingAdd(
+            StorageSpaceGuard.SaturatingAdd(
+                StorageSpaceGuard.SaturatingAdd(
+                    packageStagingBytes, generatedBytes),
+                currentServerBytes),
+            StorageSpaceGuard.SafetyReserveBytes);
+        var cacheRequired = cacheDownloadRequired
+            ? StorageSpaceGuard.SaturatingAdd(
+                packageBytes, StorageSpaceGuard.DownloadSafetyReserveBytes)
+            : 0;
+        return new ServerUpdateStorageForecast(
+            snapshotRequired,
+            candidateRequired,
+            cacheRequired);
+    }
+
+    private static long ForecastVerifiedPackageStagingBytes(
+        string packagePath,
+        PackVersionInfo target,
+        CancellationToken cancellationToken)
+    {
+        var package = new FileInfo(packagePath);
+        if (!package.Exists)
+            throw new FileNotFoundException("The verified update package was not found.", package.FullName);
+        var heuristicBytes = StorageSpaceGuard.SaturatingMultiply(
+            Math.Max(package.Length, 64L * 1024 * 1024), 5);
+        if (!UsesBoundedArchiveExtraction(target))
+            return heuristicBytes;
+
+        var archive = ServerImportInspectionService.ForecastArchiveExpansion(
+            package.FullName, cancellationToken);
+        var archiveStagingBytes = target.PackageType.Equals(
+            "curseforge-manifest", StringComparison.OrdinalIgnoreCase)
+            ? StorageSpaceGuard.SaturatingMultiply(archive.ExpandedSizeBytes, 2)
+            : archive.ExpandedSizeBytes;
+        return archiveStagingBytes;
+    }
+
+    private static bool UsesBoundedArchiveExtraction(PackVersionInfo target)
+    {
+        if (target.PackageType.Equals("mrpack", StringComparison.OrdinalIgnoreCase) ||
+            target.PackageType.Equals("fabric-server-launcher", StringComparison.OrdinalIgnoreCase) ||
+            target.PackageType.Equals("quilt-installer", StringComparison.OrdinalIgnoreCase) ||
+            target.PackageType.Equals("forge-installer", StringComparison.OrdinalIgnoreCase) ||
+            target.PackageType.Equals("neoforge-installer", StringComparison.OrdinalIgnoreCase) ||
+            target.PackageType.Equals("jar", StringComparison.OrdinalIgnoreCase) ||
+            target.FileName.EndsWith(".jar", StringComparison.OrdinalIgnoreCase))
+            return false;
+        return true;
     }
 
     private static async Task VerifyHashAsync(

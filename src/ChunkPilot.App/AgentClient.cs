@@ -3,6 +3,7 @@ using System.IO.Pipes;
 using System.Text;
 using System.Text.Json;
 using ChunkPilot.Core;
+using ChunkPilot.Infrastructure;
 
 namespace ChunkPilot.App;
 
@@ -17,27 +18,38 @@ public sealed class AgentClient : IAgentClient
 {
     internal const int InitialProbeTimeoutMilliseconds = 200;
     private readonly SemaphoreSlim startupGate = new(1, 1);
+    private string? curseForgeCredentialSourcePath;
+
+    public AgentClient()
+    {
+        // The development credential source is an Agent-bootstrap input, never App state. Capture
+        // it once for the exact Agent child, then remove it before the long-lived App can launch a
+        // browser, firewall helper, or any other process through an inheriting Windows shell path.
+        curseForgeCredentialSourcePath = Environment.GetEnvironmentVariable(
+            CurseForgeCredentialProvisioner.KeyFileEnvironmentVariable);
+        CurseForgeCredentialEnvironment.ClearFromCurrentProcess();
+    }
 
     public async Task EnsureConnectedAsync(CancellationToken cancellationToken = default)
     {
         if (await CanPingAsync(cancellationToken).ConfigureAwait(false))
+        {
+            curseForgeCredentialSourcePath = null;
             return;
+        }
         await startupGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             if (await CanPingAsync(cancellationToken).ConfigureAwait(false))
-                return;
-            var executable = ResolveAgentExecutable();
-            var process = Process.Start(new ProcessStartInfo
             {
-                FileName = executable,
-                WorkingDirectory = Path.GetDirectoryName(executable)!,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                WindowStyle = ProcessWindowStyle.Hidden
-            });
+                curseForgeCredentialSourcePath = null;
+                return;
+            }
+            var executable = ResolveAgentExecutable();
+            var process = Process.Start(CreateAgentStartInfo(executable));
             if (process is null)
                 throw new InvalidOperationException("Windows did not start ChunkPilot.Agent.");
+            curseForgeCredentialSourcePath = null;
             var deadline = DateTimeOffset.UtcNow.AddSeconds(15);
             while (DateTimeOffset.UtcNow < deadline)
             {
@@ -53,6 +65,26 @@ public sealed class AgentClient : IAgentClient
         {
             startupGate.Release();
         }
+    }
+
+    internal ProcessStartInfo CreateAgentStartInfo(string executable)
+    {
+        if (string.IsNullOrWhiteSpace(executable))
+            throw new ArgumentException("The Agent executable path is required.", nameof(executable));
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = executable,
+            WorkingDirectory = Path.GetDirectoryName(executable)!,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            WindowStyle = ProcessWindowStyle.Hidden
+        };
+        if (!string.IsNullOrWhiteSpace(curseForgeCredentialSourcePath))
+        {
+            startInfo.Environment[CurseForgeCredentialProvisioner.KeyFileEnvironmentVariable] =
+                curseForgeCredentialSourcePath;
+        }
+        return startInfo;
     }
 
     public async Task<TResponse> SendAsync<TResponse>(

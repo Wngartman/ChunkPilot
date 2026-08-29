@@ -10,12 +10,15 @@ namespace ChunkPilot.Infrastructure;
 public sealed record JarInstallReceipt(
     string AppliedRelativePath,
     string? PreviousRelativePath,
-    string? RecoveryPath);
+    string? RecoveryPath,
+    string AppliedSha256 = "",
+    string PreviousSha256 = "");
 
 public sealed record JarMoveReceipt(
     string SourceRelativePath,
     string DestinationPath,
-    bool Changed);
+    bool Changed,
+    string MovedSha256 = "");
 
 public sealed partial class JarInventoryService
 {
@@ -23,25 +26,34 @@ public sealed partial class JarInventoryService
     internal const long MaximumMetadataBytes = 512L * 1024;
     internal const int MaximumArchiveEntries = 20_000;
     internal const int MaximumDependencies = 256;
-    private readonly SafeFileService files;
     private readonly AppDataPaths paths;
+    private readonly CanonicalPathLockManager pathLocks;
 
-    public JarInventoryService(SafeFileService files, AppDataPaths paths)
+    public JarInventoryService(
+        SafeFileService files,
+        AppDataPaths paths,
+        CanonicalPathLockManager? pathLocks = null)
     {
-        this.files = files;
+        ArgumentNullException.ThrowIfNull(files);
         this.paths = paths;
+        this.pathLocks = pathLocks ?? new CanonicalPathLockManager();
     }
 
-    public IReadOnlyList<ModPluginEntry> Inventory(ServerDefinition server)
+    public IReadOnlyList<ModPluginEntry> Inventory(ServerDefinition server) =>
+        WithContentLock(server, () => InventoryCore(server));
+
+    private IReadOnlyList<ModPluginEntry> InventoryCore(ServerDefinition server)
     {
         var folderName = IsPluginEcosystem(server.Ecosystem) ? "plugins" : "mods";
-        var folder = Path.Combine(server.RootPath, folderName);
-        var disabledFolder = Path.Combine(server.RootPath, ".chunkpilot-disabled", folderName);
-        if (!Directory.Exists(folder) && !Directory.Exists(disabledFolder))
+        var folder = ResolveServerPath(server, folderName);
+        var disabledFolder = ResolveServerPath(server, ".chunkpilot-disabled", folderName);
+        var activeExists = ValidateDirectoryChain(server.RootPath, folder, allowMissing: true);
+        var disabledExists = ValidateDirectoryChain(server.RootPath, disabledFolder, allowMissing: true);
+        if (!activeExists && !disabledExists)
             return [];
 
-        var active = Directory.Exists(folder) ? Directory.EnumerateFiles(folder, "*.jar", SearchOption.TopDirectoryOnly) : [];
-        var disabled = Directory.Exists(disabledFolder) ? Directory.EnumerateFiles(disabledFolder, "*.jar", SearchOption.TopDirectoryOnly) : [];
+        var active = activeExists ? EnumerateSafeJarFiles(server.RootPath, folder) : [];
+        var disabled = disabledExists ? EnumerateSafeJarFiles(server.RootPath, disabledFolder) : [];
         var entries = active
             .Select(path => ReadMetadata(server, path, enabled: true))
             .Concat(disabled.Select(path => ReadMetadata(server, path, enabled: false)))
@@ -71,7 +83,8 @@ public sealed partial class JarInventoryService
         if (extension is not (".yml" or ".yaml" or ".json" or ".jsonc" or ".toml" or ".properties" or ".conf"))
             throw new InvalidOperationException("This add-on configuration type is not enabled for editing.");
 
-        _ = files.ResolveWithinRoot(server.RootPath, configRelativePath, mustExist: true);
+        var configPath = ResolveServerPath(server, configRelativePath);
+        ValidateRegularFileChain(server.RootPath, configPath);
         var parts = configRelativePath.Replace(Path.AltDirectorySeparatorChar, Path.DirectorySeparatorChar)
             .Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries);
         var names = new[] { addon.Id, addon.Name }
@@ -104,120 +117,202 @@ public sealed partial class JarInventoryService
         ServerDefinition server,
         string sourceJar,
         string? replaceRelativePath = null,
+        CancellationToken cancellationToken = default) =>
+        await InstallCoreAsync(
+                server, sourceJar, replaceRelativePath, reviewedRelease: null, reviewedExisting: null,
+                cancellationToken)
+            .ConfigureAwait(false);
+
+    internal async Task<JarInstallReceipt> InstallReviewedProviderWithReceiptAsync(
+        ServerDefinition server,
+        string sourceJar,
+        PluginRelease reviewedRelease,
+        ModPluginEntry? reviewedExisting,
         CancellationToken cancellationToken = default)
     {
-        if (!File.Exists(sourceJar) || !Path.GetExtension(sourceJar).Equals(".jar", StringComparison.OrdinalIgnoreCase))
+        ArgumentNullException.ThrowIfNull(reviewedRelease);
+        if (!Path.GetFileName(sourceJar).Equals(reviewedRelease.FileName, StringComparison.OrdinalIgnoreCase) ||
+            string.IsNullOrWhiteSpace(reviewedRelease.ProjectId))
+            throw new InvalidDataException("The staged add-on does not match the exact reviewed provider release.");
+        return await InstallCoreAsync(
+                server, sourceJar, reviewedExisting?.RelativePath, reviewedRelease, reviewedExisting,
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    private async Task<JarInstallReceipt> InstallCoreAsync(
+        ServerDefinition server,
+        string sourceJar,
+        string? replaceRelativePath,
+        PluginRelease? reviewedRelease,
+        ModPluginEntry? reviewedExisting,
+        CancellationToken cancellationToken)
+    {
+        if (!Path.GetExtension(sourceJar).Equals(".jar", StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("Select a local .jar file.");
+        ValidateInspectionSource(server, sourceJar);
         var incoming = ReadMetadata(server with { RootPath = Path.GetDirectoryName(sourceJar)! }, sourceJar, enabled: true);
         if (incoming.Compatibility == CompatibilityState.Incompatible)
             throw new InvalidOperationException(incoming.CompatibilityReason);
-        var replacement = string.IsNullOrWhiteSpace(replaceRelativePath)
-            ? null
-            : files.ResolveWithinRoot(server.RootPath, replaceRelativePath, mustExist: true);
-        var duplicate = Inventory(server).FirstOrDefault(entry =>
-            incoming.Id.Length > 0 && entry.Id.Equals(incoming.Id, StringComparison.OrdinalIgnoreCase) &&
-            !entry.FileName.Equals(Path.GetFileName(sourceJar), StringComparison.OrdinalIgnoreCase) &&
-            (replacement is null || !files.ResolveWithinRoot(server.RootPath, entry.RelativePath, mustExist: true)
-                .Equals(replacement, StringComparison.OrdinalIgnoreCase)));
-        if (duplicate is not null)
-            throw new InvalidOperationException($"A different file already provides ID '{incoming.Id}': {duplicate.RelativePath}");
+        var incomingSha256 = incoming.Sha256;
+        await using var contentLock = await AcquireContentLockAsync(server, cancellationToken).ConfigureAwait(false);
         var folderName = IsPluginEcosystem(server.Ecosystem) ? "plugins" : "mods";
-        var destinationDirectory = Path.Combine(server.RootPath, folderName);
-        Directory.CreateDirectory(destinationDirectory);
-        var destination = Path.Combine(destinationDirectory, Path.GetFileName(sourceJar));
-        if (replacement is not null &&
-            !IsDirectChild(replacement, destinationDirectory) &&
-            !IsDirectChild(replacement, Path.Combine(server.RootPath, ".chunkpilot-disabled", folderName)))
-            throw new InvalidOperationException("Only a top-level managed mod or plugin JAR can be replaced.");
-        if (replacement is not null && File.Exists(destination) &&
-            !destination.Equals(replacement, StringComparison.OrdinalIgnoreCase))
-            throw new IOException($"A different plugin JAR already uses the update filename: {Path.GetFileName(destination)}");
-        string? recoveryPath = null;
-        string? previousRelativePath = null;
-        if (File.Exists(destination))
+        var destinationDirectory = EnsureServerDirectory(server, folderName);
+        var destination = ResolveServerPath(server, folderName, Path.GetFileName(sourceJar));
+        var inventory = InventoryCore(server);
+
+        string? replacement;
+        string expectedDestinationSha256;
+        string expectedReplacementSha256;
+        if (reviewedRelease is not null)
         {
-            var recovery = Path.Combine(paths.Recovery, server.Id.ToString("N"), DateTime.UtcNow.ToString("yyyyMMdd-HHmmss"));
-            Directory.CreateDirectory(recovery);
-            recoveryPath = Path.Combine(recovery, Path.GetFileName(destination));
-            File.Copy(destination, recoveryPath, overwrite: false);
-            previousRelativePath = Path.GetRelativePath(server.RootPath, destination);
+            replacement = ValidateReviewedProviderActivation(
+                server, reviewedRelease, reviewedExisting, inventory, destination);
+            expectedDestinationSha256 = replacement is not null &&
+                replacement.Equals(destination, StringComparison.OrdinalIgnoreCase)
+                    ? reviewedExisting!.Sha256
+                    : "";
+            expectedReplacementSha256 = replacement is not null &&
+                !replacement.Equals(destination, StringComparison.OrdinalIgnoreCase)
+                    ? reviewedExisting!.Sha256
+                    : "";
         }
-        await using var input = new FileStream(sourceJar, FileMode.Open, FileAccess.Read, FileShare.Read, 64 * 1024, FileOptions.Asynchronous);
+        else
+        {
+            replacement = string.IsNullOrWhiteSpace(replaceRelativePath)
+                ? null
+                : ResolveContentJarPath(server, replaceRelativePath, mustExist: true);
+            var duplicate = inventory.FirstOrDefault(entry =>
+                incoming.Id.Length > 0 && entry.Id.Equals(incoming.Id, StringComparison.OrdinalIgnoreCase) &&
+                !entry.FileName.Equals(Path.GetFileName(sourceJar), StringComparison.OrdinalIgnoreCase) &&
+                (replacement is null || !ResolveContentJarPath(server, entry.RelativePath, mustExist: true)
+                    .Equals(replacement, StringComparison.OrdinalIgnoreCase)));
+            if (duplicate is not null)
+                throw new InvalidOperationException(
+                    $"A different file already provides ID '{incoming.Id}': {duplicate.RelativePath}");
+            expectedDestinationSha256 = RegularFileSha256OrEmpty(server.RootPath, destination);
+            expectedReplacementSha256 = replacement is not null &&
+                !replacement.Equals(destination, StringComparison.OrdinalIgnoreCase)
+                    ? RegularFileSha256(server.RootPath, replacement)
+                    : "";
+        }
+
+        if (replacement is not null && !replacement.Equals(destination, StringComparison.OrdinalIgnoreCase) &&
+            PathEntry(destination) != PathEntryKind.Missing)
+            throw new IOException(
+                $"A different add-on JAR already uses the update filename: {Path.GetFileName(destination)}");
+
+        await using var input = new FileStream(
+            sourceJar, FileMode.Open, FileAccess.Read, FileShare.Read, 64 * 1024,
+            FileOptions.Asynchronous | FileOptions.SequentialScan);
         var temporary = destination + $".chunkpilot-{Guid.NewGuid():N}.tmp";
         try
         {
-            await using (var output = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, 64 * 1024, FileOptions.Asynchronous))
-                await input.CopyToAsync(output, cancellationToken).ConfigureAwait(false);
-            if (File.Exists(destination))
-                File.Replace(temporary, destination, null, ignoreMetadataErrors: true);
-            else
+            await using (var output = new FileStream(
+                             temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, 64 * 1024,
+                             FileOptions.Asynchronous | FileOptions.WriteThrough))
             {
-                string? recoveredReplacement = null;
-                if (replacement is not null && File.Exists(replacement))
-                {
-                    var recovery = Path.Combine(paths.Recovery, server.Id.ToString("N"), "content",
-                        DateTime.UtcNow.ToString("yyyyMMdd-HHmmss-fff"));
-                    Directory.CreateDirectory(recovery);
-                    recoveredReplacement = Path.Combine(recovery, Path.GetFileName(replacement));
-                    File.Move(replacement, recoveredReplacement);
-                    recoveryPath = recoveredReplacement;
-                    previousRelativePath = Path.GetRelativePath(server.RootPath, replacement);
-                }
+                await input.CopyToAsync(output, cancellationToken).ConfigureAwait(false);
+                await output.FlushAsync(cancellationToken).ConfigureAwait(false);
+            }
+            ValidateRegularFileChain(server.RootPath, temporary);
+            EnsureUnchangedActivationState(
+                server, reviewedRelease, reviewedExisting, destination, replacement,
+                expectedDestinationSha256, expectedReplacementSha256);
+            var receipt = ActivatePreparedJar(
+                server, temporary, destination, replacement, incomingSha256,
+                expectedDestinationSha256, expectedReplacementSha256);
+            if (reviewedRelease is not null)
+            {
                 try
                 {
-                    File.Move(temporary, destination);
+                    WithPathLock(
+                        ProvenancePath(server.Id),
+                        () => RecordProviderProvenanceCore(server, sourceJar, reviewedRelease));
                 }
-                catch
+                catch (Exception provenanceFailure) when (provenanceFailure is
+                           IOException or UnauthorizedAccessException or InvalidDataException)
                 {
-                    if (recoveredReplacement is not null && replacement is not null &&
-                        File.Exists(recoveredReplacement) && !File.Exists(replacement))
-                        File.Move(recoveredReplacement, replacement);
+                    try { RollbackInstallCore(server, receipt); }
+                    catch (Exception rollbackFailure) when (rollbackFailure is
+                               IOException or UnauthorizedAccessException or InvalidOperationException)
+                    {
+                        throw new AggregateException(
+                            "The add-on activated, but provider ownership could not be recorded and rollback also failed. Recovery evidence was preserved.",
+                            provenanceFailure, rollbackFailure);
+                    }
                     throw;
                 }
             }
+            return receipt;
         }
         finally
         {
-            try { File.Delete(temporary); }
-            catch (IOException) { }
-            catch (UnauthorizedAccessException) { }
+            TryDeleteRegularTemporary(server.RootPath, temporary);
         }
-        return new JarInstallReceipt(
-            Path.GetRelativePath(server.RootPath, destination),
-            previousRelativePath,
-            recoveryPath);
     }
 
-    public void RollbackInstall(ServerDefinition server, JarInstallReceipt receipt)
+    public void RollbackInstall(ServerDefinition server, JarInstallReceipt receipt) =>
+        WithContentLock(server, () => RollbackInstallCore(server, receipt));
+
+    private void RollbackInstallCore(ServerDefinition server, JarInstallReceipt receipt)
     {
         ArgumentNullException.ThrowIfNull(receipt);
-        var applied = files.ResolveWithinRoot(server.RootPath, receipt.AppliedRelativePath, mustExist: false);
-        var rollbackFolder = Path.Combine(paths.Recovery, server.Id.ToString("N"), "failed-plugin-activation",
-            DateTime.UtcNow.ToString("yyyyMMdd-HHmmss-fff"));
-        Directory.CreateDirectory(rollbackFolder);
-        if (File.Exists(applied))
+        var applied = ResolveContentJarPath(server, receipt.AppliedRelativePath, mustExist: false);
+        if (PathEntry(applied) != PathEntryKind.Missing)
         {
+            ValidateRegularFileChain(server.RootPath, applied);
+            if (receipt.AppliedSha256.Length != 64 ||
+                !RegularFileSha256(server.RootPath, applied).Equals(
+                    receipt.AppliedSha256, StringComparison.OrdinalIgnoreCase))
+                throw new IOException(
+                    "The activated add-on path changed after installation, so rollback preserved it in place.");
+            var rollbackFolder = EnsureRecoveryDirectory(
+                server, "failed-plugin-activation", DateTime.UtcNow.ToString("yyyyMMdd-HHmmss-fff"));
             var failed = Path.Combine(rollbackFolder, Path.GetFileName(applied));
-            if (File.Exists(failed))
+            if (PathEntry(failed) != PathEntryKind.Missing)
                 failed = Path.Combine(rollbackFolder,
                     $"{Path.GetFileNameWithoutExtension(applied)}-{Guid.NewGuid():N}.jar");
-            File.Move(applied, failed);
+            File.Move(applied, failed, overwrite: false);
+            ValidateRegularFileChain(paths.Root, failed);
+            if (!RegularFileSha256(paths.Root, failed).Equals(
+                    receipt.AppliedSha256, StringComparison.OrdinalIgnoreCase))
+            {
+                TryRestoreMovedFile(paths.Root, failed, server.RootPath, applied);
+                throw new IOException(
+                    "The activated add-on changed at the rollback boundary and was preserved.");
+            }
         }
 
         if (string.IsNullOrWhiteSpace(receipt.PreviousRelativePath) ||
             string.IsNullOrWhiteSpace(receipt.RecoveryPath))
             return;
-        var recovery = Path.GetFullPath(receipt.RecoveryPath);
-        if (!IsWithin(recovery, paths.Recovery) || !File.Exists(recovery))
+        var recovery = ResolveAppDataRecoveryPath(receipt.RecoveryPath, mustExist: true);
+        if (receipt.PreviousSha256.Length != 64 ||
+            !RegularFileSha256(paths.Root, recovery).Equals(
+                receipt.PreviousSha256, StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("The known-good plugin recovery copy is unavailable.");
-        var previous = files.ResolveWithinRoot(server.RootPath, receipt.PreviousRelativePath, mustExist: false);
-        if (File.Exists(previous))
+        var previous = ResolveContentJarPath(server, receipt.PreviousRelativePath, mustExist: false);
+        if (PathEntry(previous) != PathEntryKind.Missing)
             throw new IOException("The previous plugin path is no longer empty, so rollback stopped safely.");
-        Directory.CreateDirectory(Path.GetDirectoryName(previous)!);
-        File.Move(recovery, previous);
+        EnsureSafeExistingParentDirectory(server.RootPath, previous);
+        File.Move(recovery, previous, overwrite: false);
+        ValidateRegularFileChain(server.RootPath, previous);
+        if (!RegularFileSha256(server.RootPath, previous).Equals(
+                receipt.PreviousSha256, StringComparison.OrdinalIgnoreCase))
+        {
+            TryRestoreMovedFile(server.RootPath, previous, paths.Root, recovery);
+            throw new IOException("The known-good add-on changed at the rollback boundary and was preserved.");
+        }
     }
 
     public void RecordProviderProvenance(ServerDefinition server, string sourceJar, PluginRelease release)
+    {
+        var provenancePath = ProvenancePath(server.Id);
+        WithPathLock(provenancePath, () => RecordProviderProvenanceCore(server, sourceJar, release));
+    }
+
+    private void RecordProviderProvenanceCore(ServerDefinition server, string sourceJar, PluginRelease release)
     {
         var inspected = Inspect(server, sourceJar);
         if (inspected.Sha256.Length != 64)
@@ -235,30 +330,48 @@ public sealed partial class JarInventoryService
         if (entries.Count > 5_000)
             entries = entries.OrderByDescending(entry => entry.RecordedAt).Take(5_000).ToList();
         var path = ProvenancePath(server.Id);
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        _ = EnsureAppDataDirectory("PluginProvenance");
+        ValidateOptionalRegularFileChain(paths.Root, path);
         var temporary = path + $".{Guid.NewGuid():N}.partial";
-        File.WriteAllText(temporary, JsonSerializer.Serialize(entries, ProtocolJson.Options), new UTF8Encoding(false));
-        File.Move(temporary, path, overwrite: true);
+        try
+        {
+            File.WriteAllText(
+                temporary, JsonSerializer.Serialize(entries, ProtocolJson.Options), new UTF8Encoding(false));
+            ValidateRegularFileChain(paths.Root, temporary);
+            ValidateOptionalRegularFileChain(paths.Root, path);
+            File.Move(temporary, path, overwrite: true);
+            ValidateRegularFileChain(paths.Root, path);
+        }
+        finally
+        {
+            TryDeleteRegularTemporary(paths.Root, temporary);
+        }
     }
 
     public ModPluginEntry Inspect(ServerDefinition server, string sourceJar)
     {
-        if (!File.Exists(sourceJar) || !Path.GetExtension(sourceJar).Equals(".jar", StringComparison.OrdinalIgnoreCase))
+        if (!Path.GetExtension(sourceJar).Equals(".jar", StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("Select a local .jar file.");
+        ValidateInspectionSource(server, sourceJar);
         return ReadMetadata(server with { RootPath = Path.GetDirectoryName(sourceJar)! }, sourceJar, enabled: true);
     }
 
     public void SetEnabled(ServerDefinition server, string relativePath, bool enabled) =>
         _ = SetEnabledWithReceipt(server, relativePath, enabled);
 
-    public JarMoveReceipt SetEnabledWithReceipt(ServerDefinition server, string relativePath, bool enabled)
+    public JarMoveReceipt SetEnabledWithReceipt(ServerDefinition server, string relativePath, bool enabled) =>
+        WithContentLock(server, () => SetEnabledWithReceiptCore(server, relativePath, enabled));
+
+    private JarMoveReceipt SetEnabledWithReceiptCore(
+        ServerDefinition server,
+        string relativePath,
+        bool enabled)
     {
-        var source = files.ResolveWithinRoot(server.RootPath, relativePath, mustExist: true);
+        var source = ResolveContentJarPath(server, relativePath, mustExist: true);
+        var movedSha256 = RegularFileSha256(server.RootPath, source);
         var folderName = IsPluginEcosystem(server.Ecosystem) ? "plugins" : "mods";
-        var activeDirectory = Path.Combine(server.RootPath, folderName);
-        var disabledDirectory = Path.Combine(server.RootPath, ".chunkpilot-disabled", folderName);
-        Directory.CreateDirectory(activeDirectory);
-        Directory.CreateDirectory(disabledDirectory);
+        var activeDirectory = EnsureServerDirectory(server, folderName);
+        var disabledDirectory = EnsureServerDirectory(server, ".chunkpilot-disabled", folderName);
         var sourceInDisabled = source.StartsWith(
             Path.TrimEndingDirectorySeparator(disabledDirectory) + Path.DirectorySeparatorChar,
             StringComparison.OrdinalIgnoreCase);
@@ -266,11 +379,19 @@ public sealed partial class JarInventoryService
             ? Path.Combine(activeDirectory, Path.GetFileName(source))
             : Path.Combine(disabledDirectory, Path.GetFileName(source));
         if (enabled == !sourceInDisabled || source.Equals(destination, StringComparison.OrdinalIgnoreCase))
-            return new JarMoveReceipt(relativePath, destination, Changed: false);
-        if (File.Exists(destination))
+            return new JarMoveReceipt(relativePath, destination, Changed: false, movedSha256);
+        ValidateOptionalRegularFileChain(server.RootPath, destination);
+        if (PathEntry(destination) != PathEntryKind.Missing)
             throw new IOException($"The destination already exists: {destination}");
-        File.Move(source, destination);
-        return new JarMoveReceipt(relativePath, destination, Changed: true);
+        EnsureRegularFileUnchanged(server.RootPath, source, movedSha256,
+            "The selected add-on changed before it could be moved.");
+        File.Move(source, destination, overwrite: false);
+        if (!RegularFileSha256(server.RootPath, destination).Equals(movedSha256, StringComparison.OrdinalIgnoreCase))
+        {
+            TryRestoreMovedFile(server.RootPath, destination, server.RootPath, source);
+            throw new IOException("The selected add-on changed while it was being moved.");
+        }
+        return new JarMoveReceipt(relativePath, destination, Changed: true, movedSha256);
     }
 
     /// <summary>
@@ -280,28 +401,33 @@ public sealed partial class JarInventoryService
     public void Remove(ServerDefinition server, string relativePath) =>
         _ = RemoveWithReceipt(server, relativePath);
 
-    public JarMoveReceipt RemoveWithReceipt(ServerDefinition server, string relativePath)
-    {
-        var source = files.ResolveWithinRoot(server.RootPath, relativePath, mustExist: true);
-        var folderName = IsPluginEcosystem(server.Ecosystem) ? "plugins" : "mods";
-        var activeDirectory = Path.Combine(server.RootPath, folderName);
-        var disabledDirectory = Path.Combine(server.RootPath, ".chunkpilot-disabled", folderName);
-        if (!IsDirectChild(source, activeDirectory) && !IsDirectChild(source, disabledDirectory))
-            throw new InvalidOperationException("Only a top-level managed mod or plugin JAR can be removed.");
-        if (!Path.GetExtension(source).Equals(".jar", StringComparison.OrdinalIgnoreCase))
-            throw new InvalidOperationException("Only a Java archive can be removed from content inventory.");
+    public JarMoveReceipt RemoveWithReceipt(ServerDefinition server, string relativePath) =>
+        WithContentLock(server, () => RemoveWithReceiptCore(server, relativePath));
 
-        var recovery = Path.Combine(paths.Recovery, server.Id.ToString("N"), "content",
-            DateTime.UtcNow.ToString("yyyyMMdd-HHmmss-fff"));
-        Directory.CreateDirectory(recovery);
+    private JarMoveReceipt RemoveWithReceiptCore(ServerDefinition server, string relativePath)
+    {
+        var source = ResolveContentJarPath(server, relativePath, mustExist: true);
+        var movedSha256 = RegularFileSha256(server.RootPath, source);
+        var recovery = EnsureRecoveryDirectory(
+            server, "content", DateTime.UtcNow.ToString("yyyyMMdd-HHmmss-fff"));
         var destination = Path.Combine(recovery, Path.GetFileName(source));
-        if (File.Exists(destination))
+        if (PathEntry(destination) != PathEntryKind.Missing)
             destination = Path.Combine(recovery, $"{Path.GetFileNameWithoutExtension(source)}-{Guid.NewGuid():N}.jar");
-        File.Move(source, destination);
-        return new JarMoveReceipt(relativePath, destination, Changed: true);
+        EnsureRegularFileUnchanged(server.RootPath, source, movedSha256,
+            "The selected add-on changed before it could be removed.");
+        File.Move(source, destination, overwrite: false);
+        if (!RegularFileSha256(paths.Root, destination).Equals(movedSha256, StringComparison.OrdinalIgnoreCase))
+        {
+            TryRestoreMovedFile(paths.Root, destination, server.RootPath, source);
+            throw new IOException("The selected add-on changed while it was being moved to recovery.");
+        }
+        return new JarMoveReceipt(relativePath, destination, Changed: true, movedSha256);
     }
 
-    public void RollbackMove(ServerDefinition server, JarMoveReceipt receipt)
+    public void RollbackMove(ServerDefinition server, JarMoveReceipt receipt) =>
+        WithContentLock(server, () => RollbackMoveCore(server, receipt));
+
+    private void RollbackMoveCore(ServerDefinition server, JarMoveReceipt receipt)
     {
         ArgumentNullException.ThrowIfNull(receipt);
         if (!receipt.Changed)
@@ -309,13 +435,28 @@ public sealed partial class JarInventoryService
         var destination = Path.GetFullPath(receipt.DestinationPath);
         if (!IsWithin(destination, server.RootPath) && !IsWithin(destination, paths.Recovery))
             throw new UnauthorizedAccessException("The plugin rollback source is outside ChunkPilot-owned storage.");
-        if (!File.Exists(destination))
-            throw new FileNotFoundException("The plugin rollback source no longer exists.", destination);
-        var source = files.ResolveWithinRoot(server.RootPath, receipt.SourceRelativePath, mustExist: false);
-        if (File.Exists(source))
+        if (IsWithin(destination, server.RootPath))
+            ValidateRegularFileChain(server.RootPath, destination);
+        else
+            ValidateRegularFileChain(paths.Root, destination);
+        if (receipt.MovedSha256.Length != 64 ||
+            !Sha256(destination).Equals(receipt.MovedSha256, StringComparison.OrdinalIgnoreCase))
+            throw new IOException("The plugin rollback source changed, so rollback preserved it in place.");
+        var source = ResolveContentJarPath(server, receipt.SourceRelativePath, mustExist: false);
+        if (PathEntry(source) != PathEntryKind.Missing)
             throw new IOException("The original plugin path is no longer empty, so rollback stopped safely.");
-        Directory.CreateDirectory(Path.GetDirectoryName(source)!);
-        File.Move(destination, source);
+        EnsureSafeExistingParentDirectory(server.RootPath, source);
+        File.Move(destination, source, overwrite: false);
+        ValidateRegularFileChain(server.RootPath, source);
+        if (!RegularFileSha256(server.RootPath, source).Equals(
+                receipt.MovedSha256, StringComparison.OrdinalIgnoreCase))
+        {
+            TryRestoreMovedFile(
+                server.RootPath, source,
+                IsWithin(destination, server.RootPath) ? server.RootPath : paths.Root,
+                destination);
+            throw new IOException("The plugin rollback source changed at the move boundary and was preserved.");
+        }
     }
 
     private static bool IsSafeConfigIdentity(string value) =>
@@ -549,12 +690,14 @@ public sealed partial class JarInventoryService
         var path = ProvenancePath(serverId);
         try
         {
-            if (!File.Exists(path) || new FileInfo(path).Length > 2 * 1024 * 1024)
+            _ = ValidateDirectoryChain(paths.Root, paths.PluginProvenance, allowMissing: false);
+            ValidateOptionalRegularFileChain(paths.Root, path);
+            if (PathEntry(path) == PathEntryKind.Missing || new FileInfo(path).Length > 2 * 1024 * 1024)
                 return [];
             return JsonSerializer.Deserialize<IReadOnlyList<PluginProvenanceEntry>>(
                        File.ReadAllText(path, Encoding.UTF8), ProtocolJson.Options) ?? [];
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException)
+        catch (Exception exception) when (exception is IOException or JsonException)
         {
             return [];
         }
@@ -566,9 +709,6 @@ public sealed partial class JarInventoryService
     private static bool IsPluginEcosystem(ServerEcosystem ecosystem) =>
         ecosystem is ServerEcosystem.Paper or ServerEcosystem.Purpur or ServerEcosystem.Spigot or
             ServerEcosystem.Bukkit or ServerEcosystem.Hybrid;
-
-    private static bool IsDirectChild(string path, string directory) =>
-        Path.GetDirectoryName(path)?.Equals(Path.GetFullPath(directory), StringComparison.OrdinalIgnoreCase) == true;
 
     private static bool IsWithin(string path, string directory)
     {

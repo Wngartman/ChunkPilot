@@ -150,6 +150,12 @@ public sealed record PackVersionInfo
     public string MigrationNotes { get; init; } = "";
     public string PackageType { get; init; } = "zip";
     public IReadOnlyList<string> DeclaredFiles { get; init; } = [];
+    /// <summary>
+    /// Native preflight-only generated-candidate plan. It is ignored by the named-pipe serializer
+    /// so a renderer request can neither supply nor observe trusted download authority.
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public CurseForgeGeneratedPackPlan? TrustedCurseForgeGeneratedPlan { get; init; }
 }
 
 public sealed record UpdatePreferences

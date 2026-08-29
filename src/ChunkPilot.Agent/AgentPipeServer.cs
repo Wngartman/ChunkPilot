@@ -38,6 +38,9 @@ public sealed class AgentPipeServer
     private readonly ServerCapabilityDetectionService capabilities;
     private readonly GuidedCatalogService guidedCatalog;
     private readonly CurseForgeModpackPreflightService curseForgeModpackPreflight;
+    private readonly CurseForgeCreationAuthorizationRegistry curseForgeCreationAuthorizations;
+    private readonly CurseForgeManagedContentPlanAuthorizationRegistry curseForgeContentPlanAuthorizations;
+    private readonly CertificationUpdateFaultInjector certificationUpdateFaults;
     private readonly ManagedJavaRuntimeService managedJava;
     private readonly DatapackService datapacks;
     private readonly DatapackManagementService packContent;
@@ -80,6 +83,9 @@ public sealed class AgentPipeServer
         ServerCapabilityDetectionService capabilities,
         GuidedCatalogService guidedCatalog,
         CurseForgeModpackPreflightService curseForgeModpackPreflight,
+        CurseForgeCreationAuthorizationRegistry curseForgeCreationAuthorizations,
+        CurseForgeManagedContentPlanAuthorizationRegistry curseForgeContentPlanAuthorizations,
+        CertificationUpdateFaultInjector certificationUpdateFaults,
         ManagedJavaRuntimeService managedJava,
         DatapackService datapacks,
         DatapackManagementService packContent,
@@ -116,6 +122,9 @@ public sealed class AgentPipeServer
         this.capabilities = capabilities;
         this.guidedCatalog = guidedCatalog;
         this.curseForgeModpackPreflight = curseForgeModpackPreflight;
+        this.curseForgeCreationAuthorizations = curseForgeCreationAuthorizations;
+        this.curseForgeContentPlanAuthorizations = curseForgeContentPlanAuthorizations;
+        this.certificationUpdateFaults = certificationUpdateFaults;
         this.managedJava = managedJava;
         this.datapacks = datapacks;
         this.packContent = packContent;
@@ -256,6 +265,8 @@ public sealed class AgentPipeServer
         };
         AgentRequest? request = null;
         AgentResponse response;
+        Guid? provisionalCurseForgeAuthorization = null;
+        Guid? provisionalCurseForgeContentPlanAuthorization = null;
         try
         {
             using var readDeadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -276,6 +287,19 @@ public sealed class AgentPipeServer
                       ?? throw new JsonException("Request was empty.");
             var payload = await DispatchAsync(
                 request, NamedPipeClientProcessId(pipe), cancellationToken).ConfigureAwait(false);
+            if (request.Operation.Equals("PreflightCurseForgeModpack", StringComparison.Ordinal))
+            {
+                var preflight = payload.Deserialize<CurseForgeModpackPreflightResult>(ProtocolJson.Options);
+                if (preflight?.State == CatalogReleasePreflightState.Ready)
+                    provisionalCurseForgeAuthorization = preflight.OperationId;
+            }
+            else if (request.Operation.Equals("PlanPluginProviderRelease", StringComparison.Ordinal))
+            {
+                var plan = payload.Deserialize<PluginInstallPlan>(ProtocolJson.Options);
+                if (plan?.Authorization is { AuthorizationId: var authorizationId } &&
+                    authorizationId != Guid.Empty)
+                    provisionalCurseForgeContentPlanAuthorization = authorizationId;
+            }
             response = new AgentResponse
             {
                 RequestId = request.RequestId,
@@ -293,7 +317,18 @@ public sealed class AgentPipeServer
                 Error = SecretRedactor.Redact(exception.Message)
             };
         }
-        await writer.WriteLineAsync(JsonSerializer.Serialize(response, ProtocolJson.Options)).ConfigureAwait(false);
+        try
+        {
+            await writer.WriteLineAsync(JsonSerializer.Serialize(response, ProtocolJson.Options)).ConfigureAwait(false);
+        }
+        catch
+        {
+            if (provisionalCurseForgeAuthorization is { } operationId)
+                curseForgeCreationAuthorizations.Revoke(operationId);
+            if (provisionalCurseForgeContentPlanAuthorization is { } authorizationId)
+                curseForgeContentPlanAuthorizations.Revoke(authorizationId);
+            throw;
+        }
     }
 
     private static async Task<string?> ReadBoundedRequestAsync(
@@ -467,12 +502,23 @@ public sealed class AgentPipeServer
             {
                 var input = Deserialize<BeginModpackCreationRequest>(request);
                 return JsonSerializer.SerializeToElement(
-                    new InstallOperationRequest(installations.BeginModpack(input.Plan)), ProtocolJson.Options);
+                    new InstallOperationRequest(installations.BeginAuthorizedModpack(
+                        input.Plan,
+                        curseForgeCreationAuthorizations.DemandAndConsumeIfRequired)),
+                    ProtocolJson.Options);
             }
             case "ModpackCreations":
             {
                 return JsonSerializer.SerializeToElement(
                     new ModpackCreationsResult(installations.ModpackOperations()), ProtocolJson.Options);
+            }
+            case "CancelOrFenceModpackCreation":
+            {
+                var input = Deserialize<CancelOrFenceModpackCreationRequest>(request);
+                var result = installations.CancelOrFenceModpack(
+                    input.Plan,
+                    authorizationId => curseForgeCreationAuthorizations.Revoke(authorizationId));
+                return JsonSerializer.SerializeToElement(result, ProtocolJson.Options);
             }
             case "BeginServerImport":
             {
@@ -539,8 +585,28 @@ public sealed class AgentPipeServer
             case "PreflightCurseForgeModpack":
             {
                 var input = Deserialize<CurseForgeModpackPreflightRequest>(request);
+                var result = await curseForgeModpackPreflight.InspectAsync(input, cancellationToken)
+                    .ConfigureAwait(false);
+                var payload = JsonSerializer.SerializeToElement(result, ProtocolJson.Options);
+                if (result.State == CatalogReleasePreflightState.Ready)
+                    curseForgeCreationAuthorizations.Register(result);
+                return payload;
+            }
+            case "RevokeCurseForgeModpackPreflight":
+            {
+                var input = Deserialize<RevokeCurseForgeModpackPreflightRequest>(request);
+                curseForgeCreationAuthorizations.Revoke(input.OperationId);
                 return JsonSerializer.SerializeToElement(
-                    await curseForgeModpackPreflight.InspectAsync(input, cancellationToken).ConfigureAwait(false),
+                    OperationResult.Ok("The exact CurseForge preflight review is no longer authorized."),
+                    ProtocolJson.Options);
+            }
+            case "ArmCertificationUpdateFailure":
+            {
+                var input = Deserialize<ArmCertificationUpdateFailureRequest>(request);
+                uiSessions.Demand(Credential(input.SessionId, input.SessionCapability),
+                    "Arming an isolated certification update failure");
+                return JsonSerializer.SerializeToElement(
+                    certificationUpdateFaults.Arm(input.ServerId, input.OperationId, input.Token),
                     ProtocolJson.Options);
             }
             case "BrowseCatalog":
@@ -1608,20 +1674,56 @@ public sealed class AgentPipeServer
             {
                 var input = Deserialize<PluginProviderPlanRequest>(request);
                 var managed = supervisor.Get(input.ServerId);
-                return JsonSerializer.SerializeToElement(
-                    await plugins.PlanAsync(managed.Definition, input.ProjectId, input.VersionId, input.Provider,
+                var plan = await plugins.PlanAsync(
+                        managed.Definition, input.ProjectId, input.VersionId, input.Provider,
                         cancellationToken)
-                        .ConfigureAwait(false), ProtocolJson.Options);
+                    .ConfigureAwait(false);
+                if (input.Provider == PluginProviderKind.CurseForge && plan.CanInstall)
+                {
+                    var authorization = curseForgeContentPlanAuthorizations.Register(
+                        input.ServerId, input.Provider, input.ProjectId, input.VersionId, plan);
+                    plan = plan with { Authorization = authorization };
+                }
+                return JsonSerializer.SerializeToElement(
+                    plan, ProtocolJson.Options);
+            }
+            case "RevokeCurseForgeManagedContentPlan":
+            {
+                var input = Deserialize<RevokeManagedContentPlanAuthorizationRequest>(request);
+                curseForgeContentPlanAuthorizations.Revoke(input.AuthorizationId);
+                return JsonSerializer.SerializeToElement(
+                    OperationResult.Ok("The exact CurseForge dependency-plan review is no longer authorized."),
+                    ProtocolJson.Options);
             }
             case "InstallPluginProviderPlan":
             {
                 var input = Deserialize<PluginProviderInstallPlanRequest>(request);
                 var managed = supervisor.Get(input.ServerId);
+                PluginInstallPlan? exactCurseForgePlan = null;
+                if (input.Provider == PluginProviderKind.CurseForge)
+                {
+                    exactCurseForgePlan = curseForgeContentPlanAuthorizations.Consume(
+                        input.ServerId,
+                        input.Provider,
+                        input.ProjectId,
+                        input.VersionId,
+                        input.PlanAuthorization ?? throw new InvalidOperationException(
+                            "CurseForge dependency installation requires the exact reviewed plan authorization."));
+                }
+                else if (input.PlanAuthorization is not null)
+                {
+                    throw new ArgumentException(
+                        "A dependency-plan authorization is valid only for CurseForge.");
+                }
                 var installed = await managed.RunExclusiveRestartableDataOperationAsync(
                     "installing a verified add-on dependency plan",
                     input.RestartIfRunning,
-                    token => plugins.InstallPlanWithReceiptsAsync(
-                        managed.Definition, input.ProjectId, input.VersionId, null, input.Provider, token),
+                    token => input.Provider == PluginProviderKind.CurseForge
+                        ? plugins.InstallExactPlanWithReceiptsAsync(
+                            managed.Definition, input.ProjectId, input.VersionId,
+                            exactCurseForgePlan!, null, token)
+                        : plugins.InstallPlanWithReceiptsAsync(
+                            managed.Definition, input.ProjectId, input.VersionId, null, input.Provider, token),
                     (result, _) =>
                     {
                         plugins.RollbackPlan(managed.Definition, result);
@@ -1642,6 +1744,14 @@ public sealed class AgentPipeServer
             {
                 var input = Deserialize<ManagedContentOperationRequest>(request);
                 return JsonSerializer.SerializeToElement(contentOperations.Get(input.OperationId), ProtocolJson.Options);
+            }
+            case "CancelOrFenceManagedContentOperation":
+            {
+                var input = Deserialize<BeginManagedContentInstallRequest>(request);
+                var result = contentOperations.CancelOrFenceInstall(
+                    input,
+                    authorizationId => curseForgeContentPlanAuthorizations.Revoke(authorizationId));
+                return JsonSerializer.SerializeToElement(result, ProtocolJson.Options);
             }
             case "ManagedContentOperations":
             {

@@ -521,6 +521,11 @@ public sealed record ServerInstallRequest
     public string PackLoader { get; init; } = "";
     public string PackLoaderVersion { get; init; } = "";
     public ReleaseChannel PackReleaseChannel { get; init; } = ReleaseChannel.Stable;
+    /// <summary>
+    /// Agent-authorized exact file inventory for a provider-backed generated CurseForge candidate.
+    /// Local manifest imports intentionally leave this empty and resolve within their local review.
+    /// </summary>
+    public CurseForgeGeneratedPackPlan? CurseForgeGeneratedPlan { get; init; }
 }
 
 public sealed record InstallProgress

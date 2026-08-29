@@ -262,6 +262,8 @@ public sealed class AutomationWorker
         };
         foreach (var argument in specification.Arguments)
             start.ArgumentList.Add(argument);
+        ChildProcessEnvironmentPolicy.Apply(start);
+        CurseForgeCredentialEnvironment.RemoveFromChild(start);
         using var process = Process.Start(start)
             ?? throw new InvalidOperationException("Windows did not start the approved external program.");
         var outputTask = ReadBoundedAsync(process.StandardOutput, cancellationToken);

@@ -13,6 +13,8 @@ import styles from './ModpackPicker.module.css';
 export type ModpackSelection =
   | { kind: 'remote'; project: ModpackProject; release: ModpackRelease }
   | { kind: 'local'; local: LocalModpackSelection };
+export type ModpackSelectionChangeReason = 'selection' | 'provider-navigation' | 'clear' | 'local';
+export type ModpackSelectionChangeProvider = ModpackProvider | null;
 
 type BrowserState = 'Uninitialized' | 'Loading cache' | 'Loading provider' | 'Ready' | 'Refreshing' |
   'Empty' | 'Offline cache' | 'Authentication required' | 'Rate limited' | 'Failed' | 'Cancelled';
@@ -63,7 +65,8 @@ function createProviderSession(): ProviderSession {
 export function ModpackPicker({ value, initialMode = 'Browse', onChange, onOpenProviderSettings: _onOpenProviderSettings }: {
   value: ModpackSelection | null;
   initialMode?: InitialMode;
-  onChange: (selection: ModpackSelection | null) => void;
+  onChange: (selection: ModpackSelection | null, reason: ModpackSelectionChangeReason,
+    provider: ModpackSelectionChangeProvider) => void;
   onOpenProviderSettings?: () => void;
 }) {
   if (initialMode === 'Link') return <ProviderLinkPicker value={value} onChange={onChange} />;
@@ -73,7 +76,8 @@ export function ModpackPicker({ value, initialMode = 'Browse', onChange, onOpenP
 
 function BrowseModpackPicker({ value, onChange }: {
   value: ModpackSelection | null;
-  onChange: (selection: ModpackSelection | null) => void;
+  onChange: (selection: ModpackSelection | null, reason: ModpackSelectionChangeReason,
+    provider: ModpackSelectionChangeProvider) => void;
 }) {
   const bridge = useAppStore(state => state.bridge);
   const command = useAppStore(state => state.command);
@@ -245,7 +249,7 @@ function BrowseModpackPicker({ value, onChange }: {
         ...current, query: { ...current.draft, search: current.draft.search.trim() }, revision: current.revision + 1,
         loadedKey: '', selectedProjectId: null, selection: null, detailState: 'idle', detailError: ''
       }));
-      if (valueRef.current?.kind !== 'local') onChangeRef.current(null);
+      if (valueRef.current?.kind !== 'local') onChangeRef.current(null, 'clear', provider);
     }, 275);
     return () => window.clearTimeout(timer);
   }, [provider, session.draft.search, session.query.search]);
@@ -289,7 +293,7 @@ function BrowseModpackPicker({ value, onChange }: {
       revision: current.revision + 1, loadedKey: '', selectedProjectId: null, selection: null,
       detailState: 'idle', detailError: ''
     }));
-    if (valueRef.current?.kind !== 'local') onChangeRef.current(null);
+    if (valueRef.current?.kind !== 'local') onChangeRef.current(null, 'clear', provider);
   };
   const clearFilters = () => {
     resetResultScroll(provider);
@@ -297,13 +301,13 @@ function BrowseModpackPicker({ value, onChange }: {
       ...current, draft: { ...emptyQuery }, query: { ...emptyQuery }, revision: current.revision + 1,
       loadedKey: '', selectedProjectId: null, selection: null, detailState: 'idle', detailError: ''
     }));
-    if (valueRef.current?.kind !== 'local') onChangeRef.current(null);
+    if (valueRef.current?.kind !== 'local') onChangeRef.current(null, 'clear', provider);
   };
   const switchProvider = (nextProvider: ModpackProvider) => {
     if (nextProvider === provider) return;
     if (resultsRef.current) scrollPositions.current[provider] = resultsRef.current.scrollTop;
     setProvider(nextProvider);
-    onChangeRef.current(sessionsRef.current[nextProvider].selection);
+    onChangeRef.current(sessionsRef.current[nextProvider].selection, 'provider-navigation', nextProvider);
   };
   const moveProviderFocus = (event: React.KeyboardEvent<HTMLButtonElement>, currentProvider: ModpackProvider) => {
     const currentIndex = providers.indexOf(currentProvider);
@@ -319,7 +323,7 @@ function BrowseModpackPicker({ value, onChange }: {
   };
   const chooseLocal = () => {
     void command<LocalModpackSelection>('modpacks.chooseLocal').then(local => {
-      if (!local.cancelled && local.inspection?.canCreate) onChange({ kind: 'local', local });
+      if (!local.cancelled && local.inspection?.canCreate) onChange({ kind: 'local', local }, 'local', null);
     });
   };
   const loadMore = async () => {
@@ -370,12 +374,12 @@ function BrowseModpackPicker({ value, onChange }: {
       selection: replacingSelection ? null : current.selection,
       detailState: 'loading', detailError: ''
     }));
-    if (replacingSelection) onChangeRef.current(null);
+    if (replacingSelection) onChangeRef.current(null, 'selection', provider);
     if (project.serverPathChecked !== false && project.versions.length) {
       const release = project.versions.find(item => item.canCreate) ?? project.versions[0];
       const selection = release ? { kind: 'remote' as const, project, release } : null;
       updateSession(provider, current => ({ ...current, selection, detailState: 'idle' }));
-      onChangeRef.current(selection);
+      onChangeRef.current(selection, 'selection', provider);
       return;
     }
     if (!bridge) return;
@@ -393,7 +397,7 @@ function BrowseModpackPicker({ value, onChange }: {
         projects: current.projects.map(item => item.projectId === resolved.projectId ? resolved : item),
         selectedProjectId: resolved.projectId, selection, detailState: 'idle', detailError: ''
       }));
-      onChangeRef.current(selection);
+      onChangeRef.current(selection, 'selection', provider);
     } catch (reason) {
       if (!controller.signal.aborted && targetGeneration === detailGeneration.current)
         updateSession(provider, current => ({
@@ -408,7 +412,7 @@ function BrowseModpackPicker({ value, onChange }: {
     if (!selectedProject) return;
     const selection = { kind: 'remote' as const, project: selectedProject, release };
     updateSession(provider, current => ({ ...current, selection }));
-    onChangeRef.current(selection);
+    onChangeRef.current(selection, 'selection', provider);
   };
   const status = providerStatuses.find(item => item.provider === provider);
   const pending = session.state === 'Loading cache' || session.state === 'Loading provider';
@@ -508,7 +512,8 @@ function BrowseModpackPicker({ value, onChange }: {
 
 function ProviderLinkPicker({ value, onChange }: {
   value: ModpackSelection | null;
-  onChange: (selection: ModpackSelection | null) => void;
+  onChange: (selection: ModpackSelection | null, reason: ModpackSelectionChangeReason,
+    provider: ModpackSelectionChangeProvider) => void;
 }) {
   const bridge = useAppStore(state => state.bridge);
   const [url, setUrl] = useState('');
@@ -536,7 +541,7 @@ function ProviderLinkPicker({ value, onChange }: {
       if (!bridge) throw new Error('ChunkPilot is still connecting to the native host.');
       const result = await bridge.request<ResolvedModpackLink>('modpacks.resolveLink', { url: url.trim() }, controller.signal);
       if (controller.signal.aborted) return;
-      onChange({ kind: 'remote', project: result.project, release: result.release });
+      onChange({ kind: 'remote', project: result.project, release: result.release }, 'selection', result.project.provider);
       setUrl(result.canonicalUrl);
       setDetail(result.detail);
     } catch (reason) {
@@ -567,7 +572,8 @@ function ProviderLinkPicker({ value, onChange }: {
 
 function LocalPackImport({ value, onChange }: {
   value: ModpackSelection | null;
-  onChange: (selection: ModpackSelection | null) => void;
+  onChange: (selection: ModpackSelection | null, reason: ModpackSelectionChangeReason,
+    provider: ModpackSelectionChangeProvider) => void;
 }) {
   const command = useAppStore(state => state.command);
   const [error, setError] = useState('');
@@ -584,12 +590,12 @@ function LocalPackImport({ value, onChange }: {
         managementMode: 'ManagedCopy',
         launchRelativePath: local.inspection.launchCandidates.length === 1
           ? local.inspection.launchCandidates[0] : undefined
-      } });
+      } }, 'local', null);
     }).catch(reason => setError(reason instanceof Error ? reason.message : 'The server source could not be inspected.'));
   };
   const local = value?.kind === 'local' ? value.local : null;
   const updateLocal = (changes: Partial<LocalModpackSelection>) => {
-    if (local) onChange({ kind: 'local', local: { ...local, ...changes } });
+    if (local) onChange({ kind: 'local', local: { ...local, ...changes } }, 'local', null);
   };
   return <section className={styles.directRoot} aria-label="Import local server">
     <header><File size={22} /><div><h3>Import server or modpack</h3><p>Choose a ZIP, .mrpack, server JAR, or complete folder. ChunkPilot inspects it before copying or running anything.</p></div></header>

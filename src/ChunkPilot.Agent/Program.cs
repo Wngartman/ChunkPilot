@@ -16,9 +16,12 @@ services.AddLogging(builder => builder
         options.SingleLine = true;
         options.TimestampFormat = "yyyy-MM-dd HH:mm:ss ";
     }));
-services.AddSingleton(_ => new AppDataPaths(
+var appDataPaths = new AppDataPaths(
     Environment.GetEnvironmentVariable("CHUNKPILOT_DATA_ROOT"),
-    Environment.GetEnvironmentVariable("CHUNKPILOT_MANAGED_SERVERS_ROOT")));
+    Environment.GetEnvironmentVariable("CHUNKPILOT_MANAGED_SERVERS_ROOT"));
+var certificationUpdateFaults = CertificationUpdateFaultInjector.CreateFromEnvironment(appDataPaths);
+services.AddSingleton(appDataPaths);
+services.AddSingleton(certificationUpdateFaults);
 services.AddSingleton<ChunkPilotStore>();
 services.AddSingleton<ProcessStatisticsProvider>();
 services.AddSingleton<MinecraftStatusClient>();
@@ -51,6 +54,8 @@ services.AddSingleton<CurseForgeApiClient>();
 services.AddSingleton<CurseForgeModpackPreflightService>();
 services.AddSingleton<ICurseForgeModpackPreflightService>(provider =>
     provider.GetRequiredService<CurseForgeModpackPreflightService>());
+services.AddSingleton<CurseForgeCreationAuthorizationRegistry>();
+services.AddSingleton<CurseForgeManagedContentPlanAuthorizationRegistry>();
 services.AddSingleton<ServerCapabilityDetectionService>();
 services.AddSingleton<CanonicalPathLockManager>();
 services.AddSingleton<DatapackService>();

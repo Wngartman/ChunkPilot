@@ -25,6 +25,10 @@ public partial class App : Application
 
     protected override async void OnStartup(StartupEventArgs e)
     {
+        // Capture the development-only credential source before any gallery, preview, fixture, or
+        // WebView2 branch can create a child process. AgentClient clears the inherited variable in
+        // its constructor and retains only the path needed for an exact normal-startup Agent child.
+        agentClient = new AgentClient();
         _ = SetCurrentProcessExplicitAppUserModelID(WindowsAppUserModelId);
         base.OnStartup(e);
         AppTheme.Initialize(this);
@@ -91,7 +95,6 @@ public partial class App : Application
             Shutdown(-1);
         };
 
-        agentClient = new AgentClient();
         var viewModel = new MainViewModel(agentClient, new DialogService());
         // The locally bundled WebUI is ChunkPilot's only product interface. Native WPF remains the
         // window/recovery host, but there is deliberately no legacy product-shell fallback.

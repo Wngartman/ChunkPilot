@@ -46,8 +46,16 @@ These paths do not contact an internet service, but they can send packets on the
 Provider credentials are protected locally through the Windows secret store. The approved CurseForge source
 file is bootstrap input only: the candidate value is authenticated against the official Minecraft game identity
 before DPAPI storage is changed, a rejected/offline/cancelled rotation preserves the last accepted value, and the
-source-path environment variable is removed from the Agent and from every managed child process. The credential,
-its source path, and authorization header never cross the named-pipe or WebUI bridge.
+source-path environment variable is removed from the Agent and from every managed child process. At App startup,
+`AgentClient` first captures that optional path for only the exact non-shell Agent child and immediately removes
+it from the long-lived App environment; the captured reference is discarded after an existing Agent answers or
+the child starts. A later browser, shell-launched process, or elevated firewall helper therefore cannot inherit
+the source path from the App. The credential, its source path, and authorization header never cross the named-pipe
+or WebUI bridge.
+The bounded source read does not resize away from its original allocation: only the populated span is decoded and
+the complete original byte buffer is zeroed in `finally`. Processes that execute managed server content,
+downloaded Java/loader code, approved automation, staged validation, or runtime certification inherit only a
+bounded Windows/Java baseline plus explicit workflow variables, not the App/Agent's arbitrary parent environment.
 
 Normal logs identify providers, stages, hosts, and artifact names where those fields are ordinary local evidence.
 CurseForge is narrower: persistent creation/update logs, operation and creation journals, instance history, and
@@ -62,6 +70,84 @@ user action outside the application.
 
 CurseForge receives only the metadata needed by the requested provider action; ChunkPilot never uploads a
 managed server directory, world, configuration, log, or backup to CurseForge.
+
+## CurseForge operation authorization boundary
+
+Discovery output is not download authority. A ready remote-creation preflight is deep-copied into a bounded,
+short-lived Agent registry and can start exactly one matching official-pack or generated-candidate creation. Its
+identity covers the exact project/client/server-file relationship, approved artifacts and integrity, platform,
+Java requirement, and generated required-dependency graph. Cancellation, selection replacement, failed preflight
+response delivery, a begin explicitly proven unaccepted, expiry, mismatch and replay revoke or reject that exact
+authorization; a pre-completion tombstone handles cancellation that arrives before a slow preflight registers.
+
+CurseForge mod/dependency plans use a separate short-lived authorization bound to one server, provider, root
+project/file and SHA-256 digest of the complete ordered plan. Installation consumes the Agent's stored copy once
+and performs no second metadata resolution. Renderer state cannot retarget that plan to another server or replay
+it after the selection changes.
+
+Named-pipe response loss does not mint a second authorization or operation. Creation and managed-content clients
+generate the operation identity before begin, query the Agent for that exact identity after ambiguous transport
+failure, and replay only after an explicit miss. Agent-side serialized acceptance consumes one-use authority at
+most once and returns existing work only when the complete request identity matches. Managed-content lookup is
+validated against server, kind, provider, project and release; creation cancellation discovered after acceptance
+is sent to the accepted operation.
+
+Pre-start cancellation retention is bounded without converting capacity into an unfenced result. At 4,096
+retained identities, each coordinator seals new registrations for the rest of that Agent lifetime. Known IDs
+continue to require their exact stored requests; unseen Begin requests are rejected before consuming authority,
+and a matching cancellation revokes any unconsumed authorization and returns synthetic terminal evidence without
+allocating another retained operation. If the Agent itself is permanently unavailable after ambiguous dispatch,
+the App keeps the cancellation pending: transport loss is not treated as proof that Begin was blocked.
+
+Whole-pack updates do not use a UI-supplied authorization object. Instead, every CurseForge download-only or
+install operation runs native exact preflight before snapshot, cache lookup/reuse, or download, then replaces all
+wire-carried operational fields with the approved URL, size, SHA-1, applicable local SHA-256, filename, package
+type and platform identity. A generated update's trusted dependency plan is native-only and excluded from JSON in
+both directions. These rules constrain which already user-requested provider calls and downloads may proceed;
+they do not add background polling or another destination.
+
+Managed add-on inventory and mutation walk the complete active `mods`/`plugins`, disabled, Recovery, provenance,
+and configuration path chains without following reparse points. Junctions, directory substitutions, and uncertain
+components fail closed. Activation revalidates the exact destination and unchanged same-project baseline under the
+content lock immediately before mutation; late or foreign files are preserved. That lock does not serialize an
+unrelated process, and Windows provides no single user-mode conditional replace that simultaneously proves the
+same file identity and a no-reparse chain, so the remaining external-writer TOCTOU is explicitly not claimed away.
+
+Exact provider size is also a precondition for egress. Client-manifest preflight checks its staging volume before
+the CDN request. After an exact package is downloaded or reused and hash-verified, bounded central-directory
+inspection calculates its declared expanded size and rejects unsafe, encrypted, unsupported, link-like, colliding,
+excessive, or oversized entries. Before recovery snapshot or active-server mutation, update preparation sums that
+verified expansion with the current-server snapshot and every generated payload/staging copy on each real volume.
+The former compressed-size multiplier does not authorize archive staging. The system resolves final mounted
+targets to Windows volume GUIDs instead of trusting drive letters; network-backed or unresolved targets fail
+closed. Overflow-safe arithmetic cannot reduce an extreme requirement.
+
+The current-server snapshot term is not a recursive best-effort estimate. Forecast, rollback snapshot, and
+migration use the same cancellation-aware full-tree inventory, bounded at 500,000 entries and prohibited from
+following any reparse point. Unsafe, inaccessible, missing, redirected, duplicate/case-colliding, or changed files
+fail closed before output or mutation; size, last-write identity, and the no-reparse ancestor chain are rechecked
+before an inventoried file is consumed, and snapshot bounds the streamed length and validates again afterward.
+This does not freeze unrelated external filesystem writers or free space after observation.
+
+## Headless CurseForge certification isolation
+
+Certification executes only the controller included in the exact-HEAD development package and covered by its
+complete SHA-256 manifest. It creates a fresh owned `data`/`servers`/`temp` run root, scopes temporary and .NET
+bundle extraction there, and permits no router, firewall, public probe, query, or RCON mutation. Cleanup first
+proves every task Job and endpoint is gone, then moves only that exact bounded run root to the Windows Recycle Bin;
+unexpected entries, reparse points, or Recycle Bin failure retain the run and fail the cleanup claim.
+
+The running-server check takes two complete TCP4/TCP6/UDP4/UDP6 owner-PID inventories across three stable Job
+snapshots before, between, and after them. Job process accounting and the exact PID/creation set must match at all
+three boundaries; the exact owned endpoint multiset must also match across the inventories. Each accepted owner is
+then revalidated live against its creation identity and the task-server process subtree. The root, owner, and every
+intermediate parent must be the same live generation represented by the stable Job PID/creation set, and each
+parent must have been created strictly before its child; missing, exited, cyclic, reordered, or PID-reused ancestry
+fails closed. Only loopback TCP on the selected Minecraft port is approved; wildcard, non-loopback, UDP,
+secondary-port, identity-raced, unreadable, or mutation-raced evidence fails closed. The report records only
+sanitized counts and policy results. Each inventory still reads four Windows tables sequentially, so repeated
+stable observation cannot exclude a socket opened and closed entirely between observations or a mutation after
+the second inventory.
 
 ## CurseForge persistence boundary
 

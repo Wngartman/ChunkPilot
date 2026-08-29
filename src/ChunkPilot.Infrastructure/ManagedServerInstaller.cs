@@ -662,10 +662,23 @@ public sealed class ManagedServerInstaller
                     throw new InvalidDataException("The CurseForge client archive size no longer matches the reviewed artifact.");
                 VerifyHash(archivePath, request.ExpectedSha1, request.ExpectedSha256, request.ExpectedSha512);
                 Report(progress, request.OperationId, InstallState.Extracting, CreationStage.PreparingServerFiles,
-                    "Resolving exact CurseForge manifest files and managed loader", 52, 0, null, 0,
+                    "Materializing the exact reviewed CurseForge files and managed loader", 52, 0, null, 0,
                     Path.GetFileName(archivePath), logPath);
-                var installed = await curseForgePacks.MaterializeAndInstallAsync(
-                    archivePath, stagingPath, javaPath, logPath, cancellationToken).ConfigureAwait(false);
+                CurseForgePackLaunchResult installed;
+                if (request.CurseForgeGeneratedPlan is { } reviewedPlan)
+                {
+                    installed = await curseForgePacks.MaterializeAndInstallAsync(
+                        archivePath, stagingPath, javaPath, logPath, reviewedPlan, cancellationToken)
+                        .ConfigureAwait(false);
+                }
+                else
+                {
+                    if (Uri.TryCreate(request.Source, UriKind.Absolute, out _))
+                        throw new InvalidDataException(
+                            "Provider-backed generated CurseForge creation requires its exact authorized file plan.");
+                    installed = await curseForgePacks.MaterializeAndInstallAsync(
+                        archivePath, stagingPath, javaPath, logPath, cancellationToken).ConfigureAwait(false);
+                }
                 if (!installed.Manifest.MinecraftVersion.Equals(request.MinecraftVersion, StringComparison.OrdinalIgnoreCase) ||
                     !installed.Manifest.Loader.ToString().Equals(request.PackLoader, StringComparison.OrdinalIgnoreCase))
                     throw new InvalidDataException("The CurseForge manifest identity changed after the creation review.");

@@ -631,6 +631,7 @@ function AddonsPage({ server, kind }: { server: ServerSummary; kind: 'plugins' |
   const hasActiveContentOperationRef = useRef(hasActiveContentOperation);
   const browseGeneration = useRef(0);
   const browseAbort = useRef<AbortController | null>(null);
+  const installPlanRef = useRef<PluginInstallPlan | null>(null);
   hasActiveContentOperationRef.current = hasActiveContentOperation;
   const operationBusy = [...busy].some(method => method.startsWith(`${kind}.`)) || hasActiveContentOperation;
   const updateIdentityKey = useMemo(() => snapshot.plugins
@@ -650,11 +651,32 @@ function AddonsPage({ server, kind }: { server: ServerSummary; kind: 'plugins' |
     browseAbort.current?.abort();
     browseAbort.current = null;
   };
-  useEffect(() => () => {
-    browseGeneration.current += 1;
-    browseAbort.current?.abort();
-    browseAbort.current = null;
-  }, [server.id]);
+  const setCurrentInstallPlan = useCallback((plan: PluginInstallPlan | null) => {
+    installPlanRef.current = plan;
+    setInstallPlan(plan);
+  }, []);
+  const revokeInstallPlan = useCallback((plan: PluginInstallPlan | null = installPlanRef.current) => {
+    if (plan === installPlanRef.current) setCurrentInstallPlan(null);
+    const authorizationId = plan?.authorization?.authorizationId;
+    if (authorizationId && bridge)
+      void bridge.request('content.invalidatePlan', { authorizationId }).catch(() => undefined);
+  }, [bridge, setCurrentInstallPlan]);
+  useEffect(() => {
+    setCurrentInstallPlan(null);
+    return () => {
+      browseGeneration.current += 1;
+      browseAbort.current?.abort();
+      browseAbort.current = null;
+      const plan = installPlanRef.current;
+      installPlanRef.current = null;
+      const authorizationId = plan?.authorization?.authorizationId;
+      if (authorizationId && bridge)
+        void bridge.request('content.invalidatePlan', { authorizationId }).catch(() => undefined);
+    };
+  }, [bridge, server.id, setCurrentInstallPlan]);
+  useEffect(() => {
+    if (section !== 'browse') revokeInstallPlan();
+  }, [section, revokeInstallPlan]);
   useEffect(() => { void command<PluginProviderStatus[]>(methods.providers, { serverId: server.id }).then(setProviders).catch(() => undefined); }, [command, server.id, methods.providers]);
   useEffect(() => {
     let active = true;
@@ -700,7 +722,8 @@ function AddonsPage({ server, kind }: { server: ServerSummary; kind: 'plugins' |
     return () => { active = false; };
   }, [section, server.id, updateIdentityKey, command, methods.release]);
   const search = () => {
-    setBrowseError(''); setSelected(null); setRelease(null); setInstallPlan(null);
+    revokeInstallPlan();
+    setBrowseError(''); setSelected(null); setRelease(null);
     if (!bridge) { setBrowseError('The native catalog bridge is unavailable.'); return; }
     const request = beginBrowseRequest();
     setSearching(true);
@@ -715,7 +738,8 @@ function AddonsPage({ server, kind }: { server: ServerSummary; kind: 'plugins' |
       });
   };
   const choose = (project: PluginProject) => {
-    setSelected(project); setRelease(null); setInstallPlan(null); setBrowseError('');
+    revokeInstallPlan();
+    setSelected(project); setRelease(null); setBrowseError('');
     if (!bridge) { setBrowseError('The native catalog bridge is unavailable.'); return; }
     const request = beginBrowseRequest();
     setSearching(false);
@@ -727,7 +751,8 @@ function AddonsPage({ server, kind }: { server: ServerSummary; kind: 'plugins' |
           void bridge.request<PluginInstallPlan>(methods.plan, {
             serverId: server.id, projectId: resolved.projectId, versionId: resolved.versionId, provider: resolved.provider
           }, request.controller.signal).then(plan => {
-            if (browseGeneration.current === request.generation && !request.controller.signal.aborted) setInstallPlan(plan);
+            if (browseGeneration.current === request.generation && !request.controller.signal.aborted) setCurrentInstallPlan(plan);
+            else revokeInstallPlan(plan);
           }).catch(error => {
             if (browseGeneration.current === request.generation && !request.controller.signal.aborted)
               setBrowseError(error instanceof Error ? error.message : 'The dependency plan could not be resolved.');
@@ -785,13 +810,20 @@ function AddonsPage({ server, kind }: { server: ServerSummary; kind: 'plugins' |
   };
   const installAllDependencies = async () => {
     setPendingDependencyBatch(false);
-    if (!release) return;
-    const operation = await command<ManagedContentOperation>(methods.installPlan, {
-      serverId: server.id, projectId: release.projectId, versionId: release.versionId,
-      provider: release.provider, restartIfRunning: running, operationId: crypto.randomUUID()
-    });
-    setContentOperations(current => [operation, ...current.filter(item => item.operationId !== operation.operationId)]);
-    setContentPollEpoch(value => value + 1);
+    if (!release || !installPlan) return;
+    const reviewedPlan = installPlan;
+    setCurrentInstallPlan(null);
+    try {
+      const operation = await command<ManagedContentOperation>(methods.installPlan, {
+        serverId: server.id, projectId: release.projectId, versionId: release.versionId,
+        provider: release.provider, restartIfRunning: running, operationId: crypto.randomUUID(),
+        planAuthorization: reviewedPlan.authorization ?? null
+      });
+      setContentOperations(current => [operation, ...current.filter(item => item.operationId !== operation.operationId)]);
+      setContentPollEpoch(value => value + 1);
+    } catch {
+      revokeInstallPlan(reviewedPlan);
+    }
   };
   const cancelContentOperation = (operationId: string) => void command('content.cancel', { operationId })
     .then(() => setContentPollEpoch(value => value + 1));
@@ -846,7 +878,7 @@ function AddonsPage({ server, kind }: { server: ServerSummary; kind: 'plugins' |
       {!canApply && <div className={styles.contextNote}>Wait for the current server operation to finish before changing {kind}. Browsing remains available.</div>}
       {section === 'installed' && (snapshot.plugins.length ? <table className={`${styles.table} ${pluginStyles.pluginResponsiveTable} ${pluginStyles.pluginInstalledTable}`}><thead><tr><th>{isMod ? 'Mod' : 'Plugin'}</th><th>Version</th><th>JAR state</th><th>Load health</th><th>Compatibility</th><th /></tr></thead><tbody>{snapshot.plugins.map(plugin => <tr key={plugin.relativePath}><td><strong>{plugin.name}</strong><small className={styles.cellMeta}>{plugin.fileName} · {bytes(plugin.sizeBytes)}</small></td><td>{plugin.version}</td><td><StatusBadge tone={plugin.enabled ? 'success' : 'neutral'}>{plugin.enabled ? 'Active' : 'Disabled'}</StatusBadge></td><td><StatusBadge tone={plugin.loadState === 'Failed' ? 'danger' : plugin.loadState === 'Loaded' ? 'success' : plugin.loadState === 'Pending' ? 'info' : 'neutral'} title={plugin.loadEvidence}>{plugin.loadState}</StatusBadge></td><td><StatusBadge tone={plugin.compatibility === 'Incompatible' ? 'danger' : plugin.compatibility === 'Unknown' ? 'warning' : 'success'}>{plugin.compatibility}</StatusBadge></td><td><div className={styles.tableActions}><Button variant="subtle" onClick={() => setConfigPlugin(plugin)}>Configure</Button><Button variant="subtle" disabled={!canApply || operationBusy} onClick={() => setPending({ kind: 'toggle', path: plugin.relativePath, name: plugin.name, enabled: !plugin.enabled })}>{plugin.enabled ? 'Disable' : 'Enable'}</Button><Button variant="subtle" disabled={!canApply || operationBusy} onClick={() => setPending({ kind: 'remove', path: plugin.relativePath, name: plugin.name })}>Remove</Button></div></td></tr>)}</tbody></table> : <EmptyState title={`No ${singular} JARs found`} detail={`Install a local JAR or browse compatible releases from an official provider. ChunkPilot inspects metadata without executing ${singular} code.`} />)}
       {section === 'browse' && <div className={pluginStyles.pluginBrowser}>
-        {isMod && <div className={pluginStyles.providerStrip} role="tablist" aria-label="Mod provider">{(['Modrinth', 'CurseForge'] as const).map(option => { const status = providers.find(item => item.provider === option); return <button key={option} type="button" role="tab" aria-selected={provider === option} data-selected={provider === option} disabled={status?.available === false} title={status?.detail} onClick={() => { cancelBrowseRequest(); setSearching(false); setProvider(option); setResults([]); setSelected(null); setRelease(null); setInstallPlan(null); setBrowseError(''); }}>{option}</button>; })}</div>}
+        {isMod && <div className={pluginStyles.providerStrip} role="tablist" aria-label="Mod provider">{(['Modrinth', 'CurseForge'] as const).map(option => { const status = providers.find(item => item.provider === option); return <button key={option} type="button" role="tab" aria-selected={provider === option} data-selected={provider === option} disabled={status?.available === false} title={status?.detail} onClick={() => { cancelBrowseRequest(); revokeInstallPlan(); setSearching(false); setProvider(option); setResults([]); setSelected(null); setRelease(null); setBrowseError(''); }}>{option}</button>; })}</div>}
         <div className={pluginStyles.pluginSearch}><SearchInput value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') search(); }} placeholder={`Search official ${provider} ${kind}`} aria-label={`Search official ${provider} ${kind}`} /><Button variant="primary" disabled={searching || providers.find(item => item.provider === provider)?.available === false} onClick={search}>{searching ? 'Searching…' : 'Search'}</Button></div>
         <div className={pluginStyles.providerStrip}>{providers.map(provider => <span key={provider.provider}><StatusBadge tone={provider.available ? 'success' : 'neutral'}>{provider.provider}</StatusBadge>{provider.detail}</span>)}</div>
         {browseError && <div className={styles.contextNote}>{browseError}</div>}

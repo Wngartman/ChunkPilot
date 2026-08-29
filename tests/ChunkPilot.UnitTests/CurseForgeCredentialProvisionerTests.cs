@@ -1,6 +1,8 @@
 using System.Net;
 using System.Text;
+using ChunkPilot.App;
 using ChunkPilot.Infrastructure;
+using ChunkPilot.UnitTests.DesignSystem;
 
 namespace ChunkPilot.UnitTests;
 
@@ -27,6 +29,48 @@ public sealed class CurseForgeCredentialProvisionerTests
         Assert.Empty(path);
         Assert.DoesNotContain(looksLikeAKey, error, StringComparison.Ordinal);
         Assert.Contains("absolute file path", error, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void App_moves_the_bootstrap_source_to_only_the_exact_Agent_child_environment()
+    {
+        var variable = CurseForgeCredentialProvisioner.KeyFileEnvironmentVariable;
+        var previous = Environment.GetEnvironmentVariable(variable);
+        var source = @"D:\synthetic-fixture\credential-source.txt";
+        try
+        {
+            Environment.SetEnvironmentVariable(variable, source);
+
+            var client = new AgentClient();
+            var agentStart = client.CreateAgentStartInfo(@"D:\synthetic-fixture\ChunkPilot.Agent.exe");
+
+            Assert.Null(Environment.GetEnvironmentVariable(variable));
+            Assert.Equal(source, agentStart.Environment[variable]);
+            Assert.False(agentStart.UseShellExecute);
+
+            var unrelatedShellStart = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "synthetic-helper.exe",
+                UseShellExecute = true
+            };
+            Assert.False(unrelatedShellStart.Environment.ContainsKey(variable));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(variable, previous);
+        }
+    }
+
+    [Fact]
+    public void App_clears_the_bootstrap_source_before_any_WebView_fixture_can_start()
+    {
+        var startup = File.ReadAllText(Path.Combine(DesignSystemFiles.AppProjectDirectory, "App.xaml.cs"));
+        var captureIndex = startup.IndexOf("agentClient = new AgentClient()", StringComparison.Ordinal);
+        var fixtureIndex = startup.IndexOf("WebUiFixtureLauncher.TryRun", StringComparison.Ordinal);
+
+        Assert.True(captureIndex > 0, "App startup never captures and clears the Agent bootstrap source.");
+        Assert.True(fixtureIndex > captureIndex,
+            "The credential-source environment must be cleared before a fixture can launch WebView2 children.");
     }
 
     [Fact]
@@ -95,6 +139,28 @@ public sealed class CurseForgeCredentialProvisionerTests
         {
             Directory.Delete(root, recursive: true);
         }
+    }
+
+    [Fact]
+    public async Task Originally_allocated_plaintext_buffer_is_zeroed_after_import()
+    {
+        await WithCandidateFileAsync("synthetic-buffer-key", async path =>
+        {
+            var secrets = new MemorySecrets();
+            using var api = new CurseForgeApiClient(secrets, new Handler(_ => Accepted()));
+            ReadOnlyMemory<byte>? clearedBuffer = null;
+            var provisioner = new CurseForgeCredentialProvisioner(
+                secrets,
+                buffer => clearedBuffer = buffer);
+
+            var result = await provisioner.ProvisionFromFileAsync(path, api);
+
+            Assert.True(result.Imported);
+            Assert.True(clearedBuffer.HasValue);
+            Assert.Equal(CurseForgeCredentialProvisioner.MaximumKeyFileBytes + 1,
+                clearedBuffer.Value.Length);
+            Assert.True(clearedBuffer.Value.Span.IndexOfAnyExcept((byte)0) < 0);
+        });
     }
 
     [Fact]

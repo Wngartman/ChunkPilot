@@ -77,6 +77,55 @@ public sealed class ServerImportInspectionTests : IDisposable
     }
 
     [Fact]
+    public void Provider_archive_forecast_uses_the_exact_bounded_central_directory_total()
+    {
+        var archive = Path.Combine(root, "expanded-provider.zip");
+        const uint compressedBytes = 4 * 1024 * 1024;
+        const uint expandedBytes = 768 * 1024 * 1024;
+        CreateSyntheticArchive(
+            archive,
+            "server/server.jar",
+            compressedBytes,
+            expandedBytes);
+
+        var forecast = ServerImportInspectionService.ForecastArchiveExpansion(archive);
+
+        Assert.Equal(expandedBytes, forecast.ExpandedSizeBytes);
+        Assert.Equal(1, forecast.FileCount);
+    }
+
+    [Fact]
+    public void Provider_archive_forecast_rejects_encrypted_and_unsafe_metadata()
+    {
+        var encrypted = Path.Combine(root, "encrypted-provider.zip");
+        CreateSyntheticArchive(
+            encrypted,
+            "server/server.jar",
+            compressedBytes: 1,
+            expandedBytes: 1,
+            generalPurposeBitFlag: 1,
+            compressionMethod: 0);
+        Assert.Throws<InvalidDataException>(() =>
+            ServerImportInspectionService.ForecastArchiveExpansion(encrypted));
+
+        var unsupported = Path.Combine(root, "unsupported-provider.zip");
+        CreateSyntheticArchive(
+            unsupported,
+            "server/server.jar",
+            compressedBytes: 1,
+            expandedBytes: 1,
+            compressionMethod: 99);
+        Assert.Throws<InvalidDataException>(() =>
+            ServerImportInspectionService.ForecastArchiveExpansion(unsupported));
+
+        var unsafeArchive = Path.Combine(root, "unsafe-provider.zip");
+        using (var archive = ZipFile.Open(unsafeArchive, ZipArchiveMode.Create))
+            Write(archive, "../outside.jar", "payload");
+        Assert.Throws<InvalidDataException>(() =>
+            ServerImportInspectionService.ForecastArchiveExpansion(unsafeArchive));
+    }
+
+    [Fact]
     public void Native_import_tokens_are_single_use_and_expire()
     {
         var now = DateTimeOffset.UtcNow;
@@ -103,6 +152,65 @@ public sealed class ServerImportInspectionTests : IDisposable
         var entry = archive.CreateEntry(path, CompressionLevel.NoCompression);
         using var writer = new StreamWriter(entry.Open(), new UTF8Encoding(false));
         writer.Write(value);
+    }
+
+    private static void CreateSyntheticArchive(
+        string path,
+        string entryName,
+        uint compressedBytes,
+        uint expandedBytes,
+        ushort generalPurposeBitFlag = 0,
+        ushort compressionMethod = 8)
+    {
+        var name = Encoding.UTF8.GetBytes(entryName);
+        using var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+        using var writer = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: true);
+
+        writer.Write(0x04034b50u);
+        writer.Write((ushort)20);
+        writer.Write(generalPurposeBitFlag);
+        writer.Write(compressionMethod);
+        writer.Write((ushort)0);
+        writer.Write((ushort)0);
+        writer.Write(0u);
+        writer.Write(compressedBytes);
+        writer.Write(expandedBytes);
+        writer.Write(checked((ushort)name.Length));
+        writer.Write((ushort)0);
+        writer.Write(name);
+        writer.Flush();
+        stream.Position = checked(stream.Position + compressedBytes);
+
+        var centralOffset = checked((uint)stream.Position);
+        writer.Write(0x02014b50u);
+        writer.Write((ushort)20);
+        writer.Write((ushort)20);
+        writer.Write(generalPurposeBitFlag);
+        writer.Write(compressionMethod);
+        writer.Write((ushort)0);
+        writer.Write((ushort)0);
+        writer.Write(0u);
+        writer.Write(compressedBytes);
+        writer.Write(expandedBytes);
+        writer.Write(checked((ushort)name.Length));
+        writer.Write((ushort)0);
+        writer.Write((ushort)0);
+        writer.Write((ushort)0);
+        writer.Write((ushort)0);
+        writer.Write(0u);
+        writer.Write(0u);
+        writer.Write(name);
+        writer.Flush();
+        var centralSize = checked((uint)(stream.Position - centralOffset));
+
+        writer.Write(0x06054b50u);
+        writer.Write((ushort)0);
+        writer.Write((ushort)0);
+        writer.Write((ushort)1);
+        writer.Write((ushort)1);
+        writer.Write(centralSize);
+        writer.Write(centralOffset);
+        writer.Write((ushort)0);
     }
 
     public void Dispose()

@@ -41,8 +41,54 @@ public sealed class CurseForgeModpackPreflightServiceTests
             Assert.Equal(Sha1(archive), result.ClientSha1);
             Assert.Equal(Convert.ToHexString(SHA256.HashData(archive)).ToLowerInvariant(), result.ClientSha256);
             Assert.Equal(archive.LongLength, result.ClientSizeBytes);
+            Assert.Equal("https://mediafilez.forgecdn.net/files/222/fixture-server.zip",
+                result.ServerPackDownloadUrl);
+            Assert.Equal(new string('b', 40), result.ServerPackSha1);
+            Assert.Equal(2_048, result.ServerPackSizeBytes);
             Assert.Equal(1, handler.CdnRequests);
             Assert.Equal("111", handler.DownloadedClientFileId);
+            Assert.Empty(Directory.EnumerateFileSystemEntries(paths.Staging));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Generated_candidate_preflight_seals_every_exact_required_file_and_optional_review()
+    {
+        var root = TempRoot();
+        try
+        {
+            var archive = ClientArchive("fabric-0.15.11", includeOptional: true);
+            var handler = new PreflightHandler(archive);
+            var secrets = new MemorySecrets();
+            secrets.SetSecret(CurseForgeUpdateProvider.ApiKeyName, "fixture-key");
+            using var api = new CurseForgeApiClient(secrets, handler);
+            var paths = new AppDataPaths(Path.Combine(root, "data"), Path.Combine(root, "servers"));
+
+            var result = await new CurseForgeModpackPreflightService(paths, api).InspectAsync(
+                new CurseForgeModpackPreflightRequest(Guid.NewGuid(), "10", "111", ""));
+
+            Assert.Equal(CatalogReleasePreflightState.Ready, result.State);
+            var plan = Assert.IsType<CurseForgeGeneratedPackPlan>(result.GeneratedPackPlan);
+            Assert.Equal(64, plan.Digest.Length);
+            Assert.Equal(4_096, plan.TotalResolvedBytes);
+            var file = Assert.Single(plan.RequiredFiles);
+            Assert.Equal("20", file.ProjectId);
+            Assert.Equal("200", file.FileId);
+            Assert.Equal("required.jar", file.FileName);
+            Assert.Equal(new string('c', 40), file.ProviderSha1);
+            Assert.Contains(file.RequiredBy, evidence =>
+                evidence.Relation == CurseForgeGeneratedFileRelation.ManifestRequired &&
+                evidence.RequestedFileId == "200");
+            var optional = Assert.Single(plan.OptionalExclusions);
+            Assert.Equal(CurseForgeGeneratedOptionalRelation.ManifestOptional, optional.Relation);
+            Assert.Equal("30", optional.ProjectId);
+            Assert.Equal("300", optional.FileId);
+            Assert.Contains("No client-only exclusions", plan.OptionalReviewSummary, StringComparison.Ordinal);
+            Assert.Equal(1, handler.CdnRequests); // Client manifest only; mod payloads remain preflight metadata.
             Assert.Empty(Directory.EnumerateFileSystemEntries(paths.Staging));
         }
         finally
@@ -115,6 +161,35 @@ public sealed class CurseForgeModpackPreflightServiceTests
     }
 
     [Fact]
+    public async Task Exact_client_size_is_checked_against_staging_space_before_CDN_download()
+    {
+        var root = TempRoot();
+        try
+        {
+            var archive = ClientArchive("fabric-0.15.11");
+            var handler = new PreflightHandler(archive);
+            var secrets = new MemorySecrets();
+            secrets.SetSecret(CurseForgeUpdateProvider.ApiKeyName, "fixture-key");
+            using var api = new CurseForgeApiClient(secrets, handler);
+            var paths = new AppDataPaths(Path.Combine(root, "data"), Path.Combine(root, "servers"));
+            var service = new CurseForgeModpackPreflightService(
+                paths, api, storageSpace: new FixedStorageSpaceProbe(0));
+
+            var error = await Assert.ThrowsAsync<IOException>(() => service.InspectAsync(
+                new CurseForgeModpackPreflightRequest(Guid.NewGuid(), "10", "111", "")));
+
+            Assert.Contains("client-manifest preflight staging", error.Message,
+                StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(0, handler.CdnRequests);
+            Assert.Empty(Directory.EnumerateFileSystemEntries(paths.Staging));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
     public void CurseForge_creation_plan_requires_verified_client_manifest_proof()
     {
         var plan = new ModpackCreationPlan
@@ -142,11 +217,18 @@ public sealed class CurseForgeModpackPreflightServiceTests
 
         Assert.Contains(plan.Problems(), problem =>
             problem.Contains("client manifest", StringComparison.OrdinalIgnoreCase));
-        Assert.DoesNotContain((plan with { VerifiedClientArchiveSha256 = new string('c', 64) }).Problems(),
+        var authorized = plan with
+        {
+            VerifiedClientArchiveSha256 = new string('c', 64),
+            PreflightOperationId = Guid.NewGuid()
+        };
+        Assert.DoesNotContain(authorized.Problems(),
             problem => problem.Contains("client manifest", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(authorized.Problems(),
+            problem => problem.Contains("preflight authorization", StringComparison.OrdinalIgnoreCase));
     }
 
-    private static byte[] ClientArchive(string loader, bool primary = true)
+    private static byte[] ClientArchive(string loader, bool primary = true, bool includeOptional = false)
     {
         using var output = new MemoryStream();
         using (var archive = new ZipArchive(output, ZipArchiveMode.Create, leaveOpen: true))
@@ -166,7 +248,13 @@ public sealed class CurseForgeModpackPreflightServiceTests
                     version = "1.20.1",
                     modLoaders = new[] { new { id = loader, primary } }
                 },
-                files = new[] { new { projectID = 20, fileID = 200, required = true } }
+                files = includeOptional
+                    ? new[]
+                    {
+                        new { projectID = 20, fileID = 200, required = true },
+                        new { projectID = 30, fileID = 300, required = false }
+                    }
+                    : [new { projectID = 20, fileID = 200, required = true }]
             });
             stream.Write(manifest);
         }
@@ -231,6 +319,50 @@ public sealed class CurseForgeModpackPreflightServiceTests
                         }
                     }));
                 }
+                if (uri.AbsolutePath == "/v1/mods/20")
+                    return Task.FromResult(Json(new
+                    {
+                        data = new
+                        {
+                            id = 20, gameId = 432, classId = 6,
+                            isAvailable = true, allowModDistribution = true
+                        }
+                    }));
+                if (uri.AbsolutePath == "/v1/mods/20/files/200")
+                    return Task.FromResult(Json(new
+                    {
+                        data = new
+                        {
+                            id = 200,
+                            modId = 20,
+                            isAvailable = true,
+                            fileName = "required.jar",
+                            displayName = "Required",
+                            fileDate = "2026-08-29T00:00:00Z",
+                            releaseType = 1,
+                            fileLength = 4_096,
+                            gameVersions = MisleadingApiGameVersions,
+                            downloadUrl = "https://mediafilez.forgecdn.net/files/200/required.jar",
+                            hashes = new[] { new { algo = 1, value = new string('c', 40) } },
+                            dependencies = Array.Empty<object>()
+                        }
+                    }));
+                if (uri.AbsolutePath == "/v1/mods/10/files/222" && serverPackFileId == 222)
+                {
+                    return Task.FromResult(Json(new
+                    {
+                        data = new
+                        {
+                            id = 222,
+                            modId = 10,
+                            isAvailable = true,
+                            fileName = "fixture-server.zip",
+                            fileLength = 2_048,
+                            downloadUrl = "https://mediafilez.forgecdn.net/files/222/fixture-server.zip",
+                            hashes = new[] { new { algo = 1, value = new string('b', 40) } }
+                        }
+                    }));
+                }
                 throw new InvalidOperationException(uri.ToString());
             }
             if (uri.Host.EndsWith("forgecdn.net", StringComparison.OrdinalIgnoreCase))
@@ -258,5 +390,11 @@ public sealed class CurseForgeModpackPreflightServiceTests
         public string? GetSecret(string name) => values.GetValueOrDefault(name);
         public bool Contains(string name) => values.ContainsKey(name);
         public void Delete(string name) => values.Remove(name);
+    }
+
+    private sealed class FixedStorageSpaceProbe(long availableBytes) : IStorageSpaceProbe
+    {
+        public StorageVolumeSpace GetSpace(string path) =>
+            new("fixture-volume", availableBytes);
     }
 }

@@ -1,6 +1,6 @@
 # CurseForge credential delivery
 
-Status date: 2026-08-27
+Status date: 2026-08-29
 
 ## Production decision
 
@@ -45,7 +45,16 @@ to arbitrary end users or that persistent provider caching is allowed.
   native code binds that developer path exactly and the file is never tracked or packaged.
 - `CHUNKPILOT_CURSEFORGE_KEY_FILE` may contain one absolute file path. It never contains the key value.
 - The Agent reads a bounded single-value file directly and imports it into the existing DPAPI CurrentUser
-  secret store. The bytes are cleared after import.
+  secret store. It decodes only the populated span and clears the complete originally allocated byte buffer in
+  `finally`; it never resizes away from the allocation that held the file bytes.
+- The long-lived App does not retain the path-only override in its process environment. `AgentClient` captures it
+  once, clears `CHUNKPILOT_CURSEFORGE_KEY_FILE` from the App immediately, and supplies it only on the exact
+  `UseShellExecute=false` Agent start. The captured reference is discarded once an existing Agent answers or the
+  child starts, so later browser, shell and elevated firewall-helper launches cannot inherit the source path.
+- After bootstrap, the Agent removes the source-path variable. Managed servers, downloaded Java/loader helpers,
+  staged validation, approved automation programs, and runtime certifiers start from a bounded Windows/Java
+  environment allowlist, then receive only their explicit server/workflow variables. Removing one known secret
+  name is not treated as sufficient child-process isolation.
 - No raw-key App/Agent command exists. The WebUI allowlist contains no key status/save/remove/console method,
   and renderer state never receives the key.
 - `.secrets` and `curseforge-api-key*.txt` are ignored. Publication audit rejects either path even if a file

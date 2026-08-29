@@ -1,4 +1,5 @@
 using System.IO.Compression;
+using System.Diagnostics;
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
@@ -272,6 +273,49 @@ public sealed class PluginManagementTests : IDisposable
         Assert.Equal("Modrinth", installed.InstallSource);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Single_release_provider_install_preserves_user_or_different_project_destination(
+        bool hasDifferentProjectProvenance)
+    {
+        var suffix = hasDifferentProjectProvenance ? "different-project" : "user-owned";
+        var server = PaperServer("single-release-filename-" + suffix);
+        var existingPath = Path.Combine(server.RootPath, "plugins", "Fixture.jar");
+        CreateJar(existingPath, "plugin.yml", "name: Existing\nversion: 1.0\n");
+        var existingBytes = File.ReadAllBytes(existingPath);
+        var incomingBytes = Encoding.UTF8.GetBytes("incoming provider bytes");
+        var incoming = Release("incoming-project", "incoming-version", "fixture.JAR", incomingBytes);
+        var paths = new AppDataPaths(Path.Combine(root, "single-release-filename-" + suffix + "-data"),
+            Path.Combine(root, "managed"));
+        paths.EnsureCreated();
+        var jars = new JarInventoryService(new SafeFileService(paths), paths);
+        if (hasDifferentProjectProvenance)
+            jars.RecordProviderProvenance(server, existingPath, new PluginRelease
+            {
+                Provider = PluginProviderKind.Modrinth,
+                ProjectId = "different-project",
+                VersionId = "existing-version"
+            });
+        var downloads = new StubHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new ByteArrayContent(incomingBytes)
+        });
+        var service = new PluginManagementService(
+            new PluginProviderRegistry([new FakeProvider(incoming)]),
+            jars,
+            paths,
+            new HttpClient(downloads));
+
+        var failure = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.InstallAsync(server, incoming.ProjectId, incoming.VersionId));
+
+        Assert.Contains("already owned", failure.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(0, downloads.RequestCount);
+        Assert.Equal(existingBytes, File.ReadAllBytes(existingPath));
+        Assert.Empty(Directory.EnumerateFiles(paths.Recovery, "*", SearchOption.AllDirectories));
+    }
+
     [Fact]
     public void CurseForge_mod_provenance_tags_the_minimum_API_derived_operational_identity()
     {
@@ -440,6 +484,523 @@ public sealed class PluginManagementTests : IDisposable
     }
 
     [Fact]
+    public async Task Authorized_CurseForge_plan_installs_exact_review_without_a_second_provider_resolution()
+    {
+        var server = ModServer("authorized-curseforge-plan", ServerEcosystem.NeoForge) with
+        {
+            MinecraftVersion = "1.21.1"
+        };
+        var dependencyBytes = Encoding.UTF8.GetBytes("dependency jar");
+        var rootBytes = Encoding.UTF8.GetBytes("root addon jar");
+        var dependency = CurseForgeRelease("20", "200", "library.jar", dependencyBytes);
+        var rootRelease = CurseForgeRelease("10", "100", "root.jar", rootBytes) with
+        {
+            Dependencies = [new PluginDependency { ProjectId = "20", Type = "required" }]
+        };
+        var paths = new AppDataPaths(Path.Combine(root, "authorized-curseforge-plan-data"),
+            Path.Combine(root, "managed"));
+        paths.EnsureCreated();
+        var jars = new JarInventoryService(new SafeFileService(paths), paths);
+        var provider = new PlanProvider([dependency, rootRelease], PluginProviderKind.CurseForge);
+        var downloads = new StubHandler(request => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new ByteArrayContent(request.RequestUri!.AbsolutePath.EndsWith("library.jar", StringComparison.Ordinal)
+                ? dependencyBytes : rootBytes)
+        });
+        var secrets = new MemorySecrets();
+        secrets.SetSecret(CurseForgeUpdateProvider.ApiKeyName, "fixture-approved-key");
+        using var api = new CurseForgeApiClient(secrets, downloads);
+        var service = new PluginManagementService(
+            new PluginProviderRegistry([provider]), jars, paths, curseForge: api);
+
+        var reviewed = await service.PlanAsync(
+            server, "10", "100", PluginProviderKind.CurseForge);
+        var resolveCountAfterReview = provider.ResolveCount;
+        var registry = new CurseForgeManagedContentPlanAuthorizationRegistry();
+        var authorization = registry.Register(
+            server.Id, PluginProviderKind.CurseForge, "10", "100", reviewed);
+        var exactPlan = registry.Consume(
+            server.Id, PluginProviderKind.CurseForge, "10", "100", authorization);
+
+        var installed = await service.InstallExactPlanWithReceiptsAsync(
+            server, "10", "100", exactPlan);
+
+        Assert.Equal(2, resolveCountAfterReview);
+        Assert.Equal(resolveCountAfterReview, provider.ResolveCount);
+        Assert.Equal(2, downloads.RequestCount);
+        Assert.Equal(["20", "10"], installed.Installed.Select(result => result.Release.ProjectId));
+        Assert.True(File.Exists(Path.Combine(server.RootPath, "mods", "library.jar")));
+        Assert.True(File.Exists(Path.Combine(server.RootPath, "mods", "root.jar")));
+    }
+
+    [Fact]
+    public async Task Exact_CurseForge_plan_rejects_case_insensitive_intra_plan_filename_collision_before_download()
+    {
+        var server = ModServer("exact-plan-filename-collision", ServerEcosystem.NeoForge) with
+        {
+            MinecraftVersion = "1.21.1"
+        };
+        var dependencyBytes = Encoding.UTF8.GetBytes("dependency jar");
+        var rootBytes = Encoding.UTF8.GetBytes("root addon jar");
+        var dependency = CurseForgeRelease("20", "200", "shared-name.jar", dependencyBytes);
+        var rootRelease = CurseForgeRelease("10", "100", "SHARED-NAME.JAR", rootBytes) with
+        {
+            Dependencies = [new PluginDependency { ProjectId = "20", Type = "required" }]
+        };
+        var plan = new PluginInstallPlan { Releases = [dependency, rootRelease] };
+        var paths = new AppDataPaths(Path.Combine(root, "exact-plan-filename-collision-data"),
+            Path.Combine(root, "managed"));
+        paths.EnsureCreated();
+        var jars = new JarInventoryService(new SafeFileService(paths), paths);
+        var downloads = new StubHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new ByteArrayContent(rootBytes)
+        });
+        var secrets = new MemorySecrets();
+        secrets.SetSecret(CurseForgeUpdateProvider.ApiKeyName, "fixture-approved-key");
+        using var api = new CurseForgeApiClient(secrets, downloads);
+        var service = new PluginManagementService(
+            new PluginProviderRegistry([new PlanProvider([dependency, rootRelease], PluginProviderKind.CurseForge)]),
+            jars, paths, curseForge: api);
+
+        var failure = await Assert.ThrowsAsync<InvalidDataException>(() =>
+            service.InstallExactPlanWithReceiptsAsync(server, "10", "100", plan));
+
+        Assert.Contains("destination JAR filename", failure.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(0, downloads.RequestCount);
+        Assert.Empty(Directory.EnumerateFiles(Path.Combine(server.RootPath, "mods"), "*.jar"));
+        Assert.Empty(Directory.EnumerateFiles(paths.Recovery, "*", SearchOption.AllDirectories));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Exact_CurseForge_plan_preserves_user_or_different_project_file_with_same_destination_name(
+        bool hasDifferentProjectProvenance)
+    {
+        var suffix = hasDifferentProjectProvenance ? "different-project" : "user-owned";
+        var server = ModServer("exact-plan-existing-filename-" + suffix, ServerEcosystem.NeoForge) with
+        {
+            MinecraftVersion = "1.21.1"
+        };
+        var existingPath = Path.Combine(server.RootPath, "mods", "shared-name.jar");
+        CreateJar(existingPath, "META-INF/neoforge.mods.toml", """
+            modLoader="javafml"
+            [[mods]]
+            modId="existing"
+            version="1.0"
+            displayName="Existing"
+            """);
+        var existingBytes = File.ReadAllBytes(existingPath);
+        var incomingBytes = Encoding.UTF8.GetBytes("new project bytes");
+        var incoming = CurseForgeRelease("10", "100", "SHARED-NAME.JAR", incomingBytes);
+        var plan = new PluginInstallPlan { Releases = [incoming] };
+        var paths = new AppDataPaths(Path.Combine(root, "exact-plan-existing-filename-" + suffix + "-data"),
+            Path.Combine(root, "managed"));
+        paths.EnsureCreated();
+        var jars = new JarInventoryService(new SafeFileService(paths), paths);
+        if (hasDifferentProjectProvenance)
+            jars.RecordProviderProvenance(
+                server,
+                existingPath,
+                CurseForgeRelease("20", "200", "shared-name.jar", existingBytes));
+        var downloads = new StubHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new ByteArrayContent(incomingBytes)
+        });
+        var secrets = new MemorySecrets();
+        secrets.SetSecret(CurseForgeUpdateProvider.ApiKeyName, "fixture-approved-key");
+        using var api = new CurseForgeApiClient(secrets, downloads);
+        var service = new PluginManagementService(
+            new PluginProviderRegistry([new PlanProvider([incoming], PluginProviderKind.CurseForge)]),
+            jars, paths, curseForge: api);
+
+        var failure = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.InstallExactPlanWithReceiptsAsync(server, "10", "100", plan));
+
+        Assert.Contains("already owned", failure.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(0, downloads.RequestCount);
+        Assert.Equal(existingBytes, File.ReadAllBytes(existingPath));
+        Assert.Empty(Directory.EnumerateFiles(paths.Recovery, "*", SearchOption.AllDirectories));
+    }
+
+    [Fact]
+    public async Task Exact_CurseForge_plan_revalidates_destination_after_download_and_preserves_new_user_file()
+    {
+        var server = ModServer("exact-plan-late-filename-collision", ServerEcosystem.NeoForge) with
+        {
+            MinecraftVersion = "1.21.1"
+        };
+        var targetPath = Path.Combine(server.RootPath, "mods", "root.jar");
+        var incomingBytes = Encoding.UTF8.GetBytes("incoming provider bytes");
+        var incoming = CurseForgeRelease("10", "100", "root.jar", incomingBytes);
+        var plan = new PluginInstallPlan { Releases = [incoming] };
+        var paths = new AppDataPaths(Path.Combine(root, "exact-plan-late-filename-collision-data"),
+            Path.Combine(root, "managed"));
+        paths.EnsureCreated();
+        var jars = new JarInventoryService(new SafeFileService(paths), paths);
+        byte[]? userBytes = null;
+        var downloads = new StubHandler(_ =>
+        {
+            CreateJar(targetPath, "META-INF/neoforge.mods.toml", """
+                modLoader="javafml"
+                [[mods]]
+                modId="userfile"
+                version="1.0"
+                displayName="User File"
+                """);
+            userBytes = File.ReadAllBytes(targetPath);
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new ByteArrayContent(incomingBytes)
+            };
+        });
+        var secrets = new MemorySecrets();
+        secrets.SetSecret(CurseForgeUpdateProvider.ApiKeyName, "fixture-approved-key");
+        using var api = new CurseForgeApiClient(secrets, downloads);
+        var service = new PluginManagementService(
+            new PluginProviderRegistry([new PlanProvider([incoming], PluginProviderKind.CurseForge)]),
+            jars, paths, curseForge: api);
+
+        var failure = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.InstallExactPlanWithReceiptsAsync(server, "10", "100", plan));
+
+        Assert.Contains("already owned", failure.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(1, downloads.RequestCount);
+        Assert.NotNull(userBytes);
+        Assert.Equal(userBytes, File.ReadAllBytes(targetPath));
+        Assert.Empty(Directory.EnumerateFiles(paths.Recovery, "*", SearchOption.AllDirectories));
+        Assert.Empty(Directory.EnumerateFiles(paths.PluginProvenance, "*", SearchOption.AllDirectories));
+    }
+
+    [Fact]
+    public async Task Authorized_CurseForge_plan_rolls_back_prior_files_when_later_exact_download_fails()
+    {
+        var server = ModServer("authorized-curseforge-plan-rollback", ServerEcosystem.NeoForge) with
+        {
+            MinecraftVersion = "1.21.1"
+        };
+        var dependencyBytes = Encoding.UTF8.GetBytes("dependency jar");
+        var rootBytes = Encoding.UTF8.GetBytes("root addon jar");
+        var dependency = CurseForgeRelease("20", "200", "library.jar", dependencyBytes);
+        var rootRelease = CurseForgeRelease("10", "100", "root.jar", rootBytes) with
+        {
+            Dependencies = [new PluginDependency { ProjectId = "20", Type = "required" }]
+        };
+        var plan = new PluginInstallPlan { Releases = [dependency, rootRelease] };
+        var paths = new AppDataPaths(Path.Combine(root, "authorized-curseforge-plan-rollback-data"),
+            Path.Combine(root, "managed"));
+        paths.EnsureCreated();
+        var jars = new JarInventoryService(new SafeFileService(paths), paths);
+        var downloads = new StubHandler(request => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new ByteArrayContent(request.RequestUri!.AbsolutePath.EndsWith("library.jar", StringComparison.Ordinal)
+                ? dependencyBytes : new byte[rootBytes.Length])
+        });
+        var secrets = new MemorySecrets();
+        secrets.SetSecret(CurseForgeUpdateProvider.ApiKeyName, "fixture-approved-key");
+        using var api = new CurseForgeApiClient(secrets, downloads);
+        var service = new PluginManagementService(
+            new PluginProviderRegistry([new PlanProvider([dependency, rootRelease], PluginProviderKind.CurseForge)]),
+            jars, paths, curseForge: api);
+
+        await Assert.ThrowsAsync<InvalidDataException>(() =>
+            service.InstallExactPlanWithReceiptsAsync(server, "10", "100", plan));
+
+        Assert.Empty(Directory.EnumerateFiles(Path.Combine(server.RootPath, "mods"), "*.jar"));
+        Assert.Single(Directory.EnumerateFiles(paths.Recovery, "library.jar", SearchOption.AllDirectories));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Inventory_refuses_active_mod_or_plugin_junction_without_reading_the_foreign_target(
+        bool modServer)
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+        var server = modServer
+            ? ModServer("inventory-mod-junction", ServerEcosystem.Fabric)
+            : PaperServer("inventory-plugin-junction");
+        var folderName = modServer ? "mods" : "plugins";
+        var active = Path.Combine(server.RootPath, folderName);
+        Directory.Delete(active);
+        var foreign = Path.Combine(root, "foreign-inventory-" + folderName);
+        Directory.CreateDirectory(foreign);
+        CreateJar(
+            Path.Combine(foreign, "Foreign.jar"),
+            modServer ? "fabric.mod.json" : "plugin.yml",
+            modServer
+                ? "{\"schemaVersion\":1,\"id\":\"foreign\",\"version\":\"1.0\",\"name\":\"Foreign\",\"environment\":\"server\"}"
+                : "name: Foreign\nversion: 1.0\n");
+        CreateJunction(active, foreign);
+
+        var failure = Assert.Throws<UnauthorizedAccessException>(() => Service().Inventory(server));
+
+        Assert.Contains("reparse", failure.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.True(File.Exists(Path.Combine(foreign, "Foreign.jar")));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Local_install_refuses_mod_or_plugin_junction_and_preserves_foreign_directory(
+        bool modServer)
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+        var server = modServer
+            ? ModServer("install-mod-junction", ServerEcosystem.Fabric)
+            : PaperServer("install-plugin-junction");
+        var folderName = modServer ? "mods" : "plugins";
+        var active = Path.Combine(server.RootPath, folderName);
+        Directory.Delete(active);
+        var foreign = Path.Combine(root, "foreign-install-" + folderName);
+        Directory.CreateDirectory(foreign);
+        var sentinel = Path.Combine(foreign, "sentinel.txt");
+        await File.WriteAllTextAsync(sentinel, "preserve");
+        CreateJunction(active, foreign);
+        var source = Path.Combine(root, "selected", modServer ? "IncomingMod.jar" : "IncomingPlugin.jar");
+        CreateJar(
+            source,
+            modServer ? "fabric.mod.json" : "plugin.yml",
+            modServer
+                ? "{\"schemaVersion\":1,\"id\":\"incoming\",\"version\":\"1.0\",\"name\":\"Incoming\",\"environment\":\"server\"}"
+                : "name: Incoming\nversion: 1.0\n");
+
+        var failure = await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            Service().InstallAsync(server, source));
+
+        Assert.Contains("reparse", failure.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("preserve", await File.ReadAllTextAsync(sentinel));
+        Assert.Single(Directory.EnumerateFiles(foreign));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Disable_refuses_reparse_in_disabled_destination_chain_and_preserves_source(
+        bool junctionAtDisabledRoot)
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+        var server = PaperServer("disabled-junction-" + junctionAtDisabledRoot);
+        var source = Path.Combine(server.RootPath, "plugins", "Fixture.jar");
+        CreateJar(source, "plugin.yml", "name: Fixture\nversion: 1.0\n");
+        var foreign = Path.Combine(root, "foreign-disabled-" + junctionAtDisabledRoot);
+        Directory.CreateDirectory(foreign);
+        var disabledRoot = Path.Combine(server.RootPath, ".chunkpilot-disabled");
+        if (junctionAtDisabledRoot)
+        {
+            CreateJunction(disabledRoot, foreign);
+        }
+        else
+        {
+            Directory.CreateDirectory(disabledRoot);
+            CreateJunction(Path.Combine(disabledRoot, "plugins"), foreign);
+        }
+
+        var failure = Assert.Throws<UnauthorizedAccessException>(() =>
+            Service().SetEnabled(server, Path.Combine("plugins", "Fixture.jar"), enabled: false));
+
+        Assert.Contains("reparse", failure.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.True(File.Exists(source));
+        Assert.Empty(Directory.EnumerateFileSystemEntries(foreign));
+    }
+
+    [Fact]
+    public void Disable_refuses_a_directory_swapped_into_the_exact_jar_destination()
+    {
+        var server = PaperServer("disabled-file-directory-swap");
+        var source = Path.Combine(server.RootPath, "plugins", "Fixture.jar");
+        CreateJar(source, "plugin.yml", "name: Fixture\nversion: 1.0\n");
+        var destination = Path.Combine(
+            server.RootPath, ".chunkpilot-disabled", "plugins", "Fixture.jar");
+        Directory.CreateDirectory(destination);
+
+        var failure = Assert.Throws<IOException>(() =>
+            Service().SetEnabled(server, Path.Combine("plugins", "Fixture.jar"), enabled: false));
+
+        Assert.Contains("replaced by a directory", failure.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.True(File.Exists(source));
+        Assert.True(Directory.Exists(destination));
+    }
+
+    [Fact]
+    public void Remove_refuses_reparse_in_recovery_chain_and_preserves_the_selected_jar()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+        var server = PaperServer("remove-recovery-junction");
+        var source = Path.Combine(server.RootPath, "plugins", "Fixture.jar");
+        CreateJar(source, "plugin.yml", "name: Fixture\nversion: 1.0\n");
+        var paths = new AppDataPaths(Path.Combine(root, "remove-recovery-data"), Path.Combine(root, "managed"));
+        paths.EnsureCreated();
+        Directory.Delete(paths.Recovery);
+        var foreign = Path.Combine(root, "foreign-recovery");
+        Directory.CreateDirectory(foreign);
+        CreateJunction(paths.Recovery, foreign);
+        var service = new JarInventoryService(new SafeFileService(paths), paths);
+
+        var failure = Assert.Throws<UnauthorizedAccessException>(() =>
+            service.Remove(server, Path.Combine("plugins", "Fixture.jar")));
+
+        Assert.Contains("reparse", failure.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.True(File.Exists(source));
+        Assert.Empty(Directory.EnumerateFileSystemEntries(foreign));
+    }
+
+    [Fact]
+    public void Provider_provenance_refuses_reparse_storage_and_does_not_write_the_foreign_target()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+        var server = PaperServer("provenance-junction");
+        var source = Path.Combine(server.RootPath, "plugins", "Fixture.jar");
+        CreateJar(source, "plugin.yml", "name: Fixture\nversion: 1.0\n");
+        var paths = new AppDataPaths(Path.Combine(root, "provenance-junction-data"), Path.Combine(root, "managed"));
+        paths.EnsureCreated();
+        Directory.Delete(paths.PluginProvenance);
+        var foreign = Path.Combine(root, "foreign-provenance");
+        Directory.CreateDirectory(foreign);
+        CreateJunction(paths.PluginProvenance, foreign);
+        var service = new JarInventoryService(new SafeFileService(paths), paths);
+
+        var failure = Assert.Throws<UnauthorizedAccessException>(() =>
+            service.RecordProviderProvenance(
+                server, source, Release("fixture", "v1", "Fixture.jar", File.ReadAllBytes(source))));
+
+        Assert.Contains("reparse", failure.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Empty(Directory.EnumerateFileSystemEntries(foreign));
+        Assert.True(File.Exists(source));
+    }
+
+    [Fact]
+    public void Config_ownership_refuses_a_reparse_path_without_reading_the_foreign_config()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+        var server = PaperServer("config-junction");
+        CreateJar(
+            Path.Combine(server.RootPath, "plugins", "Fixture.jar"),
+            "plugin.yml", "name: Fixture\nversion: 1.0\n");
+        var foreign = Path.Combine(root, "foreign-config");
+        Directory.CreateDirectory(foreign);
+        File.WriteAllText(Path.Combine(foreign, "config.yml"), "secret: preserve");
+        CreateJunction(Path.Combine(server.RootPath, "plugins", "Fixture"), foreign);
+
+        var failure = Assert.Throws<UnauthorizedAccessException>(() =>
+            Service().ValidateConfigOwnership(
+                server,
+                Path.Combine("plugins", "Fixture.jar"),
+                Path.Combine("plugins", "Fixture", "config.yml")));
+
+        Assert.Contains("reparse", failure.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("secret: preserve", File.ReadAllText(Path.Combine(foreign, "config.yml")));
+    }
+
+    [Fact]
+    public void Rollback_refuses_reparse_destination_chain_and_keeps_the_recovery_source()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+        var server = PaperServer("rollback-active-junction");
+        var source = Path.Combine(server.RootPath, "plugins", "Fixture.jar");
+        CreateJar(source, "plugin.yml", "name: Fixture\nversion: 1.0\n");
+        var service = Service();
+        var receipt = service.SetEnabledWithReceipt(
+            server, Path.Combine("plugins", "Fixture.jar"), enabled: false);
+        Directory.Delete(Path.Combine(server.RootPath, "plugins"));
+        var foreign = Path.Combine(root, "foreign-rollback");
+        Directory.CreateDirectory(foreign);
+        CreateJunction(Path.Combine(server.RootPath, "plugins"), foreign);
+
+        var failure = Assert.Throws<UnauthorizedAccessException>(() => service.RollbackMove(server, receipt));
+
+        Assert.Contains("reparse", failure.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.True(File.Exists(receipt.DestinationPath));
+        Assert.Empty(Directory.EnumerateFileSystemEntries(foreign));
+    }
+
+    [Fact]
+    public void Rollback_recreates_a_missing_content_folder_without_weakening_containment()
+    {
+        var server = PaperServer("rollback-missing-folder");
+        var source = Path.Combine(server.RootPath, "plugins", "Fixture.jar");
+        CreateJar(source, "plugin.yml", "name: Fixture\nversion: 1.0\n");
+        var sourceBytes = File.ReadAllBytes(source);
+        var service = Service();
+        var receipt = service.SetEnabledWithReceipt(
+            server, Path.Combine("plugins", "Fixture.jar"), enabled: false);
+        Directory.Delete(Path.Combine(server.RootPath, "plugins"));
+
+        service.RollbackMove(server, receipt);
+
+        Assert.Equal(sourceBytes, File.ReadAllBytes(source));
+        Assert.False(File.Exists(receipt.DestinationPath));
+    }
+
+    [Fact]
+    public async Task Reviewed_provider_activation_refuses_a_target_that_appears_while_waiting_for_the_content_lock()
+    {
+        var server = PaperServer("provider-boundary-late-target");
+        var paths = new AppDataPaths(Path.Combine(root, "provider-boundary-data"), Path.Combine(root, "managed"));
+        paths.EnsureCreated();
+        var locks = new CanonicalPathLockManager();
+        var jars = new JarInventoryService(new SafeFileService(paths, locks), paths, locks);
+        Assert.Empty(jars.Inventory(server));
+        var incomingBytes = Encoding.UTF8.GetBytes("reviewed provider payload");
+        var release = Release("reviewed-project", "reviewed-version", "Boundary.jar", incomingBytes);
+        var staged = Path.Combine(root, "provider-boundary-stage", release.FileName);
+        Directory.CreateDirectory(Path.GetDirectoryName(staged)!);
+        await File.WriteAllBytesAsync(staged, incomingBytes);
+        var lockPath = Path.Combine(server.RootPath, ".chunkpilot-addon-content.lock-key");
+        var lease = await locks.AcquireAsync(lockPath);
+        var activation = jars.InstallReviewedProviderWithReceiptAsync(server, staged, release, reviewedExisting: null);
+        var target = Path.Combine(server.RootPath, "plugins", release.FileName);
+        CreateJar(target, "plugin.yml", "name: User File\nversion: 1.0\n");
+        var userBytes = await File.ReadAllBytesAsync(target);
+        await lease.DisposeAsync();
+
+        var failure = await Assert.ThrowsAsync<InvalidOperationException>(() => activation);
+
+        Assert.Contains("appeared after review", failure.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(userBytes, await File.ReadAllBytesAsync(target));
+        Assert.Empty(Directory.EnumerateFiles(paths.Recovery, "*", SearchOption.AllDirectories));
+        Assert.Empty(Directory.EnumerateFiles(paths.PluginProvenance, "*", SearchOption.AllDirectories));
+    }
+
+    [Fact]
+    public async Task Reviewed_same_project_update_refuses_a_file_swap_and_preserves_the_new_user_file()
+    {
+        var server = PaperServer("provider-boundary-same-project-swap");
+        var paths = new AppDataPaths(Path.Combine(root, "provider-boundary-update-data"), Path.Combine(root, "managed"));
+        paths.EnsureCreated();
+        var jars = new JarInventoryService(new SafeFileService(paths), paths);
+        var current = Path.Combine(server.RootPath, "plugins", "Fixture.jar");
+        CreateJar(current, "plugin.yml", "name: Fixture\nversion: 1.0\n");
+        var oldBytes = await File.ReadAllBytesAsync(current);
+        var oldRelease = Release("fixture", "v1", "Fixture.jar", oldBytes);
+        jars.RecordProviderProvenance(server, current, oldRelease);
+        var reviewed = Assert.Single(jars.Inventory(server));
+        File.Delete(current);
+        CreateJar(current, "plugin.yml", "name: User Replacement\nversion: 9.0\n");
+        var userBytes = await File.ReadAllBytesAsync(current);
+        var incomingBytes = Encoding.UTF8.GetBytes("provider v2 payload");
+        var incomingRelease = Release("fixture", "v2", "Fixture.jar", incomingBytes);
+        var staged = Path.Combine(root, "provider-boundary-update-stage", incomingRelease.FileName);
+        Directory.CreateDirectory(Path.GetDirectoryName(staged)!);
+        await File.WriteAllBytesAsync(staged, incomingBytes);
+
+        var failure = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            jars.InstallReviewedProviderWithReceiptAsync(server, staged, incomingRelease, reviewed));
+
+        Assert.Contains("changed before activation", failure.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(userBytes, await File.ReadAllBytesAsync(current));
+        Assert.Empty(Directory.EnumerateFiles(paths.Recovery, "*", SearchOption.AllDirectories));
+    }
+
+    [Fact]
     public async Task Cancelled_local_install_removes_partial_destination_and_keeps_current_inventory()
     {
         var server = PaperServer("cancelled-local-install");
@@ -599,6 +1160,22 @@ public sealed class PluginManagementTests : IDisposable
         writer.Write(content);
     }
 
+    private static void CreateJunction(string link, string target)
+    {
+        using var process = Process.Start(new ProcessStartInfo(
+            "cmd.exe", $"/c mklink /J \"{link}\" \"{target}\"")
+        {
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true
+        }) ?? throw new InvalidOperationException("cmd.exe could not create the test junction.");
+        process.WaitForExit(20_000);
+        if (process.ExitCode != 0 || !Directory.Exists(link) ||
+            (File.GetAttributes(link) & FileAttributes.ReparsePoint) == 0)
+            throw new InvalidOperationException("The test junction could not be created on this filesystem.");
+    }
+
     private static PluginRelease Release(
         string projectId, string versionId, string fileName, byte[] bytes) => new()
     {
@@ -612,6 +1189,24 @@ public sealed class PluginManagementTests : IDisposable
         FileName = fileName,
         SizeBytes = bytes.Length,
         Sha512 = Convert.ToHexString(SHA512.HashData(bytes))
+    };
+
+    private static PluginRelease CurseForgeRelease(
+        string projectId, string versionId, string fileName, byte[] bytes) => new()
+    {
+        Kind = ManagedAddonKind.Mod,
+        Provider = PluginProviderKind.CurseForge,
+        ProjectId = projectId,
+        VersionId = versionId,
+        VersionName = versionId,
+        MinecraftVersion = "1.21.1",
+        Loader = "neoforge",
+        DownloadUrl = $"https://mediafilez.forgecdn.net/files/{versionId}/{fileName}",
+        FileName = fileName,
+        SizeBytes = bytes.Length,
+#pragma warning disable CA5350 // CurseForge publishes SHA-1 as provider identity evidence; production also records a local SHA-256 baseline.
+        Sha1 = Convert.ToHexString(SHA1.HashData(bytes))
+#pragma warning restore CA5350
     };
 
     private static HttpResponseMessage Json(string json) => new(HttpStatusCode.OK)
@@ -649,16 +1244,31 @@ public sealed class PluginManagementTests : IDisposable
             Task.FromResult<PluginRelease?>(release);
     }
 
-    private sealed class PlanProvider(IReadOnlyList<PluginRelease> releases) : IPluginCatalogProvider
+    private sealed class PlanProvider(
+        IReadOnlyList<PluginRelease> releases,
+        PluginProviderKind provider = PluginProviderKind.Modrinth) : IPluginCatalogProvider
     {
-        public PluginProviderKind Provider => PluginProviderKind.Modrinth;
+        public int ResolveCount { get; private set; }
+        public PluginProviderKind Provider => provider;
         public PluginProviderStatus Status => new(Provider, true, "Fixture");
         public Task<IReadOnlyList<PluginProject>> SearchAsync(PluginCatalogQuery query,
             CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<PluginProject>>([]);
         public Task<PluginRelease?> ResolveReleaseAsync(string projectId, string minecraftVersion, string loader,
-            string? versionId = null, CancellationToken cancellationToken = default) =>
-            Task.FromResult(releases.FirstOrDefault(item =>
+            string? versionId = null, CancellationToken cancellationToken = default)
+        {
+            ResolveCount++;
+            return Task.FromResult(releases.FirstOrDefault(item =>
                 item.ProjectId.Equals(projectId, StringComparison.OrdinalIgnoreCase) &&
                 (string.IsNullOrWhiteSpace(versionId) || item.VersionId.Equals(versionId, StringComparison.OrdinalIgnoreCase))));
+        }
+    }
+
+    private sealed class MemorySecrets : ISecretStore
+    {
+        private readonly Dictionary<string, string> values = new(StringComparer.Ordinal);
+        public void SetSecret(string name, string value) => values[name] = value;
+        public string? GetSecret(string name) => values.GetValueOrDefault(name);
+        public bool Contains(string name) => values.ContainsKey(name);
+        public void Delete(string name) => values.Remove(name);
     }
 }

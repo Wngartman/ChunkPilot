@@ -60,8 +60,13 @@ public sealed record BeginManagedContentInstallRequest(
     bool IncludeDependencies,
     bool RestartIfRunning = false,
     Guid OperationId = default,
-    PluginProviderKind Provider = PluginProviderKind.Modrinth);
+    PluginProviderKind Provider = PluginProviderKind.Modrinth,
+    ManagedContentPlanAuthorization? PlanAuthorization = null);
 
 public sealed record ManagedContentOperationRequest(Guid OperationId);
+public sealed record ManagedContentCancellationFenceResult(
+    bool FenceEstablished,
+    bool BlockedBeforeStart,
+    ManagedContentOperationSnapshot? Operation);
 public sealed record ManagedContentOperationsRequest(Guid? ServerId = null);
 

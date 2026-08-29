@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using ChunkPilot.Core;
 using ChunkPilot.Infrastructure;
 
@@ -83,10 +84,101 @@ public sealed class ProviderOwnershipManifestTests
         finally { Directory.Delete(root, recursive: true); }
     }
 
+    [Fact]
+    public async Task Migration_rejects_a_current_tree_reparse_before_candidate_mutation()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+        var root = TempRoot();
+        try
+        {
+            var current = Path.Combine(root, "current");
+            var candidate = Path.Combine(root, "candidate");
+            var foreign = Path.Combine(root, "foreign");
+            Directory.CreateDirectory(current);
+            Directory.CreateDirectory(candidate);
+            Directory.CreateDirectory(foreign);
+            await File.WriteAllTextAsync(Path.Combine(candidate, "marker.txt"), "untouched");
+            var foreignFile = Path.Combine(foreign, "level.dat");
+            await File.WriteAllTextAsync(foreignFile, "foreign");
+            CreateJunction(Path.Combine(current, "world"), foreign);
+
+            using var exclusive = new FileStream(
+                foreignFile, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+            await Assert.ThrowsAsync<InvalidDataException>(() =>
+                new PackMigrationPlanner().BuildAndApplyAsync(current, candidate, []));
+
+            Assert.Equal("untouched", await File.ReadAllTextAsync(Path.Combine(candidate, "marker.txt")));
+            Assert.False(File.Exists(Path.Combine(candidate, "world", "level.dat")));
+        }
+        finally
+        {
+            DeleteJunction(Path.Combine(root, "current", "world"));
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Migration_rejects_a_candidate_tree_reparse_before_copying_current_files()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+        var root = TempRoot();
+        try
+        {
+            var current = Path.Combine(root, "current");
+            var candidate = Path.Combine(root, "candidate");
+            var foreign = Path.Combine(root, "foreign");
+            Directory.CreateDirectory(current);
+            Directory.CreateDirectory(candidate);
+            Directory.CreateDirectory(foreign);
+            await File.WriteAllTextAsync(Path.Combine(current, "user-note.txt"), "preserve me");
+            var foreignFile = Path.Combine(foreign, "target.txt");
+            await File.WriteAllTextAsync(foreignFile, "foreign");
+            CreateJunction(Path.Combine(candidate, "linked"), foreign);
+
+            using var exclusive = new FileStream(
+                foreignFile, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+            await Assert.ThrowsAsync<InvalidDataException>(() =>
+                new PackMigrationPlanner().BuildAndApplyAsync(current, candidate, []));
+
+            Assert.False(File.Exists(Path.Combine(candidate, "user-note.txt")));
+            Assert.Equal(7, new FileInfo(foreignFile).Length);
+        }
+        finally
+        {
+            DeleteJunction(Path.Combine(root, "candidate", "linked"));
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
     private static string TempRoot()
     {
         var path = Path.Combine(Path.GetTempPath(), "ChunkPilot-provider-baseline-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(path);
         return path;
+    }
+
+    private static void CreateJunction(string link, string target)
+    {
+        using var process = Process.Start(new ProcessStartInfo(
+            "cmd.exe", $"/c mklink /J \"{link}\" \"{target}\"")
+        {
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true
+        }) ?? throw new InvalidOperationException("cmd.exe could not be started to create a junction.");
+        process.WaitForExit(20_000);
+        if (process.ExitCode != 0 || !Directory.Exists(link) ||
+            (File.GetAttributes(link) & FileAttributes.ReparsePoint) == 0)
+            throw new InvalidOperationException("The test junction could not be created on this filesystem.");
+    }
+
+    private static void DeleteJunction(string path)
+    {
+        if (Directory.Exists(path) &&
+            (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
+            Directory.Delete(path);
     }
 }

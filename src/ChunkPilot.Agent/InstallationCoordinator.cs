@@ -27,6 +27,12 @@ public sealed class InstallationCoordinator
     private readonly ConcurrentQueue<Guid> managedLoaderOperations = new();
     private readonly ConcurrentQueue<Guid> modpackOperations = new();
     private readonly ConcurrentQueue<Guid> importOperations = new();
+    private readonly object modpackBeginGate = new();
+    private readonly Dictionary<Guid, ModpackCreationPlan> modpackRequests = [];
+    internal const int DefaultMaximumPreCancelledModpackOperations = 4_096;
+    private readonly int maximumPreCancelledModpackOperations;
+    private int preCancelledModpackOperations;
+    private bool modpackRegistrationSealed;
 
     public InstallationCoordinator(
         ManagedServerInstaller installer,
@@ -42,6 +48,21 @@ public sealed class InstallationCoordinator
         this.javaRuntimes = javaRuntimes;
         this.paths = paths;
         this.detector = detector;
+        maximumPreCancelledModpackOperations = DefaultMaximumPreCancelledModpackOperations;
+    }
+
+    internal InstallationCoordinator(
+        ManagedServerInstaller installer,
+        ServerSupervisor supervisor,
+        ChunkPilotStore store,
+        int maximumPreCancelledModpackOperations)
+        : this(installer, supervisor, store)
+    {
+        if (maximumPreCancelledModpackOperations is <= 0 or > DefaultMaximumPreCancelledModpackOperations)
+            throw new ArgumentOutOfRangeException(
+                nameof(maximumPreCancelledModpackOperations),
+                $"The retained modpack cancellation-fence limit must be from 1 through {DefaultMaximumPreCancelledModpackOperations:N0}.");
+        this.maximumPreCancelledModpackOperations = maximumPreCancelledModpackOperations;
     }
 
     public Guid Begin(ServerInstallRequest request)
@@ -125,21 +146,151 @@ public sealed class InstallationCoordinator
     }
 
     /// <summary>Begins one exact reviewed Modrinth-format server-pack creation.</summary>
-    public Guid BeginModpack(ModpackCreationPlan plan)
+    public Guid BeginModpack(ModpackCreationPlan plan) =>
+        BeginModpackCore(plan, static candidate => candidate, rejectInjectedTrustedPlan: false);
+
+    /// <summary>
+    /// Begins or reattaches to one exact provider-authorized modpack creation. The authorization
+    /// callback runs at most once for an operation ID; an acknowledgement-loss replay returns the
+    /// existing operation only when every client-controlled plan field still matches.
+    /// </summary>
+    public Guid BeginAuthorizedModpack(
+        ModpackCreationPlan plan,
+        Func<ModpackCreationPlan, ModpackCreationPlan> authorize)
     {
         ArgumentNullException.ThrowIfNull(plan);
-        var problems = plan.Problems();
-        if (problems.Count > 0)
-            throw new InvalidOperationException(
-                "This modpack creation plan cannot be carried out. " + string.Join(" ", problems));
+        if (plan.OperationId == Guid.Empty)
+            throw new ArgumentException(
+                "A client-generated modpack creation operation identity is required.", nameof(plan));
+        return BeginModpackCore(plan, authorize, rejectInjectedTrustedPlan: true);
+    }
+
+    private Guid BeginModpackCore(
+        ModpackCreationPlan plan,
+        Func<ModpackCreationPlan, ModpackCreationPlan> authorize,
+        bool rejectInjectedTrustedPlan)
+    {
+        ArgumentNullException.ThrowIfNull(plan);
+        ArgumentNullException.ThrowIfNull(authorize);
         var operationId = plan.OperationId == Guid.Empty ? Guid.NewGuid() : plan.OperationId;
-        var state = new OperationState(operationId);
-        if (!operations.TryAdd(operationId, state))
+        var submittedPlan = plan with { OperationId = operationId };
+        if (rejectInjectedTrustedPlan && submittedPlan.CurseForgeGeneratedPlan is not null)
             throw new InvalidOperationException(
-                $"This creation has already been started. Operation {operationId} is already running.");
-        modpackOperations.Enqueue(operationId);
-        state.Task = RunModpackAsync(plan with { OperationId = operationId }, state);
-        return operationId;
+                "A client request cannot supply an Agent-trusted generated CurseForge file plan.");
+        var replayIdentity = submittedPlan with { CurseForgeGeneratedPlan = null };
+
+        lock (modpackBeginGate)
+        {
+            if (modpackRequests.TryGetValue(operationId, out var existingRequest))
+            {
+                if (existingRequest != replayIdentity)
+                    throw new InvalidOperationException(
+                        "That creation operation identity already belongs to another exact modpack request.");
+                return operationId;
+            }
+            if (operations.ContainsKey(operationId))
+                throw new InvalidOperationException(
+                    "That creation operation identity already belongs to another install request.");
+            if (modpackRegistrationSealed)
+                throw new InvalidOperationException(
+                    "Modpack creation is fail-closed because this Agent lifetime reached its retained cancellation-fence limit. Restart ChunkPilot before starting another server creation.");
+
+            var authorizedPlan = authorize(submittedPlan);
+            if (authorizedPlan.OperationId != operationId ||
+                authorizedPlan with { CurseForgeGeneratedPlan = null } != replayIdentity)
+                throw new InvalidOperationException(
+                    "The Agent authorization changed the client-controlled modpack request identity.");
+            if (authorizedPlan.SourceKind == ModpackCreationSource.CurseForgeGeneratedCandidate &&
+                authorizedPlan.CurseForgeGeneratedPlan is null)
+                throw new InvalidOperationException(
+                    "This generated CurseForge creation is missing its exact Agent-authorized file plan.");
+            var problems = authorizedPlan.Problems();
+            if (problems.Count > 0)
+                throw new InvalidOperationException(
+                    "This modpack creation plan cannot be carried out. " + string.Join(" ", problems));
+
+            var state = new OperationState(operationId);
+            if (!operations.TryAdd(operationId, state))
+                throw new InvalidOperationException(
+                    $"This creation has already been started. Operation {operationId} is already running.");
+            modpackRequests.Add(operationId, replayIdentity);
+            modpackOperations.Enqueue(operationId);
+            state.Task = RunModpackAsync(authorizedPlan, state);
+            return operationId;
+        }
+    }
+
+    /// <summary>
+    /// Establishes cancellation under the same gate as modpack Begin. If Begin already won, its
+    /// exact operation is cancelled. If cancellation wins, a terminal reserved operation prevents
+    /// the delayed Begin request from ever consuming authorization or starting work.
+    /// </summary>
+    public ModpackCreationCancellationFenceResult CancelOrFenceModpack(
+        ModpackCreationPlan plan,
+        Action<Guid>? revokeUnconsumedAuthorization = null)
+    {
+        ArgumentNullException.ThrowIfNull(plan);
+        if (plan.OperationId == Guid.Empty)
+            throw new ArgumentException(
+                "A client-generated modpack creation operation identity is required.", nameof(plan));
+        if (plan.CurseForgeGeneratedPlan is not null)
+            throw new InvalidOperationException(
+                "A client cancellation request cannot supply an Agent-trusted generated CurseForge file plan.");
+        var replayIdentity = plan with { CurseForgeGeneratedPlan = null };
+
+        lock (modpackBeginGate)
+        {
+            if (modpackRequests.TryGetValue(plan.OperationId, out var existingRequest))
+            {
+                if (existingRequest != replayIdentity)
+                    throw new InvalidOperationException(
+                        "That creation operation identity belongs to another exact modpack request.");
+                var existing = operations[plan.OperationId];
+                existing.Cancellation.Cancel();
+                return new ModpackCreationCancellationFenceResult(
+                    true,
+                    existing.WasCancelledBeforeStart,
+                    Read(existing));
+            }
+            if (operations.ContainsKey(plan.OperationId))
+                throw new InvalidOperationException(
+                    "That creation operation identity belongs to another install request.");
+            if (modpackRegistrationSealed)
+            {
+                if (plan.PreflightOperationId is { } sealedAuthorizationId &&
+                    sealedAuthorizationId != Guid.Empty)
+                    revokeUnconsumedAuthorization?.Invoke(sealedAuthorizationId);
+                return SealedModpackCancellationEvidence(plan.OperationId);
+            }
+
+            var state = new OperationState(plan.OperationId);
+            state.CancelBeforeStart("Creation was cancelled before the Agent started any work.");
+            if (!operations.TryAdd(plan.OperationId, state))
+                throw new InvalidOperationException(
+                    "The modpack cancellation fence could not reserve its exact operation identity.");
+            modpackRequests.Add(plan.OperationId, replayIdentity);
+            modpackOperations.Enqueue(plan.OperationId);
+            preCancelledModpackOperations++;
+            if (preCancelledModpackOperations >= maximumPreCancelledModpackOperations)
+                modpackRegistrationSealed = true;
+            if (plan.PreflightOperationId is { } authorizationId && authorizationId != Guid.Empty)
+                revokeUnconsumedAuthorization?.Invoke(authorizationId);
+            return new ModpackCreationCancellationFenceResult(true, true, Read(state));
+        }
+    }
+
+    private static ModpackCreationCancellationFenceResult SealedModpackCancellationEvidence(
+        Guid operationId)
+    {
+        // The coordinator-wide seal rejects every previously unseen modpack Begin under the same
+        // gate, so later cancellations need no additional retained tombstone. Exact identities that
+        // predate the seal still replay their stored request and terminal state above.
+        var state = new OperationState(operationId);
+        state.CancelBeforeStart(
+            "Creation was cancelled before start after this Agent reached its retained cancellation-fence limit.");
+        var snapshot = Read(state);
+        state.Cancellation.Dispose();
+        return new ModpackCreationCancellationFenceResult(true, true, snapshot);
     }
 
     /// <summary>Begins a reviewed local ZIP, JAR, or folder import under the same owned operation model.</summary>
@@ -834,7 +985,8 @@ public sealed class InstallationCoordinator
                 PackVersionName = plan.VersionName,
                 PackLoader = plan.Loader,
                 PackLoaderVersion = plan.LoaderVersion,
-                PackReleaseChannel = plan.ReleaseChannel
+                PackReleaseChannel = plan.ReleaseChannel,
+                CurseForgeGeneratedPlan = plan.CurseForgeGeneratedPlan
             };
             await RunAsync(request, state).ConfigureAwait(false);
             InstallOperationSnapshot snapshot;
@@ -1095,6 +1247,24 @@ public sealed class InstallationCoordinator
             return state.Snapshot;
     }
 
+    private static InstallOperationSnapshot Read(OperationState state)
+    {
+        lock (state.Gate)
+            return state.Snapshot;
+    }
+
+    public bool TryGet(Guid operationId, out InstallOperationSnapshot? snapshot)
+    {
+        if (operations.TryGetValue(operationId, out var state))
+        {
+            lock (state.Gate)
+                snapshot = state.Snapshot;
+            return true;
+        }
+        snapshot = null;
+        return false;
+    }
+
     public void Cancel(Guid operationId)
     {
         if (!operations.TryGetValue(operationId, out var state))
@@ -1324,6 +1494,7 @@ public sealed class InstallationCoordinator
         public object Gate { get; } = new();
         public CancellationTokenSource Cancellation { get; } = new();
         public Task? Task { get; set; }
+        public bool WasCancelledBeforeStart { get; private set; }
         public InstallOperationSnapshot Snapshot
         {
             get => snapshot;
@@ -1335,6 +1506,34 @@ public sealed class InstallationCoordinator
                     Revision = revision,
                     StartedAtUtc = startedAtUtc,
                     UpdatedAtUtc = DateTimeOffset.UtcNow
+                };
+            }
+        }
+
+        public void CancelBeforeStart(string message)
+        {
+            Cancellation.Cancel();
+            lock (Gate)
+            {
+                WasCancelledBeforeStart = true;
+                Snapshot = Snapshot with
+                {
+                    IsTerminal = true,
+                    Success = false,
+                    Error = "The operation was cancelled.",
+                    Outcome = CreationOutcome.NothingActivated,
+                    Progress = Snapshot.Progress with
+                    {
+                        OperationId = Id,
+                        State = InstallState.Cancelled,
+                        Phase = CreationPhase.Cancelling,
+                        Stage = CreationStage.Cancelled,
+                        CurrentStep = message,
+                        OverallPercent = 0,
+                        BytesDownloaded = 0,
+                        TotalBytes = null,
+                        BytesPerSecond = 0
+                    }
                 };
             }
         }

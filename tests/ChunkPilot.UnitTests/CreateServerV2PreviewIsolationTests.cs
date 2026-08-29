@@ -83,11 +83,11 @@ public sealed class CreateServerV2PreviewIsolationTests
         var startup = File.ReadAllText(Path.Combine(DesignSystemFiles.AppProjectDirectory, "App.xaml.cs"));
         var previewIndex = startup.IndexOf("CreateServerPreviewLauncher.TryRun", StringComparison.Ordinal);
         var mutexIndex = startup.IndexOf("new Mutex(", StringComparison.Ordinal);
-        var agentIndex = startup.IndexOf("new AgentClient()", StringComparison.Ordinal);
+        var agentContactIndex = startup.IndexOf("agentClient.EnsureConnectedAsync", StringComparison.Ordinal);
 
         Assert.True(previewIndex > 0, "App startup never offers the preview switch.");
         Assert.True(mutexIndex > previewIndex, "The preview must run before the single-instance lock.");
-        Assert.True(agentIndex > previewIndex, "The preview must run before the agent client is created.");
+        Assert.True(agentContactIndex > previewIndex, "The preview must run before the Agent is contacted.");
     }
 
     [Fact]

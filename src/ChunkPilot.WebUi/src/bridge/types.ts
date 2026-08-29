@@ -126,7 +126,8 @@ export interface PluginProviderStatus { provider: 'Modrinth' | 'CurseForge' | 'H
 export interface PluginProject { provider: 'Modrinth' | 'CurseForge'; kind: 'Plugin' | 'Mod'; projectId: string; slug: string; name: string; author: string; summary: string; downloads: number | null; updatedAt: string | null; serverSide: string; clientSide: string; clientRequirement: 'ServerOnly' | 'ClientOptional' | 'ClientAndServer' | 'ClientOnly' | 'Unknown'; }
 export interface PluginDependency { projectId: string; versionId: string; fileName: string; type: 'required' | 'optional' | 'incompatible' | 'embedded'; }
 export interface PluginRelease { provider: 'Modrinth' | 'CurseForge'; kind: 'Plugin' | 'Mod'; projectId: string; versionId: string; versionName: string; minecraftVersion: string; loader: string; releaseChannel: string; publishedAt: string; fileName: string; sizeBytes: number; integrity: 'sha512' | 'sha1' | 'unavailable'; serverSide: string; clientSide: string; clientRequirement: 'ServerOnly' | 'ClientOptional' | 'ClientAndServer' | 'ClientOnly' | 'Unknown'; dependencies: PluginDependency[]; }
-export interface PluginInstallPlan { releases: PluginRelease[]; problems: string[]; canInstall: boolean; }
+export interface ManagedContentPlanAuthorization { authorizationId: string; digest: string; }
+export interface PluginInstallPlan { releases: PluginRelease[]; problems: string[]; canInstall: boolean; authorization?: ManagedContentPlanAuthorization | null; }
 export type ManagedContentOperationStage = 'Queued' | 'ResolvingDependencies' | 'Downloading' | 'Verifying' | 'InspectingMetadata' | 'Staging' | 'Installing' | 'PendingRestart' | 'Installed' | 'Loaded' | 'Failed' | 'Cancelled';
 export interface ManagedContentOperation {
   operationId: string;
@@ -146,6 +147,17 @@ export interface ManagedContentOperation {
 }
 export interface PluginConfigFile { relativePath: string; name: string; sizeBytes: number; modifiedAt: string; format: 'yml' | 'yaml' | 'json' | 'jsonc' | 'toml' | 'properties' | 'conf'; }
 export interface ModpackRelease { versionId: string; versionName: string; minecraftVersion: string; loader: string; loaderVersion?: string; releaseChannel: 'Stable' | 'Beta' | 'Alpha'; publishedAt: string | null; sizeBytes: number | null; changelog: string; requiredJavaMajor: number; hasIntegrity: boolean; canCreate: boolean; preflightState?: 'NotRequired' | 'Required' | 'Inspecting' | 'Ready' | 'Unsupported' | 'Failed'; preflightDetail?: string; serverPath?: 'Official server pack' | 'ChunkPilot can generate and validate a server candidate' | 'No supportable server setup found'; limitation?: string; }
+export type ModpackSelectionMethod = 'Browse' | 'Link';
+export interface CurseForgeModpackPreflightParameters extends Record<string, unknown> {
+  projectId: string;
+  versionId: string;
+  reviewId: string;
+  modpackSelectionMethod: ModpackSelectionMethod;
+}
+export interface CurseForgeCreationReviewParameters extends Record<string, unknown> {
+  modpackReviewId: string;
+  modpackSelectionMethod: ModpackSelectionMethod;
+}
 export type ModpackProvider = 'Modrinth' | 'CurseForge';
 export type ModpackCatalogLoadState = 'Ready' | 'Empty' | 'OfflineCache' | 'AuthenticationRequired' | 'RateLimited' | 'Failed';
 export interface ModpackProject { provider: ModpackProvider; projectId: string; slug: string; name: string; author: string; summary: string; downloadCount: number | null; updatedAt: string | null; categories: string[]; hasImage: boolean; serverPathChecked?: boolean; serverSupport: string; clientRequirement: string; trend: { available: boolean; detail: string }; versions: ModpackRelease[]; }
@@ -406,8 +418,8 @@ export type BridgeMethod =
   | 'plugins.install' | 'plugins.plan' | 'plugins.installPlan' | 'plugins.setEnabled' | 'plugins.remove' | 'plugins.configFiles' | 'plugins.saveConfig'
   | 'mods.openFolder' | 'mods.chooseLocal' | 'mods.installLocal' | 'mods.providers' | 'mods.search' | 'mods.release'
   | 'mods.install' | 'mods.plan' | 'mods.installPlan' | 'mods.setEnabled' | 'mods.remove' | 'mods.configFiles' | 'mods.saveConfig'
-  | 'content.operations' | 'content.cancel'
-  | 'modpacks.providers' | 'modpacks.versions' | 'modpacks.cache' | 'modpacks.search' | 'modpacks.project' | 'modpacks.resolveLink' | 'modpacks.preflight' | 'modpacks.image' | 'modpacks.chooseLocal'
+  | 'content.operations' | 'content.cancel' | 'content.invalidatePlan'
+  | 'modpacks.providers' | 'modpacks.versions' | 'modpacks.cache' | 'modpacks.search' | 'modpacks.project' | 'modpacks.resolveLink' | 'modpacks.preflight' | 'modpacks.invalidatePreflight' | 'modpacks.image' | 'modpacks.chooseLocal'
   | 'console.send' | 'workspace.load' | 'files.openFolder' | 'files.navigate' | 'files.read' | 'files.write'
   | 'backups.create' | 'backups.restore' | 'backups.verify'
   | 'players.moderate' | 'players.addAllowlist' | 'players.setWhitelist' | 'players.head' | 'schedules.upsert' | 'schedules.delete' | 'settings.saveGlobal' | 'settings.saveServer'

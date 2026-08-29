@@ -43,12 +43,69 @@ returns credential material to App, Agent protocol models, or React. `CurseForge
 official API/CDN HTTP boundary: HTTPS/host allowlists, no cookies or redirects, connect/total timeouts,
 bounded JSON, typed status mapping, cancellation, and in-flight request coalescing are enforced there.
 Persistent CurseForge API-response caching is disabled under the currently reviewed provider terms.
+The provisioner decodes only the populated span of one bounded byte allocation and zeroes that same complete
+allocation in `finally`. The App captures the optional path-only bootstrap override once, removes it from its
+process environment immediately, and places it only on the exact non-shell Agent start. The captured reference
+is discarded when an existing Agent answers or after that child starts, so later browser, shell, and elevated
+helper launches cannot inherit the source path. Processes that execute managed server content, downloaded
+Java/loader code, approved automation programs, staged candidates, or runtime certification start from a bounded
+Windows/Java environment allowlist; explicit server variables are applied afterward and the CurseForge
+source-path variable is removed.
 
 Official CurseForge server packs and generated candidates reuse the managed installation transaction. The
 generated path accepts only an exact CurseForge manifest, recursively resolved required file relationships,
 provider size/SHA-1, locally recorded SHA-256, the narrow `config`/`defaultconfigs` override set, and an exact
-official loader install. Both paths must pass a loopback-only staged launch, readiness/status check and clean
-stop before promotion. Arbitrary pack scripts are never executed.
+official loader install. Native preflight seals the full ordered required-dependency graph and optional-review
+evidence into an Agent-lifetime plan. A short-lived authorization binds that plan and the official/client
+artifact evidence to one exact creation request; it expires, is consumed once, and rejects caller-injected plan
+data or replay. Cancellation and selection replacement revoke the exact review, including cancellation that
+wins before a slow preflight registers. Both paths must pass a loopback-only staged launch, readiness/status
+check and clean stop before promotion. Arbitrary pack scripts are never executed.
+
+Creation acceptance is separate from transport acknowledgement. The App generates the operation ID before the
+named-pipe request. If the begin response is lost, times out, is cancelled locally, or cannot be decoded, it asks
+the Agent whether that exact ID was accepted before deciding to replay. An explicit miss may replay only the same
+request and ID. `InstallationCoordinator` serializes acceptance, records the complete client-controlled plan
+identity, consumes the one-use authorization at most once, and returns the existing operation for an exact
+replay; any changed field or collision fails closed. Cancellation discovered after acceptance is sent to that
+authoritative operation instead of being mistaken for proof that creation never started. Cancellation itself is
+serialized under the same Begin gate with the complete request: it either cancels accepted work or reserves the
+operation ID as a terminal pre-start tombstone before a delayed Begin can consume authority. These externally
+controlled exact-operation paths reject `Guid.Empty` instead of silently substituting another identity.
+
+CurseForge mod/dependency installation follows the same ownership rule through a separate registry. The Agent
+deep-copies and digests the ordered exact plan, binds it to one server/provider/root-project/root-file tuple, and
+returns a short-lived public authorization identity with the review. Installation consumes the stored plan once
+before operation state is created, revalidates compatibility and inventory, and downloads only those exact
+releases without resolving provider metadata a second time. Wrong-server, replaced, expired, altered-digest and
+replayed requests fail closed. Other provider paths keep their existing contracts.
+
+Managed-content begin uses the same exact-operation reconciliation boundary. Agent acceptance is serialized with
+one-use plan consumption and retains the original server, provider, project, release, dependency mode, restart
+choice, and authorization identity. A lost acknowledgement is resolved through a non-throwing exact-ID lookup;
+only an explicit miss permits replay of that same request. The App validates every identity field in a returned
+snapshot, and the Agent rejects a reused operation ID whose request differs. Managed-content cancellation uses
+the same atomic cancel-or-tombstone contract as creation.
+
+Each coordinator retains at most 4,096 pre-start tombstones. Reaching that bound atomically seals previously
+unseen Begin registrations for the remainder of that Agent lifetime instead of returning a permanently
+unestablishable fence. Exact identities retained before the seal still require their original request; an unseen
+Begin is rejected before authorization consumption, while cancellation can revoke that request's unconsumed
+authorization and return synthetic terminal-cancelled evidence without retaining another operation object. If the
+Agent itself remains permanently unavailable after an ambiguous dispatch, the App deliberately leaves
+cancellation pending and continues reconciliation because no terminal fence can be proven.
+
+Windows destination identity is case-insensitive. A reviewed plan cannot assign the same destination JAR name to
+multiple releases under different casing. Inventory and every add-on mutation walk the complete active
+`mods`/`plugins`, disabled, Recovery, provenance, and configuration path chain without following reparse points;
+junctions, directory substitutions, and ownership-uncertain components fail closed. Before download and again
+under the content lock immediately before activation, installation refuses an existing path unless its unchanged
+authoritative provenance and content baseline belong to the same provider project. A newly appeared file or
+changed same-project baseline is preserved in place, no foreign provenance is written, and no refused file is
+moved to Recovery. The same rule applies to exact multi-release plans and ordinary single-release installs.
+ChunkPilot's lock serializes its own operations, but unrelated processes remain able to race the final check and
+filesystem mutation: this user-mode path has no single atomic conditional replace that also proves same-file
+identity and a no-reparse chain.
 
 Crossplay packages use `ICrossplayPackageProvider`. Installation is stopped-server-only, capability-gated, backed up, hash-verified, and serialized under the canonical server-root lock. ChunkPilot records relative ownership paths and versions so removal can move only its own Geyser, Floodgate, and ViaVersion JARs into Recovery while preserving generated configuration.
 
@@ -58,7 +115,42 @@ Datapack installation is bound to a selected world containing `level.dat`, valid
 
 Provider code is behind `IUpdateProviderAdapter`; ViewModels use only typed agent operations. `UpdateSourceDetector` trusts explicit ChunkPilot manifests and recognized launcher/provider IDs, never folder names or mod similarity.
 
-`ServerPackUpdateService` writes an operation journal, checks both snapshot/cache and server-volume free space, creates a full compressed snapshot with per-file SHA-256 data, downloads or reuses a content-addressed cache file, verifies the strongest provider digest, and extracts through traversal-safe code. `PackMigrationPlanner` copies worlds, player data, server properties, access lists, JVM settings, icons, user files outside pack-managed locations, and explicitly marked persistent paths. The new pack remains authoritative for mods, libraries, scripts, defaults, and pack configuration; removed JARs become explicit conflicts and remain in the rollback snapshot. An unresolved plan returns before activation. The user can select the old file, the new baseline, or supply complete merged text for a bounded text configuration file; the second staging pass records and applies those choices.
+`ServerPackUpdateService` writes an operation journal, checks snapshot/cache/server-candidate storage by exact
+volume, creates a full compressed snapshot with per-file SHA-256 data, downloads or reuses a content-addressed
+cache file, verifies the strongest provider digest, and extracts through traversal-safe code. Requirements that
+share a volume are added before comparison; distinct volumes are evaluated separately and arithmetic saturates
+instead of overflowing. The initial forecast reserves the exact package and download margin. Once the exact
+package is locally available and hash-verified, a bounded central-directory inspection sums its declared expanded
+file sizes and rejects encrypted, unsupported, unsafe, link-like, colliding, excessive, or oversized entries.
+Before snapshot or active-server mutation, the final forecast combines that verified archive expansion with the
+current-server recovery snapshot and every required generated-candidate payload and staging copy on their real
+volumes. The former compressed-size multiplier is not an authorization for bounded archive staging. Volume
+identity is resolved from the nearest existing target through its final Windows mount path to the authoritative
+volume GUID; a drive letter alone is not used, and unresolved or network-backed targets fail closed. A
+download-only update also reserves the exact package size before network transfer. `PackMigrationPlanner` copies
+worlds, player data, server properties, access lists, JVM settings, icons, user files outside pack-managed
+locations, and explicitly marked persistent paths. The new pack remains authoritative for mods, libraries,
+scripts, defaults, and pack configuration; removed JARs become explicit conflicts and remain in the rollback
+snapshot. An unresolved plan returns before activation. The user can select the old file, the new baseline, or
+supply complete merged text for a bounded text configuration file; the second staging pass records and applies
+those choices.
+
+Forecast, version snapshot, and migration share one bounded metadata inventory of the complete current server
+tree. The inventory is cancellation-aware, caps the tree at 500,000 entries, compares relative paths with Windows
+case-insensitive semantics, and never follows a reparse point. Unsafe, inaccessible, missing, redirected, or
+case-colliding components fail before snapshot/migration output. Each inventoried file's size, last-write identity,
+and no-reparse ancestor chain are checked again before it is read; snapshot also bounds streamed length and
+revalidates the entry after reading. This is bounded observation rather than a filesystem freeze; unrelated
+external mutation outside those checks remains possible.
+
+For CurseForge, both download-only and install paths perform operation-time native client-manifest preflight
+before free-space evaluation, snapshot, reviewed-download reuse, ordinary cache lookup, or network download. The
+linked numeric project and selected client/provider file IDs define the expected official/generated relationship.
+After exact tuple validation, preflight replaces the request URL, size, SHA-1, applicable local client SHA-256,
+safe filename, package type, platform and Java identity; unrelated hashes and caller-declared file lists are
+cleared. Generated updates additionally carry a validated native dependency plan that is excluded from JSON in
+both directions and used directly during materialization. Renderer-supplied operational fields or a generated
+plan are therefore never update download authority.
 
 CurseForge installations add `.chunkpilot/provider-owned-files.json`, a local SHA-256 baseline for files
 materialized from the exact provider release. During updates, an unchanged obsolete provider file may leave
@@ -124,6 +216,33 @@ WPF resources are split into Colors, Typography, and Controls dictionaries. The 
 Update progress is polled from the agent without blocking its process. Normal timestamps use 12-hour AM/PM formatting; raw server logs retain their original/ISO timestamps. Console collections are virtualized and bounded; host static data is cached, storage is sampled on a slower interval, and network throughput uses lightweight counters.
 
 `ServerCapabilityProfile` is the single adapter boundary for Java/Bedrock, plugin/mod, content, gamerule, world, update, and crossplay applicability. Views bind to capabilities rather than repeating loader-name checks. Quick-start presets are immutable, reviewable policy output; Advanced still exposes the effective launch profile.
+
+## Development certification boundary
+
+A development package is eligible for headless runtime certification only when the package-affecting `HEAD`,
+index, and actual worktree blob digests match exactly. The proof includes staged, untracked and unexpected ignored
+source plus files hidden with `skip-worktree` or `assume-unchanged`. Eligible output is built from an isolated
+`git archive` of that commit. The manifest binds the commit and input digests to the size and SHA-256 of every
+packaged file, including the controller under `artifacts\dev-current\Certification`; certification never executes
+a persistent `bin` or `obj` controller.
+
+Each certification invocation creates one fresh marked run containing exactly `data`, `servers`, and `temp`.
+`TEMP`, `TMP`, and .NET bundle extraction are scoped to that temp tree for the packaged controller. Final cleanup
+refuses unexpected entries and reparse points, inventories the bounded full run, and moves only the exact run root
+to the Windows Recycle Bin with no permanent-delete fallback.
+
+While a task server is running, the certifier takes two complete owner-PID inventories of TCP listeners and UDP
+endpoints in IPv4 and IPv6 across three stable Job snapshots taken before, between, and after them. Job accounting
+and the exact PID/creation set must remain unchanged at all three boundaries, and the exact owned endpoint multiset
+must match across both inventories. Every accepted owner is then revalidated live against its creation identity
+and the task-server process subtree. The task root, endpoint owner, and every intermediate ancestor must belong to
+that stable Job PID/creation set, must still match its live raw creation identity, and each parent must have been
+created strictly before its child; missing, exited, cyclic, reordered, or PID-reused ancestry fails closed. Only
+exact loopback TCP on the selected Minecraft port is permitted.
+Wildcard, non-loopback, UDP, secondary-port, identity-raced, unreadable, or mutation-raced evidence fails
+certification, and the report retains only sanitized counts and policy results. Each complete inventory still
+consists of four sequential Windows tables; repeated stable observation detects mutations that persist into an
+inventory, but cannot exclude a socket opened and closed entirely between observations or after the final one.
 
 ## Packaging
 

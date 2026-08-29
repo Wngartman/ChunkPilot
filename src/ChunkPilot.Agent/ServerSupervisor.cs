@@ -17,6 +17,7 @@ public sealed class ServerSupervisor : IAsyncDisposable
     private readonly BackupService backups;
     private readonly ILoggerFactory loggerFactory;
     private readonly JarInventoryService? jarInventory;
+    private readonly CertificationUpdateFaultInjector? certificationUpdateFaults;
     private IReadOnlyList<ServerRunningState> pendingRestorations = [];
 
     public ServerSupervisor(
@@ -26,7 +27,8 @@ public sealed class ServerSupervisor : IAsyncDisposable
         MinecraftStatusClient statusClient,
         BackupService backups,
         ILoggerFactory loggerFactory,
-        JarInventoryService? jarInventory = null)
+        JarInventoryService? jarInventory = null,
+        CertificationUpdateFaultInjector? certificationUpdateFaults = null)
     {
         this.store = store;
         this.paths = paths;
@@ -35,6 +37,7 @@ public sealed class ServerSupervisor : IAsyncDisposable
         this.backups = backups;
         this.loggerFactory = loggerFactory;
         this.jarInventory = jarInventory;
+        this.certificationUpdateFaults = certificationUpdateFaults;
     }
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
@@ -379,7 +382,8 @@ public sealed class ServerSupervisor : IAsyncDisposable
         ServerDefinition definition,
         AutostartMode autostartMode = AutostartMode.Never) =>
         new(definition, statistics, statusClient, store, paths, loggerFactory.CreateLogger<ManagedServer>(),
-            jarInventory: jarInventory, autostartMode: autostartMode);
+            jarInventory: jarInventory, autostartMode: autostartMode,
+            certificationUpdateFaults: certificationUpdateFaults);
 
     public async ValueTask DisposeAsync()
     {

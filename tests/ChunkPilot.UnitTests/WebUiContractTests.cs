@@ -249,6 +249,7 @@ public sealed class WebUiContractTests
         Assert.True(WebUiMethodPolicy.IsAllowed("mods.saveConfig"));
         Assert.True(WebUiMethodPolicy.IsAllowed("content.operations"));
         Assert.True(WebUiMethodPolicy.IsAllowed("content.cancel"));
+        Assert.True(WebUiMethodPolicy.IsAllowed("content.invalidatePlan"));
         Assert.True(WebUiMethodPolicy.IsAllowed("modpacks.search"));
         Assert.True(WebUiMethodPolicy.IsAllowed("modpacks.cache"));
         Assert.True(WebUiMethodPolicy.IsAllowed("modpacks.providers"));
@@ -287,6 +288,8 @@ public sealed class WebUiContractTests
         Assert.False(WebUiWindow.RequiresFullPresentationRefresh("connectivity.external.check"));
         Assert.False(WebUiWindow.RequiresFullPresentationRefresh("players.head"));
         Assert.False(WebUiWindow.RequiresFullPresentationRefresh("help.openExternal"));
+        Assert.False(WebUiWindow.RequiresFullPresentationRefresh("modpacks.invalidatePreflight"));
+        Assert.False(WebUiWindow.RequiresFullPresentationRefresh("content.invalidatePlan"));
         Assert.Equal("docs.papermc.io", WebUiWindow.RequireAllowedHelpSource("https://docs.papermc.io/paper/basic-troubleshooting/").Host);
         Assert.Throws<ArgumentException>(() => WebUiWindow.RequireAllowedHelpSource("http://docs.papermc.io/"));
         Assert.Throws<ArgumentException>(() => WebUiWindow.RequireAllowedHelpSource("https://example.com/help"));
@@ -335,6 +338,24 @@ public sealed class WebUiContractTests
         Assert.Equal(operationId, accepted["operationId"]!.GetValue<Guid>());
     }
 
+    [Theory]
+    [InlineData("creation")]
+    [InlineData("managed-content")]
+    public void WebUi_begin_requires_a_nonempty_client_generated_operation_identity(string operationKind)
+    {
+        Assert.Throws<ArgumentException>(() => WebUiWindow.RequireClientOperationId(
+            new JsonObject { ["operationId"] = Guid.Empty.ToString("D") },
+            operationKind));
+        Assert.Throws<ArgumentException>(() => WebUiWindow.RequireClientOperationId(
+            new JsonObject { ["operationId"] = "not-a-guid" },
+            operationKind));
+
+        var expected = Guid.NewGuid();
+        Assert.Equal(expected, WebUiWindow.RequireClientOperationId(
+            new JsonObject { ["operationId"] = expected.ToString("D") },
+            operationKind));
+    }
+
     [Fact]
     public void Managed_content_prompt_acceptance_is_nonterminal_and_client_correlated()
     {
@@ -367,6 +388,77 @@ public sealed class WebUiContractTests
         var json = JsonSerializer.Serialize(accepted, WebUiProtocol.Json);
         Assert.Contains($"\"operationId\":\"{operationId}\"", json, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("\"stage\":\"Queued\"", json, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Managed_content_plan_authorization_parses_exact_guid_and_sha256()
+    {
+        var authorizationId = Guid.NewGuid();
+        var parameters = new JsonObject
+        {
+            ["planAuthorization"] = new JsonObject
+            {
+                ["authorizationId"] = authorizationId.ToString("D"),
+                ["digest"] = new string('A', 64)
+            }
+        };
+
+        var parsed = WebUiWindow.ParseManagedContentPlanAuthorization(parameters);
+
+        Assert.NotNull(parsed);
+        Assert.Equal(authorizationId, parsed.AuthorizationId);
+        Assert.Equal(new string('a', 64), parsed.Digest);
+        Assert.Null(WebUiWindow.ParseManagedContentPlanAuthorization(new JsonObject()));
+    }
+
+    [Fact]
+    public void Managed_content_plan_authorization_rejects_partial_or_malformed_values()
+    {
+        Assert.Throws<ArgumentException>(() => WebUiWindow.ParseManagedContentPlanAuthorization(
+            new JsonObject { ["planAuthorization"] = "not-an-object" }));
+        Assert.Throws<ArgumentException>(() => WebUiWindow.ParseManagedContentPlanAuthorization(
+            new JsonObject
+            {
+                ["planAuthorization"] = new JsonObject
+                {
+                    ["authorizationId"] = Guid.NewGuid().ToString("D")
+                }
+            }));
+        Assert.Throws<ArgumentException>(() => WebUiWindow.ParseManagedContentPlanAuthorization(
+            new JsonObject
+            {
+                ["planAuthorization"] = new JsonObject
+                {
+                    ["digest"] = new string('a', 64)
+                }
+            }));
+        Assert.Throws<ArgumentException>(() => WebUiWindow.ParseManagedContentPlanAuthorization(
+            new JsonObject
+            {
+                ["planAuthorization"] = new JsonObject
+                {
+                    ["authorizationId"] = Guid.Empty.ToString("D"),
+                    ["digest"] = new string('a', 64)
+                }
+            }));
+        Assert.Throws<ArgumentException>(() => WebUiWindow.ParseManagedContentPlanAuthorization(
+            new JsonObject
+            {
+                ["planAuthorization"] = new JsonObject
+                {
+                    ["authorizationId"] = Guid.NewGuid().ToString("D"),
+                    ["digest"] = new string('a', 63)
+                }
+            }));
+        Assert.Throws<ArgumentException>(() => WebUiWindow.ParseManagedContentPlanAuthorization(
+            new JsonObject
+            {
+                ["planAuthorization"] = new JsonObject
+                {
+                    ["authorizationId"] = Guid.NewGuid().ToString("D"),
+                    ["digest"] = new string('z', 64)
+                }
+            }));
     }
 
     [Fact]

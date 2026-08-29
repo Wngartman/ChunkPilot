@@ -22,6 +22,7 @@ public sealed class ManagedServer : IAsyncDisposable
     private readonly ChunkPilotStore store;
     private readonly AppDataPaths paths;
     private readonly JarInventoryService? jarInventory;
+    private readonly CertificationUpdateFaultInjector? certificationUpdateFaults;
     private readonly ILogger<ManagedServer> logger;
     private readonly List<StatisticsSample> samples = [];
     private readonly CancellationTokenSource lifetime = new();
@@ -86,7 +87,8 @@ public sealed class ManagedServer : IAsyncDisposable
         ILogger<ManagedServer> logger,
         int consoleCapacity = 5_000,
         JarInventoryService? jarInventory = null,
-        AutostartMode autostartMode = AutostartMode.Never)
+        AutostartMode autostartMode = AutostartMode.Never,
+        CertificationUpdateFaultInjector? certificationUpdateFaults = null)
     {
         Definition = definition;
         this.statistics = statistics;
@@ -95,6 +97,7 @@ public sealed class ManagedServer : IAsyncDisposable
         this.paths = paths;
         this.logger = logger;
         this.jarInventory = jarInventory;
+        this.certificationUpdateFaults = certificationUpdateFaults;
         this.autostartMode = autostartMode is AutostartMode.AgentStart or AutostartMode.WindowsLoginWithDelay
             ? autostartMode
             : AutostartMode.Never;
@@ -998,7 +1001,10 @@ public sealed class ManagedServer : IAsyncDisposable
                 return withoutStartup;
             }
 
-            var start = await StartCoreAsync(CancellationToken.None).ConfigureAwait(false);
+            var start = certificationUpdateFaults?.TryConsume(Definition.Id, request.OperationId) == true
+                ? OperationResult.Fail(
+                    "The isolated certification controller injected the requested pre-start validation failure.")
+                : await StartCoreAsync(CancellationToken.None).ConfigureAwait(false);
             if (start.Success)
             {
                 var reachable = await WaitForLocalStatusAsync(CancellationToken.None).ConfigureAwait(false);
@@ -1251,8 +1257,7 @@ public sealed class ManagedServer : IAsyncDisposable
             StandardOutputEncoding = Encoding.UTF8,
             StandardErrorEncoding = Encoding.UTF8
         };
-        foreach (var pair in Definition.Environment)
-            startInfo.Environment[pair.Key] = pair.Value;
+        ChildProcessEnvironmentPolicy.Apply(startInfo, Definition.Environment);
         CurseForgeCredentialEnvironment.RemoveFromChild(startInfo);
         var newProcess = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
         try

@@ -106,7 +106,7 @@ public sealed class WebUiAddonFenceTests
             "plugins.plan", "mods.plan",
             "plugins.install", "mods.install",
             "plugins.installPlan", "mods.installPlan",
-            "content.operations"
+            "content.operations", "content.invalidatePlan"
         ];
 
         Assert.All(expected, method => Assert.True(WebUiWindow.IsCancellableAddonRequestMethod(method), method));

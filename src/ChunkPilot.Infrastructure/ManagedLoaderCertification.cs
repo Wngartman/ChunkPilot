@@ -281,6 +281,8 @@ public sealed class ManagedLoaderRuntimeCertifier : IManagedLoaderExactRuntimeCe
                 start.ArgumentList.Add(Path.GetFullPath(install.LaunchFile));
             }
             start.ArgumentList.Add("nogui");
+            ChildProcessEnvironmentPolicy.Apply(start);
+            CurseForgeCredentialEnvironment.RemoveFromChild(start);
             process = Process.Start(start) ?? throw new InvalidOperationException("Windows did not start the owned loader server.");
             void ReadLine(string source, string? line)
             {
@@ -439,6 +441,8 @@ public sealed class ManagedLoaderRuntimeCertifier : IManagedLoaderExactRuntimeCe
             RedirectStandardOutput = true, RedirectStandardError = true
         };
         start.ArgumentList.Add("-version");
+        ChildProcessEnvironmentPolicy.Apply(start);
+        CurseForgeCredentialEnvironment.RemoveFromChild(start);
         using var process = Process.Start(start) ?? throw new InvalidOperationException("Java health check did not start.");
         var stdout = process.StandardOutput.ReadToEndAsync(cancellationToken);
         var stderr = process.StandardError.ReadToEndAsync(cancellationToken);
