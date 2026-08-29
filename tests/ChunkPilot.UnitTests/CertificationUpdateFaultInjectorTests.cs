@@ -5,7 +5,7 @@ namespace ChunkPilot.UnitTests;
 
 public sealed class CertificationUpdateFaultInjectorTests
 {
-    private const string Token = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    private static readonly string Token = new('c', 64);
 
     [Fact]
     public void Disabled_registry_refuses_arming()
