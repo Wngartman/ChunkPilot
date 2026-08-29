@@ -18,6 +18,8 @@ try {
     $prohibited = @(Get-ChildItem -LiteralPath $testRoot -File -Recurse | Where-Object {
         $_.Extension -in @('.pdb', '.cs', '.csproj', '.jar', '.mrpack') -or
         $_.FullName -match '[\\/](node_modules|\.secrets?|secrets?)[\\/]' -or
+        $_.FullName -match '[\\/](WebView2|CurrentProfile)[\\/]' -or
+        $_.Name -match '^(secrets\.dat|chunkpilot\.db(?:-wal|-shm)?)$' -or
         $_.Name -match '^curseforge-api-key.*\.txt$'
     })
     if ($prohibited.Count -ne 0) { throw "Portable package contains prohibited development/server files: $($prohibited.Name -join ', ')" }

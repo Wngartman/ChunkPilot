@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { WebViewBridge, BridgeError, initializeBridge } from './client';
 
 type Handler = (event: MessageEvent) => void;
@@ -18,7 +18,10 @@ function host() {
   return { sent, reply: (data: unknown) => handler?.({ data } as MessageEvent) };
 }
 
-afterEach(() => { Reflect.deleteProperty(globalThis, 'window'); });
+afterEach(() => {
+  vi.useRealTimers();
+  Reflect.deleteProperty(globalThis, 'window');
+});
 
 describe('WebView bridge client', () => {
   it('correlates a response with its request', async () => {
@@ -43,6 +46,29 @@ describe('WebView bridge client', () => {
     await expect(timeout.request('snapshot.get')).rejects.toMatchObject({ code: 'timeout' });
     expect((native.sent.at(-1) as { method: string; params: { requestId: string } }).method).toBe('bridge.cancel');
     timeout.dispose();
+  });
+
+  it.each([
+    { method: 'modpacks.preflight' as const, timeoutMs: 30 * 60_000 },
+    { method: 'mods.search' as const, timeoutMs: 2 * 60_000 },
+    { method: 'mods.release' as const, timeoutMs: 2 * 60_000 },
+    { method: 'mods.plan' as const, timeoutMs: 2 * 60_000 },
+    { method: 'versions.check' as const, timeoutMs: 2 * 60_000 },
+    { method: 'versions.rollback' as const, timeoutMs: 30 * 60_000 }
+  ])('gives $method a bounded long-running timeout', async ({ method, timeoutMs }) => {
+    vi.useFakeTimers();
+    const native = host();
+    const bridge = new WebViewBridge();
+    const pending = bridge.request(method);
+    const rejection = expect(pending).rejects.toMatchObject({ code: 'timeout' });
+
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(native.sent).toHaveLength(1);
+
+    await vi.advanceTimersByTimeAsync(timeoutMs - 15_000);
+    await rejection;
+    expect((native.sent.at(-1) as { method: string }).method).toBe('bridge.cancel');
+    bridge.dispose();
   });
 
   it('handshakes before requesting the full snapshot', async () => {
@@ -77,7 +103,7 @@ describe('WebView bridge client', () => {
     const native = host();
     const bridge = new WebViewBridge();
     const cancellation = new AbortController();
-    const pending = bridge.request('snapshot.refresh', {}, cancellation.signal);
+    const pending = bridge.request('modpacks.preflight', {}, cancellation.signal);
     const request = native.sent[0] as { id: string };
     cancellation.abort();
     await expect(pending).rejects.toMatchObject({ code: 'cancelled' });

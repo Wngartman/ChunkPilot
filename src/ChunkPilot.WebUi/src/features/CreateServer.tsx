@@ -8,6 +8,7 @@ import { formatMemory } from './memory/memory';
 import { VersionBrowser } from './versions/VersionBrowser';
 import type { MinecraftVersionCatalog } from './versions/types';
 import { ModpackPicker, type ModpackSelection } from './modpacks/ModpackPicker';
+import { isFixtureMode } from '../fixtures/mode';
 import styles from './CreateServer.module.css';
 
 interface Destination { available: boolean; path: string; message: string; }
@@ -41,7 +42,7 @@ export function CreateServerPage({ onDone, onOpenProviderSettings }: { onDone: (
   const command = useAppStore(state => state.command);
   const bridge = useAppStore(state => state.bridge);
   const hostTotalBytes = useAppStore(state => state.snapshot?.host.totalMemoryBytes);
-  const fixtureMode = new URLSearchParams(window.location.search).has('fixture');
+  const fixtureMode = isFixtureMode();
   const requestedMode = new URLSearchParams(window.location.search).get('mode')?.toLowerCase();
   const requestedPlatform: CreationPlatform = requestedMode === 'paper' ? 'Paper'
     : requestedMode === 'modpack' ? 'Modpack'

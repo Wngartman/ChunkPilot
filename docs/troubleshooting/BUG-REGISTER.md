@@ -6,6 +6,76 @@ become the durable record and the entry can leave this active register.
 
 ---
 
+## CP-2026-045 — Modpack discovery performed per-card provider work and leaked browser state across providers
+
+| Field | Value |
+|---|---|
+| Date | 2026-08-29 |
+| Git state | `codex/curseforge-runtime-browser-parity`; local browser checkpoint based on `a5ec5df9846122442589015c8a340023b1657e8e`, commit pending |
+| Provider identity | Official Minecraft game `432`; live aggregate evidence only, with no credential value or response body retained |
+| Severity | High — normal browsing could multiply one visible page into hundreds of serialized API reads, show another provider's rows under the selected provider, and repeat or hide catalog results |
+| Area | Create Server v2, Modrinth/CurseForge discovery, pagination, provider switching, exact-release detail |
+| Status | **Fixed locally; live runtime certification still pending** |
+| Validation | Shallow-search/no-N+1 and three-page provider regressions; renderer cancellation, provider-session, pagination, underfilled-page, query-scroll, lazy-detail, preflight-detail and virtualization regressions; direct packaged live browser inspection |
+
+### Reproduction
+
+The previous renderer hardcoded a 20-item page. CurseForge discovery then resolved file and server-pack
+relationships serially for every visible project before returning the page. Static path analysis showed a
+worst-case upper bound of about 1,201 provider reads for 20 cards. This delayed the first useful result and made
+ordinary browsing perform exact-release work the user had not requested.
+
+Browser state was shared across providers. Switching from CurseForge to Modrinth could briefly relabel the old
+CurseForge rows as Modrinth rows, and a late response could overwrite the new provider. Modrinth did not send its
+requested offset, so **Load more** could fetch page one again. Early CurseForge server-path filtering also
+underfilled a page while renderer pagination inferred position from the accepted item count, hiding or repeating
+later provider rows.
+
+Two related presentation defects appeared while correcting the browser. Starting a new query while the result
+list remained deeply scrolled could immediately trigger an unintended second-page request. A completed
+CurseForge preflight updated the parent-owned exact release but could leave the selected detail pane displaying
+the earlier preflight-required state.
+
+### Root cause and impact
+
+Discovery and exact-project resolution were one operation even though cards need only shallow project metadata.
+The generic catalog contract did not carry provider totals and cursors, the Modrinth adapter omitted `offset`,
+and renderer query, selection, paging, and scroll state had one owner rather than one session per provider.
+Consequently local filtering and stale asynchronous completion could change provider position or visible
+identity. The result was slow, sparse and sometimes factually misleading discovery rather than merely a visual
+density problem.
+
+### Resolution
+
+Both providers now return shallow 50-project pages with the provider's true cursor and total. CurseForge search
+does no per-card file request; selecting one card lazily resolves its exact project/release detail. The renderer
+deduplicates appended rows, keeps a bounded 200-item session, virtualizes beyond the first 20 cards, automatically
+loads near the end, and retains an accessible **Load more** action. Search, filters, sort, loaded pages,
+selection, and scroll position are isolated per provider. Superseded requests are cancelled and fenced, and a
+cached provider session restores without a network refetch.
+
+Modrinth now sends the requested offset. Cursor advancement remains based on the raw provider page even when
+policy rejects or cross-page deduplication removes visible rows. A new query resets the list to the top before it
+can satisfy the append threshold, and parent preflight output is synchronized into the selected exact-detail
+model. Shallow cards explicitly say that server setup has not been checked rather than claiming compatibility.
+
+### Final boundary
+
+**VERIFIED:** in the packaged live candidate, Modrinth rendered 50 of 12,631 results. CurseForge rendered 49,
+then 97, then 144 accepted unique rows while its official bounded total remained 10,000; the smaller visible
+counts were caused by live cross-page duplicates or policy-invalid rows, while the raw cursor continued correctly.
+Returning to an already loaded provider restored the visible session in roughly 130-169 ms without relabelling
+rows. Exact SkyFactory 5 detail resolved live and identified its official server pack. Automated regressions cover
+the shallow/no-N+1 boundary, three 50-row pages, true offsets/cursors, stale completion, provider session restore,
+query scroll reset, lazy exact detail, underfilled pages and preflight-result synchronization.
+
+**PENDING:** the prior 15-second renderer timeout cancelled the first real preflight and its partial download was
+deleted. Extended-operation handling is being corrected separately. No archive/server/mod payload, generated
+candidate, provider-backed update, rollback, or controlled recovery is certified by this browser checkpoint, and
+final user acceptance has not occurred.
+
+---
+
 ## CP-2026-044 — Credential presence and isolated harnesses could cross the approved source boundary
 
 | Field | Value |

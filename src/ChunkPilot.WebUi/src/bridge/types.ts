@@ -148,8 +148,8 @@ export interface PluginConfigFile { relativePath: string; name: string; sizeByte
 export interface ModpackRelease { versionId: string; versionName: string; minecraftVersion: string; loader: string; loaderVersion?: string; releaseChannel: 'Stable' | 'Beta' | 'Alpha'; publishedAt: string | null; sizeBytes: number | null; changelog: string; requiredJavaMajor: number; hasIntegrity: boolean; canCreate: boolean; preflightState?: 'NotRequired' | 'Required' | 'Inspecting' | 'Ready' | 'Unsupported' | 'Failed'; preflightDetail?: string; serverPath?: 'Official server pack' | 'ChunkPilot can generate and validate a server candidate' | 'No supportable server setup found'; limitation?: string; }
 export type ModpackProvider = 'Modrinth' | 'CurseForge';
 export type ModpackCatalogLoadState = 'Ready' | 'Empty' | 'OfflineCache' | 'AuthenticationRequired' | 'RateLimited' | 'Failed';
-export interface ModpackProject { provider: ModpackProvider; projectId: string; slug: string; name: string; author: string; summary: string; downloadCount: number | null; updatedAt: string | null; categories: string[]; hasImage: boolean; serverSupport: string; clientRequirement: string; trend: { available: boolean; detail: string }; versions: ModpackRelease[]; }
-export interface ModpackCatalogResult { provider: ModpackProvider; state: ModpackCatalogLoadState; items: ModpackProject[]; detail: string; failedStage: string; retrievedAt: string | null; fromCache: boolean; stale: boolean; nextIndex: number; hasMore: boolean; }
+export interface ModpackProject { provider: ModpackProvider; projectId: string; slug: string; name: string; author: string; summary: string; downloadCount: number | null; updatedAt: string | null; categories: string[]; hasImage: boolean; serverPathChecked?: boolean; serverSupport: string; clientRequirement: string; trend: { available: boolean; detail: string }; versions: ModpackRelease[]; }
+export interface ModpackCatalogResult { provider: ModpackProvider; state: ModpackCatalogLoadState; items: ModpackProject[]; detail: string; failedStage: string; retrievedAt: string | null; fromCache: boolean; stale: boolean; nextIndex: number; hasMore: boolean; totalCount?: number | null; }
 export interface ModpackProviderStatus { provider: ModpackProvider; available: boolean; detail: string; }
 export type CatalogGameVersionKind = 'Release' | 'Snapshot' | 'Beta' | 'Alpha' | 'Unknown';
 export interface ModpackGameVersion { versionId: string; kind: CatalogGameVersionKind; publishedAt: string | null; isMajor: boolean; }
@@ -222,6 +222,7 @@ export interface UpdateSummary {
   downloadSizeBytes?: number | null; compatibilityReasons?: string[]; compatibility: string | null;
   canInstall: boolean; operationState: string | null; operationStep?: string | null;
   operationDetail?: string | null; operationPercent: number | null; cancellable: boolean;
+  pendingValidation?: { serverId: string; versionId: string; versionName: string } | null;
   migrationReview: UpdateMigrationReview | null;
 }
 export interface ActivityEntry { id: number; timestamp: string; serverId: string | null; serverName: string; action: string; result: string; error: string | null; durationMs: number; }
@@ -406,7 +407,7 @@ export type BridgeMethod =
   | 'mods.openFolder' | 'mods.chooseLocal' | 'mods.installLocal' | 'mods.providers' | 'mods.search' | 'mods.release'
   | 'mods.install' | 'mods.plan' | 'mods.installPlan' | 'mods.setEnabled' | 'mods.remove' | 'mods.configFiles' | 'mods.saveConfig'
   | 'content.operations' | 'content.cancel'
-  | 'modpacks.providers' | 'modpacks.versions' | 'modpacks.cache' | 'modpacks.search' | 'modpacks.resolveLink' | 'modpacks.preflight' | 'modpacks.image' | 'modpacks.chooseLocal'
+  | 'modpacks.providers' | 'modpacks.versions' | 'modpacks.cache' | 'modpacks.search' | 'modpacks.project' | 'modpacks.resolveLink' | 'modpacks.preflight' | 'modpacks.image' | 'modpacks.chooseLocal'
   | 'console.send' | 'workspace.load' | 'files.openFolder' | 'files.navigate' | 'files.read' | 'files.write'
   | 'backups.create' | 'backups.restore' | 'backups.verify'
   | 'players.moderate' | 'players.addAllowlist' | 'players.setWhitelist' | 'players.head' | 'schedules.upsert' | 'schedules.delete' | 'settings.saveGlobal' | 'settings.saveServer'
@@ -414,7 +415,7 @@ export type BridgeMethod =
   | 'connectivity.router.check' | 'connectivity.router.confirm' | 'connectivity.router.cancelConsent' | 'connectivity.router.stop' | 'connectivity.router.cancel' | 'connectivity.router.retry'
   | 'connectivity.external.check' | 'connectivity.external.cancel'
   | 'connectivity.firewall.primary' | 'connectivity.firewall.secondary' | 'connectivity.firewall.confirm' | 'connectivity.firewall.cancelConsent' | 'connectivity.firewall.remove' | 'connectivity.firewall.cancel'
-  | 'versions.check' | 'versions.install' | 'versions.rollback' | 'versions.verify' | 'versions.cancel'
+  | 'versions.check' | 'versions.install' | 'versions.markHealthy' | 'versions.rollback' | 'versions.verify' | 'versions.cancel'
   | 'creation.catalog' | 'creation.paperBuilds' | 'creation.loaderBuilds' | 'creation.previewDestination' | 'creation.chooseFolder' | 'creation.chooseWorld' | 'creation.chooseLegacyArtifact' | 'creation.begin' | 'creation.operations' | 'creation.progress' | 'creation.cancel';
 
 export interface BridgeRequest {

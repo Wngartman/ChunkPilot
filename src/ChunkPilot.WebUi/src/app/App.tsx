@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { initializeBridge, WebViewBridge, type BridgeAdapter } from '../bridge/client';
 import { FixtureBridge } from '../fixtures/catalog';
+import { isFixtureMode } from '../fixtures/mode';
 import { useAppStore } from '../state/store';
 import { EmptyState } from '../design-system/Primitives';
 import type { ServerSummary } from '../bridge/types';
@@ -16,7 +17,7 @@ const CreateServerPage = lazy(() => import('../features/CreateServer').then(modu
 
 function createBridge(): BridgeAdapter {
   const fixture = new URLSearchParams(window.location.search).get('fixture');
-  return fixture ? new FixtureBridge(fixture) : new WebViewBridge();
+  return fixture && isFixtureMode() ? new FixtureBridge(fixture) : new WebViewBridge();
 }
 
 export default function App() {
@@ -27,7 +28,7 @@ function AppContent() {
   const [route, setRoute] = useState<GlobalRoute>(() => (new URLSearchParams(window.location.search).get('page') as GlobalRoute | null) ?? 'dashboard');
   const [serverRouteId, setServerRouteId] = useState<string | null | undefined>(() => {
     const query = new URLSearchParams(window.location.search);
-    return query.has('fixture') && query.get('page') === 'servers' && query.get('mode')?.startsWith('library') ? null : undefined;
+    return isFixtureMode() && query.get('page') === 'servers' && query.get('mode')?.startsWith('library') ? null : undefined;
   });
   const [settingsCategory, setSettingsCategory] = useState(() => {
     const query = new URLSearchParams(window.location.search);
@@ -57,7 +58,7 @@ function AppContent() {
   }, [initialized]);
   useEffect(() => {
     const query = new URLSearchParams(window.location.search);
-    if (!query.has('fixture') || !query.has('profile') || !('PerformanceObserver' in window)) return;
+    if (!isFixtureMode() || !query.has('profile') || !('PerformanceObserver' in window)) return;
     let count = 0; let maximum = 0;
     const observer = new PerformanceObserver(list => {
       for (const entry of list.getEntries()) { count += 1; maximum = Math.max(maximum, entry.duration); }

@@ -5,7 +5,7 @@ import type { BridgeAdapter } from '../../bridge/client';
 import type { BridgeMethod, ModpackProject } from '../../bridge/types';
 import { FixtureBridge, fixtures } from '../../fixtures/catalog';
 import { useAppStore } from '../../state/store';
-import { ModpackPicker, type ModpackSelection } from './ModpackPicker';
+import { ModpackPicker, PackImage, type ModpackSelection } from './ModpackPicker';
 
 const calls: { method: BridgeMethod; params: Record<string, unknown> }[] = [];
 
@@ -30,6 +30,7 @@ describe('modpack provider browser', () => {
     const { rerender } = render(<ModpackPicker value={selected} onChange={value => { selected = value; rerender(<ModpackPicker value={selected} onChange={next => { selected = next; }} />); }} />);
 
     expect(await screen.findByRole('button', { name: /Copper Trails/ })).toBeTruthy();
+    expect(calls.some(call => call.method === 'modpacks.search' && call.params.limit === 50)).toBe(true);
     fireEvent.change(screen.getByRole('searchbox', { name: 'Search Modrinth modpacks' }), { target: { value: 'copper' } });
     fireEvent.click(screen.getByRole('combobox', { name: 'Minecraft version filter' }));
     fireEvent.click(await screen.findByRole('option', { name: '1.20.1' }));
@@ -43,6 +44,36 @@ describe('modpack provider browser', () => {
     expect(chosen.kind).toBe('remote');
     expect(chosen.release.versionId).toBe('fixture-pack-4');
     expect(screen.getByText('SHA-1 + SHA-512')).toBeTruthy();
+  });
+
+  it('continues to the live Modrinth catalog and inventory when optional cache reads fail', async () => {
+    const fixture = new FixtureBridge('running');
+    const liveProject = catalogProject('live-after-cache', 'Live after cache');
+    const bridge: BridgeAdapter = {
+      request: async <T,>(method: BridgeMethod, params: Record<string, unknown> = {}) => {
+        calls.push({ method, params });
+        if (method === 'modpacks.cache') throw new Error('Optional cache unavailable.');
+        if (method === 'modpacks.versions' && params.cacheOnly === true) throw new Error('Optional inventory cache unavailable.');
+        if (method === 'modpacks.versions') return {
+          provider: 'Modrinth', state: 'Ready', versions: [
+            { versionId: '1.20.1', kind: 'Release', publishedAt: null, isMajor: false }
+          ], detail: 'Live inventory.', failedStage: '', retrievedAt: null, fromCache: false, stale: false
+        } as T;
+        if (method === 'modpacks.search') return {
+          provider: 'Modrinth', state: 'Ready', items: [liveProject], detail: 'Live catalog.', failedStage: '',
+          retrievedAt: null, fromCache: false, stale: false, nextIndex: 1, hasMore: false, totalCount: 1
+        } as T;
+        return fixture.request<T>(method, params);
+      },
+      subscribe: listener => fixture.subscribe(listener), dispose: () => fixture.dispose()
+    };
+    useAppStore.setState({ bridge });
+    render(<ModpackPicker value={null} onChange={() => undefined} />);
+
+    expect(await screen.findByRole('button', { name: /Live after cache/ })).toBeTruthy();
+    await waitFor(() => expect(calls).toContainEqual({ method: 'modpacks.versions', params: { provider: 'Modrinth', cacheOnly: false } }));
+    fireEvent.click(screen.getByRole('combobox', { name: 'Minecraft version filter' }));
+    expect(await screen.findByRole('option', { name: '1.20.1' })).toBeTruthy();
   });
 
   it('keeps provider images behind the native bounded image bridge', async () => {
@@ -60,6 +91,67 @@ describe('modpack provider browser', () => {
     expect(await screen.findByRole('button', { name: /Image Pack/ })).toBeTruthy();
     await waitFor(() => expect(calls).toContainEqual({ method: 'modpacks.image', params: { provider: 'Modrinth', projectId: 'image-pack' } }));
     expect(container.querySelector('img')?.getAttribute('src')).toBe('data:image/png;base64,AA==');
+  });
+
+  it('shares thumbnail work while mounted and cancels it only after the final subscriber leaves', async () => {
+    const project: ModpackProject = {
+      provider: 'Modrinth', projectId: 'shared-cancellable-image', slug: 'shared-cancellable-image',
+      name: 'Shared image', author: 'Fixture', summary: 'Image request lifetime fixture.',
+      downloadCount: 1, updatedAt: null, categories: [], hasImage: true,
+      serverSupport: 'FullyAutomated', clientRequirement: 'Optional',
+      trend: { available: false, detail: 'Collecting trend history.' }, versions: []
+    };
+    let imageCalls = 0;
+    let imageSignal: AbortSignal | undefined;
+    const fixture = new FixtureBridge('running');
+    const bridge: BridgeAdapter = {
+      request: async <T,>(method: BridgeMethod, params: Record<string, unknown> = {}, signal?: AbortSignal) => {
+        calls.push({ method, params });
+        if (method !== 'modpacks.image') return fixture.request<T>(method, params);
+        imageCalls++;
+        imageSignal = signal;
+        return new Promise<T>((_resolve, reject) => {
+          signal?.addEventListener('abort', () => reject(new DOMException('cancelled', 'AbortError')), { once: true });
+        });
+      },
+      subscribe: listener => fixture.subscribe(listener),
+      dispose: () => fixture.dispose()
+    };
+    useAppStore.setState({ bridge });
+
+    const { rerender, unmount } = render(<><PackImage project={project} /><PackImage project={project} large /></>);
+    await waitFor(() => expect(imageCalls).toBe(1));
+
+    rerender(<PackImage project={project} />);
+    expect(imageSignal?.aborted).toBe(false);
+
+    unmount();
+    await waitFor(() => expect(imageSignal?.aborted).toBe(true));
+    expect(imageCalls).toBe(1);
+  });
+
+  it('never carries a previous project image into newly selected details', async () => {
+    const first = { ...catalogProject('detail-image-first', 'First image pack'), hasImage: true };
+    const second = { ...catalogProject('detail-image-second', 'Second imageless pack'), hasImage: false };
+    const fixture = new FixtureBridge('running');
+    const bridge: BridgeAdapter = {
+      request: async <T,>(method: BridgeMethod, params: Record<string, unknown> = {}) => {
+        if (method === 'modpacks.cache') return { provider: 'Modrinth', state: 'Empty', items: [], detail: '', failedStage: '', retrievedAt: null, fromCache: true, stale: false } as T;
+        if (method === 'modpacks.search') return { provider: 'Modrinth', state: 'Ready', items: [first, second], detail: 'Ready.', failedStage: '', retrievedAt: null, fromCache: false, stale: false, nextIndex: 2, hasMore: false, totalCount: 2 } as T;
+        if (method === 'modpacks.image') return { dataUrl: 'data:image/png;base64,FIRST' } as T;
+        return fixture.request<T>(method, params);
+      },
+      subscribe: listener => fixture.subscribe(listener), dispose: () => fixture.dispose()
+    };
+    useAppStore.setState({ bridge });
+    const { container } = render(<ModpackPicker value={null} onChange={() => undefined} />);
+    fireEvent.click(await screen.findByRole('button', { name: /First image pack/ }));
+    await waitFor(() => expect(container.querySelector('aside img')?.getAttribute('src')).toBe('data:image/png;base64,FIRST'));
+
+    fireEvent.click(screen.getByRole('button', { name: /Second imageless pack/ }));
+
+    expect(screen.getByRole('heading', { name: 'Second imageless pack' })).toBeTruthy();
+    expect(container.querySelector('aside img')).toBeNull();
   });
 
   it('shows the native credential boundary instead of asking an end user for a key', async () => {
@@ -162,15 +254,167 @@ describe('modpack provider browser', () => {
     expect(screen.getByRole('button', { name: /New result/ })).toBeTruthy();
   });
 
+  it('never relabels stale rows while switching providers and restores the prior provider session without refetching', async () => {
+    const fixture = new FixtureBridge('running');
+    let resolveCurseForge!: (value: unknown) => void;
+    const curseForgeResult = new Promise(resolve => { resolveCurseForge = resolve; });
+    const bridge: BridgeAdapter = {
+      request: async <T,>(method: BridgeMethod, params: Record<string, unknown> = {}) => {
+        calls.push({ method, params });
+        if (method === 'modpacks.cache') return { provider: 'Modrinth', state: 'Empty', items: [], detail: '', failedStage: '', retrievedAt: null, fromCache: true, stale: false, nextIndex: 0, hasMore: false } as T;
+        if (method === 'modpacks.search' && params.provider === 'CurseForge') return curseForgeResult as Promise<T>;
+        if (method === 'modpacks.search') return { provider: 'Modrinth', state: 'Ready', items: [catalogProject('modrinth-only', 'Modrinth only')], detail: 'Ready.', failedStage: '', retrievedAt: null, fromCache: false, stale: false, nextIndex: 1, hasMore: false, totalCount: 1 } as T;
+        return fixture.request<T>(method, params);
+      },
+      subscribe: listener => fixture.subscribe(listener), dispose: () => fixture.dispose()
+    };
+    useAppStore.setState({ bridge });
+    render(<ModpackPicker value={null} onChange={() => undefined} />);
+
+    expect(await screen.findByRole('button', { name: /Modrinth only/ })).toBeTruthy();
+    fireEvent.click(screen.getByRole('tab', { name: /CurseForge/ }));
+    expect(screen.queryByRole('button', { name: /Modrinth only/ })).toBeNull();
+    resolveCurseForge({ provider: 'CurseForge', state: 'Ready', items: [catalogProject('curseforge-only', 'CurseForge only', 'CurseForge')], detail: 'Ready.', failedStage: '', retrievedAt: null, fromCache: false, stale: false, nextIndex: 1, hasMore: false, totalCount: 1 });
+    expect(await screen.findByRole('button', { name: /CurseForge only/ })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('tab', { name: /Modrinth/ }));
+    expect(screen.getByRole('button', { name: /Modrinth only/ })).toBeTruthy();
+    expect(calls.filter(call => call.method === 'modpacks.search' && call.params.provider === 'Modrinth')).toHaveLength(1);
+  });
+
+  it('renders shallow cards before exact project calls and resolves server setup only after selection', async () => {
+    const fixture = new FixtureBridge('running');
+    const shallow: ModpackProject = {
+      ...catalogProject('shallow-pack', 'Shallow pack', 'CurseForge'),
+      serverPathChecked: false,
+      serverSupport: 'Unsupported',
+      versions: []
+    };
+    const resolved: ModpackProject = {
+      ...catalogProject('shallow-pack', 'Shallow pack', 'CurseForge'),
+      serverPathChecked: true,
+      serverSupport: 'FullyAutomated'
+    };
+    const bridge: BridgeAdapter = {
+      request: async <T,>(method: BridgeMethod, params: Record<string, unknown> = {}) => {
+        calls.push({ method, params });
+        if (method === 'modpacks.search' && params.provider === 'CurseForge') return { provider: 'CurseForge', state: 'Ready', items: [shallow], detail: 'Ready.', failedStage: '', retrievedAt: null, fromCache: false, stale: false, nextIndex: 1, hasMore: false, totalCount: 1 } as T;
+        if (method === 'modpacks.project') return resolved as T;
+        if (method === 'modpacks.cache') return { provider: 'Modrinth', state: 'Empty', items: [], detail: '', failedStage: '', retrievedAt: null, fromCache: true, stale: false, nextIndex: 0, hasMore: false } as T;
+        if (method === 'modpacks.search') return { provider: 'Modrinth', state: 'Empty', items: [], detail: '', failedStage: '', retrievedAt: null, fromCache: false, stale: false, nextIndex: 0, hasMore: false } as T;
+        return fixture.request<T>(method, params);
+      },
+      subscribe: listener => fixture.subscribe(listener), dispose: () => fixture.dispose()
+    };
+    useAppStore.setState({ bridge });
+    render(<ModpackPicker value={null} onChange={() => undefined} />);
+    fireEvent.click(await screen.findByRole('tab', { name: /CurseForge/ }));
+
+    const card = await screen.findByRole('button', { name: /Shallow pack/ });
+    expect(screen.getByText('Server setup not checked yet')).toBeTruthy();
+    expect(calls.some(call => call.method === 'modpacks.project')).toBe(false);
+    fireEvent.click(card);
+    await waitFor(() => expect(calls).toContainEqual({ method: 'modpacks.project', params: { provider: 'CurseForge', projectId: 'shallow-pack' } }));
+    expect(await screen.findByText('Official server pack')).toBeTruthy();
+  });
+
+  it('reflects the parent-owned CurseForge preflight result in the selected project details', async () => {
+    const fixture = new FixtureBridge('running');
+    const shallow: ModpackProject = {
+      ...catalogProject('preflight-pack', 'Preflight pack', 'CurseForge'),
+      serverPathChecked: false,
+      versions: []
+    };
+    const requiredRelease = {
+      ...catalogProject('preflight-pack', 'Preflight pack', 'CurseForge').versions[0],
+      canCreate: false,
+      preflightState: 'Required' as const,
+      limitation: 'Inspecting the exact client manifest is required before this release can be created.'
+    };
+    const resolved: ModpackProject = {
+      ...shallow,
+      serverPathChecked: true,
+      serverSupport: 'FullyAutomated',
+      versions: [requiredRelease]
+    };
+    let selected: ModpackSelection | null = null;
+    const bridge: BridgeAdapter = {
+      request: async <T,>(method: BridgeMethod, params: Record<string, unknown> = {}) => {
+        if (method === 'modpacks.search' && params.provider === 'CurseForge') return { provider: 'CurseForge', state: 'Ready', items: [shallow], detail: 'Ready.', failedStage: '', retrievedAt: null, fromCache: false, stale: false, nextIndex: 1, hasMore: false, totalCount: 1 } as T;
+        if (method === 'modpacks.project') return resolved as T;
+        if (method === 'modpacks.cache') return { provider: 'Modrinth', state: 'Empty', items: [], detail: '', failedStage: '', retrievedAt: null, fromCache: true, stale: false, nextIndex: 0, hasMore: false } as T;
+        if (method === 'modpacks.search') return { provider: 'Modrinth', state: 'Empty', items: [], detail: '', failedStage: '', retrievedAt: null, fromCache: false, stale: false, nextIndex: 0, hasMore: false } as T;
+        return fixture.request<T>(method, params);
+      },
+      subscribe: listener => fixture.subscribe(listener), dispose: () => fixture.dispose()
+    };
+    useAppStore.setState({ bridge });
+    const { rerender } = render(<ModpackPicker value={null} onChange={value => { selected = value; }} />);
+    fireEvent.click(await screen.findByRole('tab', { name: /CurseForge/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /Preflight pack/ }));
+    await waitFor(() => expect(selected).not.toBeNull());
+
+    const failedRelease = { ...requiredRelease, preflightState: 'Failed' as const, limitation: 'The verified client archive could not be downloaded.' };
+    const failedSelection: ModpackSelection = {
+      kind: 'remote',
+      project: { ...resolved, versions: [failedRelease] },
+      release: failedRelease
+    };
+    rerender(<ModpackPicker value={failedSelection} onChange={value => { selected = value; }} />);
+
+    expect(await screen.findByText('The verified client archive could not be downloaded.')).toBeTruthy();
+    expect(screen.queryByText(requiredRelease.limitation)).toBeNull();
+  });
+
+  it('clears the prior createable selection while a different shallow project is unresolved', async () => {
+    const fixture = new FixtureBridge('running');
+    const first = catalogProject('first-pack', 'First pack', 'CurseForge');
+    const second: ModpackProject = {
+      ...catalogProject('second-pack', 'Second pack', 'CurseForge'),
+      serverPathChecked: false,
+      serverSupport: 'Unsupported',
+      versions: []
+    };
+    let resolveSecond!: (project: ModpackProject) => void;
+    const secondDetail = new Promise<ModpackProject>(resolve => { resolveSecond = resolve; });
+    const bridge: BridgeAdapter = {
+      request: async <T,>(method: BridgeMethod, params: Record<string, unknown> = {}) => {
+        if (method === 'modpacks.search' && params.provider === 'CurseForge') return {
+          provider: 'CurseForge', state: 'Ready', items: [first, second], detail: 'Ready.', failedStage: '',
+          retrievedAt: null, fromCache: false, stale: false, nextIndex: 2, hasMore: false, totalCount: 2
+        } as T;
+        if (method === 'modpacks.project' && params.projectId === 'second-pack') return secondDetail as Promise<T>;
+        if (method === 'modpacks.cache') return { provider: 'Modrinth', state: 'Empty', items: [], detail: '', failedStage: '', retrievedAt: null, fromCache: true, stale: false, nextIndex: 0, hasMore: false } as T;
+        if (method === 'modpacks.search') return { provider: 'Modrinth', state: 'Empty', items: [], detail: '', failedStage: '', retrievedAt: null, fromCache: false, stale: false, nextIndex: 0, hasMore: false } as T;
+        return fixture.request<T>(method, params);
+      },
+      subscribe: listener => fixture.subscribe(listener), dispose: () => fixture.dispose()
+    };
+    useAppStore.setState({ bridge });
+    let selected: ModpackSelection | null = null;
+    render(<ModpackPicker value={null} onChange={value => { selected = value; }} />);
+    fireEvent.click(await screen.findByRole('tab', { name: /CurseForge/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /First pack/ }));
+    await waitFor(() => expect(selected).not.toBeNull());
+
+    fireEvent.click(screen.getByRole('button', { name: /Second pack/ }));
+
+    expect(selected).toBeNull();
+    expect(screen.getByText('Checking exact releases and server setup…')).toBeTruthy();
+    resolveSecond({ ...second, serverPathChecked: true, serverSupport: 'Unsupported', versions: [] });
+    await waitFor(() => expect(screen.queryByText('Checking exact releases and server setup…')).toBeNull());
+    expect(selected).toBeNull();
+  });
+
   it('loads the next provider page with an exact index and keeps the first page', async () => {
     const fixture = new FixtureBridge('running');
-    const first = Array.from({ length: 20 }, (_, index) => catalogProject(`pack-${index}`, `Pack ${index}`));
+    const first = Array.from({ length: 50 }, (_, index) => catalogProject(`pack-${index}`, `Pack ${index}`));
     const bridge: BridgeAdapter = {
       request: async <T,>(method: BridgeMethod, params: Record<string, unknown> = {}) => {
         calls.push({ method, params });
         if (method === 'modpacks.cache') return { provider: 'Modrinth', state: 'Empty', items: [], detail: '', failedStage: '', retrievedAt: null, fromCache: true, stale: false } as T;
-        if (method === 'modpacks.search' && params.index === 20) return { provider: 'Modrinth', state: 'Ready', items: [catalogProject('pack-20', 'Pack 20')], detail: 'Ready.', failedStage: '', retrievedAt: null, fromCache: false, stale: false } as T;
-        if (method === 'modpacks.search') return { provider: 'Modrinth', state: 'Ready', items: first, detail: 'Ready.', failedStage: '', retrievedAt: null, fromCache: false, stale: false } as T;
+        if (method === 'modpacks.search' && params.index === 50) return { provider: 'Modrinth', state: 'Ready', items: [catalogProject('pack-50', 'Pack 50')], detail: 'Ready.', failedStage: '', retrievedAt: null, fromCache: false, stale: false, nextIndex: 51, hasMore: false, totalCount: 51 } as T;
+        if (method === 'modpacks.search') return { provider: 'Modrinth', state: 'Ready', items: first, detail: 'Ready.', failedStage: '', retrievedAt: null, fromCache: false, stale: false, nextIndex: 50, hasMore: true, totalCount: 51 } as T;
         return fixture.request<T>(method, params);
       },
       subscribe: listener => fixture.subscribe(listener),
@@ -181,8 +425,66 @@ describe('modpack provider browser', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: 'Load more' }));
 
-    await waitFor(() => expect(calls.some(call => call.method === 'modpacks.search' && call.params.index === 20)).toBe(true));
+    await waitFor(() => expect(calls.some(call => call.method === 'modpacks.search' && call.params.index === 50)).toBe(true));
+    expect(screen.getByText('Showing 51 of 51 packs')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Load more' })).toBeNull();
+  });
+
+  it('coalesces repeated near-end signals into one exact next-page request', async () => {
+    const fixture = new FixtureBridge('running');
+    const first = Array.from({ length: 50 }, (_, index) => catalogProject(`guard-pack-${index}`, `Guard Pack ${index}`));
+    let resolveNext!: (value: unknown) => void;
+    const nextPage = new Promise(resolve => { resolveNext = resolve; });
+    const bridge: BridgeAdapter = {
+      request: async <T,>(method: BridgeMethod, params: Record<string, unknown> = {}) => {
+        calls.push({ method, params });
+        if (method === 'modpacks.cache') return { provider: 'Modrinth', state: 'Empty', items: [], detail: '', failedStage: '', retrievedAt: null, fromCache: true, stale: false } as T;
+        if (method === 'modpacks.search' && params.index === 50) return nextPage as Promise<T>;
+        if (method === 'modpacks.search') return { provider: 'Modrinth', state: 'Ready', items: first, detail: 'Ready.', failedStage: '', retrievedAt: null, fromCache: false, stale: false, nextIndex: 50, hasMore: true, totalCount: 100 } as T;
+        return fixture.request<T>(method, params);
+      },
+      subscribe: listener => fixture.subscribe(listener), dispose: () => fixture.dispose()
+    };
+    useAppStore.setState({ bridge });
+    const { container } = render(<ModpackPicker value={null} onChange={() => undefined} />);
+    await screen.findByText('Showing 50 of 100 packs');
+    const resultList = container.querySelector('[aria-busy]') as HTMLDivElement;
+
+    fireEvent.scroll(resultList);
+    fireEvent.scroll(resultList);
+    fireEvent.scroll(resultList);
+
+    await waitFor(() => expect(calls.filter(call => call.method === 'modpacks.search' && call.params.index === 50)).toHaveLength(1));
+    resolveNext({ provider: 'Modrinth', state: 'Ready', items: [catalogProject('guard-pack-50', 'Guard Pack 50')], detail: 'Ready.', failedStage: '', retrievedAt: null, fromCache: false, stale: false, nextIndex: 51, hasMore: false, totalCount: 51 });
+    expect(await screen.findByText('Showing 51 of 51 packs')).toBeTruthy();
+  });
+
+  it('resets a deep result scroll before issuing a new query', async () => {
+    const fixture = new FixtureBridge('running');
+    const first = Array.from({ length: 50 }, (_, index) => catalogProject(`pack-${index}`, `Pack ${index}`));
+    const bridge: BridgeAdapter = {
+      request: async <T,>(method: BridgeMethod, params: Record<string, unknown> = {}) => {
+        calls.push({ method, params });
+        if (method === 'modpacks.cache') return { provider: 'Modrinth', state: 'Empty', items: [], detail: '', failedStage: '', retrievedAt: null, fromCache: true, stale: false } as T;
+        if (method === 'modpacks.search' && params.search === 'technology') return { provider: 'Modrinth', state: 'Ready', items: first, detail: 'Ready.', failedStage: '', retrievedAt: null, fromCache: false, stale: false, nextIndex: 50, hasMore: true, totalCount: 500 } as T;
+        if (method === 'modpacks.search') return { provider: 'Modrinth', state: 'Ready', items: first, detail: 'Ready.', failedStage: '', retrievedAt: null, fromCache: false, stale: false, nextIndex: 50, hasMore: true, totalCount: 500 } as T;
+        return fixture.request<T>(method, params);
+      },
+      subscribe: listener => fixture.subscribe(listener), dispose: () => fixture.dispose()
+    };
+    useAppStore.setState({ bridge });
+    const { container } = render(<ModpackPicker value={null} onChange={() => undefined} />);
+    await screen.findByText('Showing 50 of 500 packs');
+    const resultList = container.querySelector('[aria-busy]') as HTMLDivElement;
+    resultList.scrollTop = 2_000;
+    fireEvent.scroll(resultList);
+
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search Modrinth modpacks' }), { target: { value: 'technology' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+
+    await waitFor(() => expect(calls.some(call => call.method === 'modpacks.search' && call.params.search === 'technology')).toBe(true));
+    expect(resultList.scrollTop).toBe(0);
+    expect(calls.filter(call => call.method === 'modpacks.search' && call.params.search === 'technology')).toHaveLength(1);
   });
 
   it('keeps provider pagination available when policy filtering underfills a raw page', async () => {
@@ -191,8 +493,8 @@ describe('modpack provider browser', () => {
       request: async <T,>(method: BridgeMethod, params: Record<string, unknown> = {}) => {
         calls.push({ method, params });
         if (method === 'modpacks.cache') return { provider: 'CurseForge', state: 'Empty', items: [], detail: '', failedStage: '', retrievedAt: null, fromCache: false, stale: false, nextIndex: 0, hasMore: false } as T;
-        if (method === 'modpacks.search' && params.index === 2) return { provider: 'CurseForge', state: 'Ready', items: [catalogProject('accepted-later', 'Accepted later')], detail: 'Ready.', failedStage: '', retrievedAt: null, fromCache: false, stale: false, nextIndex: 4, hasMore: false } as T;
-        if (method === 'modpacks.search') return { provider: 'CurseForge', state: 'Ready', items: [catalogProject('accepted-first', 'Accepted first')], detail: 'Ready.', failedStage: '', retrievedAt: null, fromCache: false, stale: false, nextIndex: 2, hasMore: true } as T;
+        if (method === 'modpacks.search' && params.index === 2) return { provider: 'CurseForge', state: 'Ready', items: [catalogProject('accepted-later', 'Accepted later', 'CurseForge')], detail: 'Ready.', failedStage: '', retrievedAt: null, fromCache: false, stale: false, nextIndex: 4, hasMore: false } as T;
+        if (method === 'modpacks.search') return { provider: 'CurseForge', state: 'Ready', items: [catalogProject('accepted-first', 'Accepted first', 'CurseForge')], detail: 'Ready.', failedStage: '', retrievedAt: null, fromCache: false, stale: false, nextIndex: 2, hasMore: true } as T;
         return fixture.request<T>(method, params);
       },
       subscribe: listener => fixture.subscribe(listener),
@@ -211,9 +513,9 @@ describe('modpack provider browser', () => {
   });
 });
 
-function catalogProject(projectId: string, name: string): ModpackProject {
+function catalogProject(projectId: string, name: string, provider: ModpackProject['provider'] = 'Modrinth'): ModpackProject {
   return {
-    provider: 'Modrinth', projectId, slug: projectId, name, author: 'Fixture', summary: `${name} summary`,
+    provider, projectId, slug: projectId, name, author: 'Fixture', summary: `${name} summary`,
     downloadCount: 1, updatedAt: null, categories: [], hasImage: false, serverSupport: 'FullyAutomated',
     clientRequirement: 'Required', trend: { available: false, detail: '' }, versions: [{
       versionId: `${projectId}-version`, versionName: '1.0', minecraftVersion: '1.21.8', loader: 'fabric',

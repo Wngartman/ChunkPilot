@@ -1045,6 +1045,33 @@ public sealed class ChunkPilotStore : IAsyncDisposable
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
+    internal async Task<RecordedUpdateDownload?> GetRecordedUpdateDownloadAsync(
+        Guid operationId,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = await OpenAsync(cancellationToken).ConfigureAwait(false);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT server_id, provider, size_bytes, sha256, status
+            FROM update_downloads
+            WHERE operation_id=$operation
+            """;
+        command.Parameters.AddWithValue("$operation", operationId.ToString("D"));
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            return null;
+        if (!Guid.TryParse(reader.GetString(0), out var serverId) ||
+            !Enum.TryParse<UpdateProvider>(reader.GetString(1), ignoreCase: false, out var provider))
+            throw new InvalidDataException("The recorded update-download identity is invalid.");
+        return new RecordedUpdateDownload(
+            operationId,
+            serverId,
+            provider,
+            reader.GetInt64(2),
+            reader.GetString(3),
+            reader.GetString(4));
+    }
+
     public async Task RecordRollbackAsync(
         Guid serverId,
         string fromVersion,
@@ -1782,3 +1809,11 @@ public sealed class ChunkPilotStore : IAsyncDisposable
         return ValueTask.CompletedTask;
     }
 }
+
+internal sealed record RecordedUpdateDownload(
+    Guid OperationId,
+    Guid ServerId,
+    UpdateProvider Provider,
+    long SizeBytes,
+    string Sha256,
+    string Status);

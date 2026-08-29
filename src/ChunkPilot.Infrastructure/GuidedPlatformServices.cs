@@ -256,7 +256,8 @@ public interface IGuidedCatalogProvider
 public sealed record CatalogProviderPage(
     IReadOnlyList<CatalogItem> Items,
     int NextIndex,
-    bool HasMore);
+    bool HasMore,
+    int? TotalCount = null);
 
 public interface IPaginatedGuidedCatalogProvider
 {
@@ -395,7 +396,8 @@ public sealed class GuidedCatalogService
                 : new CatalogProviderPage(
                     await adapter.BrowseAsync(query, cancellationToken).ConfigureAwait(false),
                     query.Index + query.Limit,
-                    false);
+                    false,
+                    null);
             var items = CatalogPolicy.Filter(page.Items, query);
             if (provider != CatalogProvider.CurseForge)
                 await WriteCacheAsync(provider, query, items, cancellationToken).ConfigureAwait(false);
@@ -405,13 +407,12 @@ public sealed class GuidedCatalogService
                 State = items.Count > 0 ? CatalogLoadState.Ready : CatalogLoadState.Empty,
                 Items = items,
                 Detail = items.Count > 0
-                    ? $"Loaded {items.Count} exact provider result{(items.Count == 1 ? "" : "s")}."
-                    : "No server-capable pack matched the current filters.",
+                    ? $"Loaded {items.Count} provider result{(items.Count == 1 ? "" : "s")}."
+                    : "No packs matched the current filters.",
                 RetrievedAt = DateTimeOffset.UtcNow,
                 NextIndex = page.NextIndex,
-                HasMore = provider == CatalogProvider.CurseForge
-                    ? page.HasMore
-                    : items.Count == query.Limit
+                HasMore = page.HasMore,
+                TotalCount = page.TotalCount
             };
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -761,7 +762,8 @@ public sealed class BuiltInServerCatalogProvider : HttpCatalogProvider, IGuidedC
     }
 }
 
-public sealed class ModrinthCatalogProvider : HttpCatalogProvider, IGuidedCatalogProvider
+public sealed class ModrinthCatalogProvider : HttpCatalogProvider, IGuidedCatalogProvider,
+    IPaginatedGuidedCatalogProvider
 {
     public ModrinthCatalogProvider(HttpClient? httpClient = null) : base(httpClient) { }
 
@@ -801,45 +803,18 @@ public sealed class ModrinthCatalogProvider : HttpCatalogProvider, IGuidedCatalo
     public async Task<IReadOnlyList<CatalogItem>> BrowseAsync(
         CatalogQuery query,
         CancellationToken cancellationToken = default)
+        => (await BrowsePageAsync(query, cancellationToken).ConfigureAwait(false)).Items;
+
+    public async Task<CatalogProviderPage> BrowsePageAsync(
+        CatalogQuery query,
+        CancellationToken cancellationToken = default)
     {
         if (TryGetProjectReference(query.Search, out var projectReference))
         {
-            using var projectDocument = await GetJsonAsync(
-                $"https://api.modrinth.com/v2/project/{Uri.EscapeDataString(projectReference)}",
-                cancellationToken).ConfigureAwait(false);
-            var project = projectDocument.RootElement;
-            var projectId = project.GetProperty("id").GetString() ?? projectReference;
-            var versions = await GetVersionsAsync(projectId, query with { Search = "" }, cancellationToken)
-                .ConfigureAwait(false);
-            var serverSide = project.TryGetProperty("server_side", out var server)
-                ? server.GetString() : "unknown";
-            return [new CatalogItem
-            {
-                Provider = CatalogProvider.Modrinth,
-                ContentType = CatalogContentType.Modpack,
-                ProjectId = projectId,
-                Slug = project.TryGetProperty("slug", out var slug) ? slug.GetString() ?? "" : "",
-                Name = project.TryGetProperty("title", out var title) ? title.GetString() ?? "" : "",
-                Author = "Modrinth project",
-                Summary = project.TryGetProperty("description", out var description)
-                    ? description.GetString() ?? "" : "",
-                IconUrl = project.TryGetProperty("icon_url", out var icon) ? icon.GetString() ?? "" : "",
-                ProjectUrl = "https://modrinth.com/modpack/" +
-                             (project.TryGetProperty("slug", out slug) ? slug.GetString() ?? projectId : projectId),
-                DownloadCount = project.TryGetProperty("downloads", out var downloads)
-                    ? downloads.GetInt64() : null,
-                UpdatedAt = project.TryGetProperty("updated", out var updated) &&
-                            updated.TryGetDateTimeOffset(out var updatedAt) ? updatedAt : null,
-                ClientRequirement = serverSide == "required"
-                    ? ClientRequirement.MatchingPackRequired : ClientRequirement.Unknown,
-                InstallationSupport = versions.Any(version => version.HasServerPackage)
-                    ? InstallationSupportState.AutomatedWithReview : InstallationSupportState.ClientOnly,
-                Categories = project.TryGetProperty("categories", out var categories)
-                    ? categories.EnumerateArray().Select(value => value.GetString() ?? "")
-                        .Where(value => value.Length > 0).ToArray()
-                    : [],
-                Versions = versions
-            }];
+            var exact = await ResolveFullProjectAsync(
+                projectReference, null, query with { Search = "" }, cancellationToken).ConfigureAwait(false);
+            return new CatalogProviderPage(exact is null ? [] : [exact], exact is null ? 0 : 1, false,
+                exact is null ? 0 : 1);
         }
 
         var facets = new List<IReadOnlyList<string>>
@@ -862,53 +837,157 @@ public sealed class ModrinthCatalogProvider : HttpCatalogProvider, IGuidedCatalo
             CatalogSort.Relevance => "relevance",
             _ => "updated"
         };
+        var pageSize = Math.Clamp(query.Limit, 1, 100);
+        var requestedIndex = Math.Max(0, query.Index);
         var url = "https://api.modrinth.com/v2/search?limit=" +
-                  Math.Clamp(query.Limit, 1, 20) +
-                   "&index=" + providerIndex + "&query=" + Uri.EscapeDataString(query.Search) +
+                  pageSize + "&offset=" + requestedIndex +
+                  "&index=" + providerIndex + "&query=" + Uri.EscapeDataString(query.Search) +
                   "&facets=" + Uri.EscapeDataString(facetJson);
         using var search = await GetJsonAsync(url, cancellationToken).ConfigureAwait(false);
         var hits = search.RootElement.GetProperty("hits").EnumerateArray().Select(hit => hit.Clone()).ToArray();
-        using var hydrateGate = new SemaphoreSlim(6, 6);
-        var itemTasks = hits.Select(async hit =>
+        int? totalCount = null;
+        if (search.RootElement.TryGetProperty("total_hits", out var total) &&
+            total.TryGetInt64(out var providerTotal))
         {
-            await hydrateGate.WaitAsync(cancellationToken).ConfigureAwait(false);
-            IReadOnlyList<CatalogVersion> versions;
-            try
-            {
-                var projectId = hit.GetProperty("project_id").GetString() ?? "";
-                versions = await GetVersionsAsync(projectId, query, cancellationToken).ConfigureAwait(false);
-            }
-            finally
-            {
-                hydrateGate.Release();
-            }
-            var resolvedProjectId = hit.GetProperty("project_id").GetString() ?? "";
-            var serverSide = hit.TryGetProperty("server_side", out var server) ? server.GetString() : "unknown";
-            return new CatalogItem
-            {
-                Provider = CatalogProvider.Modrinth,
-                ContentType = CatalogContentType.Modpack,
-                ProjectId = resolvedProjectId,
-                Slug = hit.GetProperty("slug").GetString() ?? "",
-                Name = hit.GetProperty("title").GetString() ?? "",
-                Author = hit.GetProperty("author").GetString() ?? "",
-                Summary = hit.GetProperty("description").GetString() ?? "",
-                IconUrl = hit.TryGetProperty("icon_url", out var icon) ? icon.GetString() ?? "" : "",
-                ProjectUrl = "https://modrinth.com/modpack/" + (hit.GetProperty("slug").GetString() ?? resolvedProjectId),
-                DownloadCount = hit.TryGetProperty("downloads", out var downloads) ? downloads.GetInt64() : null,
-                UpdatedAt = hit.TryGetProperty("date_modified", out var updated) &&
-                            updated.TryGetDateTimeOffset(out var updatedAt) ? updatedAt : null,
-                ClientRequirement = serverSide == "required"
-                    ? ClientRequirement.MatchingPackRequired : ClientRequirement.Unknown,
-                InstallationSupport = versions.Any(version => version.HasServerPackage)
-                    ? InstallationSupportState.AutomatedWithReview : InstallationSupportState.ClientOnly,
-                Categories = hit.TryGetProperty("categories", out var categories)
-                    ? categories.EnumerateArray().Select(value => value.GetString() ?? "").Where(value => value.Length > 0).ToArray()
-                    : [],
-                Versions = versions
-            };
-        }).ToArray();
-        return await Task.WhenAll(itemTasks).ConfigureAwait(false);
+            if (providerTotal < 0)
+                throw new InvalidDataException("Modrinth returned invalid pagination metadata.");
+            totalCount = (int)Math.Min(int.MaxValue, providerTotal);
+        }
+        IReadOnlyList<CatalogItem> items = hits.Select(ParseSearchSummary).ToArray();
+        if (query.Sort == CatalogSort.Name)
+            items = items.OrderBy(item => item.Name, StringComparer.OrdinalIgnoreCase).ToArray();
+        var nextIndex = checked(requestedIndex + hits.Length);
+        var hasMore = hits.Length > 0 &&
+                      (totalCount is { } count ? nextIndex < count : hits.Length == pageSize);
+        return new CatalogProviderPage(items, nextIndex, hasMore, totalCount);
+    }
+
+    public Task<CatalogItem?> ResolveProjectAsync(
+        string projectReference,
+        string? exactReleaseReference,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(projectReference);
+        if (!TryNormalizeProjectReference(projectReference, out var normalized))
+            return Task.FromResult<CatalogItem?>(null);
+        return ResolveFullProjectAsync(normalized, exactReleaseReference, new CatalogQuery
+        {
+            Provider = CatalogProvider.Modrinth,
+            MaximumChannel = ReleaseChannel.Alpha,
+            ServerPackRequired = false,
+            ExcludeClientOnly = false,
+            Limit = 100
+        }, cancellationToken);
+    }
+
+    private async Task<CatalogItem?> ResolveFullProjectAsync(
+        string projectReference,
+        string? exactReleaseReference,
+        CatalogQuery query,
+        CancellationToken cancellationToken)
+    {
+        using var projectDocument = await GetJsonAsync(
+            $"https://api.modrinth.com/v2/project/{Uri.EscapeDataString(projectReference)}",
+            cancellationToken).ConfigureAwait(false);
+        var project = projectDocument.RootElement;
+        if (!project.TryGetProperty("id", out var id) || id.ValueKind != JsonValueKind.String)
+            throw new InvalidDataException("Modrinth's project response did not contain an id.");
+        var projectId = id.GetString() ?? "";
+        var versions = await GetVersionsAsync(projectId, query, cancellationToken).ConfigureAwait(false);
+        if (!string.IsNullOrWhiteSpace(exactReleaseReference))
+        {
+            versions = versions.Where(version => version.VersionId.Equals(
+                exactReleaseReference.Trim(), StringComparison.Ordinal)).ToArray();
+            if (versions.Count == 0) return null;
+        }
+        return ParseResolvedProject(project, projectId, versions);
+    }
+
+    private static CatalogItem ParseResolvedProject(
+        JsonElement project,
+        string projectId,
+        IReadOnlyList<CatalogVersion> versions)
+    {
+        var serverSide = project.TryGetProperty("server_side", out var server)
+            ? server.GetString() : "unknown";
+        var slug = project.TryGetProperty("slug", out var slugValue)
+            ? slugValue.GetString() ?? "" : "";
+        return new CatalogItem
+        {
+            Provider = CatalogProvider.Modrinth,
+            ContentType = CatalogContentType.Modpack,
+            ProjectId = projectId,
+            Slug = slug,
+            Name = project.TryGetProperty("title", out var title) ? title.GetString() ?? "" : "",
+            Author = "Modrinth project",
+            Summary = project.TryGetProperty("description", out var description)
+                ? description.GetString() ?? "" : "",
+            IconUrl = project.TryGetProperty("icon_url", out var icon) ? icon.GetString() ?? "" : "",
+            ProjectUrl = "https://modrinth.com/modpack/" + (slug.Length > 0 ? slug : projectId),
+            DownloadCount = project.TryGetProperty("downloads", out var downloads) &&
+                            downloads.TryGetInt64(out var downloadCount) ? downloadCount : null,
+            UpdatedAt = project.TryGetProperty("updated", out var updated) &&
+                        updated.TryGetDateTimeOffset(out var updatedAt) ? updatedAt : null,
+            ClientRequirement = serverSide == "required"
+                ? ClientRequirement.MatchingPackRequired : ClientRequirement.Unknown,
+            InstallationSupport = versions.Any(version => version.HasServerPackage)
+                ? InstallationSupportState.AutomatedWithReview : InstallationSupportState.ClientOnly,
+            Categories = project.TryGetProperty("categories", out var categories) &&
+                         categories.ValueKind == JsonValueKind.Array
+                ? categories.EnumerateArray().Select(value => value.GetString() ?? "")
+                    .Where(value => value.Length > 0).ToArray()
+                : [],
+            Versions = versions,
+            ServerPathChecked = true
+        };
+    }
+
+    private static CatalogItem ParseSearchSummary(JsonElement hit)
+    {
+        var projectId = hit.TryGetProperty("project_id", out var id) ? id.GetString() ?? "" : "";
+        var slug = hit.TryGetProperty("slug", out var slugValue) ? slugValue.GetString() ?? "" : "";
+        var serverSide = hit.TryGetProperty("server_side", out var server) ? server.GetString() : "unknown";
+        return new CatalogItem
+        {
+            Provider = CatalogProvider.Modrinth,
+            ContentType = CatalogContentType.Modpack,
+            ProjectId = projectId,
+            Slug = slug,
+            Name = hit.TryGetProperty("title", out var title) ? title.GetString() ?? "" : "",
+            Author = hit.TryGetProperty("author", out var author) ? author.GetString() ?? "" : "",
+            Summary = hit.TryGetProperty("description", out var description)
+                ? description.GetString() ?? "" : "",
+            IconUrl = hit.TryGetProperty("icon_url", out var icon) ? icon.GetString() ?? "" : "",
+            ProjectUrl = "https://modrinth.com/modpack/" + (slug.Length > 0 ? slug : projectId),
+            DownloadCount = hit.TryGetProperty("downloads", out var downloads) &&
+                            downloads.TryGetInt64(out var downloadCount) ? downloadCount : null,
+            UpdatedAt = hit.TryGetProperty("date_modified", out var updated) &&
+                        updated.TryGetDateTimeOffset(out var updatedAt) ? updatedAt : null,
+            ClientRequirement = serverSide == "required"
+                ? ClientRequirement.MatchingPackRequired : ClientRequirement.Unknown,
+            InstallationSupport = InstallationSupportState.ManualPackageRequired,
+            Categories = hit.TryGetProperty("categories", out var categories) &&
+                         categories.ValueKind == JsonValueKind.Array
+                ? categories.EnumerateArray().Select(value => value.GetString() ?? "")
+                    .Where(value => value.Length > 0).ToArray()
+                : [],
+            Versions = [],
+            ServerPathChecked = false
+        };
+    }
+
+    private static bool TryNormalizeProjectReference(string value, out string projectReference)
+    {
+        if (TryGetProjectReference(value, out projectReference)) return true;
+        var candidate = value.Trim();
+        if (candidate.Length is < 1 or > 80 || candidate.Any(character =>
+                !(char.IsLetterOrDigit(character) || character is '-' or '_')))
+        {
+            projectReference = "";
+            return false;
+        }
+        projectReference = candidate;
+        return true;
     }
 
     private static bool TryGetProjectReference(string value, out string projectReference)
@@ -1069,23 +1148,26 @@ public sealed class CurseForgeCatalogProvider : IGuidedCatalogProvider, IPaginat
         CatalogQuery query,
         CancellationToken cancellationToken = default)
     {
-        if (!IsAvailable) return new CatalogProviderPage([], Math.Max(0, query.Index), false);
+        if (!IsAvailable) return new CatalogProviderPage([], Math.Max(0, query.Index), false, 0);
         var loaderType = LoaderType(query.Loader);
         var categoryId = await ResolveCategoryIdAsync(query.Category, cancellationToken).ConfigureAwait(false);
         if (!string.IsNullOrWhiteSpace(query.Category) && categoryId is null)
-            return new CatalogProviderPage([], Math.Max(0, query.Index), false);
+            return new CatalogProviderPage([], Math.Max(0, query.Index), false, 0);
         var sortField = query.Sort switch
         {
             CatalogSort.Downloads => 6,
             CatalogSort.Newest => 11,
             CatalogSort.Updated => 3,
+            CatalogSort.Name => 4,
             _ => 2
         };
+        var sortOrder = query.Sort == CatalogSort.Name ? "asc" : "desc";
+        var pageSize = Math.Clamp(query.Limit, 1, 50);
         var path = "/v1/mods/search?gameId=" + MinecraftGameId + "&classId=" + ModpackClassId +
-                   "&pageSize=" + Math.Clamp(query.Limit, 1, 50) +
+                   "&pageSize=" + pageSize +
                    "&index=" + Math.Max(0, query.Index) +
                    "&searchFilter=" + Uri.EscapeDataString(query.Search.Trim()) +
-                   $"&sortField={sortField}&sortOrder=desc" +
+                   $"&sortField={sortField}&sortOrder={sortOrder}" +
                    (string.IsNullOrWhiteSpace(query.MinecraftVersion)
                        ? "" : "&gameVersion=" + Uri.EscapeDataString(query.MinecraftVersion.Trim())) +
                     (loaderType == 0 || string.IsNullOrWhiteSpace(query.MinecraftVersion)
@@ -1097,25 +1179,31 @@ public sealed class CurseForgeCatalogProvider : IGuidedCatalogProvider, IPaginat
         foreach (var project in data.EnumerateArray())
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var parsed = await ParseProjectAsync(project, query, cancellationToken).ConfigureAwait(false);
+            var parsed = ParseProjectSummary(project);
             if (parsed is not null) items.Add(parsed);
         }
         var requestedIndex = Math.Max(0, query.Index);
         var rawCount = data.GetArrayLength();
         var nextIndex = Math.Min(10_000, requestedIndex + rawCount);
-        var hasMore = rawCount > 0 && nextIndex < 10_000;
+        var hasMore = rawCount == pageSize && nextIndex < 10_000;
+        int? totalCount = null;
         if (document.RootElement.TryGetProperty("pagination", out var pagination) &&
             pagination.ValueKind == JsonValueKind.Object)
         {
             var responseIndex = Number(pagination, "index") ?? requestedIndex;
             var resultCount = Number(pagination, "resultCount") ?? rawCount;
-            var totalCount = Math.Min(10_000, Number(pagination, "totalCount") ?? nextIndex);
-            if (responseIndex < 0 || resultCount < 0 || totalCount < 0)
+            var providerTotal = Number(pagination, "totalCount");
+            if (responseIndex < 0 || resultCount < 0 || providerTotal is < 0)
                 throw new InvalidDataException("CurseForge returned invalid pagination metadata.");
             nextIndex = checked((int)Math.Min(10_000, responseIndex + resultCount));
-            hasMore = resultCount > 0 && nextIndex < totalCount;
+            totalCount = providerTotal is { } totalValue
+                ? (int)Math.Min(int.MaxValue, totalValue)
+                : null;
+            hasMore = providerTotal is { } knownTotal
+                ? resultCount > 0 && nextIndex < Math.Min(10_000, knownTotal)
+                : resultCount == pageSize && nextIndex < 10_000;
         }
-        return new CatalogProviderPage(items, nextIndex, hasMore);
+        return new CatalogProviderPage(items, nextIndex, hasMore, totalCount);
     }
 
     private async Task<long?> ResolveCategoryIdAsync(string category, CancellationToken cancellationToken)
@@ -1264,6 +1352,36 @@ public sealed class CurseForgeCatalogProvider : IGuidedCatalogProvider, IPaginat
             ClientRequirement = ClientRequirement.MatchingPackRequired,
             InstallationSupport = support,
             Versions = versions.OrderByDescending(version => version.PublishedAt).ToArray()
+        };
+    }
+
+    private static CatalogItem? ParseProjectSummary(JsonElement project)
+    {
+        if (!IsProjectAvailable(project)) return null;
+        var projectId = project.GetProperty("id").ToString();
+        return new CatalogItem
+        {
+            Provider = CatalogProvider.CurseForge,
+            ContentType = CatalogContentType.Modpack,
+            ProjectId = projectId,
+            Slug = Text(project, "slug"),
+            Name = Text(project, "name"),
+            Author = project.TryGetProperty("authors", out var authors) && authors.ValueKind == JsonValueKind.Array
+                ? string.Join(", ", authors.EnumerateArray().Select(author => Text(author, "name"))
+                    .Where(name => name.Length > 0).Take(20)) : "",
+            Summary = Text(project, "summary"),
+            IconUrl = project.TryGetProperty("logo", out var logo) ? Text(logo, "thumbnailUrl") : "",
+            ProjectUrl = project.TryGetProperty("links", out var links) ? Text(links, "websiteUrl") : "",
+            DownloadCount = Number(project, "downloadCount"),
+            UpdatedAt = Date(project, "dateModified"),
+            Categories = project.TryGetProperty("categories", out var categories) &&
+                         categories.ValueKind == JsonValueKind.Array
+                ? categories.EnumerateArray().Select(category => Text(category, "slug"))
+                    .Where(value => value.Length > 0).Take(50).ToArray() : [],
+            ClientRequirement = ClientRequirement.MatchingPackRequired,
+            InstallationSupport = InstallationSupportState.ManualPackageRequired,
+            Versions = [],
+            ServerPathChecked = false
         };
     }
 

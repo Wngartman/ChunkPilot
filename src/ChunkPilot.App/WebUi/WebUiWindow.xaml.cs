@@ -67,7 +67,6 @@ public partial class WebUiWindow : Window
     private readonly HashSet<Guid> observedContentOperations = [];
     private readonly HashSet<Guid> observedUpdateOperations = [];
     private readonly Dictionary<string, CatalogItem> modpackCatalog = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<string, string> modpackImageCache = new(StringComparer.Ordinal);
     private Guid sessionId;
     private string sessionCapability = "";
     private bool refreshInProgress;
@@ -81,7 +80,7 @@ public partial class WebUiWindow : Window
     private readonly WebUiLegacyArtifactTokenStore legacyArtifactTokens = new();
     private readonly WebUiWorldSourceTokenStore worldSourceTokens = new();
     private readonly CreationWorldSourceService creationWorldSources = new();
-    private readonly HttpClient modpackImages;
+    private readonly ModpackImageLoader modpackImages;
     private readonly PlayerHeadImageService playerHeads = new();
 
     public WebUiWindow(MainViewModel viewModel, AgentClient client)
@@ -93,7 +92,7 @@ public partial class WebUiWindow : Window
         creation = new AgentVanillaCreationGateway(client);
         paperCreation = new AgentPaperCreationGateway(client);
         loaderCreation = new AgentManagedLoaderCreationGateway(client);
-        modpackImages = new HttpClient(new SocketsHttpHandler
+        var modpackImageClient = new HttpClient(new SocketsHttpHandler
         {
             AllowAutoRedirect = false,
             UseCookies = false,
@@ -101,8 +100,9 @@ public partial class WebUiWindow : Window
             AutomaticDecompression = System.Net.DecompressionMethods.GZip |
                                      System.Net.DecompressionMethods.Deflate
         }, disposeHandler: true) { Timeout = TimeSpan.FromSeconds(20) };
-        modpackImages.DefaultRequestHeaders.UserAgent.ParseAdd(
+        modpackImageClient.DefaultRequestHeaders.UserAgent.ParseAdd(
             "ChunkPilot/1.3.0 (local Windows Minecraft server manager)");
+        modpackImages = new ModpackImageLoader(modpackImageClient, disposeClient: true);
         DataContext = viewModel;
         refreshTimer = new DispatcherTimer(TimeSpan.FromSeconds(1), DispatcherPriority.Background, RefreshTimerOnTick, Dispatcher);
         Loaded += OnLoaded;
@@ -272,15 +272,236 @@ public partial class WebUiWindow : Window
     private Task<JsonNode?> DispatchCancellableAsync(
         string method,
         JsonObject parameters,
-        CancellationToken cancellationToken) => method switch
+        CancellationToken cancellationToken)
+    {
+        if (IsCancellableAddonRequestMethod(method))
+            return DispatchAddonRequestAsync(method, parameters, cancellationToken);
+
+        return method switch
         {
             "modpacks.versions" => LoadModpackVersionsAsync(parameters, cancellationToken),
             "modpacks.cache" => SearchModpacksAsync(parameters, cacheOnly: true, cancellationToken),
             "modpacks.search" => SearchModpacksAsync(parameters, cacheOnly: false, cancellationToken),
+            "modpacks.project" => ResolveModpackProjectAsync(parameters, cancellationToken),
             "modpacks.resolveLink" => ResolveModpackLinkAsync(parameters, cancellationToken),
             "modpacks.preflight" => PreflightCurseForgeModpackAsync(parameters, cancellationToken),
+            "modpacks.image" => LoadModpackImageAsync(parameters, cancellationToken),
+            "versions.check" => CheckForServerUpdatesAsync(parameters, cancellationToken),
+            "versions.markHealthy" => MarkVersionHealthyFromWebUiAsync(parameters, cancellationToken),
+            "versions.rollback" => RollbackVersionFromWebUiAsync(parameters, cancellationToken),
             _ => DispatchAsync(method, parameters)
         };
+    }
+
+    internal static bool IsCancellableAddonRequestMethod(string method) => method is
+        "plugins.providers" or "mods.providers" or
+        "plugins.search" or "mods.search" or
+        "plugins.release" or "mods.release" or
+        "plugins.plan" or "mods.plan" or
+        "plugins.install" or "mods.install" or
+        "plugins.installPlan" or "mods.installPlan" or
+        "content.operations";
+
+    private async Task<JsonNode?> DispatchAddonRequestAsync(
+        string method,
+        JsonObject parameters,
+        CancellationToken cancellationToken)
+    {
+        var serverId = RequireCurrentAddonServer(parameters, cancellationToken);
+        switch (method)
+        {
+            case "plugins.providers":
+            case "mods.providers":
+            {
+                var statuses = await ExecuteFencedAddonMetadataRequestAsync(
+                    serverId,
+                    () => viewModel.SelectedServer?.Definition.Id,
+                    token => client.SendAsync<IReadOnlyList<PluginProviderStatus>>(
+                        "PluginProviders", new ServerIdRequest(serverId), token),
+                    cancellationToken).ConfigureAwait(true);
+                return JsonSerializer.SerializeToNode(statuses, WebUiProtocol.Json);
+            }
+            case "plugins.search":
+            case "mods.search":
+            {
+                var results = await ExecuteFencedAddonMetadataRequestAsync(
+                    serverId,
+                    () => viewModel.SelectedServer?.Definition.Id,
+                    token => client.SendAsync<IReadOnlyList<PluginProject>>(
+                        "PluginSearch",
+                        new PluginSearchRequest(
+                            serverId,
+                            parameters["search"]?.GetValue<string>()?.Trim() ?? "",
+                            RequiredInt(parameters, "limit", 1, 40, 20),
+                            ParseAddonProvider(parameters)),
+                        token),
+                    cancellationToken).ConfigureAwait(true);
+                // Provider image URLs are intentionally not sent to the renderer. Production CSP
+                // permits only app-local images; a future native image cache can add them safely.
+                return SerializeAddonProjects(results);
+            }
+            case "plugins.release":
+            case "mods.release":
+            {
+                var release = await ExecuteFencedAddonMetadataRequestAsync(
+                    serverId,
+                    () => viewModel.SelectedServer?.Definition.Id,
+                    token => client.SendAsync<PluginRelease?>(
+                        "PluginRelease",
+                        new PluginReleaseRequest(
+                            serverId,
+                            RequiredString(parameters, "projectId", 80),
+                            ParseAddonProvider(parameters)),
+                        token),
+                    cancellationToken).ConfigureAwait(true);
+                return SerializeAddonRelease(release);
+            }
+            case "plugins.plan":
+            case "mods.plan":
+            {
+                var plan = await ExecuteFencedAddonMetadataRequestAsync(
+                    serverId,
+                    () => viewModel.SelectedServer?.Definition.Id,
+                    token => client.SendAsync<PluginInstallPlan>(
+                        "PlanPluginProviderRelease",
+                        new PluginProviderPlanRequest(
+                            serverId,
+                            RequiredString(parameters, "projectId", 80),
+                            RequiredString(parameters, "versionId", 80),
+                            ParseAddonProvider(parameters)),
+                        token),
+                    cancellationToken).ConfigureAwait(true);
+                return JsonSerializer.SerializeToNode(plan, WebUiProtocol.Json);
+            }
+            case "plugins.install":
+            case "mods.install":
+            case "plugins.installPlan":
+            case "mods.installPlan":
+            {
+                var includeDependencies = method.EndsWith("installPlan", StringComparison.Ordinal);
+                var result = await ExecuteFencedAddonInstallRequestAsync(
+                    serverId,
+                    () => viewModel.SelectedServer?.Definition.Id,
+                    token => client.SendAsync<ManagedContentOperationSnapshot>(
+                        "BeginManagedContentInstall",
+                        new BeginManagedContentInstallRequest(
+                            serverId,
+                            RequiredString(parameters, "projectId", 80),
+                            RequiredString(parameters, "versionId", 80),
+                            includeDependencies,
+                            parameters["restartIfRunning"]?.GetValue<bool?>() ?? false,
+                            Guid.TryParse(OptionalString(parameters, "operationId", 64), out var operationId)
+                                ? operationId
+                                : Guid.NewGuid(),
+                            ParseAddonProvider(parameters)),
+                        token),
+                    EnsureContentOperationObserver,
+                    cancellationToken).ConfigureAwait(true);
+                return JsonSerializer.SerializeToNode(result, WebUiProtocol.Json);
+            }
+            case "content.operations":
+            {
+                var operations = await ExecuteFencedAddonMetadataRequestAsync(
+                    serverId,
+                    () => viewModel.SelectedServer?.Definition.Id,
+                    token => client.SendAsync<IReadOnlyList<ManagedContentOperationSnapshot>>(
+                        "ManagedContentOperations",
+                        new ManagedContentOperationsRequest(serverId),
+                        token),
+                    cancellationToken).ConfigureAwait(true);
+                foreach (var operation in operations.Where(operation => !operation.IsTerminal))
+                    EnsureContentOperationObserver(operation);
+                return JsonSerializer.SerializeToNode(operations, WebUiProtocol.Json);
+            }
+            default:
+                throw new ArgumentException($"The add-on bridge method '{method}' is not supported.");
+        }
+    }
+
+    private Guid RequireCurrentAddonServer(JsonObject parameters, CancellationToken cancellationToken)
+    {
+        if (!Guid.TryParse(RequiredString(parameters, "serverId", 64), out var serverId))
+            throw new ArgumentException("A valid server ID is required.");
+        RequireSelectedAddonServer(serverId, viewModel.SelectedServer?.Definition.Id, cancellationToken);
+        return serverId;
+    }
+
+    internal static void RequireSelectedAddonServer(
+        Guid requestedServerId,
+        Guid? selectedServerId,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (selectedServerId != requestedServerId)
+            throw new InvalidOperationException(
+                "The selected server changed before the add-on request could complete. No other server was selected or modified.");
+    }
+
+    internal static async Task<T> ExecuteFencedAddonMetadataRequestAsync<T>(
+        Guid serverId,
+        Func<Guid?> selectedServerId,
+        Func<CancellationToken, Task<T>> request,
+        CancellationToken cancellationToken)
+    {
+        RequireSelectedAddonServer(serverId, selectedServerId(), cancellationToken);
+        var result = await request(cancellationToken).ConfigureAwait(true);
+        RequireSelectedAddonServer(serverId, selectedServerId(), cancellationToken);
+        return result;
+    }
+
+    internal static async Task<T> ExecuteFencedAddonInstallRequestAsync<T>(
+        Guid serverId,
+        Func<Guid?> selectedServerId,
+        Func<CancellationToken, Task<T>> request,
+        Action<T> observeStartedOperation,
+        CancellationToken cancellationToken)
+    {
+        RequireSelectedAddonServer(serverId, selectedServerId(), cancellationToken);
+        var result = await request(cancellationToken).ConfigureAwait(true);
+        observeStartedOperation(result);
+        RequireSelectedAddonServer(serverId, selectedServerId(), cancellationToken);
+        return result;
+    }
+
+    private static JsonNode? SerializeAddonProjects(IReadOnlyList<PluginProject> results) =>
+        JsonSerializer.SerializeToNode(results.Select(project => new
+        {
+            provider = project.Provider.ToString(),
+            projectId = project.ProjectId,
+            slug = project.Slug,
+            name = project.Name,
+            author = project.Author,
+            summary = project.Summary,
+            downloads = project.Downloads,
+            updatedAt = project.UpdatedAt,
+            serverSide = project.ServerSide,
+            clientSide = project.ClientSide,
+            clientRequirement = project.ClientRequirement,
+            kind = project.Kind.ToString()
+        }).ToArray(), WebUiProtocol.Json);
+
+    private static JsonNode? SerializeAddonRelease(PluginRelease? release) =>
+        JsonSerializer.SerializeToNode(release is null ? null : new
+        {
+            provider = release.Provider.ToString(),
+            projectId = release.ProjectId,
+            versionId = release.VersionId,
+            versionName = release.VersionName,
+            minecraftVersion = release.MinecraftVersion,
+            loader = release.Loader,
+            releaseChannel = release.ReleaseChannel,
+            publishedAt = release.PublishedAt,
+            fileName = release.FileName,
+            sizeBytes = release.SizeBytes,
+            integrity = release.Sha512.Length == 128 ? "sha512" :
+                release.Provider == PluginProviderKind.CurseForge && release.Sha1.Length == 40
+                    ? "sha1" : "unavailable",
+            serverSide = release.ServerSide,
+            clientSide = release.ClientSide,
+            clientRequirement = release.ClientRequirement,
+            kind = release.Kind.ToString(),
+            dependencies = release.Dependencies
+        }, WebUiProtocol.Json);
 
     private async Task<JsonNode?> DispatchAsync(string method, JsonObject parameters)
     {
@@ -403,12 +624,14 @@ public partial class WebUiWindow : Window
                 return await SearchModpacksAsync(parameters, cacheOnly: true, CancellationToken.None).ConfigureAwait(true);
             case "modpacks.search":
                 return await SearchModpacksAsync(parameters, cacheOnly: false, CancellationToken.None).ConfigureAwait(true);
+            case "modpacks.project":
+                return await ResolveModpackProjectAsync(parameters, CancellationToken.None).ConfigureAwait(true);
             case "modpacks.resolveLink":
                 return await ResolveModpackLinkAsync(parameters, CancellationToken.None).ConfigureAwait(true);
             case "modpacks.preflight":
                 return await PreflightCurseForgeModpackAsync(parameters, CancellationToken.None).ConfigureAwait(true);
             case "modpacks.image":
-                return await LoadModpackImageAsync(parameters).ConfigureAwait(true);
+                return await LoadModpackImageAsync(parameters, CancellationToken.None).ConfigureAwait(true);
             case "modpacks.chooseLocal":
                 return await ChooseLocalServerImportAsync(parameters).ConfigureAwait(true);
             case "creation.chooseLegacyArtifact":
@@ -427,125 +650,6 @@ public partial class WebUiWindow : Window
                         parameters["restartIfRunning"]?.GetValue<bool?>() ?? false)).ConfigureAwait(true);
                 await viewModel.LoadWebUiInventoryAsync().ConfigureAwait(true);
                 await bridge!.PublishSnapshotAsync().ConfigureAwait(true);
-                return JsonSerializer.SerializeToNode(result, WebUiProtocol.Json);
-            }
-            case "plugins.providers":
-            case "mods.providers":
-                Select(parameters);
-                return JsonSerializer.SerializeToNode(
-                    await client.SendAsync<IReadOnlyList<PluginProviderStatus>>("PluginProviders",
-                        new ServerIdRequest(RequireServer(parameters).Definition.Id)).ConfigureAwait(true),
-                    WebUiProtocol.Json);
-            case "plugins.search":
-            case "mods.search":
-            {
-                Select(parameters);
-                var results = await client.SendAsync<IReadOnlyList<PluginProject>>("PluginSearch",
-                    new PluginSearchRequest(RequireServer(parameters).Definition.Id,
-                        parameters["search"]?.GetValue<string>()?.Trim() ?? "",
-                        RequiredInt(parameters, "limit", 1, 40, 20),
-                        ParseAddonProvider(parameters))).ConfigureAwait(true);
-                // Provider image URLs are intentionally not sent to the renderer. Production CSP
-                // permits only app-local images; a future native image cache can add them safely.
-                return JsonSerializer.SerializeToNode(results.Select(project => new
-                {
-                    provider = project.Provider.ToString(),
-                    projectId = project.ProjectId,
-                    slug = project.Slug,
-                    name = project.Name,
-                    author = project.Author,
-                    summary = project.Summary,
-                    downloads = project.Downloads,
-                    updatedAt = project.UpdatedAt,
-                    serverSide = project.ServerSide,
-                    clientSide = project.ClientSide,
-                    clientRequirement = project.ClientRequirement,
-                    kind = project.Kind.ToString()
-                }).ToArray(), WebUiProtocol.Json);
-            }
-            case "plugins.release":
-            case "mods.release":
-            {
-                Select(parameters);
-                var release = await client.SendAsync<PluginRelease?>("PluginRelease",
-                    new PluginReleaseRequest(RequireServer(parameters).Definition.Id,
-                        RequiredString(parameters, "projectId", 80),
-                        ParseAddonProvider(parameters))).ConfigureAwait(true);
-                return JsonSerializer.SerializeToNode(release is null ? null : new
-                {
-                    provider = release.Provider.ToString(),
-                    projectId = release.ProjectId,
-                    versionId = release.VersionId,
-                    versionName = release.VersionName,
-                    minecraftVersion = release.MinecraftVersion,
-                    loader = release.Loader,
-                    releaseChannel = release.ReleaseChannel,
-                    publishedAt = release.PublishedAt,
-                    fileName = release.FileName,
-                    sizeBytes = release.SizeBytes,
-                    integrity = release.Sha512.Length == 128 ? "sha512" :
-                        release.Provider == PluginProviderKind.CurseForge && release.Sha1.Length == 40
-                            ? "sha1" : "unavailable",
-                    serverSide = release.ServerSide,
-                    clientSide = release.ClientSide,
-                    clientRequirement = release.ClientRequirement,
-                    kind = release.Kind.ToString(),
-                    dependencies = release.Dependencies
-                }, WebUiProtocol.Json);
-            }
-            case "plugins.install":
-            case "mods.install":
-            {
-                Select(parameters);
-                var result = await client.SendAsync<ManagedContentOperationSnapshot>("BeginManagedContentInstall",
-                    new BeginManagedContentInstallRequest(RequireServer(parameters).Definition.Id,
-                        RequiredString(parameters, "projectId", 80),
-                        RequiredString(parameters, "versionId", 80),
-                        IncludeDependencies: false,
-                        parameters["restartIfRunning"]?.GetValue<bool?>() ?? false,
-                        Guid.TryParse(OptionalString(parameters, "operationId", 64), out var operationId)
-                            ? operationId
-                            : Guid.NewGuid(),
-                        ParseAddonProvider(parameters))).ConfigureAwait(true);
-                EnsureContentOperationObserver(result);
-                return JsonSerializer.SerializeToNode(result, WebUiProtocol.Json);
-            }
-            case "plugins.plan":
-            case "mods.plan":
-            {
-                Select(parameters);
-                var result = await client.SendAsync<PluginInstallPlan>("PlanPluginProviderRelease",
-                    new PluginProviderPlanRequest(RequireServer(parameters).Definition.Id,
-                        RequiredString(parameters, "projectId", 80),
-                        RequiredString(parameters, "versionId", 80),
-                        ParseAddonProvider(parameters))).ConfigureAwait(true);
-                return JsonSerializer.SerializeToNode(result, WebUiProtocol.Json);
-            }
-            case "plugins.installPlan":
-            case "mods.installPlan":
-            {
-                Select(parameters);
-                var result = await client.SendAsync<ManagedContentOperationSnapshot>("BeginManagedContentInstall",
-                    new BeginManagedContentInstallRequest(RequireServer(parameters).Definition.Id,
-                        RequiredString(parameters, "projectId", 80),
-                        RequiredString(parameters, "versionId", 80),
-                        IncludeDependencies: true,
-                        parameters["restartIfRunning"]?.GetValue<bool?>() ?? false,
-                        Guid.TryParse(OptionalString(parameters, "operationId", 64), out var operationId)
-                            ? operationId
-                            : Guid.NewGuid(),
-                        ParseAddonProvider(parameters))).ConfigureAwait(true);
-                EnsureContentOperationObserver(result);
-                return JsonSerializer.SerializeToNode(result, WebUiProtocol.Json);
-            }
-            case "content.operations":
-            {
-                Select(parameters);
-                var result = await client.SendAsync<IReadOnlyList<ManagedContentOperationSnapshot>>(
-                    "ManagedContentOperations",
-                    new ManagedContentOperationsRequest(RequireServer(parameters).Definition.Id)).ConfigureAwait(true);
-                foreach (var operation in result.Where(operation => !operation.IsTerminal))
-                    EnsureContentOperationObserver(operation);
                 return JsonSerializer.SerializeToNode(result, WebUiProtocol.Json);
             }
             case "content.cancel":
@@ -740,19 +844,16 @@ public partial class WebUiWindow : Window
                 }
                 break;
             case "versions.check":
-                Select(parameters);
-                await viewModel.CheckForUpdatesCommand.ExecuteAsync(null).ConfigureAwait(true);
-                break;
+                return await CheckForServerUpdatesAsync(parameters, CancellationToken.None).ConfigureAwait(true);
             case "versions.install":
                 Select(parameters);
                 if (viewModel.CurrentUpdateCheck?.LatestVersion is null)
                     throw new InvalidOperationException("No installable update has been confirmed for this server.");
                 return await BeginUpdateOperationAsync(parameters).ConfigureAwait(true);
+            case "versions.markHealthy":
+                return await MarkVersionHealthyFromWebUiAsync(parameters, CancellationToken.None).ConfigureAwait(true);
             case "versions.rollback":
-                Select(parameters);
-                SelectVersion(parameters, requireRollbackReady: true);
-                await viewModel.RollbackVersionCommand.ExecuteAsync(null).ConfigureAwait(true);
-                break;
+                return await RollbackVersionFromWebUiAsync(parameters, CancellationToken.None).ConfigureAwait(true);
             case "versions.verify":
                 Select(parameters);
                 SelectVersion(parameters, requireRollbackReady: false);
@@ -1093,6 +1194,9 @@ public partial class WebUiWindow : Window
             OperationId = requestedOperationId,
             ServerId = server.Definition.Id,
             TargetVersion = target,
+            ReviewedOperationId = migrationResolutions.Count > 0
+                ? Guid.Parse(RequiredString(parameters, "reviewedOperationId", 64))
+                : null,
             PlayerCountdownSeconds = server.State == ServerState.Running ? 30 : 0,
             StartForValidation = true,
             ConfirmedMigrationWarnings = migrationResolutions.Count > 0,
@@ -1409,6 +1513,15 @@ public partial class WebUiWindow : Window
         viewModel.BackupBeforeRestart = parameters["backupBeforeRestart"]?.GetValue<bool?>() ?? false;
     }
 
+    private async Task<JsonNode?> CheckForServerUpdatesAsync(
+        JsonObject parameters,
+        CancellationToken cancellationToken)
+    {
+        var serverId = RequireServer(parameters).Definition.Id;
+        await viewModel.CheckForUpdatesForServerAsync(serverId, cancellationToken).ConfigureAwait(true);
+        return null;
+    }
+
     private async Task<JsonNode?> LoadModpackVersionsAsync(
         JsonObject parameters,
         CancellationToken cancellationToken)
@@ -1466,9 +1579,11 @@ public partial class WebUiWindow : Window
             MaximumChannel = parameters["includeExperimental"]?.GetValue<bool?>() == true
                 ? ReleaseChannel.Alpha
                 : ReleaseChannel.Stable,
-            ServerPackRequired = true,
-            ExcludeClientOnly = true,
-            Limit = RequiredInt(parameters, "limit", 1, 20, 20),
+            // Discovery is intentionally summary-only. Exact server-path and distribution evidence is
+            // resolved after the user selects a project; unknown is not the same as unsupported.
+            ServerPackRequired = false,
+            ExcludeClientOnly = false,
+            Limit = RequiredInt(parameters, "limit", 1, 50, 50),
             Index = RequiredInt(parameters, "index", 0, 10_000, 0),
             Sort = sort
         };
@@ -1487,8 +1602,26 @@ public partial class WebUiWindow : Window
             result.FromCache,
             result.Stale,
             result.NextIndex,
-            result.HasMore
+            result.HasMore,
+            result.TotalCount
         }, WebUiProtocol.Json);
+    }
+
+    private async Task<JsonNode?> ResolveModpackProjectAsync(
+        JsonObject parameters,
+        CancellationToken cancellationToken)
+    {
+        if (!Enum.TryParse<CatalogProvider>(RequiredString(parameters, "provider", 32), true,
+                out var provider) || provider is not (CatalogProvider.Modrinth or CatalogProvider.CurseForge))
+            throw new ArgumentException("The modpack provider is invalid.");
+        var projectId = RequiredString(parameters, "projectId", 80);
+        var item = await client.SendAsync<CatalogItem?>("ResolveCatalogProject",
+            new CatalogProjectRequest(provider, projectId), cancellationToken).ConfigureAwait(true);
+        if (item is null || item.Provider != provider ||
+            !item.ProjectId.Equals(projectId, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("The provider project could not be resolved.");
+        modpackCatalog[CatalogKey(item.Provider, item.ProjectId)] = item;
+        return JsonSerializer.SerializeToNode(ToWebModpackProject(item), WebUiProtocol.Json);
     }
 
     private async Task<JsonNode?> ResolveModpackLinkAsync(
@@ -1510,23 +1643,9 @@ public partial class WebUiWindow : Window
             Limit = 20,
             Sort = CatalogSort.Relevance
         };
-        CatalogItem? item;
-        if (reference.Provider == CatalogProvider.CurseForge)
-        {
-            item = await client.SendAsync<CatalogItem?>("ResolveCatalogProject",
-                new CatalogProjectRequest(reference.Provider, reference.ProjectReference,
-                    reference.ReleaseReference), cancellationToken).ConfigureAwait(true);
-        }
-        else
-        {
-            var result = await client.SendAsync<CatalogBrowseResult>(
-                "BrowseCatalogDetailed", query, cancellationToken).ConfigureAwait(true);
-            if (result.State is CatalogLoadState.AuthenticationRequired or CatalogLoadState.RateLimited or CatalogLoadState.Failed)
-                throw new InvalidOperationException(result.Detail);
-            item = result.Items.FirstOrDefault(candidate =>
-                       candidate.ProjectId.Equals(reference.ProjectReference, StringComparison.OrdinalIgnoreCase) ||
-                       candidate.Slug.Equals(reference.ProjectReference, StringComparison.OrdinalIgnoreCase));
-        }
+        var item = await client.SendAsync<CatalogItem?>("ResolveCatalogProject",
+            new CatalogProjectRequest(reference.Provider, reference.ProjectReference,
+                reference.ReleaseReference), cancellationToken).ConfigureAwait(true);
         if (item is null)
             throw new InvalidOperationException("The provider project could not be resolved from that link.");
         var release = reference.ReleaseReference is { } exact
@@ -1684,6 +1803,7 @@ public partial class WebUiWindow : Window
             item.UpdatedAt,
             item.Categories,
             hasImage = !string.IsNullOrWhiteSpace(item.IconUrl),
+            item.ServerPathChecked,
             serverSupport = item.InstallationSupport.ToString(),
             clientRequirement = item.ClientRequirement.ToString(),
             trend = new { available = false, detail = "No local period snapshot history exists yet." },
@@ -1738,7 +1858,9 @@ public partial class WebUiWindow : Window
     private static string CatalogKey(CatalogProvider provider, string projectId) =>
         $"{provider}:{projectId}";
 
-    private async Task<JsonNode?> LoadModpackImageAsync(JsonObject parameters)
+    private async Task<JsonNode?> LoadModpackImageAsync(
+        JsonObject parameters,
+        CancellationToken cancellationToken)
     {
         if (!Enum.TryParse<CatalogProvider>(RequiredString(parameters, "provider", 32), true,
                 out var provider) || provider is not (CatalogProvider.Modrinth or CatalogProvider.CurseForge))
@@ -1747,68 +1869,16 @@ public partial class WebUiWindow : Window
         if (!modpackCatalog.TryGetValue(CatalogKey(provider, projectId), out var item) ||
             string.IsNullOrWhiteSpace(item.IconUrl))
             return JsonSerializer.SerializeToNode(new { dataUrl = (string?)null }, WebUiProtocol.Json);
-        if (modpackImageCache.TryGetValue(item.IconUrl, out var cached))
-            return JsonSerializer.SerializeToNode(new { dataUrl = cached }, WebUiProtocol.Json);
         if (!Uri.TryCreate(item.IconUrl, UriKind.Absolute, out var uri) ||
             !IsApprovedModpackImageUri(provider, uri))
             return JsonSerializer.SerializeToNode(new { dataUrl = (string?)null }, WebUiProtocol.Json);
-        using var response = await modpackImages.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead)
-            .ConfigureAwait(true);
-        if ((int)response.StatusCode is >= 300 and < 400)
-            throw new InvalidDataException("Provider image redirects are not followed outside the approved boundary.");
-        response.EnsureSuccessStatusCode();
-        if (response.RequestMessage?.RequestUri is not { } final || !IsApprovedModpackImageUri(provider, final))
-            throw new InvalidDataException("The provider image left its approved HTTPS host boundary.");
-        var mediaType = response.Content.Headers.ContentType?.MediaType?.ToLowerInvariant();
-        if (mediaType is not ("image/png" or "image/jpeg" or "image/webp"))
-            throw new InvalidDataException("The provider image did not use a supported image format.");
-        if (response.Content.Headers.ContentLength is > 524_288)
-            throw new InvalidDataException("The provider image exceeds ChunkPilot's 512 KB cache limit.");
-        await using var input = await response.Content.ReadAsStreamAsync().ConfigureAwait(true);
-        using var raw = new MemoryStream();
-        var buffer = new byte[32 * 1024];
-        while (true)
-        {
-            var count = await input.ReadAsync(buffer).ConfigureAwait(true);
-            if (count == 0) break;
-            if (raw.Length + count > 524_288)
-                throw new InvalidDataException("The provider image exceeds ChunkPilot's 512 KB cache limit.");
-            raw.Write(buffer, 0, count);
-        }
-        raw.Position = 0;
-        var info = await ImageSharpImage.IdentifyAsync(raw).ConfigureAwait(true)
-            ?? throw new InvalidDataException("The provider image could not be decoded.");
-        if (info.Width is <= 0 or > 4096 || info.Height is <= 0 or > 4096 ||
-            (long)info.Width * info.Height > 16_777_216)
-            throw new InvalidDataException("The provider image dimensions exceed ChunkPilot's safe preview limit.");
-        raw.Position = 0;
-        using var image = await ImageSharpImage.LoadAsync<Rgba32>(raw).ConfigureAwait(true);
-        image.Mutate(context => context.Resize(new ResizeOptions
-        {
-            Size = new ImageSharpSize(160, 160),
-            Mode = ImageSharpResizeMode.Max,
-            Sampler = KnownResamplers.Lanczos3
-        }));
-        using var encoded = new MemoryStream();
-        await image.SaveAsync(encoded, new PngEncoder()).ConfigureAwait(true);
-        var dataUrl = $"data:image/png;base64,{Convert.ToBase64String(encoded.ToArray())}";
-        if (modpackImageCache.Count >= 32)
-            modpackImageCache.Remove(modpackImageCache.Keys.First());
-        modpackImageCache[item.IconUrl] = dataUrl;
+        var dataUrl = await modpackImages.LoadAsync(provider, uri, cancellationToken).ConfigureAwait(true);
         return JsonSerializer.SerializeToNode(new { dataUrl }, WebUiProtocol.Json);
     }
 
     internal static bool IsApprovedModpackImageUri(CatalogProvider provider, Uri? uri)
     {
-        if (uri is null || uri.Scheme != Uri.UriSchemeHttps || !uri.IsDefaultPort) return false;
-        var host = uri.IdnHost.TrimEnd('.');
-        return provider switch
-        {
-            CatalogProvider.Modrinth => host.Equals("cdn.modrinth.com", StringComparison.OrdinalIgnoreCase),
-            CatalogProvider.CurseForge => host.Equals("forgecdn.net", StringComparison.OrdinalIgnoreCase) ||
-                                          host.EndsWith(".forgecdn.net", StringComparison.OrdinalIgnoreCase),
-            _ => false
-        };
+        return ModpackImageLoader.IsApprovedUri(provider, uri);
     }
 
     private async Task<JsonNode?> ChooseLocalServerImportAsync(JsonObject parameters)
@@ -2888,6 +2958,92 @@ public partial class WebUiWindow : Window
         viewModel.SelectedVersion = version;
     }
 
+    private async Task<JsonNode?> RollbackVersionFromWebUiAsync(
+        JsonObject parameters,
+        CancellationToken cancellationToken)
+    {
+        var (serverId, snapshotId) = ValidateRollbackParameters(parameters);
+        RequireSelectedRollbackServer(serverId, viewModel.SelectedServer?.Definition.Id);
+        SelectVersion(parameters, requireRollbackReady: true);
+        var result = await viewModel.RollbackVersionFromWebUiAsync(
+            serverId, snapshotId, cancellationToken).ConfigureAwait(true);
+        await viewModel.RefreshCommand.ExecuteAsync(null).ConfigureAwait(true);
+        if (bridge is { } currentBridge)
+            await currentBridge.PublishSnapshotAsync().ConfigureAwait(true);
+        return JsonSerializer.SerializeToNode(new
+        {
+            accepted = true,
+            serverId,
+            versionId = snapshotId,
+            result.Message
+        }, WebUiProtocol.Json);
+    }
+
+    private async Task<JsonNode?> MarkVersionHealthyFromWebUiAsync(
+        JsonObject parameters,
+        CancellationToken cancellationToken)
+    {
+        var (serverId, snapshotId) = ValidateMarkHealthyParameters(parameters);
+        _ = RequireSelectedPendingValidation(
+            serverId, snapshotId, viewModel.SelectedServer?.Definition.Id, viewModel.Versions);
+        var result = await viewModel.MarkVersionHealthyFromWebUiAsync(
+            serverId, snapshotId, retentionDays: 30, cancellationToken).ConfigureAwait(true);
+        if (bridge is { } currentBridge)
+            await currentBridge.PublishSnapshotAsync().ConfigureAwait(true);
+        return JsonSerializer.SerializeToNode(new
+        {
+            accepted = true,
+            serverId,
+            versionId = snapshotId,
+            result.Message
+        }, WebUiProtocol.Json);
+    }
+
+    internal static (Guid ServerId, Guid SnapshotId) ValidateMarkHealthyParameters(JsonObject parameters)
+    {
+        if (!RequiredBool(parameters, "confirmed"))
+            throw new ArgumentException("Marking an update healthy requires deliberate in-product confirmation.");
+        if (!Guid.TryParse(RequiredString(parameters, "serverId", 64), out var serverId))
+            throw new ArgumentException("A valid server ID is required.");
+        if (!Guid.TryParse(RequiredString(parameters, "versionId", 64), out var snapshotId))
+            throw new ArgumentException("A valid version ID is required.");
+        return (serverId, snapshotId);
+    }
+
+    internal static VersionSnapshot RequireSelectedPendingValidation(
+        Guid requestedServerId,
+        Guid snapshotId,
+        Guid? selectedServerId,
+        IEnumerable<VersionSnapshot> versions)
+    {
+        if (selectedServerId != requestedServerId)
+            throw new InvalidOperationException(
+                "The selected server changed before validation could be saved. No other server was modified.");
+        return versions.FirstOrDefault(version => version.ServerId == requestedServerId &&
+                   version.Id == snapshotId && version.IsActive &&
+                   version.Health == VersionHealth.PendingValidation)
+               ?? throw new InvalidOperationException(
+                   "That active version is no longer awaiting validation. Refresh the server before trying again.");
+    }
+
+    internal static (Guid ServerId, Guid SnapshotId) ValidateRollbackParameters(JsonObject parameters)
+    {
+        if (!RequiredBool(parameters, "confirmed"))
+            throw new ArgumentException("Version rollback requires deliberate in-product confirmation.");
+        if (!Guid.TryParse(RequiredString(parameters, "serverId", 64), out var serverId))
+            throw new ArgumentException("A valid server ID is required.");
+        if (!Guid.TryParse(RequiredString(parameters, "versionId", 64), out var snapshotId))
+            throw new ArgumentException("A valid version ID is required.");
+        return (serverId, snapshotId);
+    }
+
+    internal static void RequireSelectedRollbackServer(Guid requestedServerId, Guid? selectedServerId)
+    {
+        if (selectedServerId != requestedServerId)
+            throw new InvalidOperationException(
+                "The selected server changed before rollback could start. No version was restored.");
+    }
+
     private async Task ModeratePlayerAsync(JsonObject parameters)
     {
         Select(parameters);
@@ -3069,10 +3225,9 @@ public partial class WebUiWindow : Window
         localImportTokens.Clear();
         legacyArtifactTokens.Clear();
         worldSourceTokens.Clear();
-        modpackImageCache.Clear();
+        bridge?.Dispose();
         modpackImages.Dispose();
         playerHeads.Dispose();
-        bridge?.Dispose();
         CoreWebView2? core = null;
         try
         {

@@ -297,18 +297,34 @@ public sealed partial class MainViewModel
     [RelayCommand]
     private async Task CheckForUpdatesAsync()
     {
-        if (SelectedServer is null)
+        var serverId = SelectedServer?.Definition.Id;
+        if (serverId is null)
             return;
+        await CheckForUpdatesForServerAsync(serverId.Value).ConfigureAwait(true);
+    }
+
+    internal async Task<bool> CheckForUpdatesForServerAsync(
+        Guid serverId,
+        CancellationToken cancellationToken = default)
+    {
+        if (SelectedServer?.Definition.Id != serverId)
+            return false;
+        var committed = false;
         await RunBusyAsync("Checking the official linked source…", async () =>
         {
-            CurrentUpdateCheck = await client.SendAsync<UpdateCheckResult>("CheckUpdates",
-                new CheckUpdatesRequest(SelectedServer.Definition.Id)).ConfigureAwait(true);
-            CurrentUpdateSource = CurrentUpdateCheck.Source ?? CurrentUpdateSource;
+            var check = await client.SendAsync<UpdateCheckResult>("CheckUpdates",
+                new CheckUpdatesRequest(serverId), cancellationToken).ConfigureAwait(true);
+            if (SelectedServer?.Definition.Id != serverId)
+                return;
+            if (!await LoadVersionsForServerAsync(serverId, check, cancellationToken).ConfigureAwait(true))
+                return;
+            CurrentUpdateSource = check.Source ?? CurrentUpdateSource;
             migrationResolutions.Clear();
             OnPropertyChanged(nameof(MigrationResolutionSummary));
-            StatusMessage = CurrentUpdateCheck.Message;
-            await LoadVersionsAsync().ConfigureAwait(true);
+            StatusMessage = check.Message;
+            committed = true;
         }).ConfigureAwait(true);
+        return committed;
     }
 
     [RelayCommand]
@@ -442,6 +458,69 @@ public sealed partial class MainViewModel
             await RefreshAsync().ConfigureAwait(true);
             await LoadUpdateDetailsAsync().ConfigureAwait(true);
         }).ConfigureAwait(true);
+    }
+
+    /// <summary>
+    /// Marks an exact, still-selected pending update healthy after the WebUI has collected its own
+    /// deliberate confirmation. The native command above retains its existing confirmation flow.
+    /// </summary>
+    internal async Task<OperationResult> MarkVersionHealthyFromWebUiAsync(
+        Guid serverId,
+        Guid snapshotId,
+        int retentionDays,
+        CancellationToken cancellationToken = default)
+    {
+        if (SelectedServer?.Definition.Id != serverId)
+            throw new InvalidOperationException(
+                "The selected server changed before validation could be saved. No other server was modified.");
+        var active = Versions.FirstOrDefault(item => item.Id == snapshotId && item.ServerId == serverId &&
+            item.IsActive && item.Health == VersionHealth.PendingValidation)
+            ?? throw new InvalidOperationException(
+                "That active version is no longer awaiting validation. Refresh the server before trying again.");
+
+        var result = await client.SendAsync<OperationResult>("MarkVersionHealthy",
+            new MarkVersionHealthyRequest(serverId, active.Id, retentionDays), cancellationToken).ConfigureAwait(true);
+        if (!result.Success)
+            throw new InvalidOperationException(result.Message);
+
+        // A server switch must never let an A response overwrite B's presentation state. The
+        // Agent mutation remains scoped to A by the exact request identities above; A will be
+        // reloaded the next time it is selected if the renderer navigated away meanwhile.
+        if (SelectedServer?.Definition.Id == serverId &&
+            await LoadVersionsForServerAsync(serverId, cancellationToken: cancellationToken).ConfigureAwait(true))
+        {
+            CurrentUpdateOperation = null;
+            StatusMessage = result.Message;
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Runs a rollback already confirmed by the WebUI without opening a second native dialog.
+    /// Exact identities are revalidated here so a late renderer request cannot follow a newer
+    /// server selection or restore a different snapshot.
+    /// </summary>
+    internal async Task<OperationResult> RollbackVersionFromWebUiAsync(
+        Guid serverId,
+        Guid snapshotId,
+        CancellationToken cancellationToken = default)
+    {
+        if (SelectedServer?.Definition.Id != serverId)
+            throw new InvalidOperationException(
+                "The selected server changed before rollback could start. No version was restored.");
+        var version = Versions.FirstOrDefault(item => item.Id == snapshotId && item.ServerId == serverId)
+            ?? throw new InvalidOperationException("That version snapshot is no longer available for this server.");
+        if (version.IsActive || !version.Verified || !File.Exists(version.SnapshotPath))
+            throw new InvalidOperationException("That version is not a verified rollback target.");
+
+        var result = await client.SendAsync<OperationResult>("RollbackVersion",
+            new VersionSnapshotRequest(serverId, snapshotId), cancellationToken).ConfigureAwait(true);
+        if (!result.Success)
+            throw new InvalidOperationException(result.Message);
+
+        StatusMessage = result.Message;
+        await LoadVersionsForServerAsync(serverId, cancellationToken: cancellationToken).ConfigureAwait(true);
+        return result;
     }
 
     [RelayCommand]
@@ -649,20 +728,41 @@ public sealed partial class MainViewModel
 
     private async Task LoadVersionsAsync()
     {
-        if (SelectedServer is null)
+        var serverId = SelectedServer?.Definition.Id;
+        if (serverId is null)
             return;
-        Replace(Versions, await client.SendAsync<IReadOnlyList<VersionSnapshot>>("ListVersions",
-            new ServerIdRequest(SelectedServer.Definition.Id)).ConfigureAwait(true));
+        await LoadVersionsForServerAsync(serverId.Value).ConfigureAwait(true);
+    }
+
+    private async Task<bool> LoadVersionsForServerAsync(
+        Guid serverId,
+        UpdateCheckResult? knownCheck = null,
+        CancellationToken cancellationToken = default)
+    {
+        var versions = await client.SendAsync<IReadOnlyList<VersionSnapshot>>("ListVersions",
+            new ServerIdRequest(serverId), cancellationToken).ConfigureAwait(true);
+        if (SelectedServer?.Definition.Id != serverId)
+            return false;
+        var check = knownCheck ?? (await client.SendAsync<UpdateCheckResponse>("GetLatestUpdateCheck",
+            new ServerIdRequest(serverId), cancellationToken).ConfigureAwait(true)).Check;
+        if (SelectedServer?.Definition.Id != serverId)
+            return false;
+        var history = await client.SendAsync<IReadOnlyList<UpdateHistoryEntry>>("GetUpdateHistory",
+            new ServerIdRequest(serverId), cancellationToken).ConfigureAwait(true);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (SelectedServer?.Definition.Id != serverId)
+            return false;
+
+        Replace(Versions, versions);
         OnPropertyChanged(nameof(HasVersionHistory));
-        CurrentUpdateCheck = (await client.SendAsync<UpdateCheckResponse>("GetLatestUpdateCheck",
-            new ServerIdRequest(SelectedServer.Definition.Id)).ConfigureAwait(true)).Check;
+        CurrentUpdateCheck = check;
         OnPropertyChanged(nameof(IsPendingUpdateValidation));
         OnPropertyChanged(nameof(ActivePackVersion));
         OnPropertyChanged(nameof(ActualPackJava));
         OnPropertyChanged(nameof(RollbackAvailability));
-        Replace(UpdateHistory, await client.SendAsync<IReadOnlyList<UpdateHistoryEntry>>("GetUpdateHistory",
-            new ServerIdRequest(SelectedServer.Definition.Id)).ConfigureAwait(true));
+        Replace(UpdateHistory, history);
         SelectedVersion = Versions.FirstOrDefault(item => item.IsActive) ?? Versions.FirstOrDefault();
+        return true;
     }
 
     private void PopulateLinkFields(UpdateSource source)

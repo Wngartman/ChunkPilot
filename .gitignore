@@ -32,6 +32,9 @@ src/ChunkPilot.WebUi/*.tsbuildinfo
 *.db-wal
 *.sqlite
 *.sqlite3
+secrets.dat
+WebView2/
+CurrentProfile/
 *.log
 *.dmp
 *.jar

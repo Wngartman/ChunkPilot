@@ -44,7 +44,7 @@ internal static class WebUiMethodPolicy
         "mods.openFolder", "mods.chooseLocal", "mods.installLocal", "mods.providers", "mods.search", "mods.release",
         "mods.install", "mods.plan", "mods.installPlan", "mods.setEnabled", "mods.remove", "mods.configFiles", "mods.saveConfig",
         "content.operations", "content.cancel",
-        "modpacks.providers", "modpacks.versions", "modpacks.cache", "modpacks.search", "modpacks.resolveLink", "modpacks.preflight", "modpacks.image", "modpacks.chooseLocal",
+        "modpacks.providers", "modpacks.versions", "modpacks.cache", "modpacks.search", "modpacks.project", "modpacks.resolveLink", "modpacks.preflight", "modpacks.image", "modpacks.chooseLocal",
         "backups.create", "backups.restore", "backups.verify", "players.moderate", "players.addAllowlist", "players.setWhitelist", "players.head",
         "schedules.upsert", "schedules.delete",
         "settings.saveGlobal", "settings.saveServer", "help.openExternal",
@@ -54,7 +54,7 @@ internal static class WebUiMethodPolicy
         "connectivity.external.check", "connectivity.external.cancel",
         "connectivity.firewall.primary", "connectivity.firewall.secondary", "connectivity.firewall.confirm",
         "connectivity.firewall.cancelConsent", "connectivity.firewall.remove", "connectivity.firewall.cancel",
-        "versions.check", "versions.install", "versions.rollback", "versions.verify", "versions.cancel",
+        "versions.check", "versions.install", "versions.markHealthy", "versions.rollback", "versions.verify", "versions.cancel",
         "creation.catalog", "creation.paperBuilds", "creation.loaderBuilds", "creation.previewDestination", "creation.chooseFolder", "creation.chooseWorld", "creation.chooseLegacyArtifact",
         "creation.begin", "creation.operations", "creation.progress", "creation.cancel"
     };

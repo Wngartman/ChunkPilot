@@ -83,6 +83,42 @@ public sealed class WebUiContractTests
     }
 
     [Fact]
+    public void Mark_healthy_requires_confirmation_and_the_exact_selected_pending_version()
+    {
+        var serverId = Guid.NewGuid();
+        var snapshotId = Guid.NewGuid();
+        var pending = new VersionSnapshot
+        {
+            Id = snapshotId,
+            ServerId = serverId,
+            IsActive = true,
+            Health = VersionHealth.PendingValidation
+        };
+        var parameters = new JsonObject
+        {
+            ["serverId"] = serverId.ToString(),
+            ["versionId"] = snapshotId.ToString(),
+            ["confirmed"] = true
+        };
+
+        Assert.Equal((serverId, snapshotId), WebUiWindow.ValidateMarkHealthyParameters(parameters));
+        Assert.Same(pending, WebUiWindow.RequireSelectedPendingValidation(
+            serverId, snapshotId, serverId, [pending]));
+
+        var unconfirmed = parameters.DeepClone().AsObject();
+        unconfirmed["confirmed"] = false;
+        Assert.Throws<ArgumentException>(() => WebUiWindow.ValidateMarkHealthyParameters(unconfirmed));
+        Assert.Throws<InvalidOperationException>(() => WebUiWindow.RequireSelectedPendingValidation(
+            serverId, snapshotId, Guid.NewGuid(), [pending]));
+        Assert.Throws<InvalidOperationException>(() => WebUiWindow.RequireSelectedPendingValidation(
+            serverId, Guid.NewGuid(), serverId, [pending]));
+        Assert.Throws<InvalidOperationException>(() => WebUiWindow.RequireSelectedPendingValidation(
+            serverId, snapshotId, serverId, [pending with { Health = VersionHealth.Healthy }]));
+        Assert.Throws<InvalidOperationException>(() => WebUiWindow.RequireSelectedPendingValidation(
+            serverId, snapshotId, serverId, [pending with { IsActive = false }]));
+    }
+
+    [Fact]
     public void Migration_review_mapping_is_bounded_and_fenced_to_server_target_and_operation()
     {
         var serverId = Guid.NewGuid();
@@ -228,6 +264,7 @@ public sealed class WebUiContractTests
         Assert.False(WebUiMethodPolicy.IsAllowed("settings.curseforge.disconnect"));
         Assert.False(WebUiMethodPolicy.IsAllowed("settings.curseforge.openConsole"));
         Assert.True(WebUiMethodPolicy.IsAllowed("versions.install"));
+        Assert.True(WebUiMethodPolicy.IsAllowed("versions.markHealthy"));
         Assert.True(WebUiMethodPolicy.IsAllowed("versions.rollback"));
         Assert.True(WebUiMethodPolicy.IsAllowed("versions.verify"));
         Assert.True(WebUiMethodPolicy.IsAllowed("versions.cancel"));
@@ -414,6 +451,10 @@ public sealed class WebUiContractTests
     {
         Assert.Equal("--webui-fixture", WebUiFixtureLauncher.FixtureArgument);
         Assert.Equal("--render", WebUiFixtureLauncher.RenderArgument);
+        Assert.True(WebUiFixtureLauncher.IsTrustedFixtureSource("https://fixture.chunkpilot.local/index.html?fixture=running"));
+        Assert.False(WebUiFixtureLauncher.IsTrustedFixtureSource("https://chunkpilot.local/index.html"));
+        Assert.False(WebUiFixtureLauncher.IsTrustedFixtureSource("https://fixture.chunkpilot.local.evil.example/index.html"));
+        Assert.False(WebUiFixtureLauncher.IsTrustedFixtureSource("http://fixture.chunkpilot.local/index.html"));
     }
 
     [Fact]
@@ -475,6 +516,100 @@ public sealed class WebUiContractTests
         viewModel.SelectedServer = bravo;
         await WaitUntilAsync(() => viewModel.WebUiDetailsServerId == bravoId, TimeSpan.FromSeconds(2));
         Assert.Equal(new[] { alphaId, bravoId, bravoId }, client.CapabilityServerIds);
+    }
+
+    [Fact]
+    public async Task Update_check_cannot_commit_after_the_selected_server_changes()
+    {
+        var alphaId = Guid.NewGuid();
+        var bravoId = Guid.NewGuid();
+        var alpha = SelectionServer(alphaId, "Alpha");
+        var bravo = SelectionServer(bravoId, "Bravo");
+        var client = new UpdateCheckFenceClient();
+        var viewModel = new MainViewModel(client, new SelectionDialogs());
+        viewModel.Servers.Add(alpha);
+        viewModel.Servers.Add(bravo);
+        viewModel.SelectedServer = alpha;
+
+        var pending = viewModel.CheckForUpdatesForServerAsync(alphaId);
+        await client.CheckStarted.WaitAsync(TimeSpan.FromSeconds(2));
+        viewModel.SelectedServer = bravo;
+        await WaitUntilAsync(() => viewModel.WebUiDetailsServerId == bravoId, TimeSpan.FromSeconds(2));
+        var bravoCheck = new UpdateCheckResult
+        {
+            ServerId = bravoId,
+            Status = ServerUpdateStatus.UpToDate,
+            Message = "Bravo is current."
+        };
+        var bravoVersion = new VersionSnapshot
+        {
+            ServerId = bravoId,
+            VersionId = "bravo-current",
+            VersionName = "Bravo current",
+            IsActive = true
+        };
+        viewModel.CurrentUpdateCheck = bravoCheck;
+        viewModel.Versions.Add(bravoVersion);
+
+        client.ReleaseCheck();
+
+        Assert.False(await pending.WaitAsync(TimeSpan.FromSeconds(2)));
+        Assert.Same(bravoCheck, viewModel.CurrentUpdateCheck);
+        Assert.Equal(bravoId, viewModel.CurrentUpdateCheck!.ServerId);
+        Assert.Equal(new[] { bravoVersion }, viewModel.Versions);
+        Assert.Equal(new[] { alphaId }, client.CheckedServerIds);
+    }
+
+    [Fact]
+    public async Task Mark_healthy_response_cannot_replace_the_newly_selected_servers_version_state()
+    {
+        var alphaId = Guid.NewGuid();
+        var bravoId = Guid.NewGuid();
+        var alpha = SelectionServer(alphaId, "Alpha");
+        var bravo = SelectionServer(bravoId, "Bravo");
+        var client = new UpdateCheckFenceClient();
+        var viewModel = new MainViewModel(client, new SelectionDialogs());
+        viewModel.Servers.Add(alpha);
+        viewModel.Servers.Add(bravo);
+        viewModel.SelectedServer = alpha;
+        await WaitUntilAsync(() => viewModel.WebUiDetailsServerId == alphaId, TimeSpan.FromSeconds(2));
+        var alphaPending = new VersionSnapshot
+        {
+            ServerId = alphaId,
+            VersionId = "alpha-v2",
+            VersionName = "Alpha v2",
+            IsActive = true,
+            Health = VersionHealth.PendingValidation
+        };
+        viewModel.Versions.Add(alphaPending);
+
+        var pending = viewModel.MarkVersionHealthyFromWebUiAsync(alphaId, alphaPending.Id, retentionDays: 30);
+        await client.MarkHealthyStarted.WaitAsync(TimeSpan.FromSeconds(2));
+        viewModel.SelectedServer = bravo;
+        await WaitUntilAsync(() => viewModel.WebUiDetailsServerId == bravoId, TimeSpan.FromSeconds(2));
+        var bravoCheck = new UpdateCheckResult
+        {
+            ServerId = bravoId,
+            Status = ServerUpdateStatus.UpToDate,
+            Message = "Bravo is current."
+        };
+        var bravoVersion = new VersionSnapshot
+        {
+            ServerId = bravoId,
+            VersionId = "bravo-current",
+            VersionName = "Bravo current",
+            IsActive = true,
+            Health = VersionHealth.Healthy
+        };
+        viewModel.CurrentUpdateCheck = bravoCheck;
+        viewModel.Versions.Add(bravoVersion);
+
+        client.ReleaseMarkHealthy();
+
+        Assert.True((await pending.WaitAsync(TimeSpan.FromSeconds(2))).Success);
+        Assert.Same(bravoCheck, viewModel.CurrentUpdateCheck);
+        Assert.Equal(new[] { bravoVersion }, viewModel.Versions);
+        Assert.Equal(new[] { (alphaId, alphaPending.Id, 30) }, client.MarkHealthyRequests);
     }
 
     private static UpdateOperationSnapshot MigrationReviewOperation(Guid serverId, string targetVersionId)
@@ -579,6 +714,93 @@ public sealed class WebUiContractTests
                     response = OperationResult.Ok("fixture");
                     break;
             }
+            return (TResponse)response;
+        }
+    }
+
+    private sealed class UpdateCheckFenceClient : IAgentClient
+    {
+        private readonly TaskCompletionSource checkStarted =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource releaseCheck =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource markHealthyStarted =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource releaseMarkHealthy =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task CheckStarted => checkStarted.Task;
+        public Task MarkHealthyStarted => markHealthyStarted.Task;
+        public List<Guid> CheckedServerIds { get; } = [];
+        public List<(Guid ServerId, Guid SnapshotId, int RetentionDays)> MarkHealthyRequests { get; } = [];
+
+        public Task EnsureConnectedAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+        public void ReleaseCheck() => releaseCheck.TrySetResult();
+        public void ReleaseMarkHealthy() => releaseMarkHealthy.TrySetResult();
+
+        public async Task<TResponse> SendAsync<TResponse>(string operation, object? payload = null,
+            CancellationToken cancellationToken = default)
+        {
+            if (operation == "CheckUpdates")
+            {
+                var serverId = ((CheckUpdatesRequest)payload!).ServerId;
+                CheckedServerIds.Add(serverId);
+                checkStarted.TrySetResult();
+                await releaseCheck.Task.WaitAsync(cancellationToken);
+                return (TResponse)(object)new UpdateCheckResult
+                {
+                    ServerId = serverId,
+                    Status = ServerUpdateStatus.UpdateAvailable,
+                    Message = "Alpha has an update."
+                };
+            }
+            if (operation == "MarkVersionHealthy")
+            {
+                var request = (MarkVersionHealthyRequest)payload!;
+                MarkHealthyRequests.Add((request.ServerId, request.SnapshotId, request.RetentionDays));
+                markHealthyStarted.TrySetResult();
+                await releaseMarkHealthy.Task.WaitAsync(cancellationToken);
+                return (TResponse)(object)OperationResult.Ok("Alpha update marked healthy.");
+            }
+
+            var serverIdFromRequest = payload switch
+            {
+                ServerIdRequest request => request.ServerId,
+                GameruleReadRequest request => request.ServerId,
+                _ => Guid.Empty
+            };
+            object response = operation switch
+            {
+                "GetCapabilities" => new ServerCapabilityProfile(),
+                "GetNetworkConfiguration" => new NetworkConfiguration { ServerId = serverIdFromRequest },
+                "ListBackups" => Array.Empty<BackupRecord>(),
+                "ListSchedules" => Array.Empty<ScheduleEntry>(),
+                "ListFiles" => Array.Empty<FileSystemEntry>(),
+                "Inventory" => Array.Empty<ModPluginEntry>(),
+                "Diagnostics" => Array.Empty<DiagnosticFinding>(),
+                "GetServerProperties" => new ServerPropertiesResponse([], ""),
+                "ListWorlds" => Array.Empty<WorldEntry>(),
+                "GetPlayerAccess" => new PlayerAccessSnapshot { ServerId = serverIdFromRequest },
+                "ReadGamerules" => new GameruleStateResponse { ServerId = serverIdFromRequest },
+                "GetUpdateSource" => new UpdateSourceResponse(null),
+                "DetectUpdateSource" => new UpdateSourceDetectionResult(),
+                "GetUpdatePreferences" => new UpdatePreferences(),
+                "GetLatestUpdateCheck" => new UpdateCheckResponse(null),
+                "ListVersions" => Array.Empty<VersionSnapshot>(),
+                "GetUpdateHistory" => Array.Empty<UpdateHistoryEntry>(),
+                "HasCurseForgeApiKey" => new TextResponse("missing"),
+                "ListAutomationRecipes" => Array.Empty<AutomationRecipe>(),
+                "AutomationRecipeTemplates" => Array.Empty<AutomationRecipe>(),
+                "GetCrossplayConfiguration" => new CrossplayConfiguration { ServerId = serverIdFromRequest },
+                "ListDatapacks" => Array.Empty<DatapackInventoryItem>(),
+                "GetResourcePackConfiguration" => new ResourcePackConfiguration { ServerId = serverIdFromRequest },
+                "GetRouterMapping" => new RouterMappingState { ServerId = serverIdFromRequest },
+                "GetFirewallAccess" => new WindowsFirewallState { ServerId = serverIdFromRequest },
+                "GetExternalReachability" => new ExternalReachabilityState { ServerId = serverIdFromRequest },
+                "SetSetting" => OperationResult.Ok("fixture"),
+                _ => throw new InvalidOperationException($"Unexpected fixture operation: {operation}")
+            };
             return (TResponse)response;
         }
     }

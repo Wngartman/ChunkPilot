@@ -521,6 +521,12 @@ public sealed record CatalogItem
     public int RecommendedRamMaxMb { get; init; }
     public IReadOnlyList<string> Categories { get; init; } = [];
     public IReadOnlyList<CatalogVersion> Versions { get; init; } = [];
+    /// <summary>
+    /// True only when the provider-specific release inventory has been inspected far enough to
+    /// establish the project's server installation path. Search summaries deliberately set this
+    /// false so discovery remains fast without being mistaken for an unsupported project.
+    /// </summary>
+    public bool ServerPathChecked { get; init; } = true;
 }
 
 public sealed record CatalogQuery
@@ -545,7 +551,8 @@ public enum CatalogSort
     Downloads,
     Follows,
     Newest,
-    Updated
+    Updated,
+    Name
 }
 
 public sealed record CatalogProviderStatus(
@@ -593,6 +600,7 @@ public sealed record CatalogBrowseResult
     public bool Stale { get; init; }
     public int NextIndex { get; init; }
     public bool HasMore { get; init; }
+    public int? TotalCount { get; init; }
 }
 
 /// <summary>
@@ -665,7 +673,8 @@ public static class CatalogPolicy
     {
         var filtered = items.Where(item =>
             (!query.ExcludeClientOnly || item.InstallationSupport != InstallationSupportState.ClientOnly) &&
-            (!query.ServerPackRequired || item.Versions.Any(version => version.HasServerPackage)) &&
+            (!query.ServerPackRequired || !item.ServerPathChecked ||
+             item.Versions.Any(HasManagedServerPath)) &&
             (query.Provider is null || item.Provider == query.Provider) &&
             (string.IsNullOrWhiteSpace(query.Search) ||
              item.Name.Contains(query.Search, StringComparison.OrdinalIgnoreCase) ||
@@ -689,12 +698,15 @@ public static class CatalogPolicy
                     .OrderByDescending(version => version.PublishedAt)
                     .ToArray()
             })
-            .Where(item => !query.ServerPackRequired || item.Versions.Any(version => version.HasServerPackage));
+            .Where(item => !query.ServerPackRequired || !item.ServerPathChecked ||
+                           item.Versions.Any(HasManagedServerPath));
         var ordered = query.Sort switch
         {
             CatalogSort.Downloads => shaped.OrderByDescending(item => item.DownloadCount),
             CatalogSort.Newest => shaped.OrderByDescending(item =>
-                item.Versions.Select(version => version.PublishedAt).Max()),
+                item.Versions.Select(version => version.PublishedAt)
+                    .DefaultIfEmpty(item.UpdatedAt).Max()),
+            CatalogSort.Name => shaped.OrderBy(item => item.Name, StringComparer.OrdinalIgnoreCase),
             CatalogSort.Relevance => shaped,
             _ => shaped.OrderByDescending(item => item.UpdatedAt)
         };
@@ -714,6 +726,9 @@ public static class CatalogPolicy
 
     private static bool ChannelAllowed(ReleaseChannel channel, ReleaseChannel maximum) =>
         channel <= maximum;
+
+    private static bool HasManagedServerPath(CatalogVersion version) =>
+        version.HasServerPackage || version.CanGenerateServerCandidate;
 }
 
 public sealed record ManagedJavaRuntime

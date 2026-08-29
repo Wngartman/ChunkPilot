@@ -273,6 +273,11 @@ public sealed record UpdateInstallRequest
     public Guid OperationId { get; init; } = Guid.NewGuid();
     public Guid ServerId { get; init; }
     public required PackVersionInfo TargetVersion { get; init; }
+    /// <summary>
+    /// The terminal migration-review operation the user is confirming. This is an untrusted claim;
+    /// the Agent must validate it before authorizing reuse of that operation's verified download.
+    /// </summary>
+    public Guid? ReviewedOperationId { get; init; }
     public int PlayerCountdownSeconds { get; init; } = 30;
     public bool StartForValidation { get; init; } = true;
     public bool Automatic { get; init; }

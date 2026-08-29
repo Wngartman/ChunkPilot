@@ -22,6 +22,9 @@ internal sealed class WebUiSnapshotMapper
         var selectedId = selected?.Definition.Id;
         var detailsReady = selectedId is not null && viewModel.WebUiDetailsServerId == selectedId;
         var host = viewModel.Dashboard.Host;
+        var pendingValidation = viewModel.Versions.FirstOrDefault(version =>
+            version.ServerId == selectedId && version.IsActive &&
+            version.Health == VersionHealth.PendingValidation);
         var versions = viewModel.Versions
             .Where(version => selectedId is null || version.ServerId == selectedId)
             .Select(version => new
@@ -196,6 +199,12 @@ internal sealed class WebUiSnapshotMapper
                 operationDetail = viewModel.CurrentUpdateOperation?.Progress.Detail,
                 operationPercent = viewModel.CurrentUpdateOperation is null ? (double?)null : viewModel.CurrentUpdateOperation.Progress.Percent,
                 cancellable = viewModel.CurrentUpdateOperation is { IsTerminal: false },
+                pendingValidation = pendingValidation is null ? null : new
+                {
+                    serverId = pendingValidation.ServerId,
+                    versionId = pendingValidation.Id,
+                    versionName = pendingValidation.VersionName
+                },
                 migrationReview = MapMigrationReview(
                     selectedId,
                     viewModel.CurrentUpdateCheck?.LatestVersion?.VersionId,

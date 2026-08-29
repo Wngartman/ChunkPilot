@@ -9,6 +9,14 @@ internal static class WebUiFixtureLauncher
 {
     internal const string FixtureArgument = "--webui-fixture";
     internal const string RenderArgument = "--render";
+    private const string FixtureHost = "fixture.chunkpilot.local";
+
+    internal static bool IsTrustedFixtureSource(string source) =>
+        Uri.TryCreate(source, UriKind.Absolute, out var uri) &&
+        string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) &&
+        string.Equals(uri.IdnHost, FixtureHost, StringComparison.OrdinalIgnoreCase) &&
+        uri.IsDefaultPort &&
+        string.IsNullOrEmpty(uri.UserInfo);
 
     public static bool TryRun(Application application, string[] arguments)
     {
@@ -114,7 +122,7 @@ internal static class WebUiFixtureLauncher
                 await browser.EnsureCoreWebView2Async(environment).ConfigureAwait(true);
                 Configure(browser.CoreWebView2);
                 var assetRoot = Path.Combine(AppContext.BaseDirectory, "WebUi");
-                browser.CoreWebView2.SetVirtualHostNameToFolderMapping("chunkpilot.local", assetRoot, CoreWebView2HostResourceAccessKind.DenyCors);
+                browser.CoreWebView2.SetVirtualHostNameToFolderMapping(FixtureHost, assetRoot, CoreWebView2HostResourceAccessKind.DenyCors);
                 if (renderSetDirectory is not null)
                 {
                     await CaptureReviewSetAsync(Path.GetFullPath(renderSetDirectory)).ConfigureAwait(true);
@@ -155,7 +163,7 @@ internal static class WebUiFixtureLauncher
                 (settingsName is null ? "" : $"&settings={Uri.EscapeDataString(settingsName)}") +
                 (modeName is null ? "" : $"&mode={Uri.EscapeDataString(modeName)}") +
                 (isDirty ? "&dirty=1" : "");
-            browser.CoreWebView2.Navigate(WebUiProtocol.EntryPoint + query);
+            browser.CoreWebView2.Navigate("https://fixture.chunkpilot.local/index.html" + query);
             var expires = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(20);
             while (DateTimeOffset.UtcNow < expires)
             {
@@ -163,7 +171,7 @@ internal static class WebUiFixtureLauncher
                 try
                 {
                     var state = await browser.CoreWebView2.ExecuteScriptAsync("`${location.origin}|${document.readyState}|${document.getElementById('root')?.childElementCount ?? 0}`").ConfigureAwait(true);
-                    if (state.Contains("https://chunkpilot.local|complete|", StringComparison.Ordinal) && !state.EndsWith("|0\"", StringComparison.Ordinal))
+                    if (state.Contains("https://fixture.chunkpilot.local|complete|", StringComparison.Ordinal) && !state.EndsWith("|0\"", StringComparison.Ordinal))
                         return;
                 }
                 catch (COMException)
@@ -354,7 +362,7 @@ internal static class WebUiFixtureLauncher
             core.DownloadStarting += (_, args) => { args.Cancel = true; args.Handled = true; };
             core.NavigationStarting += (_, args) =>
             {
-                if (!WebUiProtocol.IsTrustedSource(args.Uri))
+                if (!IsTrustedFixtureSource(args.Uri))
                     args.Cancel = true;
             };
         }

@@ -2,6 +2,16 @@ import { protocolVersion, type BridgeEvent, type BridgeMethod, type BridgeReques
 
 type EventListener = (event: BridgeEvent) => void;
 
+const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
+const METHOD_REQUEST_TIMEOUT_MS: Partial<Record<BridgeMethod, number>> = {
+  'modpacks.preflight': 30 * 60_000,
+  'mods.search': 2 * 60_000,
+  'mods.release': 2 * 60_000,
+  'mods.plan': 2 * 60_000,
+  'versions.check': 2 * 60_000,
+  'versions.rollback': 30 * 60_000
+};
+
 export class BridgeError extends Error {
   constructor(public readonly code: string, message: string, public readonly details?: string) { super(message); }
 }
@@ -12,7 +22,7 @@ export class WebViewBridge {
   private sequence = 0;
   private readonly onMessage = (event: MessageEvent) => this.receive(event.data);
 
-  constructor(private readonly timeoutMs = 15_000) {
+  constructor(private readonly timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS) {
     window.chrome?.webview?.addEventListener('message', this.onMessage);
   }
 
@@ -24,12 +34,13 @@ export class WebViewBridge {
     const id = `web-${Date.now().toString(36)}-${++this.sequence}`;
     const message: BridgeRequest = { protocolVersion, id, method, params };
     return new Promise<T>((resolve, reject) => {
+      const requestTimeoutMs = METHOD_REQUEST_TIMEOUT_MS[method] ?? this.timeoutMs;
       const timer = window.setTimeout(() => {
         this.pending.delete(id);
         signal?.removeEventListener('abort', abort);
         this.cancelNative(id);
         reject(new BridgeError('timeout', 'ChunkPilot did not answer in time.'));
-      }, this.timeoutMs);
+      }, requestTimeoutMs);
       const abort = () => {
         window.clearTimeout(timer);
         this.pending.delete(id);

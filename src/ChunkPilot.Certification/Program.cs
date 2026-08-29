@@ -252,10 +252,26 @@ static async Task<int> SmokeCurseForgeAsync(string[] values)
         }
         results.Add(new { category = "provider pagination", status = paginationPassed ? "PASSED" : "FAILED" });
         Console.WriteLine($"provider pagination: {(paginationPassed ? "PASSED" : "FAILED")}");
-        var selected = packs.FirstOrDefault(pack => pack.Versions.Count > 0);
-        if (selected is null)
+        var selectedSummary = packs.Count > 0 ? packs[0] : null;
+        CatalogItem? selected = null;
+        var projectDetailTimer = Stopwatch.StartNew();
+        if (selectedSummary is not null)
         {
-            results.Add(new { category = "exact project and file", status = "UNAVAILABLE" });
+            // Browse pages intentionally contain shallow cards. Resolve the selected project before
+            // inspecting releases or server-pack relationships so this smoke path exercises the same
+            // explicit-detail boundary as the packaged browser.
+            selected = await provider.ResolveProjectAsync(
+                selectedSummary.ProjectId, exactReleaseReference: null, cancellation.Token);
+        }
+        projectDetailTimer.Stop();
+        if (selected is null || selected.Versions.Count == 0)
+        {
+            results.Add(new
+            {
+                category = "exact project and file",
+                status = selectedSummary is null ? "UNAVAILABLE" : "FAILED",
+                elapsedMilliseconds = projectDetailTimer.Elapsed.TotalMilliseconds
+            });
             results.Add(new { category = "official server-pack relationship", status = "UNAVAILABLE" });
             results.Add(new { category = "recognized CurseForge link", status = "UNAVAILABLE" });
         }
@@ -265,14 +281,17 @@ static async Task<int> SmokeCurseForgeAsync(string[] values)
             var detailTimer = Stopwatch.StartNew();
             var resolved = await provider.ResolveProjectAsync(selected.ProjectId, exact.ClientFileId, cancellation.Token);
             detailTimer.Stop();
+            var exactResolved = resolved?.Versions.Any(version =>
+                version.ClientFileId.Equals(exact.ClientFileId, StringComparison.Ordinal)) == true;
             results.Add(new
             {
                 category = "exact project and file",
-                status = resolved is not null ? "PASSED" : "FAILED",
-                elapsedMilliseconds = detailTimer.Elapsed.TotalMilliseconds
+                status = exactResolved ? "PASSED" : "FAILED",
+                elapsedMilliseconds = projectDetailTimer.Elapsed.TotalMilliseconds +
+                                      detailTimer.Elapsed.TotalMilliseconds
             });
-            Console.WriteLine($"exact project and file: {(resolved is not null ? "PASSED" : "FAILED")}");
-            var official = packs.SelectMany(pack => pack.Versions).Any(file => file.HasServerPackage);
+            Console.WriteLine($"exact project and file: {(exactResolved ? "PASSED" : "FAILED")}");
+            var official = selected.Versions.Any(file => file.HasServerPackage);
             results.Add(new { category = "official server-pack relationship", status = official ? "PASSED" : "UNAVAILABLE" });
             Console.WriteLine($"official server-pack relationship: {(official ? "PASSED" : "UNAVAILABLE")}");
             var link = $"https://www.curseforge.com/minecraft/modpacks/{Uri.EscapeDataString(selected.Slug)}" +

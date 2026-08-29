@@ -19,6 +19,38 @@ type InitialMode = 'Browse' | 'Link' | 'Import' | 'Custom';
 interface Query { search: string; minecraftVersion: string; loader: string; category: string; sort: string; }
 
 const emptyQuery: Query = { search: '', minecraftVersion: '', loader: '', category: '', sort: 'Downloads' };
+const discoveryPageSize = 50;
+const sessionResultLimit = 200;
+
+interface ProviderSession {
+  draft: Query;
+  query: Query;
+  revision: number;
+  loadedKey: string;
+  projects: ModpackProject[];
+  state: BrowserState;
+  detail: string;
+  failedStage: string;
+  versions: ModpackVersionInventory | null;
+  canLoadMore: boolean;
+  nextIndex: number;
+  totalCount: number | null;
+  loadingMore: boolean;
+  paginationError: string;
+  selectedProjectId: string | null;
+  selection: Extract<ModpackSelection, { kind: 'remote' }> | null;
+  detailState: 'idle' | 'loading' | 'failed';
+  detailError: string;
+}
+
+function createProviderSession(): ProviderSession {
+  return {
+    draft: { ...emptyQuery }, query: { ...emptyQuery }, revision: 0, loadedKey: '', projects: [],
+    state: 'Uninitialized', detail: '', failedStage: '', versions: null, canLoadMore: false,
+    nextIndex: 0, totalCount: null, loadingMore: false, paginationError: '', selectedProjectId: null,
+    selection: null, detailState: 'idle', detailError: ''
+  };
+}
 
 export function ModpackPicker({ value, initialMode = 'Browse', onChange, onOpenProviderSettings: _onOpenProviderSettings }: {
   value: ModpackSelection | null;
@@ -38,25 +70,58 @@ function BrowseModpackPicker({ value, onChange }: {
   const bridge = useAppStore(state => state.bridge);
   const command = useAppStore(state => state.command);
   const [provider, setProvider] = useState<ModpackProvider>('Modrinth');
-  const [draft, setDraft] = useState<Query>(emptyQuery);
-  const [query, setQuery] = useState<Query>(emptyQuery);
-  const [queryRevision, setQueryRevision] = useState(0);
-  const [projects, setProjects] = useState<ModpackProject[]>([]);
-  const [state, setState] = useState<BrowserState>('Uninitialized');
-  const [detail, setDetail] = useState('');
-  const [failedStage, setFailedStage] = useState('');
+  const [sessions, setSessions] = useState<Record<ModpackProvider, ProviderSession>>(() => ({
+    Modrinth: createProviderSession(), CurseForge: createProviderSession()
+  }));
   const [providerStatuses, setProviderStatuses] = useState<ModpackProviderStatus[]>([]);
-  const [providerVersions, setProviderVersions] = useState<ModpackVersionInventory | null>(null);
-  const [canLoadMore, setCanLoadMore] = useState(false);
-  const nextIndex = useRef(0);
-  const [loadingMore, setLoadingMore] = useState(false);
+  const session = sessions[provider];
+  const sessionsRef = useRef(sessions);
+  sessionsRef.current = sessions;
   const generation = useRef(0);
+  const detailGeneration = useRef(0);
+  const searchRequest = useRef<AbortController | null>(null);
   const paginationRequest = useRef<AbortController | null>(null);
+  const detailRequest = useRef<AbortController | null>(null);
   const resultsRef = useRef<HTMLDivElement>(null);
+  const scrollPositions = useRef<Record<ModpackProvider, number>>({ Modrinth: 0, CurseForge: 0 });
   const onChangeRef = useRef(onChange);
   const valueRef = useRef(value);
   onChangeRef.current = onChange;
   valueRef.current = value;
+
+  useEffect(() => {
+    if (value?.kind !== 'remote' || value.project.provider !== provider) return;
+    const reviewedProject = {
+      ...value.project,
+      versions: value.project.versions.map(candidate =>
+        candidate.versionId === value.release.versionId ? value.release : candidate)
+    };
+    setSessions(current => {
+      const active = current[provider];
+      if (active.selectedProjectId !== reviewedProject.projectId) return current;
+      const tracked = active.selection?.release;
+      if (tracked?.versionId === value.release.versionId && tracked.canCreate === value.release.canCreate &&
+          tracked.preflightState === value.release.preflightState && tracked.limitation === value.release.limitation)
+        return current;
+      return {
+        ...current,
+        [provider]: {
+          ...active,
+          projects: active.projects.map(project => project.projectId === reviewedProject.projectId ? reviewedProject : project),
+          selection: { kind: 'remote', project: reviewedProject, release: value.release }
+        }
+      };
+    });
+  }, [provider, value]);
+
+  const updateSession = (target: ModpackProvider, update: (current: ProviderSession) => ProviderSession) => {
+    setSessions(current => ({ ...current, [target]: update(current[target]) }));
+  };
+
+  const resetResultScroll = (target: ModpackProvider) => {
+    scrollPositions.current[target] = 0;
+    if (target === provider && resultsRef.current) resultsRef.current.scrollTop = 0;
+  };
 
   useEffect(() => {
     if (!bridge) return;
@@ -69,197 +134,326 @@ function BrowseModpackPicker({ value, onChange }: {
 
   useEffect(() => {
     if (!bridge) return;
+    if (sessionsRef.current[provider].versions) return;
     let active = true;
     const controller = new AbortController();
     const apply = (inventory: ModpackVersionInventory) => {
       if (!active) return;
-      setProviderVersions(inventory);
-      setDraft(current => current.minecraftVersion && inventory.versions.length > 0 &&
-        !inventory.versions.some(version => version.versionId === current.minecraftVersion)
-        ? { ...current, minecraftVersion: '' } : current);
+      updateSession(provider, current => ({ ...current, versions: inventory }));
     };
     void (async () => {
-      const cached = await bridge.request<ModpackVersionInventory>('modpacks.versions',
-        { provider, cacheOnly: true }, controller.signal);
-      if (cached.versions.length) apply(cached);
+      if (provider === 'Modrinth') {
+        try {
+          const cached = await bridge.request<ModpackVersionInventory>('modpacks.versions',
+            { provider, cacheOnly: true }, controller.signal);
+          if (cached.versions.length) apply(cached);
+        } catch {
+          if (controller.signal.aborted) return;
+        }
+      }
       const current = await bridge.request<ModpackVersionInventory>('modpacks.versions',
         { provider, cacheOnly: false }, controller.signal);
       apply(current);
-    })().catch(() => { if (active) setProviderVersions(null); });
+    })().catch(() => undefined);
     return () => { active = false; controller.abort(); };
   }, [bridge, provider]);
 
+  const queryKey = `${session.query.search}\u0000${session.query.minecraftVersion}\u0000${session.query.loader}\u0000${session.query.category}\u0000${session.query.sort}`;
   useEffect(() => {
     if (!bridge) return;
+    const requestKey = `${queryKey}\u0000${session.revision}`;
+    if (sessionsRef.current[provider].loadedKey === requestKey) return;
     const requestGeneration = ++generation.current;
     const controller = new AbortController();
-    const parameters = { provider, ...query, limit: 20, includeExperimental: false };
-    const apply = (result: ModpackCatalogResult) => {
-      if (requestGeneration !== generation.current) return;
-      setProjects(result.items);
-      nextIndex.current = Number.isInteger(result.nextIndex) ? result.nextIndex : result.items.length;
-      setCanLoadMore(result.hasMore ?? result.items.length === 20);
-      setDetail(result.detail);
-      setFailedStage(result.failedStage);
-      setState(toBrowserState(result));
-      reconcileSelection(result.items, provider, valueRef.current, onChangeRef.current);
+    searchRequest.current?.abort();
+    searchRequest.current = controller;
+    const parameters = { provider, ...sessionsRef.current[provider].query, limit: discoveryPageSize, includeExperimental: false };
+    const apply = (result: ModpackCatalogResult, complete: boolean) => {
+      if (requestGeneration !== generation.current || result.provider !== provider) return;
+      const items = sortLoadedProjects(
+        deduplicateProjects(result.items.filter(item => item.provider === provider)).slice(0, sessionResultLimit),
+        sessionsRef.current[provider].query.sort);
+      updateSession(provider, current => ({
+        ...current,
+        projects: items,
+        state: complete ? toBrowserState(result) : 'Refreshing',
+        detail: result.detail,
+        failedStage: result.failedStage,
+        nextIndex: Number.isInteger(result.nextIndex) ? result.nextIndex : result.items.length,
+        canLoadMore: Boolean(result.hasMore ?? result.items.length === discoveryPageSize) && items.length < sessionResultLimit,
+        totalCount: typeof result.totalCount === 'number' ? result.totalCount : null,
+        loadedKey: complete ? requestKey : current.loadedKey,
+        paginationError: ''
+      }));
     };
     const run = async () => {
-      setFailedStage('');
-      setCanLoadMore(false);
-      setState('Loading cache');
+      updateSession(provider, current => ({
+        ...current,
+        state: current.projects.length ? 'Refreshing' : provider === 'Modrinth' ? 'Loading cache' : 'Loading provider',
+        failedStage: '', paginationError: '', loadingMore: false
+      }));
       try {
-        const cached = await bridge.request<ModpackCatalogResult>('modpacks.cache', parameters, controller.signal);
-        if (requestGeneration !== generation.current) return;
-        if (cached.items.length) {
-          apply(cached);
-          setState('Refreshing');
-        } else {
-          setState('Loading provider');
+        if (provider === 'Modrinth') {
+          try {
+            const cached = await bridge.request<ModpackCatalogResult>('modpacks.cache', parameters, controller.signal);
+            if (requestGeneration !== generation.current) return;
+            if (cached.items.length) apply(cached, false);
+            else updateSession(provider, current => ({ ...current, state: 'Loading provider' }));
+          } catch {
+            if (controller.signal.aborted || requestGeneration !== generation.current) return;
+            updateSession(provider, current => ({ ...current, state: 'Loading provider' }));
+          }
         }
         const current = await bridge.request<ModpackCatalogResult>('modpacks.search', parameters, controller.signal);
-        apply(current);
+        apply(current, true);
       } catch (reason) {
         if (requestGeneration !== generation.current) return;
-        if (controller.signal.aborted) {
-          setState('Cancelled');
-          return;
-        }
-        setState('Failed');
-        setDetail(reason instanceof Error ? reason.message : `${provider} could not load its catalog.`);
-        setFailedStage('provider request');
+        if (controller.signal.aborted) return;
+        updateSession(provider, current => ({
+          ...current, state: 'Failed',
+          detail: reason instanceof Error ? reason.message : `${provider} could not load its catalog.`,
+          failedStage: 'provider request'
+        }));
+      } finally {
+        if (searchRequest.current === controller) searchRequest.current = null;
       }
     };
     void run();
-    return () => { generation.current += 1; controller.abort(); paginationRequest.current?.abort(); };
-    // queryRevision deliberately retriggers an identical query after Retry.
-  }, [bridge, provider, query, queryRevision]);
+    return () => {
+      generation.current += 1;
+      controller.abort();
+      paginationRequest.current?.abort();
+      detailRequest.current?.abort();
+    };
+  }, [bridge, provider, queryKey, session.revision]);
 
-  const selectedProject = value?.kind === 'remote' && value.project.provider === provider ? value.project : null;
+  useEffect(() => {
+    const trimmed = session.draft.search.trim();
+    if (trimmed === session.query.search) return;
+    const timer = window.setTimeout(() => {
+      resetResultScroll(provider);
+      updateSession(provider, current => ({
+        ...current, query: { ...current.draft, search: current.draft.search.trim() }, revision: current.revision + 1,
+        loadedKey: '', selectedProjectId: null, selection: null, detailState: 'idle', detailError: ''
+      }));
+      if (valueRef.current?.kind !== 'local') onChangeRef.current(null);
+    }, 275);
+    return () => window.clearTimeout(timer);
+  }, [provider, session.draft.search, session.query.search]);
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      if (resultsRef.current) resultsRef.current.scrollTop = scrollPositions.current[provider];
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [provider]);
+
+  const selectedProject = session.projects.find(project => project.projectId === session.selectedProjectId) ??
+    session.selection?.project ??
+    (value?.kind === 'remote' && value.project.provider === provider ? value.project : null);
   const releaseOptions = useMemo(() => selectedProject?.versions ?? [], [selectedProject]);
   const versionOptions = useMemo(() => {
-    const official = providerVersions?.versions ?? [];
+    const official = session.versions?.versions ?? [];
     if (official.length) return official.map(version => ({
       value: version.versionId,
       label: version.kind === 'Release' ? version.versionId : `${version.versionId} · ${version.kind}`
     }));
-    return Array.from(new Set(projects.flatMap(project =>
+    return Array.from(new Set(session.projects.flatMap(project =>
       project.versions.map(release => release.minecraftVersion)).filter(Boolean)))
       .map(version => ({ value: version, label: version }));
-  }, [projects, providerVersions]);
+  }, [session.projects, session.versions]);
   const virtual = useVirtualizer({
-    count: projects.length,
+    count: session.projects.length,
     getScrollElement: () => resultsRef.current,
     estimateSize: () => 77,
     overscan: 8,
     initialRect: { width: 620, height: 390 }
   });
-  const applySearch = () => setQuery({
-    search: draft.search.trim(), minecraftVersion: draft.minecraftVersion.trim(), loader: draft.loader,
-    category: draft.category, sort: draft.sort
-  });
+  const applySearch = () => {
+    resetResultScroll(provider);
+    updateSession(provider, current => ({
+      ...current,
+      query: {
+        search: current.draft.search.trim(), minecraftVersion: current.draft.minecraftVersion.trim(),
+        loader: current.draft.loader, category: current.draft.category, sort: current.draft.sort
+      },
+      revision: current.revision + 1, loadedKey: '', selectedProjectId: null, selection: null,
+      detailState: 'idle', detailError: ''
+    }));
+    if (valueRef.current?.kind !== 'local') onChangeRef.current(null);
+  };
+  const clearFilters = () => {
+    resetResultScroll(provider);
+    updateSession(provider, current => ({
+      ...current, draft: { ...emptyQuery }, query: { ...emptyQuery }, revision: current.revision + 1,
+      loadedKey: '', selectedProjectId: null, selection: null, detailState: 'idle', detailError: ''
+    }));
+    if (valueRef.current?.kind !== 'local') onChangeRef.current(null);
+  };
+  const switchProvider = (nextProvider: ModpackProvider) => {
+    if (nextProvider === provider) return;
+    if (resultsRef.current) scrollPositions.current[provider] = resultsRef.current.scrollTop;
+    setProvider(nextProvider);
+    onChangeRef.current(sessionsRef.current[nextProvider].selection);
+  };
   const chooseLocal = () => {
     void command<LocalModpackSelection>('modpacks.chooseLocal').then(local => {
       if (!local.cancelled && local.inspection?.canCreate) onChange({ kind: 'local', local });
     });
   };
   const loadMore = async () => {
-    if (!bridge || loadingMore || !canLoadMore) return;
+    const active = sessionsRef.current[provider];
+    if (!bridge || paginationRequest.current || active.loadingMore || !active.canLoadMore || active.projects.length >= sessionResultLimit) return;
     const requestGeneration = generation.current;
-    paginationRequest.current?.abort();
     const controller = new AbortController();
     paginationRequest.current = controller;
-    setLoadingMore(true);
+    updateSession(provider, current => ({ ...current, loadingMore: true, paginationError: '' }));
     try {
-      const requestedIndex = nextIndex.current;
+      const requestedIndex = active.nextIndex;
       const result = await bridge.request<ModpackCatalogResult>('modpacks.search',
-        { provider, ...query, limit: 20, index: requestedIndex, includeExperimental: false }, controller.signal);
-      if (requestGeneration !== generation.current) return;
-      const existing = new Set(projects.map(project => `${project.provider}:${project.projectId}`));
-      const appended = result.items.filter(project => !existing.has(`${project.provider}:${project.projectId}`));
-      const merged = [...projects, ...appended];
-      setProjects(merged);
-      nextIndex.current = Number.isInteger(result.nextIndex)
-        ? result.nextIndex
-        : requestedIndex + result.items.length;
-      setCanLoadMore(result.hasMore ?? result.items.length === 20);
-      setDetail(result.detail);
-      setFailedStage(result.failedStage);
-      if (result.state !== 'Ready') setState(toBrowserState(result));
-      reconcileSelection(merged, provider, valueRef.current, onChangeRef.current);
+        { provider, ...active.query, limit: discoveryPageSize, index: requestedIndex, includeExperimental: false }, controller.signal);
+      if (requestGeneration !== generation.current || result.provider !== provider) return;
+      updateSession(provider, current => {
+        const merged = sortLoadedProjects(
+          deduplicateProjects([...current.projects, ...result.items.filter(item => item.provider === provider)])
+            .slice(0, sessionResultLimit), current.query.sort);
+        return {
+          ...current, projects: merged,
+          nextIndex: Number.isInteger(result.nextIndex) ? result.nextIndex : requestedIndex + result.items.length,
+          canLoadMore: Boolean(result.hasMore ?? result.items.length === discoveryPageSize) && merged.length < sessionResultLimit,
+          totalCount: typeof result.totalCount === 'number' ? result.totalCount : current.totalCount,
+          detail: result.detail, failedStage: result.failedStage,
+          state: result.state === 'Ready' || current.projects.length ? 'Ready' : toBrowserState(result)
+        };
+      });
     } catch (reason) {
-      if (requestGeneration === generation.current) {
-        setState('Failed');
-        setDetail(reason instanceof Error ? reason.message : `${provider} could not load the next page.`);
-        setFailedStage('provider pagination');
-      }
+      if (requestGeneration === generation.current && !controller.signal.aborted)
+        updateSession(provider, current => ({
+          ...current,
+          paginationError: reason instanceof Error ? reason.message : `${provider} could not load the next page.`
+        }));
     } finally {
-      if (paginationRequest.current === controller) paginationRequest.current = null;
-      if (requestGeneration === generation.current) setLoadingMore(false);
+      if (paginationRequest.current === controller) {
+        paginationRequest.current = null;
+        if (requestGeneration === generation.current)
+          updateSession(provider, current => ({ ...current, loadingMore: false }));
+      }
     }
   };
+  const selectProject = async (project: ModpackProject) => {
+    detailRequest.current?.abort();
+    const targetGeneration = ++detailGeneration.current;
+    const replacingSelection = sessionsRef.current[provider].selection?.project.projectId !== project.projectId;
+    updateSession(provider, current => ({
+      ...current, selectedProjectId: project.projectId,
+      selection: replacingSelection ? null : current.selection,
+      detailState: 'loading', detailError: ''
+    }));
+    if (replacingSelection) onChangeRef.current(null);
+    if (project.serverPathChecked !== false && project.versions.length) {
+      const release = project.versions.find(item => item.canCreate) ?? project.versions[0];
+      const selection = release ? { kind: 'remote' as const, project, release } : null;
+      updateSession(provider, current => ({ ...current, selection, detailState: 'idle' }));
+      onChangeRef.current(selection);
+      return;
+    }
+    if (!bridge) return;
+    const controller = new AbortController();
+    detailRequest.current = controller;
+    try {
+      const resolved = await bridge.request<ModpackProject>('modpacks.project',
+        { provider, projectId: project.projectId }, controller.signal);
+      if (controller.signal.aborted || targetGeneration !== detailGeneration.current ||
+          resolved.provider !== provider || resolved.projectId !== project.projectId) return;
+      const release = resolved.versions.find(item => item.canCreate) ?? resolved.versions[0];
+      const selection = release ? { kind: 'remote' as const, project: resolved, release } : null;
+      updateSession(provider, current => ({
+        ...current,
+        projects: current.projects.map(item => item.projectId === resolved.projectId ? resolved : item),
+        selectedProjectId: resolved.projectId, selection, detailState: 'idle', detailError: ''
+      }));
+      onChangeRef.current(selection);
+    } catch (reason) {
+      if (!controller.signal.aborted && targetGeneration === detailGeneration.current)
+        updateSession(provider, current => ({
+          ...current, detailState: 'failed',
+          detailError: reason instanceof Error ? reason.message : 'Exact project details are unavailable.'
+        }));
+    } finally {
+      if (detailRequest.current === controller) detailRequest.current = null;
+    }
+  };
+  const chooseRelease = (release: ModpackRelease) => {
+    if (!selectedProject) return;
+    const selection = { kind: 'remote' as const, project: selectedProject, release };
+    updateSession(provider, current => ({ ...current, selection }));
+    onChangeRef.current(selection);
+  };
   const status = providerStatuses.find(item => item.provider === provider);
-  const pending = state === 'Loading cache' || state === 'Loading provider';
-  const refreshing = state === 'Refreshing';
+  const pending = session.state === 'Loading cache' || session.state === 'Loading provider';
+  const refreshing = session.state === 'Refreshing';
+  const filtersActive = Object.entries(session.draft).some(([key, item]) => key === 'sort' ? item !== 'Downloads' : Boolean(item));
+  const resultSummary = session.totalCount === null
+    ? `Showing ${session.projects.length.toLocaleString()} pack${session.projects.length === 1 ? '' : 's'}`
+    : `Showing ${session.projects.length.toLocaleString()} of ${session.totalCount.toLocaleString()} packs`;
 
   return <section className={styles.root} aria-label="Modpack catalog">
     <div className={styles.providerBar}>
       <div className={styles.providerTabs} role="tablist" aria-label="Modpack providers">
         {(['Modrinth', 'CurseForge'] as const).map(item => <button key={item} type="button" role="tab"
           aria-selected={provider === item} data-selected={provider === item}
-          onClick={() => { setProvider(item); if (value?.kind === 'remote' && value.project.provider !== item) onChange(null); }}>
+          onClick={() => switchProvider(item)}>
           {item}{providerStatuses.length > 0 && <span aria-hidden="true" data-ready={providerStatuses.find(statusItem => statusItem.provider === item)?.available || undefined} />}
         </button>)}
       </div>
       <Button icon={<File size={14} />} onClick={chooseLocal}>Import pack</Button>
     </div>
     <form className={styles.toolbar} onSubmit={event => { event.preventDefault(); applySearch(); }}>
-      <TextInput type="search" value={draft.search}
-        onChange={event => setDraft(current => ({ ...current, search: event.target.value }))}
+      <TextInput type="search" value={session.draft.search}
+        onChange={event => updateSession(provider, current => ({ ...current, draft: { ...current.draft, search: event.target.value } }))}
         placeholder={`Search ${provider} modpacks`}
         aria-label={`Search ${provider} modpacks`} />
-      <Combobox value={draft.minecraftVersion} onChange={minecraftVersion => setDraft(current => ({ ...current, minecraftVersion }))}
+      <Combobox value={session.draft.minecraftVersion} onChange={minecraftVersion => updateSession(provider, current => ({ ...current, draft: { ...current.draft, minecraftVersion } }))}
         options={[{ value: '', label: 'Any Minecraft version' }, ...versionOptions]} ariaLabel="Minecraft version filter" searchable />
-      <Combobox value={draft.loader} onChange={loader => setDraft(current => ({ ...current, loader }))} ariaLabel="Loader filter"
+      <Combobox value={session.draft.loader} onChange={loader => updateSession(provider, current => ({ ...current, draft: { ...current.draft, loader } }))} ariaLabel="Loader filter"
         options={[{ value: '', label: 'All loaders' }, { value: 'fabric', label: 'Fabric' }, { value: 'quilt', label: 'Quilt' }, { value: 'forge', label: 'Forge' }, { value: 'neoforge', label: 'NeoForge' }]} />
-      <Combobox value={draft.category} onChange={category => setDraft(current => ({ ...current, category }))} ariaLabel="Category filter"
+      <Combobox value={session.draft.category} onChange={category => updateSession(provider, current => ({ ...current, draft: { ...current.draft, category } }))} ariaLabel="Category filter"
         options={[{ value: '', label: 'All categories' }, { value: 'adventure', label: 'Adventure' }, { value: 'magic', label: 'Magic' }, { value: 'technology', label: 'Technology' }, { value: 'optimization', label: 'Optimization' }, { value: 'multiplayer', label: 'Multiplayer' }]} />
-      <Combobox value={draft.sort} onChange={sort => setDraft(current => ({ ...current, sort }))} ariaLabel="Sort modpacks"
-        options={[{ value: 'Downloads', label: 'Popular' }, { value: 'Updated', label: 'Recently updated' }, { value: 'Newest', label: 'Newest' }, { value: 'Relevance', label: 'Relevance' }]} />
+      <Combobox value={session.draft.sort} onChange={sort => updateSession(provider, current => ({ ...current, draft: { ...current.draft, sort } }))} ariaLabel="Sort modpacks"
+        options={[{ value: 'Downloads', label: 'Popular' }, { value: 'Updated', label: 'Recently updated' }, { value: 'Newest', label: 'Newest releases' }, { value: 'Name', label: 'Name' }, { value: 'Relevance', label: 'Relevance' }]} />
       <Button variant="primary" icon={<Search size={14} />} type="submit">Search</Button>
+      {filtersActive && <Button type="button" onClick={clearFilters}>Clear filters</Button>}
     </form>
     <div className={styles.trendNote}><Info size={13} /><span>{status?.detail ?? `${provider} provider status is loading.`}</span></div>
-    {state === 'Authentication required' && <div className={styles.connectState} role="status"><Box size={22} /><div><strong>CurseForge unavailable</strong><span>This development candidate has no approved native CurseForge credential. Modrinth and local pack import remain available.</span></div></div>}
-    {(state === 'Failed' || state === 'Rate limited') && <div className={styles.error} role="alert"><strong>{state === 'Rate limited' ? `${provider} rate limit active` : `${provider} catalog unavailable`}</strong><span>{detail}</span><Button onClick={() => setQueryRevision(revision => revision + 1)}>Retry</Button>{failedStage && <details><summary>Technical details</summary><code>Failed stage: {failedStage}</code></details>}</div>}
-    {state === 'Offline cache' && <div className={styles.cacheNotice} role="status">{detail}</div>}
+    {session.state === 'Authentication required' && <div className={styles.connectState} role="status"><Box size={22} /><div><strong>CurseForge unavailable</strong><span>This development candidate has no approved native CurseForge credential. Modrinth and local pack import remain available.</span></div></div>}
+    {(session.state === 'Failed' || session.state === 'Rate limited') && <div className={styles.error} role="alert"><strong>{session.state === 'Rate limited' ? `${provider} rate limit active` : `${provider} catalog unavailable`}</strong><span>{session.detail}</span><Button onClick={() => updateSession(provider, current => ({ ...current, revision: current.revision + 1, loadedKey: '' }))}>Retry</Button>{session.failedStage && <details><summary>Technical details</summary><code>Failed stage: {session.failedStage}</code></details>}</div>}
+    {session.state === 'Offline cache' && <div className={styles.cacheNotice} role="status">{session.detail}</div>}
+    {(session.projects.length > 0 || refreshing) && <div className={styles.resultsSummary} role="status" aria-live="polite"><strong>{resultSummary}</strong><span>{refreshing ? `Refreshing ${provider}…` : session.projects.length >= sessionResultLimit && session.canLoadMore === false ? 'Session limit reached — narrow the filters to continue.' : 'Exact server setup is checked when you open a pack.'}</span></div>}
     <div className={styles.layout}>
-      <div ref={resultsRef} className={styles.list} aria-busy={pending || refreshing}>
-        {pending && !projects.length && <LoadingSkeleton provider={provider} />}
-        {!pending && state === 'Empty' && <div className={styles.loading}><Box size={24} /><strong>No matching server pack</strong><span>Clear a filter or search another provider.</span></div>}
-        {projects.length > 0 && projects.length <= 20 && projects.map(project => <ProjectRow key={`${project.provider}:${project.projectId}`}
-          project={project} selected={selectedProject?.projectId === project.projectId} onSelect={() => {
-            const release = project.versions.find(item => item.canCreate) ?? project.versions[0];
-            onChange(release ? { kind: 'remote', project, release } : null);
-          }} />)}
-        {projects.length > 20 && <div className={styles.virtualContent} style={{ height: virtual.getTotalSize() }}>
+      <div ref={resultsRef} className={styles.list} aria-busy={pending || refreshing} onScroll={event => {
+        const element = event.currentTarget;
+        scrollPositions.current[provider] = element.scrollTop;
+        if (element.scrollHeight - element.scrollTop - element.clientHeight < 180) void loadMore();
+      }}>
+        {pending && !session.projects.length && <LoadingSkeleton provider={provider} />}
+        {!pending && session.state === 'Empty' && <div className={styles.loading}><Box size={24} /><strong>No matching modpacks</strong><span>Clear a filter or search another provider.</span></div>}
+        {session.projects.length > 0 && session.projects.length <= 20 && session.projects.map(project => <ProjectRow key={`${project.provider}:${project.projectId}`}
+          project={project} selected={selectedProject?.projectId === project.projectId} onSelect={() => void selectProject(project)} />)}
+        {session.projects.length > 20 && <div className={styles.virtualContent} style={{ height: virtual.getTotalSize() }}>
           {virtual.getVirtualItems().map(row => {
-            const project = projects[row.index];
+            const project = session.projects[row.index];
             return <button key={`${project.provider}:${project.projectId}`} type="button" className={`${styles.project} ${styles.virtualProject}`}
               style={{ transform: `translateY(${row.start}px)` }} data-index={row.index} ref={virtual.measureElement}
-              data-selected={selectedProject?.projectId === project.projectId || undefined} onClick={() => {
-                const release = project.versions.find(item => item.canCreate) ?? project.versions[0];
-                onChange(release ? { kind: 'remote', project, release } : null);
-              }}>
+              data-selected={selectedProject?.projectId === project.projectId || undefined} onClick={() => void selectProject(project)}>
               <PackImage project={project} />
               <span className={styles.projectCopy}><strong>{project.name}</strong><small>{project.author} · {project.downloadCount?.toLocaleString() ?? 'Downloads unavailable'} downloads</small><span>{project.summary}</span></span>
-              <StatusBadge tone={project.versions.some(release => release.canCreate) ? 'success' : 'warning'}>
-                {project.serverSupport === 'FullyAutomated' ? 'Server pack' : project.serverSupport === 'AutomatedWithReview' ? 'Validation required' : project.serverSupport}
-              </StatusBadge>
+              <StatusBadge tone={projectStatus(project).tone}>{projectStatus(project).label}</StatusBadge>
             </button>;
           })}
         </div>}
-        {projects.length > 0 && canLoadMore && <div className={styles.loadMore}><Button disabled={loadingMore}
-          onClick={() => void loadMore()}>{loadingMore ? 'Loading more…' : 'Load more'}</Button></div>}
+        {session.canLoadMore && <div className={styles.loadMore}><Button disabled={session.loadingMore}
+          onClick={() => void loadMore()}>{session.loadingMore ? 'Loading more…' : 'Load more'}</Button></div>}
+        {session.paginationError && <div className={styles.paginationError} role="alert"><span>{session.paginationError}</span><Button onClick={() => void loadMore()}>Retry page</Button></div>}
       </div>
       <aside className={styles.detail}>
         {value?.kind === 'local' && value.local.inspection ? <>
@@ -270,14 +464,17 @@ function BrowseModpackPicker({ value, onChange }: {
         </> : selectedProject ? <>
           <div className={styles.detailTitle}><PackImage project={selectedProject} large /><div><h3>{selectedProject.name}</h3><p>by {selectedProject.author} · {selectedProject.provider}</p></div></div>
           <p>{selectedProject.summary}</p>
-          <label className={styles.releaseLabel}>Exact release<Combobox value={value?.kind === 'remote' ? value.release.versionId : ''} onChange={versionId => {
+          {session.detailState === 'loading' && <div className={styles.detailProgress} role="status">Checking exact releases and server setup…</div>}
+          {session.detailState === 'failed' && <div className={styles.releaseLimitation} role="alert"><strong>Project details unavailable</strong><span>{session.detailError}</span><Button onClick={() => void selectProject(selectedProject)}>Retry details</Button></div>}
+          {releaseOptions.length > 0 && <label className={styles.releaseLabel}>Exact release<Combobox value={session.selection?.release.versionId ?? ''} onChange={versionId => {
             const release = releaseOptions.find(item => item.versionId === versionId);
-            if (release) onChange({ kind: 'remote', project: selectedProject, release });
-          }} ariaLabel="Exact modpack release" options={releaseOptions.map(release => ({ value: release.versionId, label: `${release.versionName} · Minecraft ${release.minecraftVersion} · ${release.loader}` }))} /></label>
-          {value?.kind === 'remote' && <><dl><div><dt>Release</dt><dd>{value.release.releaseChannel}</dd></div><div><dt>Server path</dt><dd>{value.release.serverPath ?? 'Still checking'}</dd></div><div><dt>Integrity</dt><dd>{value.release.hasIntegrity ? value.project.provider === 'Modrinth' ? 'SHA-1 + SHA-512' : 'Provider SHA-1 + local SHA-256 after download' : 'Unavailable'}</dd></div><div><dt>Size</dt><dd>{value.release.sizeBytes ? `${(value.release.sizeBytes / 1024 / 1024).toFixed(1)} MB` : 'Unavailable'}</dd></div><div><dt>Published</dt><dd>{value.release.publishedAt ? new Date(value.release.publishedAt).toLocaleDateString() : 'Unavailable'}</dd></div></dl>{value.release.changelog && <details><summary>Release notes</summary><p>{value.release.changelog}</p></details>}</>}
-          {value?.kind === 'remote' && !value.release.canCreate && <div className={styles.releaseLimitation} role="status"><strong>Creation unavailable</strong><span>{value.release.limitation || 'This exact release does not have a complete managed server path.'}</span></div>}
-          <StatusBadge tone={value?.kind === 'remote' && value.release.canCreate ? 'warning' : 'neutral'}>{value?.kind === 'remote' && value.release.canCreate ? 'Validated during creation' : 'Browse only'}</StatusBadge>
-        </> : <div className={styles.empty}><Box size={24} /><strong>{pending ? `Loading ${provider}` : 'Select a modpack'}</strong><span>{pending ? 'Fetching compatible server-pack releases.' : `Choose an exact ${provider} release or import a local pack.`}</span></div>}
+            if (release) chooseRelease(release);
+          }} ariaLabel="Exact modpack release" options={releaseOptions.map(release => ({ value: release.versionId, label: `${release.versionName} · Minecraft ${release.minecraftVersion} · ${release.loader}` }))} /></label>}
+          {session.selection && <><dl><div><dt>Release</dt><dd>{session.selection.release.releaseChannel}</dd></div><div><dt>Server path</dt><dd>{session.selection.release.serverPath ?? 'No supportable server setup found'}</dd></div><div><dt>Integrity</dt><dd>{session.selection.release.hasIntegrity ? session.selection.project.provider === 'Modrinth' ? 'SHA-1 + SHA-512' : 'Provider SHA-1 + local SHA-256 after download' : 'Unavailable'}</dd></div><div><dt>Size</dt><dd>{session.selection.release.sizeBytes ? `${(session.selection.release.sizeBytes / 1024 / 1024).toFixed(1)} MB` : 'Unavailable'}</dd></div><div><dt>Published</dt><dd>{session.selection.release.publishedAt ? new Date(session.selection.release.publishedAt).toLocaleDateString() : 'Unavailable'}</dd></div></dl>{session.selection.release.changelog && <details><summary>Release notes</summary><p>{session.selection.release.changelog}</p></details>}</>}
+          {session.selection && !session.selection.release.canCreate && <div className={styles.releaseLimitation} role="status"><strong>Creation unavailable</strong><span>{session.selection.release.limitation || 'This exact release does not have a complete managed server path.'}</span></div>}
+          {selectedProject.serverPathChecked === false && session.detailState !== 'failed' && <StatusBadge tone="neutral">Server setup not checked yet</StatusBadge>}
+          {selectedProject.serverPathChecked !== false && <StatusBadge tone={session.selection?.release.canCreate ? 'warning' : 'neutral'}>{session.selection?.release.canCreate ? 'Validated during creation' : 'Browse only'}</StatusBadge>}
+        </> : <div className={styles.empty}><Box size={24} /><strong>{pending ? `Loading ${provider}` : 'Select a modpack'}</strong><span>{pending ? 'Fetching provider discovery results.' : `Open a ${provider} pack to check its exact releases and server setup.`}</span></div>}
       </aside>
     </div>
   </section>;
@@ -394,27 +591,30 @@ function toBrowserState(result: ModpackCatalogResult): BrowserState {
   return states[result.state];
 }
 
-function reconcileSelection(projects: ModpackProject[], provider: ModpackProvider,
-  value: ModpackSelection | null, onChange: (selection: ModpackSelection | null) => void) {
-  if (value?.kind === 'local') return;
-  const current = value?.kind === 'remote' && value.project.provider === provider
-    ? projects.find(project => project.projectId === value.project.projectId) : undefined;
-  const currentRelease = current && value?.kind === 'remote'
-    ? current.versions.find(release => release.versionId === value.release.versionId) : undefined;
-  if (current && currentRelease) {
-    if (current !== value?.project || currentRelease !== value?.release)
-      onChange({ kind: 'remote', project: current, release: currentRelease });
-    return;
-  }
-  // CurseForge preflight downloads the exact client manifest archive. Provider browsing alone is
-  // not consent to that transfer, so require an explicit project/release selection first.
-  if (provider === 'CurseForge') {
-    onChange(null);
-    return;
-  }
-  const first = projects.map(project => ({ project, release: project.versions.find(release => release.canCreate) ?? project.versions[0] }))
-    .find(item => item.release);
-  onChange(first?.release ? { kind: 'remote', project: first.project, release: first.release } : null);
+function deduplicateProjects(projects: ModpackProject[]): ModpackProject[] {
+  const seen = new Set<string>();
+  return projects.filter(project => {
+    const key = `${project.provider}:${project.projectId}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function sortLoadedProjects(projects: ModpackProject[], sort: string): ModpackProject[] {
+  return sort === 'Name'
+    ? [...projects].sort((left, right) => left.name.localeCompare(right.name, undefined, { sensitivity: 'base' }))
+    : projects;
+}
+
+function projectStatus(project: ModpackProject): { tone: 'neutral' | 'success' | 'warning'; label: string } {
+  if (project.serverPathChecked === false)
+    return { tone: 'neutral', label: 'Server setup not checked yet' };
+  if (project.serverSupport === 'FullyAutomated')
+    return { tone: 'success', label: 'Official server pack' };
+  if (project.serverSupport === 'AutomatedWithReview')
+    return { tone: 'warning', label: 'ChunkPilot can evaluate this release' };
+  return { tone: 'neutral', label: 'No supportable server setup found' };
 }
 
 function LoadingSkeleton({ provider }: { provider: ModpackProvider }) {
@@ -427,22 +627,87 @@ function ProjectRow({ project, selected, onSelect }: { project: ModpackProject; 
   return <button type="button" className={styles.project} data-selected={selected || undefined} onClick={onSelect}>
     <PackImage project={project} />
     <span className={styles.projectCopy}><strong>{project.name}</strong><small>{project.author} · {project.downloadCount?.toLocaleString() ?? 'Downloads unavailable'} downloads</small><span>{project.summary}</span></span>
-    <StatusBadge tone={project.versions.some(release => release.canCreate) ? 'success' : 'warning'}>
-      {project.serverSupport === 'FullyAutomated' ? 'Server pack' : project.serverSupport === 'AutomatedWithReview' ? 'Validation required' : project.serverSupport}
-    </StatusBadge>
+    <StatusBadge tone={projectStatus(project).tone}>{projectStatus(project).label}</StatusBadge>
   </button>;
 }
 
-function PackImage({ project, large = false }: { project: ModpackProject; large?: boolean }) {
+const packImageSources = new Map<string, string>();
+interface SharedPackImageRequest {
+  controller: AbortController;
+  promise: Promise<string | null>;
+  subscribers: number;
+  settled: boolean;
+}
+const packImageRequests = new Map<string, SharedPackImageRequest>();
+
+function acquirePackImageRequest(
+  key: string,
+  load: (signal: AbortSignal) => Promise<string | null>
+): { promise: Promise<string | null>; release: () => void } {
+  let shared = packImageRequests.get(key);
+  if (!shared) {
+    const controller = new AbortController();
+    shared = { controller, subscribers: 0, settled: false, promise: Promise.resolve(null) };
+    const created = shared;
+    created.promise = load(controller.signal)
+      .then(dataUrl => {
+        if (!dataUrl) return null;
+        if (packImageSources.size >= 64)
+          packImageSources.delete(packImageSources.keys().next().value ?? '');
+        packImageSources.set(key, dataUrl);
+        return dataUrl;
+      })
+      .finally(() => {
+        created.settled = true;
+        if (packImageRequests.get(key) === created)
+          packImageRequests.delete(key);
+      });
+    packImageRequests.set(key, created);
+    shared = created;
+  }
+
+  shared.subscribers++;
+  let released = false;
+  return {
+    promise: shared.promise,
+    release: () => {
+      if (released) return;
+      released = true;
+      shared!.subscribers = Math.max(0, shared!.subscribers - 1);
+      if (shared!.subscribers !== 0 || shared!.settled) return;
+      if (packImageRequests.get(key) === shared)
+        packImageRequests.delete(key);
+      shared!.controller.abort();
+    }
+  };
+}
+
+export function PackImage({ project, large = false }: { project: ModpackProject; large?: boolean }) {
   const bridge = useAppStore(state => state.bridge);
-  const [source, setSource] = useState('');
+  const key = `${project.provider}:${project.projectId}`;
+  const [image, setImage] = useState(() => ({ key, source: packImageSources.get(key) ?? '' }));
+  const source = image.key === key ? image.source : '';
   useEffect(() => {
     let active = true;
+    const cached = packImageSources.get(key);
+    setImage({ key, source: cached ?? '' });
     if (!project.hasImage || !bridge) return;
-    void bridge.request<{ dataUrl: string | null }>('modpacks.image', { provider: project.provider, projectId: project.projectId })
-      .then(result => { if (active && result.dataUrl) setSource(result.dataUrl); })
+    if (cached) {
+      return;
+    }
+    const request = acquirePackImageRequest(key, signal =>
+      bridge.request<{ dataUrl: string | null }>('modpacks.image',
+        { provider: project.provider, projectId: project.projectId }, signal)
+        .then(result => result.dataUrl));
+    void request.promise.then(dataUrl => {
+      if (!dataUrl) return;
+      if (active) setImage({ key, source: dataUrl });
+    })
       .catch(() => undefined);
-    return () => { active = false; };
-  }, [bridge, project.hasImage, project.projectId, project.provider]);
+    return () => {
+      active = false;
+      request.release();
+    };
+  }, [bridge, key, project.hasImage, project.projectId, project.provider]);
   return <span className={`${styles.art} ${large ? styles.artLarge : ''}`}>{source ? <img src={source} alt="" loading="lazy" /> : <Image size={large ? 26 : 18} aria-hidden="true" />}</span>;
 }

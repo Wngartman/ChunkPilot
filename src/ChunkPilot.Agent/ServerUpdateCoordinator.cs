@@ -14,6 +14,7 @@ public sealed class ServerUpdateCoordinator
     private readonly ServerPackUpdateService updates;
     private readonly VersionSnapshotService snapshots;
     private readonly ConcurrentDictionary<Guid, OperationState> operations = new();
+    private long operationSequence;
 
     public ServerUpdateCoordinator(
         ChunkPilotStore store,
@@ -161,7 +162,9 @@ public sealed class ServerUpdateCoordinator
     {
         var operationId = request.OperationId == Guid.Empty ? Guid.NewGuid() : request.OperationId;
         var normalized = request with { OperationId = operationId };
-        var state = new OperationState(operationId, normalized.ServerId);
+        var state = new OperationState(
+            normalized,
+            Interlocked.Increment(ref operationSequence));
         if (!operations.TryAdd(operationId, state))
             throw new InvalidOperationException($"Update operation {operationId} already exists.");
         state.Task = RunAsync(normalized, state);
@@ -195,7 +198,8 @@ public sealed class ServerUpdateCoordinator
         CancellationToken cancellationToken = default)
     {
         var versions = await store.GetVersionSnapshotsAsync(serverId, cancellationToken).ConfigureAwait(false);
-        var active = versions.FirstOrDefault(version => version.Id == snapshotId && version.IsActive)
+        var active = versions.FirstOrDefault(version => version.Id == snapshotId && version.IsActive &&
+                                                  version.Health == VersionHealth.PendingValidation)
                      ?? throw new InvalidOperationException("Only the active pending version can be marked healthy.");
         await store.UpsertVersionSnapshotAsync(active with
         {
@@ -347,6 +351,9 @@ public sealed class ServerUpdateCoordinator
             var source = await store.GetUpdateSourceAsync(request.ServerId, state.Cancellation.Token)
                              .ConfigureAwait(false)
                          ?? throw new InvalidOperationException("Link and identify an update source before installing.");
+            lock (state.Gate)
+                state.Source = source;
+            var reuseAuthorization = AuthorizeReviewedArtifactReuse(request, source, state);
             var managed = supervisor.Get(request.ServerId);
             var progress = new CallbackProgress<UpdateProgress>(update =>
             {
@@ -378,7 +385,8 @@ public sealed class ServerUpdateCoordinator
             var result = await managed.RunExclusivePackUpdateAsync(
                 request,
                 (definition, token) => updates.PrepareAndSwitchAsync(
-                    definition, source, request, progress, token),
+                    definition, source, request, progress,
+                    reuseAuthorization, token),
                 (definition, snapshot, operationId, token) =>
                     updates.RollbackAsync(definition, snapshot, operationId, token),
                 (prepared, token) => updates.FinalizeOperationAsync(prepared, token),
@@ -490,6 +498,106 @@ public sealed class ServerUpdateCoordinator
         }
     }
 
+    private ReviewedUpdateArtifactAuthorization? AuthorizeReviewedArtifactReuse(
+        UpdateInstallRequest request,
+        UpdateSource source,
+        OperationState current)
+    {
+        if (request.ReviewedOperationId is not { } reviewedOperationId)
+            return null;
+        if (!operations.TryGetValue(reviewedOperationId, out var reviewed))
+            throw new InvalidOperationException(
+                "The reviewed migration operation is no longer available. Run the update review again.");
+
+        lock (reviewed.Gate)
+        {
+            if (reviewed.ReusedByOperationId is not null)
+                throw new InvalidOperationException(
+                    "The reviewed update package was already claimed by another confirmation attempt.");
+            if (operations.Values.Any(operation =>
+                    operation.ServerId == request.ServerId &&
+                    operation.Sequence > reviewed.Sequence &&
+                    operation.Sequence < current.Sequence))
+                throw new InvalidOperationException(
+                    "The reviewed migration operation is stale. Run the update review again.");
+            var authorization = ValidateReviewedOperationForReuse(
+                request,
+                source,
+                reviewed.Request,
+                reviewed.Source,
+                reviewed.Snapshot);
+            reviewed.ReusedByOperationId = current.Id;
+            return authorization;
+        }
+    }
+
+    internal static ReviewedUpdateArtifactAuthorization ValidateReviewedOperationForReuse(
+        UpdateInstallRequest request,
+        UpdateSource source,
+        UpdateInstallRequest reviewedRequest,
+        UpdateSource? reviewedSource,
+        UpdateOperationSnapshot reviewedSnapshot)
+    {
+        if (request.ReviewedOperationId is not { } reviewedOperationId ||
+            reviewedOperationId == Guid.Empty ||
+            reviewedOperationId == request.OperationId ||
+            !request.ConfirmedMigrationWarnings ||
+            request.DownloadOnly)
+            throw new InvalidOperationException(
+                "Verified download reuse requires an explicit confirmation of a different migration-review operation.");
+        if (reviewedSource is null ||
+            source.Provider != UpdateProvider.CurseForge ||
+            reviewedSource.Provider != UpdateProvider.CurseForge ||
+            source.Provider != reviewedSource.Provider ||
+            !source.ProjectId.Equals(reviewedSource.ProjectId, StringComparison.Ordinal))
+            throw new InvalidOperationException(
+                "The reviewed migration operation belongs to a different update provider or project.");
+        if (request.ServerId != reviewedRequest.ServerId ||
+            request.ServerId != source.ServerId ||
+            request.ServerId != reviewedSource.ServerId ||
+            reviewedRequest.OperationId != reviewedOperationId ||
+            reviewedRequest.DownloadOnly ||
+            reviewedRequest.ConfirmedMigrationWarnings ||
+            reviewedRequest.ReviewedOperationId is not null)
+            throw new InvalidOperationException(
+                "The reviewed migration operation belongs to a different server or is not an original review.");
+        if (!SameProviderTargetIdentity(request.TargetVersion, reviewedRequest.TargetVersion))
+            throw new InvalidOperationException(
+                "The reviewed migration operation belongs to a different target release.");
+        if (reviewedSnapshot is not
+            {
+                IsTerminal: true,
+                Success: false,
+                Progress.State: UpdateOperationState.PlanningMigration,
+                Result: { } result
+            } ||
+            reviewedSnapshot.OperationId != reviewedOperationId ||
+            result.OperationId != reviewedOperationId ||
+            result.ServerId != request.ServerId ||
+            !result.TargetVersionId.Equals(request.TargetVersion.VersionId, StringComparison.Ordinal) ||
+            !result.MigrationPlan.RequiresManualReview)
+            throw new InvalidOperationException(
+                "The referenced operation is not a terminal migration review for this server and release.");
+
+        return new ReviewedUpdateArtifactAuthorization(
+            reviewedOperationId,
+            request.ServerId,
+            source.Provider,
+            source.ProjectId,
+            request.TargetVersion.VersionId,
+            request.TargetVersion.ProviderFileId);
+    }
+
+    private static bool SameProviderTargetIdentity(PackVersionInfo current, PackVersionInfo reviewed) =>
+        current.PackId.Equals(reviewed.PackId, StringComparison.Ordinal) &&
+        current.VersionId.Equals(reviewed.VersionId, StringComparison.Ordinal) &&
+        current.ProviderFileId.Equals(reviewed.ProviderFileId, StringComparison.Ordinal) &&
+        current.PackageType.Equals(reviewed.PackageType, StringComparison.OrdinalIgnoreCase) &&
+        current.FileSize == reviewed.FileSize &&
+        current.Sha1.Equals(reviewed.Sha1, StringComparison.OrdinalIgnoreCase) &&
+        current.Sha256.Equals(reviewed.Sha256, StringComparison.OrdinalIgnoreCase) &&
+        current.Sha512.Equals(reviewed.Sha512, StringComparison.OrdinalIgnoreCase);
+
     private static int Priority(ServerUpdateStatus status) => status switch
     {
         ServerUpdateStatus.UpdateFailed => 0,
@@ -516,16 +624,18 @@ public sealed class ServerUpdateCoordinator
 
     private sealed class OperationState
     {
-        public OperationState(Guid id, Guid serverId)
+        public OperationState(UpdateInstallRequest request, long sequence)
         {
-            Id = id;
-            ServerId = serverId;
+            Id = request.OperationId;
+            ServerId = request.ServerId;
+            Request = request;
+            Sequence = sequence;
             Snapshot = new UpdateOperationSnapshot
             {
-                OperationId = id,
+                OperationId = Id,
                 Progress = new UpdateProgress
                 {
-                    OperationId = id,
+                    OperationId = Id,
                     State = UpdateOperationState.Planned,
                     CurrentStep = "Queued"
                 }
@@ -534,9 +644,13 @@ public sealed class ServerUpdateCoordinator
 
         public Guid Id { get; }
         public Guid ServerId { get; }
+        public long Sequence { get; }
+        public UpdateInstallRequest Request { get; }
         public object Gate { get; } = new();
         public CancellationTokenSource Cancellation { get; } = new();
         public Task? Task { get; set; }
+        public UpdateSource? Source { get; set; }
+        public Guid? ReusedByOperationId { get; set; }
         public UpdateOperationSnapshot Snapshot { get; set; }
     }
 

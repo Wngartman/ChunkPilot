@@ -222,6 +222,7 @@ silently promoted.
 | Priority | High (equal) |
 | Status | **In progress** |
 | Area | Create Server v2 / providers |
+| Defect | [CP-2026-045](BUG-REGISTER.md#cp-2026-045--modpack-discovery-performed-per-card-provider-work-and-leaked-browser-state-across-providers) |
 
 Modpacks are first-class. The creation experience needs official-API discovery for Modrinth and
 licensed CurseForge access, exact release history, compatibility evidence, official server packs, and
@@ -237,9 +238,20 @@ uses the hardened transaction to materialize server-only files plus the exact de
 NeoForge, Forge or Quilt loader. Exact provider identity persists and pack-level update/rollback uses
 the existing recovery architecture without independently updating constituent mods.
 
-The item remains **In progress**: provider linking for a local pack, period popularity history,
-runtime certification for representative public packs, and a complete conflict UI
-are not delivered. The beginner outcome is therefore not yet fully accepted.
+The discovery checkpoint replaces the old 20-card, per-card-enriched browser with shallow 50-card
+pages, true provider cursors and totals, a bounded 200-card session, virtualized rendering, near-end
+automatic pagination and an accessible **Load more** action. Search, filters, sort, loaded pages,
+selection and scroll position are kept separately for Modrinth and CurseForge; returning to a loaded
+provider is local, and selecting a card is the point at which exact release/server-path detail is
+resolved. Live packaged inspection showed Modrinth 50 of 12,631 and CurseForge 49, then 97, then 144
+accepted unique rows against its bounded 10,000 total. Exact SkyFactory 5 detail and its official
+server-pack relationship resolved without doing that work for every card.
+
+The item remains **In progress**: the first real preflight was cancelled by the former 15-second
+renderer timeout and its partial payload was deleted. Representative public-pack creation/start,
+generated-candidate disposition, real mod/dependency install/remove, provider-backed update/rollback,
+controlled recovery, provider linking for a local pack, period popularity history, and a complete
+conflict UI are not yet accepted. Browser evidence does not substitute for those runtime gates.
 
 ---
 

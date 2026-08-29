@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { Archive, Box, Check, CircleAlert, CircleHelp, CloudOff, Code2, File, Folder, FolderOpen, Globe2, History, MoreHorizontal, Play, RotateCw, Send, Server as ServerIcon, Settings, Share2, ShieldCheck, Square, Terminal, Trash2, Users, Wifi } from '../design-system/Icons';
-import type { ConnectivitySnapshot, ManagedContentOperation, MigrationResolutionChoice, PlayerEntry, PluginInstallPlan, PluginProject, PluginProviderStatus, PluginRelease, ServerDeletionMode, ServerDeletionPreflight, ServerHealthIssue, ServerSummary, TextFileContent, UpdateMigrationReview, UpdateSummary } from '../bridge/types';
+import type { ConnectivitySnapshot, ManagedContentOperation, MigrationResolutionChoice, PlayerEntry, PluginInstallPlan, PluginProject, PluginProviderStatus, PluginRelease, ServerDeletionMode, ServerDeletionPreflight, ServerHealthIssue, ServerSummary, TextFileContent, UpdateMigrationReview, UpdateSummary, VersionEntry } from '../bridge/types';
 import { Button, ConfirmDialog, Dialog, EmptyState, PanelTitle, SearchInput, SelectInput, Sparkline, StatusBadge, Switch, TextInput } from '../design-system/Primitives';
 import { ActionMenu } from '../design-system/ActionMenu';
 import { useAppStore } from '../state/store';
@@ -510,8 +510,8 @@ function FilesPage({ server }: { server: ServerSummary }) {
 function ContentPage({ server }: { server: ServerSummary }) {
   const kind = server.capabilities.content;
   if (kind === 'unsupported') return <section className={styles.panel}><div className={styles.unsupported}><CloudOff size={28} color="var(--cp-text-muted)" /><h2>Content management unavailable</h2><p>ChunkPilot has not confirmed a supported content model for this server. No catalog or installation state is being invented.</p></div></section>;
-  if (kind === 'plugins') return <AddonsPage server={server} kind="plugins" />;
-  if (kind === 'mods') return <AddonsPage server={server} kind="mods" />;
+  if (kind === 'plugins') return <AddonsPage key={`plugins-${server.id}`} server={server} kind="plugins" />;
+  if (kind === 'mods') return <AddonsPage key={`mods-${server.id}`} server={server} kind="mods" />;
   if (kind === 'modpack') return <ModpackPage server={server} />;
   const label = contentLabel(server);
   return <section className={styles.panel}><PanelTitle title={label} meta="Installed content" /><div className={styles.unsupported}><Box size={28} color="var(--cp-accent)" /><h2>No installed {label.toLowerCase()} reported</h2><p>This destination adapts to the server capability. Remote discovery is not shown because this build has no authoritative provider catalog connected to the WebUI.</p></div></section>;
@@ -602,6 +602,7 @@ function AddonsPage({ server, kind }: { server: ServerSummary; kind: 'plugins' |
   const [release, setRelease] = useState<PluginRelease | null>(null);
   const [installPlan, setInstallPlan] = useState<PluginInstallPlan | null>(null);
   const [browseError, setBrowseError] = useState('');
+  const [searching, setSearching] = useState(false);
   const [updates, setUpdates] = useState<PluginUpdateMatch[]>([]);
   const [updatesLoading, setUpdatesLoading] = useState(false);
   const [pending, setPending] = useState<{ kind: 'remove' | 'toggle'; path: string; name: string; enabled?: boolean } | null>(null);
@@ -628,6 +629,8 @@ function AddonsPage({ server, kind }: { server: ServerSummary; kind: 'plugins' |
   const canApply = stopped || running;
   const hasActiveContentOperation = contentOperations.some(operation => !operation.isTerminal);
   const hasActiveContentOperationRef = useRef(hasActiveContentOperation);
+  const browseGeneration = useRef(0);
+  const browseAbort = useRef<AbortController | null>(null);
   hasActiveContentOperationRef.current = hasActiveContentOperation;
   const operationBusy = [...busy].some(method => method.startsWith(`${kind}.`)) || hasActiveContentOperation;
   const updateIdentityKey = useMemo(() => snapshot.plugins
@@ -636,6 +639,22 @@ function AddonsPage({ server, kind }: { server: ServerSummary; kind: 'plugins' |
     .map(plugin => `${plugin.relativePath}|${plugin.providerProjectId}|${plugin.providerVersionId ?? ''}`)
     .sort()
     .join('\n'), [snapshot.plugins]);
+  const beginBrowseRequest = () => {
+    browseAbort.current?.abort();
+    const request = { generation: ++browseGeneration.current, controller: new AbortController() };
+    browseAbort.current = request.controller;
+    return request;
+  };
+  const cancelBrowseRequest = () => {
+    browseGeneration.current += 1;
+    browseAbort.current?.abort();
+    browseAbort.current = null;
+  };
+  useEffect(() => () => {
+    browseGeneration.current += 1;
+    browseAbort.current?.abort();
+    browseAbort.current = null;
+  }, [server.id]);
   useEffect(() => { void command<PluginProviderStatus[]>(methods.providers, { serverId: server.id }).then(setProviders).catch(() => undefined); }, [command, server.id, methods.providers]);
   useEffect(() => {
     let active = true;
@@ -682,20 +701,41 @@ function AddonsPage({ server, kind }: { server: ServerSummary; kind: 'plugins' |
   }, [section, server.id, updateIdentityKey, command, methods.release]);
   const search = () => {
     setBrowseError(''); setSelected(null); setRelease(null); setInstallPlan(null);
-    void command<PluginProject[]>(methods.search, { serverId: server.id, search: query, limit: 20, provider })
-      .then(setResults).catch(error => setBrowseError(error instanceof Error ? error.message : `${title} search is unavailable.`));
+    if (!bridge) { setBrowseError('The native catalog bridge is unavailable.'); return; }
+    const request = beginBrowseRequest();
+    setSearching(true);
+    void bridge.request<PluginProject[]>(methods.search, { serverId: server.id, search: query, limit: 20, provider }, request.controller.signal)
+      .then(next => {
+        if (browseGeneration.current === request.generation && !request.controller.signal.aborted) setResults(next);
+      }).catch(error => {
+        if (browseGeneration.current === request.generation && !request.controller.signal.aborted)
+          setBrowseError(error instanceof Error ? error.message : `${title} search is unavailable.`);
+      }).finally(() => {
+        if (browseGeneration.current === request.generation && !request.controller.signal.aborted) setSearching(false);
+      });
   };
   const choose = (project: PluginProject) => {
     setSelected(project); setRelease(null); setInstallPlan(null); setBrowseError('');
-    void command<PluginRelease | null>(methods.release, { serverId: server.id, projectId: project.projectId, provider: project.provider })
+    if (!bridge) { setBrowseError('The native catalog bridge is unavailable.'); return; }
+    const request = beginBrowseRequest();
+    setSearching(false);
+    void bridge.request<PluginRelease | null>(methods.release, { serverId: server.id, projectId: project.projectId, provider: project.provider }, request.controller.signal)
       .then(resolved => {
+        if (browseGeneration.current !== request.generation || request.controller.signal.aborted) return;
         setRelease(resolved);
         if (resolved)
-          void command<PluginInstallPlan>(methods.plan, {
+          void bridge.request<PluginInstallPlan>(methods.plan, {
             serverId: server.id, projectId: resolved.projectId, versionId: resolved.versionId, provider: resolved.provider
-          }).then(setInstallPlan).catch(error => setBrowseError(
-            error instanceof Error ? error.message : 'The dependency plan could not be resolved.'));
-      }).catch(error => setBrowseError(error instanceof Error ? error.message : 'No compatible release could be resolved.'));
+          }, request.controller.signal).then(plan => {
+            if (browseGeneration.current === request.generation && !request.controller.signal.aborted) setInstallPlan(plan);
+          }).catch(error => {
+            if (browseGeneration.current === request.generation && !request.controller.signal.aborted)
+              setBrowseError(error instanceof Error ? error.message : 'The dependency plan could not be resolved.');
+          });
+      }).catch(error => {
+        if (browseGeneration.current === request.generation && !request.controller.signal.aborted)
+          setBrowseError(error instanceof Error ? error.message : 'No compatible release could be resolved.');
+      });
   };
   const chooseLocal = () => {
     void command<LocalPluginSelection>(methods.chooseLocal, { serverId: server.id }).then(selection => {
@@ -806,8 +846,8 @@ function AddonsPage({ server, kind }: { server: ServerSummary; kind: 'plugins' |
       {!canApply && <div className={styles.contextNote}>Wait for the current server operation to finish before changing {kind}. Browsing remains available.</div>}
       {section === 'installed' && (snapshot.plugins.length ? <table className={`${styles.table} ${pluginStyles.pluginResponsiveTable} ${pluginStyles.pluginInstalledTable}`}><thead><tr><th>{isMod ? 'Mod' : 'Plugin'}</th><th>Version</th><th>JAR state</th><th>Load health</th><th>Compatibility</th><th /></tr></thead><tbody>{snapshot.plugins.map(plugin => <tr key={plugin.relativePath}><td><strong>{plugin.name}</strong><small className={styles.cellMeta}>{plugin.fileName} · {bytes(plugin.sizeBytes)}</small></td><td>{plugin.version}</td><td><StatusBadge tone={plugin.enabled ? 'success' : 'neutral'}>{plugin.enabled ? 'Active' : 'Disabled'}</StatusBadge></td><td><StatusBadge tone={plugin.loadState === 'Failed' ? 'danger' : plugin.loadState === 'Loaded' ? 'success' : plugin.loadState === 'Pending' ? 'info' : 'neutral'} title={plugin.loadEvidence}>{plugin.loadState}</StatusBadge></td><td><StatusBadge tone={plugin.compatibility === 'Incompatible' ? 'danger' : plugin.compatibility === 'Unknown' ? 'warning' : 'success'}>{plugin.compatibility}</StatusBadge></td><td><div className={styles.tableActions}><Button variant="subtle" onClick={() => setConfigPlugin(plugin)}>Configure</Button><Button variant="subtle" disabled={!canApply || operationBusy} onClick={() => setPending({ kind: 'toggle', path: plugin.relativePath, name: plugin.name, enabled: !plugin.enabled })}>{plugin.enabled ? 'Disable' : 'Enable'}</Button><Button variant="subtle" disabled={!canApply || operationBusy} onClick={() => setPending({ kind: 'remove', path: plugin.relativePath, name: plugin.name })}>Remove</Button></div></td></tr>)}</tbody></table> : <EmptyState title={`No ${singular} JARs found`} detail={`Install a local JAR or browse compatible releases from an official provider. ChunkPilot inspects metadata without executing ${singular} code.`} />)}
       {section === 'browse' && <div className={pluginStyles.pluginBrowser}>
-        {isMod && <div className={pluginStyles.providerStrip} role="tablist" aria-label="Mod provider">{(['Modrinth', 'CurseForge'] as const).map(option => { const status = providers.find(item => item.provider === option); return <button key={option} type="button" role="tab" aria-selected={provider === option} data-selected={provider === option} disabled={status?.available === false} title={status?.detail} onClick={() => { setProvider(option); setResults([]); setSelected(null); setRelease(null); setBrowseError(''); }}>{option}</button>; })}</div>}
-        <div className={pluginStyles.pluginSearch}><SearchInput value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') search(); }} placeholder={`Search official ${provider} ${kind}`} aria-label={`Search official ${provider} ${kind}`} /><Button variant="primary" disabled={busy.has(methods.search) || providers.find(item => item.provider === provider)?.available === false} onClick={search}>{busy.has(methods.search) ? 'Searching…' : 'Search'}</Button></div>
+        {isMod && <div className={pluginStyles.providerStrip} role="tablist" aria-label="Mod provider">{(['Modrinth', 'CurseForge'] as const).map(option => { const status = providers.find(item => item.provider === option); return <button key={option} type="button" role="tab" aria-selected={provider === option} data-selected={provider === option} disabled={status?.available === false} title={status?.detail} onClick={() => { cancelBrowseRequest(); setSearching(false); setProvider(option); setResults([]); setSelected(null); setRelease(null); setInstallPlan(null); setBrowseError(''); }}>{option}</button>; })}</div>}
+        <div className={pluginStyles.pluginSearch}><SearchInput value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') search(); }} placeholder={`Search official ${provider} ${kind}`} aria-label={`Search official ${provider} ${kind}`} /><Button variant="primary" disabled={searching || providers.find(item => item.provider === provider)?.available === false} onClick={search}>{searching ? 'Searching…' : 'Search'}</Button></div>
         <div className={pluginStyles.providerStrip}>{providers.map(provider => <span key={provider.provider}><StatusBadge tone={provider.available ? 'success' : 'neutral'}>{provider.provider}</StatusBadge>{provider.detail}</span>)}</div>
         {browseError && <div className={styles.contextNote}>{browseError}</div>}
         <div className={pluginStyles.pluginResults}>{results.length ? results.map(project => { const state = projectState(project.projectId); return <button key={`${project.provider}-${project.projectId}`} data-selected={selected?.projectId === project.projectId && selected.provider === project.provider} aria-pressed={selected?.projectId === project.projectId && selected.provider === project.provider} onClick={() => choose(project)}><span className={pluginStyles.pluginMonogram} aria-hidden="true">{project.name.slice(0, 2).toUpperCase()}</span><span><span className={pluginStyles.pluginProjectTitle}><strong>{project.name}</strong>{state && <StatusBadge tone={state.tone}>{state.label}</StatusBadge>}</span><small>{project.provider} · {project.author} · {project.downloads == null ? 'Downloads unavailable' : `${project.downloads.toLocaleString()} downloads`}{isMod ? ` · ${clientRequirementLabel(project.clientRequirement)}` : ''}</small><p>{project.summary}</p></span></button>; }) : <EmptyState title={`Search the official ${provider} catalog`} detail={`Results are filtered to exact Minecraft ${server.minecraftVersion} and ${server.ecosystem}. Unknown dedicated-server compatibility remains clearly marked for staged review.`} />}</div>
@@ -837,19 +877,33 @@ function VersionsPage({ server }: { server: ServerSummary }) {
   const snapshot = useAppStore(state => state.snapshot)!;
   const command = useAppStore(state => state.command);
   const [showInstall, setShowInstall] = useState(false);
+  const [showMarkHealthy, setShowMarkHealthy] = useState(false);
+  const [rollbackTarget, setRollbackTarget] = useState<{ serverId: string; version: VersionEntry } | null>(null);
   const [dismissedReviewId, setDismissedReviewId] = useState<string | null>(null);
+  const markHealthyRequest = useRef<AbortController | null>(null);
   const busy = useAppStore(state => state.busy);
   const update = snapshot.update;
+  const pendingValidation = update?.pendingValidation?.serverId === server.id
+    ? update.pendingValidation
+    : null;
   const isPaper = server.capabilities.versioning === 'paper';
   const loaderPlatform = server.capabilities.versioning === 'fabric' ? 'Fabric' :
     server.capabilities.versioning === 'quilt' ? 'Quilt' :
       server.capabilities.versioning === 'forge' ? 'Forge' :
         server.capabilities.versioning === 'neoforge' ? 'NeoForge' : null;
+  useEffect(() => {
+    setShowMarkHealthy(false);
+    return () => {
+      markHealthyRequest.current?.abort();
+      markHealthyRequest.current = null;
+    };
+  }, [server.id]);
   const isLoader = loaderPlatform !== null;
   const [catalog, setCatalog] = useState<MinecraftVersionCatalog | null>(null);
   const [paperBuilds, setPaperBuilds] = useState<PaperBuildEvidenceCatalog | null>(null);
   const [loaderBuilds, setLoaderBuilds] = useState<LoaderBuildEvidenceCatalog | null>(null);
   const [catalogError, setCatalogError] = useState('');
+  useEffect(() => setRollbackTarget(null), [server.id]);
   useEffect(() => {
     let active = true;
     const applyCatalog = (result: MinecraftVersionCatalog) => { if (active) setCatalog(result); };
@@ -882,7 +936,7 @@ function VersionsPage({ server }: { server: ServerSummary }) {
       .catch(error => { if (active) setCatalogError(error instanceof Error ? error.message : `${loaderPlatform} inventory unavailable.`); });
     return () => { active = false; };
   }, [command, loaderPlatform, server.minecraftVersion]);
-  const versionBusy = ['versions.check', 'versions.install', 'versions.rollback', 'versions.verify', 'versions.cancel'].some(method => busy.has(method));
+  const versionBusy = ['versions.check', 'versions.install', 'versions.markHealthy', 'versions.rollback', 'versions.verify', 'versions.cancel'].some(method => busy.has(method));
   const installedEvidence = catalog?.versions.find(version => version.id === server.minecraftVersion) ?? null;
   const latestStable = catalog?.versions.find(version => version.id === catalog.manifestLatestReleaseId) ?? null;
   const buildNumber = Number(server.loaderVersion);
@@ -923,9 +977,14 @@ function VersionsPage({ server }: { server: ServerSummary }) {
         <div><StatusBadge tone={update.canInstall ? 'warning' : update.sourceLinked ? 'success' : 'neutral'}>{update.status}</StatusBadge><strong>{update.detail}</strong><span>{update.checkedAt ? `Last checked ${new Date(update.checkedAt).toLocaleString()}` : update.sourceLinked ? 'Not checked yet' : 'No authoritative update source is linked.'}</span></div>
         {update.operationPercent != null && <div className={styles.updateProgress} aria-label={`Update progress ${update.operationPercent.toFixed(0)} percent`}><i><b style={{ width: `${Math.max(0, Math.min(100, update.operationPercent))}%` }} /></i><span>{update.operationStep || update.operationState} · {update.operationPercent.toFixed(0)}%</span>{update.operationDetail && update.operationDetail !== update.operationStep && <small>{update.operationDetail}</small>}</div>}
       </div>}
+      {pendingValidation && <div className={styles.catalogPolicy}>
+        <div><span>Validation needed</span><strong>{pendingValidation.versionName}</strong></div>
+        <p>Confirm this update only after the server starts, answers a local status check, and you have joined or otherwise verified the gameplay you care about. The previous rollback snapshot will remain retained for 30 days.</p>
+        <Button icon={<Check size={14} />} variant="primary" disabled={versionBusy} onClick={() => setShowMarkHealthy(true)}>{busy.has('versions.markHealthy') ? 'Saving validation…' : 'Mark update healthy'}</Button>
+      </div>}
       {update && <UpdateInstallDialog open={showInstall} onClose={() => setShowInstall(false)} server={server} update={update} />}
       {update?.migrationReview && <MigrationReviewDialog key={update.migrationReview.reviewOperationId} open={dismissedReviewId !== update.migrationReview.reviewOperationId} onClose={() => setDismissedReviewId(update.migrationReview!.reviewOperationId)} server={server} review={update.migrationReview} />}
-      {snapshot.versions.length ? <table className={styles.table}><thead><tr><th>Version</th><th>Platform</th><th>Installed</th><th>Snapshot</th><th>Status</th><th /></tr></thead><tbody>{snapshot.versions.map(version => <tr key={version.id}><td><strong>{version.version}</strong><small className={styles.cellMeta}>{version.health}</small></td><td>{version.platform}</td><td>{version.installedAt ? new Date(version.installedAt).toLocaleDateString() : 'Unavailable'}</td><td>{version.snapshotSizeBytes > 0 ? bytes(version.snapshotSizeBytes) : version.active ? 'Active files' : 'Unavailable'}{version.includesWorldData && <small className={styles.cellMeta}>World data included</small>}</td><td><StatusBadge tone={version.active ? 'success' : version.rollbackReady ? 'info' : version.verified ? 'neutral' : 'warning'}>{version.active ? 'Active' : version.rollbackReady ? 'Rollback ready' : version.verified ? 'Verified' : 'Unverified'}</StatusBadge></td><td><div className={styles.tableActions}><Button disabled={versionBusy} variant="subtle" onClick={() => void command('versions.verify', { serverId: server.id, versionId: version.id })}>Verify</Button>{version.rollbackReady && <Button disabled={versionBusy} variant="subtle" onClick={() => void command('versions.rollback', { serverId: server.id, versionId: version.id })}>Roll back</Button>}</div></td></tr>)}</tbody></table> : <EmptyState title="No rollback snapshots recorded" detail="The current installed version is shown above. ChunkPilot will list verified version snapshots here after an update or rollback creates them." />}
+      {snapshot.versions.length ? <table className={styles.table}><thead><tr><th>Version</th><th>Platform</th><th>Installed</th><th>Snapshot</th><th>Status</th><th /></tr></thead><tbody>{snapshot.versions.map(version => <tr key={version.id}><td><strong>{version.version}</strong><small className={styles.cellMeta}>{version.health}</small></td><td>{version.platform}</td><td>{version.installedAt ? new Date(version.installedAt).toLocaleDateString() : 'Unavailable'}</td><td>{version.snapshotSizeBytes > 0 ? bytes(version.snapshotSizeBytes) : version.active ? 'Active files' : 'Unavailable'}{version.includesWorldData && <small className={styles.cellMeta}>World data included</small>}</td><td><StatusBadge tone={version.active ? 'success' : version.rollbackReady ? 'info' : version.verified ? 'neutral' : 'warning'}>{version.active ? 'Active' : version.rollbackReady ? 'Rollback ready' : version.verified ? 'Verified' : 'Unverified'}</StatusBadge></td><td><div className={styles.tableActions}><Button disabled={versionBusy} variant="subtle" onClick={() => void command('versions.verify', { serverId: server.id, versionId: version.id })}>Verify</Button>{version.rollbackReady && <Button disabled={versionBusy} variant="subtle" onClick={() => setRollbackTarget({ serverId: server.id, version })}>Roll back</Button>}</div></td></tr>)}</tbody></table> : <EmptyState title="No rollback snapshots recorded" detail="The current installed version is shown above. ChunkPilot will list verified version snapshots here after an update or rollback creates them." />}
     </section>
     <section className={styles.versionEvidence}>
       <header><div><strong>{isPaper ? 'Installed Paper evidence' : isLoader ? `Installed ${loaderPlatform} evidence` : 'Installed-version evidence'}</strong><p>Support is based on official metadata, artifact integrity, Java requirements, and exact runtime evidence—not age alone.</p></div><StatusBadge tone={(isPaper ? installedPaperBuild?.selectable : isLoader ? installedLoaderBuild?.selectable : installedEvidence?.selectable) ? 'success' : 'neutral'}>{isPaper ? installedPaperBuild?.support ?? 'Unavailable' : isLoader ? installedLoaderBuild?.support ?? 'Unavailable' : installedEvidence?.support ?? 'Unavailable'}</StatusBadge></header>
@@ -942,6 +1001,47 @@ function VersionsPage({ server }: { server: ServerSummary }) {
           : <EmptyState title={`Minecraft ${server.minecraftVersion} is not in the current inventory`} detail={catalogError || catalog?.message || 'Refresh the official catalog to resolve this installed version.'} />}
     </section>
     {catalog && <details className={styles.inventory}><summary>Browse the complete official {isPaper ? 'PaperMC' : loaderPlatform ?? 'Minecraft'} inventory ({catalog.versions.length.toLocaleString()} versions)</summary><div><VersionBrowser catalog={catalog} value={server.minecraftVersion} readonly compact />{isLoader && loaderBuilds && <div className={styles.catalogPolicy}><div><span>Exact builds for {server.minecraftVersion}</span><strong>{loaderBuilds.builds.length.toLocaleString()}</strong></div><div><span>Installed</span><strong>{server.loaderVersion || 'Unavailable'}</strong></div><p>{loaderBuilds.stale ? 'Showing the last-known-good offline cache. ' : ''}Only builds bound to this exact Minecraft version are shown.</p></div>}</div></details>}
+    <ConfirmDialog
+      open={showMarkHealthy && pendingValidation !== null}
+      title={`Mark ${pendingValidation?.versionName ?? 'this update'} healthy?`}
+      detail={`Confirm that ${server.name} is working correctly on this exact updated version. ChunkPilot will keep the previous rollback snapshot for 30 days.`}
+      confirmLabel="Mark update healthy"
+      onCancel={() => setShowMarkHealthy(false)}
+      onConfirm={() => {
+        if (!pendingValidation) return;
+        setShowMarkHealthy(false);
+        markHealthyRequest.current?.abort();
+        const controller = new AbortController();
+        markHealthyRequest.current = controller;
+        void command('versions.markHealthy', {
+          serverId: pendingValidation.serverId,
+          versionId: pendingValidation.versionId,
+          confirmed: true
+        }, controller.signal).catch(() => undefined).finally(() => {
+          if (markHealthyRequest.current === controller) markHealthyRequest.current = null;
+        });
+      }}
+    />
+    <ConfirmDialog
+      open={rollbackTarget !== null}
+      title={`Roll back to ${rollbackTarget?.version.version ?? 'this version'}?`}
+      detail={rollbackTarget
+        ? `Activate the verified ${rollbackTarget.version.version} snapshot for ${server.name}? ChunkPilot will warn players, save and stop a running server, preserve the current installation in a safety snapshot, restore this target, and restart the server only if it was running.`
+        : ''}
+      confirmLabel="Roll back server version"
+      destructive
+      onCancel={() => setRollbackTarget(null)}
+      onConfirm={() => {
+        if (!rollbackTarget) return;
+        const target = rollbackTarget;
+        setRollbackTarget(null);
+        void command('versions.rollback', {
+          serverId: target.serverId,
+          versionId: target.version.id,
+          confirmed: true
+        });
+      }}
+    />
   </div>;
 }
 

@@ -15,14 +15,19 @@ public sealed class CurseForgeProviderTests
     private const string Cdn = "https://mediafilez.forgecdn.net/files/222/fixture-server.zip";
 
     [Fact]
-    public async Task Search_preserves_client_and_official_server_file_identity_with_exact_filters_and_pagination()
+    public async Task Search_is_shallow_and_exact_resolution_preserves_client_and_server_file_identity()
     {
-        var handler = new Handler(request => request.RequestUri!.AbsolutePath.EndsWith("/files/222", StringComparison.Ordinal)
-            ? Json(ServerFile(222, 123, Cdn, "fixture-server.zip"))
-            : Json(SearchProject()));
+        var handler = new Handler(request => request.RequestUri!.AbsolutePath switch
+        {
+            "/v1/mods/search" => Json(SearchProject()),
+            "/v1/mods/123" => Json(ProjectObject()),
+            "/v1/mods/123/files/111" => Json(ClientFile(111, 123, 222)),
+            "/v1/mods/123/files/222" => Json(ServerFile(222, 123, Cdn, "fixture-server.zip")),
+            _ => throw new InvalidOperationException(request.RequestUri.ToString())
+        });
         using var provider = Provider(handler);
 
-        var item = Assert.Single(await provider.BrowseAsync(new CatalogQuery
+        var page = await provider.BrowsePageAsync(new CatalogQuery
         {
             Provider = CatalogProvider.CurseForge,
             Search = "fixture",
@@ -30,8 +35,18 @@ public sealed class CurseForgeProviderTests
             Loader = "NeoForge",
             Index = 50,
             Limit = 20
-        }));
+        });
 
+        var summary = Assert.Single(page.Items);
+        Assert.False(summary.ServerPathChecked);
+        Assert.Empty(summary.Versions);
+        Assert.Equal(1, handler.Count);
+        Assert.DoesNotContain(handler.Uris, uri => uri.AbsolutePath.Contains("/files/", StringComparison.Ordinal));
+
+        var item = await provider.ResolveProjectAsync("123", "111");
+
+        Assert.NotNull(item);
+        Assert.True(item.ServerPathChecked);
         var release = Assert.Single(item.Versions);
         Assert.Equal("111", release.VersionId);
         Assert.Equal("111", release.ClientFileId);
@@ -47,18 +62,18 @@ public sealed class CurseForgeProviderTests
     [Fact]
     public async Task CurseForge_file_game_versions_establish_loader_family_but_not_an_exact_loader_version()
     {
-        var handler = new Handler(request => request.RequestUri!.AbsolutePath.EndsWith("/files/222", StringComparison.Ordinal)
-            ? Json(ServerFile(222, 123, Cdn, "fixture-server.zip"))
-            : Json(SearchProject()));
+        var handler = new Handler(request => request.RequestUri!.AbsolutePath switch
+        {
+            "/v1/mods/123" => Json(ProjectObject()),
+            "/v1/mods/123/files/111" => Json(ClientFile(111, 123, 222)),
+            "/v1/mods/123/files/222" => Json(ServerFile(222, 123, Cdn, "fixture-server.zip")),
+            _ => throw new InvalidOperationException(request.RequestUri.ToString())
+        });
         using var provider = Provider(handler);
 
-        var item = Assert.Single(await provider.BrowseAsync(new CatalogQuery
-        {
-            Provider = CatalogProvider.CurseForge,
-            MinecraftVersion = "1.21.1",
-            Loader = "NeoForge"
-        }));
+        var item = await provider.ResolveProjectAsync("123", "111");
 
+        Assert.NotNull(item);
         var release = Assert.Single(item.Versions);
         Assert.Equal("NeoForge", release.Loader);
         Assert.Empty(release.LoaderVersion);
@@ -93,17 +108,16 @@ public sealed class CurseForgeProviderTests
     [Fact]
     public async Task Contradictory_server_pack_relationship_is_blocked()
     {
-        var handler = new Handler(request => request.RequestUri!.AbsolutePath.EndsWith("/files/222", StringComparison.Ordinal)
-            ? Json(ServerFile(222, 999, Cdn, "fixture-server.zip"))
-            : Json(SearchProject()));
+        var handler = new Handler(request => request.RequestUri!.AbsolutePath switch
+        {
+            "/v1/mods/123" => Json(ProjectObject()),
+            "/v1/mods/123/files/111" => Json(ClientFile(111, 123, 222)),
+            "/v1/mods/123/files/222" => Json(ServerFile(222, 999, Cdn, "fixture-server.zip")),
+            _ => throw new InvalidOperationException(request.RequestUri.ToString())
+        });
         using var provider = Provider(handler);
 
-        await Assert.ThrowsAsync<InvalidDataException>(() => provider.BrowseAsync(new CatalogQuery
-        {
-            Provider = CatalogProvider.CurseForge,
-            MinecraftVersion = "1.21.1",
-            Loader = "NeoForge"
-        }));
+        await Assert.ThrowsAsync<InvalidDataException>(() => provider.ResolveProjectAsync("123", "111"));
     }
 
     [Theory]
@@ -142,7 +156,7 @@ public sealed class CurseForgeProviderTests
     [InlineData("false")]
     [InlineData("null")]
     [InlineData("missing")]
-    public async Task File_availability_must_be_explicit_true(string state)
+    public async Task Search_summary_does_not_inspect_per_file_availability(string state)
     {
         var response = JsonNode.Parse(SearchProject())!.AsObject();
         var file = response["data"]!.AsArray()[0]!["latestFiles"]!.AsArray()[0]!.AsObject();
@@ -155,6 +169,7 @@ public sealed class CurseForgeProviderTests
             new CatalogQuery { Provider = CatalogProvider.CurseForge }));
 
         Assert.Empty(item.Versions);
+        Assert.False(item.ServerPathChecked);
         Assert.Equal(1, handler.Count);
     }
 
@@ -225,6 +240,76 @@ public sealed class CurseForgeProviderTests
         Assert.Single(page.Items);
         Assert.Equal(2, page.NextIndex);
         Assert.True(page.HasMore);
+        Assert.Equal(4, page.TotalCount);
+        Assert.Equal(1, handler.Count);
+
+        var root = Path.Combine(Path.GetTempPath(), "ChunkPilot-cf-pagination-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var service = new GuidedCatalogService(new AppDataPaths(root), [provider]);
+            var result = await service.BrowseDetailedAsync(new CatalogQuery
+            {
+                Provider = CatalogProvider.CurseForge,
+                Limit = 2
+            });
+            Assert.Equal(2, result.NextIndex);
+            Assert.True(result.HasMore);
+            Assert.Equal(4, result.TotalCount);
+            Assert.Single(result.Items);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Pagination_advances_three_raw_pages_without_duplicates_or_file_requests()
+    {
+        var handler = new Handler(request =>
+        {
+            Assert.Equal("/v1/mods/search", request.RequestUri!.AbsolutePath);
+            var index = int.Parse(request.RequestUri.Query.TrimStart('?').Split('&')
+                .Select(part => part.Split('=', 2))
+                .Single(part => part[0].Equals("index", StringComparison.Ordinal))[1]);
+            var data = Enumerable.Range(index, 50).Select(value => new
+            {
+                id = 10_000 + value,
+                slug = $"pack-{value}",
+                name = $"Pack {value:D3}",
+                summary = "Fixture pack",
+                isAvailable = true,
+                allowModDistribution = true,
+                authors = new[] { new { name = "Fixture" } },
+                categories = Array.Empty<object>(),
+                downloadCount = 150 - value,
+                dateModified = "2026-08-01T00:00:00Z"
+            });
+            return Json(JsonSerializer.Serialize(new
+            {
+                data,
+                pagination = new { index, pageSize = 50, resultCount = 50, totalCount = 150 }
+            }));
+        });
+        using var provider = Provider(handler);
+        var query = new CatalogQuery { Provider = CatalogProvider.CurseForge, Limit = 50 };
+        var ids = new HashSet<string>(StringComparer.Ordinal);
+
+        for (var index = 0; index < 150;)
+        {
+            var page = await provider.BrowsePageAsync(query with { Index = index });
+            Assert.Equal(150, page.TotalCount);
+            Assert.Equal(index < 100, page.HasMore);
+            Assert.Equal(50, page.Items.Count);
+            Assert.All(page.Items, item => Assert.False(item.ServerPathChecked));
+            foreach (var item in page.Items) Assert.True(ids.Add(item.ProjectId));
+            index = page.NextIndex;
+        }
+
+        Assert.Equal(150, ids.Count);
+        Assert.Equal(3, handler.Count);
+        Assert.DoesNotContain(handler.Uris, uri => uri.AbsolutePath.Contains("/files", StringComparison.Ordinal));
     }
 
     [Fact]

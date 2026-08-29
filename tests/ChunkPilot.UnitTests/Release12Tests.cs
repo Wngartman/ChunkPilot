@@ -132,29 +132,50 @@ public sealed class Release12Tests : IDisposable
     }
 
     [Fact]
-    public async Task Modrinth_catalog_exposes_only_trusted_exact_mrpack_releases_for_review()
+    public async Task Modrinth_search_is_shallow_paginated_and_exact_resolution_keeps_trusted_mrpack_identity()
     {
-        var handler = new StubHandler(request => request.RequestUri!.AbsolutePath.EndsWith("/search", StringComparison.Ordinal)
-            ? Json("""
-                {"hits":[{"project_id":"pack-project","slug":"pack-project","title":"Pack Project","author":"Fixture","description":"A server-capable pack.","icon_url":"https://cdn.modrinth.com/data/pack-project/icon.png","downloads":42,"date_modified":"2026-08-19T12:00:00Z","server_side":"required","categories":["fabric"]}]}
-                """)
-            : Json("""
+        var handler = new StubHandler(request => request.RequestUri!.AbsolutePath switch
+        {
+            "/v2/search" => Json("""
+                {"total_hits":151,"hits":[{"project_id":"pack-project","slug":"pack-project","title":"Pack Project","author":"Fixture","description":"A server-capable pack.","icon_url":"https://cdn.modrinth.com/data/pack-project/icon.png","downloads":42,"date_modified":"2026-08-19T12:00:00Z","server_side":"required","categories":["fabric"]}]}
+                """),
+            "/v2/project/pack-project" => Json("""
+                {"id":"pack-project","slug":"pack-project","title":"Pack Project","description":"A server-capable pack.","icon_url":"https://cdn.modrinth.com/data/pack-project/icon.png","downloads":42,"updated":"2026-08-19T12:00:00Z","server_side":"required","categories":["fabric"]}
+                """),
+            "/v2/project/pack-project/version" => Json("""
                 [{"id":"release-id","name":"Release 1","version_type":"release","date_published":"2026-08-19T12:00:00Z","game_versions":["1.21.1"],"loaders":["fabric"],"changelog":"Verified fixture metadata.","files":[
                   {"primary":true,"filename":"release.mrpack","url":"https://cdn.modrinth.com/data/pack-project/versions/release-id/release.mrpack","size":1234,"hashes":{"sha1":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","sha512":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}},
                   {"primary":false,"filename":"unsafe.mrpack","url":"https://example.invalid/unsafe.mrpack","size":20,"hashes":{"sha1":"bad","sha512":"bad"}}
                 ]}]
-                """));
+                """),
+            _ => throw new InvalidOperationException(request.RequestUri.ToString())
+        });
         var provider = new ModrinthCatalogProvider(new HttpClient(handler));
 
-        var item = Assert.Single(await provider.BrowseAsync(new CatalogQuery
+        var page = await provider.BrowsePageAsync(new CatalogQuery
         {
             Search = "pack",
             MinecraftVersion = "1.21.1",
             Loader = "fabric",
-            Limit = 20,
+            Index = 100,
+            Limit = 50,
             Sort = CatalogSort.Downloads
-        }));
+        });
 
+        var summary = Assert.Single(page.Items);
+        Assert.False(summary.ServerPathChecked);
+        Assert.Empty(summary.Versions);
+        Assert.Equal(101, page.NextIndex);
+        Assert.True(page.HasMore);
+        Assert.Equal(151, page.TotalCount);
+        Assert.Equal(1, handler.RequestCount);
+        Assert.Contains(handler.Uris, uri => uri.Query.Contains("limit=50", StringComparison.Ordinal) &&
+                                             uri.Query.Contains("offset=100", StringComparison.Ordinal));
+
+        var item = await provider.ResolveProjectAsync("pack-project", "release-id");
+
+        Assert.NotNull(item);
+        Assert.True(item.ServerPathChecked);
         Assert.Equal(InstallationSupportState.AutomatedWithReview, item.InstallationSupport);
         var release = Assert.Single(item.Versions);
         Assert.True(release.HasServerPackage);
@@ -165,23 +186,92 @@ public sealed class Release12Tests : IDisposable
     }
 
     [Fact]
+    public async Task Modrinth_empty_provider_page_stops_instead_of_repeating_the_same_cursor()
+    {
+        var handler = new StubHandler(_ => Json("""
+            {"total_hits":151,"hits":[]}
+            """));
+        var provider = new ModrinthCatalogProvider(new HttpClient(handler));
+
+        var page = await provider.BrowsePageAsync(new CatalogQuery
+        {
+            Search = "pack",
+            Index = 100,
+            Limit = 50,
+            Sort = CatalogSort.Downloads
+        });
+
+        Assert.Empty(page.Items);
+        Assert.Equal(100, page.NextIndex);
+        Assert.False(page.HasMore);
+        Assert.Equal(151, page.TotalCount);
+        Assert.Equal(1, handler.RequestCount);
+    }
+
+    [Fact]
     public async Task Modrinth_catalog_preserves_the_exact_requested_beta_version_when_it_is_not_first()
     {
-        var handler = new StubHandler(request => request.RequestUri!.AbsolutePath.EndsWith("/search", StringComparison.Ordinal)
-            ? Json("""
-                {"hits":[{"project_id":"beta-pack","slug":"beta-pack","title":"Beta Pack","author":"Fixture","description":"Historical pack.","downloads":3,"date_modified":"2026-08-19T12:00:00Z","server_side":"required","categories":["fabric"]}]}
-                """)
-            : Json("""
+        var handler = new StubHandler(request => request.RequestUri!.AbsolutePath switch
+        {
+            "/v2/project/beta-pack" => Json("""
+                {"id":"beta-pack","slug":"beta-pack","title":"Beta Pack","description":"Historical pack.","downloads":3,"updated":"2026-08-19T12:00:00Z","server_side":"required","categories":["fabric"]}
+                """),
+            "/v2/project/beta-pack/version" => Json("""
                 [{"id":"beta-release","name":"Beta release","version_type":"release","date_published":"2026-08-19T12:00:00Z","game_versions":["1.20.1","b1.8.1"],"loaders":["forge","fabric"],"files":[{"primary":true,"filename":"beta.mrpack","url":"https://cdn.modrinth.com/data/beta-pack/versions/beta-release/beta.mrpack","size":1234,"hashes":{"sha1":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","sha512":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}]}]
-                """));
+                """),
+            _ => throw new InvalidOperationException(request.RequestUri.ToString())
+        });
 
         var item = Assert.Single(await new ModrinthCatalogProvider(new HttpClient(handler)).BrowseAsync(
-            new CatalogQuery { Search = "beta", MinecraftVersion = "b1.8.1", Loader = "fabric" }));
+            new CatalogQuery
+            {
+                Search = "https://modrinth.com/modpack/beta-pack",
+                MinecraftVersion = "b1.8.1",
+                Loader = "fabric"
+            }));
         var release = Assert.Single(item.Versions);
 
         Assert.Equal("b1.8.1", release.MinecraftVersion);
         Assert.Equal("fabric", release.Loader);
         Assert.Equal(8, release.RequiredJavaMajor);
+    }
+
+    [Fact]
+    public async Task Modrinth_catalog_advances_three_provider_pages_without_duplicates_or_detail_requests()
+    {
+        var handler = new StubHandler(request =>
+        {
+            Assert.Equal("/v2/search", request.RequestUri!.AbsolutePath);
+            var offset = int.Parse(request.RequestUri.Query.TrimStart('?').Split('&')
+                .Select(part => part.Split('=', 2))
+                .Single(part => part[0].Equals("offset", StringComparison.Ordinal))[1]);
+            var hits = Enumerable.Range(offset, 50).Select(index => new
+            {
+                project_id = $"project-{index}", slug = $"project-{index}", title = $"Project {index:D3}",
+                author = "Fixture", description = "Server pack", downloads = 150 - index,
+                date_modified = "2026-08-19T12:00:00Z", server_side = "required",
+                categories = Array.Empty<string>()
+            });
+            return Json(JsonSerializer.Serialize(new { total_hits = 150, hits }));
+        });
+        var provider = new ModrinthCatalogProvider(new HttpClient(handler));
+        var query = new CatalogQuery { Search = "pack", Limit = 50, Sort = CatalogSort.Downloads };
+        var ids = new HashSet<string>(StringComparer.Ordinal);
+
+        for (var index = 0; index < 150;)
+        {
+            var page = await provider.BrowsePageAsync(query with { Index = index });
+            Assert.Equal(150, page.TotalCount);
+            Assert.Equal(index < 100, page.HasMore);
+            Assert.Equal(50, page.Items.Count);
+            Assert.All(page.Items, item => Assert.False(item.ServerPathChecked));
+            foreach (var item in page.Items) Assert.True(ids.Add(item.ProjectId));
+            index = page.NextIndex;
+        }
+
+        Assert.Equal(150, ids.Count);
+        Assert.Equal(3, handler.RequestCount);
+        Assert.DoesNotContain(handler.Uris, uri => uri.AbsolutePath.Contains("/project/", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -633,7 +723,9 @@ public sealed class Release12Tests : IDisposable
 
     private sealed class StubHandler(Func<HttpRequestMessage, HttpResponseMessage> handler) : HttpMessageHandler
     {
+        private readonly List<Uri> uris = [];
         public int RequestCount { get; private set; }
+        public IReadOnlyList<Uri> Uris => uris;
 
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
@@ -641,6 +733,7 @@ public sealed class Release12Tests : IDisposable
         {
             cancellationToken.ThrowIfCancellationRequested();
             RequestCount++;
+            lock (uris) uris.Add(request.RequestUri!);
             return Task.FromResult(handler(request));
         }
     }

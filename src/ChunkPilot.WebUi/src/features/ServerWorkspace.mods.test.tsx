@@ -2,7 +2,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BridgeAdapter } from '../bridge/client';
-import type { BridgeMethod, ManagedContentOperation, ManagedContentOperationStage } from '../bridge/types';
+import type { BridgeMethod, ManagedContentOperation, ManagedContentOperationStage, PluginInstallPlan, PluginProject, PluginRelease } from '../bridge/types';
 import { NavigationGuardProvider } from '../app/NavigationGuard';
 import { FixtureBridge, fixtures } from '../fixtures/catalog';
 import { useAppStore } from '../state/store';
@@ -198,5 +198,101 @@ describe('Fabric mod management', () => {
     expect(screen.getByRole('status').textContent).toContain('Downloading');
     expect(calls.filter(call => call.method === 'mods.install')).toHaveLength(0);
     expect(calls.filter(call => call.method === 'content.operations').length).toBeGreaterThan(callsAfterUnmount);
+  });
+
+  it('cancels and fences delayed catalog search, release, and plan state when the selected server changes', async () => {
+    const fixture = new FixtureBridge('fabric');
+    const current = structuredClone(fixtures.fabric);
+    const alpha = current.servers[0];
+    alpha.name = 'Alpha Works';
+    const beta = { ...structuredClone(alpha), id: 'c4b211ec-8c34-4c93-88a2-4de6930822fd', name: 'Beta Works' };
+    current.servers = [alpha, beta];
+    current.selectedServerId = alpha.id;
+    current.workspace = { serverId: alpha.id, state: 'Ready' };
+    current.plugins = [];
+
+    const project = (serverName: string): PluginProject => ({
+      provider: 'Modrinth', kind: 'Mod', projectId: `${serverName.toLowerCase()}-project`, slug: `${serverName.toLowerCase()}-project`,
+      name: `${serverName} Catalog Mod`, author: 'Fixture Author', summary: `${serverName} scoped result.`, downloads: 42,
+      updatedAt: '2026-08-29T12:00:00Z', serverSide: 'required', clientSide: 'optional', clientRequirement: 'ClientOptional'
+    });
+    const release = (serverName: string): PluginRelease => ({
+      provider: 'Modrinth', kind: 'Mod', projectId: `${serverName.toLowerCase()}-project`, versionId: `${serverName.toLowerCase()}-release`,
+      versionName: '1.0.0', minecraftVersion: '26.2', loader: 'fabric', releaseChannel: 'release', publishedAt: '2026-08-29T12:00:00Z',
+      fileName: `${serverName.toLowerCase()}.jar`, sizeBytes: 1_024, integrity: 'sha512', serverSide: 'required', clientSide: 'optional',
+      clientRequirement: 'ClientOptional', dependencies: [{ projectId: 'fixture-library', versionId: 'fixture-library-1', fileName: 'fixture-library.jar', type: 'required' }]
+    });
+    let alphaSearchCount = 0;
+    let alphaSearchSignal: AbortSignal | undefined;
+    let betaReleaseSignal: AbortSignal | undefined;
+    let alphaPlanSignal: AbortSignal | undefined;
+    let resolveAlphaSearch!: (value: PluginProject[]) => void;
+    let resolveBetaRelease!: (value: PluginRelease) => void;
+    let resolveAlphaPlan!: (value: PluginInstallPlan) => void;
+    const delayedBridge: BridgeAdapter = {
+      request: async <T,>(method: BridgeMethod, params: Record<string, unknown> = {}, signal?: AbortSignal) => {
+        calls.push({ method, params });
+        if (method === 'mods.search' && params.serverId === alpha.id && alphaSearchCount++ === 0) {
+          alphaSearchSignal = signal;
+          return new Promise<T>(resolvePromise => { resolveAlphaSearch = value => resolvePromise(value as T); });
+        }
+        if (method === 'mods.search' && params.serverId === alpha.id) return [project('Alpha')] as T;
+        if (method === 'mods.search' && params.serverId === beta.id) return [project('Beta')] as T;
+        if (method === 'mods.release' && params.serverId === beta.id) {
+          betaReleaseSignal = signal;
+          return new Promise<T>(resolvePromise => { resolveBetaRelease = value => resolvePromise(value as T); });
+        }
+        if (method === 'mods.release' && params.serverId === alpha.id) return release('Alpha') as T;
+        if (method === 'mods.plan' && params.serverId === alpha.id) {
+          alphaPlanSignal = signal;
+          return new Promise<T>(resolvePromise => { resolveAlphaPlan = value => resolvePromise(value as T); });
+        }
+        return fixture.request<T>(method, params);
+      },
+      subscribe: listener => fixture.subscribe(listener),
+      dispose: () => fixture.dispose()
+    };
+    useAppStore.setState({ snapshot: current, bridge: delayedBridge, busy: new Set(), pendingOperations: new Map(), completedOperations: new Set(), error: null });
+    const view = render(<NavigationGuardProvider><ServerWorkspace serverId={alpha.id} /></NavigationGuardProvider>);
+    const switchTo = (serverId: string) => {
+      const next = structuredClone(useAppStore.getState().snapshot!);
+      next.selectedServerId = serverId;
+      next.workspace = { serverId, state: 'Ready' };
+      next.plugins = [];
+      act(() => useAppStore.setState({ snapshot: next }));
+      view.rerender(<NavigationGuardProvider><ServerWorkspace serverId={serverId} /></NavigationGuardProvider>);
+    };
+
+    fireEvent.click(screen.getByRole('button', { name: 'Browse' }));
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search official Modrinth mods' }), { target: { value: 'alpha' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    await waitFor(() => expect(alphaSearchSignal).toBeTruthy());
+    switchTo(beta.id);
+    expect(alphaSearchSignal!.aborted).toBe(true);
+    await act(async () => { resolveAlphaSearch([project('Alpha')]); await Promise.resolve(); });
+    expect(screen.queryByRole('button', { name: /Alpha Catalog Mod/ })).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Browse' }));
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search official Modrinth mods' }), { target: { value: 'beta' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    fireEvent.click(await screen.findByRole('button', { name: /Beta Catalog Mod/ }));
+    await waitFor(() => expect(betaReleaseSignal).toBeTruthy());
+    switchTo(alpha.id);
+    expect(betaReleaseSignal!.aborted).toBe(true);
+    await act(async () => { resolveBetaRelease(release('Beta')); await Promise.resolve(); });
+    expect(calls.some(call => call.method === 'mods.plan' && call.params.serverId === beta.id)).toBe(false);
+    expect(screen.queryByText('beta.jar · 1,024 B')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Browse' }));
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search official Modrinth mods' }), { target: { value: 'alpha' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    fireEvent.click(await screen.findByRole('button', { name: /Alpha Catalog Mod/ }));
+    await waitFor(() => expect(alphaPlanSignal).toBeTruthy());
+    expect(await screen.findByText('alpha.jar · 1,024 B')).toBeTruthy();
+    switchTo(beta.id);
+    expect(alphaPlanSignal!.aborted).toBe(true);
+    await act(async () => { resolveAlphaPlan({ releases: [release('Alpha')], problems: [], canInstall: true }); await Promise.resolve(); });
+    expect(screen.queryByText('alpha.jar · 1,024 B')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Install complete verified plan' })).toBeNull();
   });
 });

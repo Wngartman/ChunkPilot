@@ -211,7 +211,11 @@ public sealed class PublicDistributionContractTests
         Assert.Contains(".secrets/", ignore, StringComparison.Ordinal);
         Assert.Contains("curseforge-api-key*.txt", ignore, StringComparison.Ordinal);
         Assert.Contains("curseforge-api-key", audit, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("secrets\\.dat", audit, StringComparison.Ordinal);
+        Assert.Contains("WebView2|CurrentProfile", audit, StringComparison.Ordinal);
         Assert.Contains("curseforge-api-key", portable, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("secrets\\.dat", portable, StringComparison.Ordinal);
+        Assert.Contains("WebView2|CurrentProfile", portable, StringComparison.Ordinal);
         Assert.Contains("\\.secrets?", portable, StringComparison.Ordinal);
         Assert.Contains("CHUNKPILOT_CURSEFORGE_KEY_FILE", portableSmoke, StringComparison.Ordinal);
         Assert.Contains(".missing-curseforge-api-key", portableSmoke, StringComparison.Ordinal);
@@ -228,6 +232,37 @@ public sealed class PublicDistributionContractTests
         Assert.DoesNotContain("private string curseForgeApiKey", viewModel, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("x-api-key", webUi, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("CURSEFORGE_KEY_FILE", webUi, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void CurseForge_development_launcher_is_worktree_aware_and_keeps_the_source_Agent_only()
+    {
+        var source = File.ReadAllText(Path.Combine(Root, "scripts", "start-curseforge-dev.ps1"));
+
+        Assert.Contains("rev-parse', '--path-format=absolute', '--git-common-dir", source,
+            StringComparison.Ordinal);
+        Assert.Contains("worktree list --porcelain", source, StringComparison.Ordinal);
+        Assert.Contains(".secrets\\curseforge-api-key.txt", source, StringComparison.Ordinal);
+        Assert.Contains("Test-Path -LiteralPath $approvedSource -PathType Leaf", source,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("Get-Content", source, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("ReadAllText", source, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("Get-FileHash", source, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("Copy-Item", source, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(".Arguments", source, StringComparison.Ordinal);
+        Assert.Contains("$agentInfo.Environment['CHUNKPILOT_CURSEFORGE_KEY_FILE'] = $approvedSource", source,
+            StringComparison.Ordinal);
+        Assert.Contains("$appInfo.Environment['CHUNKPILOT_CURSEFORGE_KEY_FILE'] = $disabledSource", source,
+            StringComparison.Ordinal);
+        Assert.Contains("Join-Path $artifactsDirectory 'curseforge-dev-runtime'", source,
+            StringComparison.Ordinal);
+        Assert.Contains(".chunkpilot-curseforge-dev-runtime.json", source, StringComparison.Ordinal);
+        Assert.Contains("already exists without its ownership marker", source, StringComparison.Ordinal);
+        Assert.Contains("CHUNKPILOT_REACHABILITY_PROBE_URL", source, StringComparison.Ordinal);
+        Assert.Contains("Environment.Remove('CHUNKPILOT_REACHABILITY_PROBE_URL')", source,
+            StringComparison.Ordinal);
+        Assert.Contains("already running", source, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("\\\\.\\pipe\\$pipeName", source, StringComparison.Ordinal);
     }
 
     [Fact]

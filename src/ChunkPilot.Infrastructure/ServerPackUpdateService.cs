@@ -19,6 +19,18 @@ public sealed class MigrationReviewRequiredException : InvalidOperationException
     public MigrationPlan Plan { get; }
 }
 
+/// <summary>
+/// Agent-issued authorization to reuse one exact, operation-scoped download after a terminal
+/// migration review. Callers must not construct this from an unvalidated UI request.
+/// </summary>
+public sealed record ReviewedUpdateArtifactAuthorization(
+    Guid ReviewedOperationId,
+    Guid ServerId,
+    UpdateProvider Provider,
+    string ProjectId,
+    string TargetVersionId,
+    string TargetProviderFileId);
+
 public sealed class PackUpdateCompatibilityService
 {
     public UpdateCheckResult Evaluate(
@@ -978,6 +990,7 @@ public sealed class ServerPackUpdateService
         UpdateSource source,
         UpdateInstallRequest request,
         IProgress<UpdateProgress>? progress = null,
+        ReviewedUpdateArtifactAuthorization? reuseAuthorization = null,
         CancellationToken cancellationToken = default)
     {
         Validate(server, source, request);
@@ -1006,14 +1019,26 @@ public sealed class ServerPackUpdateService
                 target = await EstablishCurseForgeTargetAsync(source, target, request.OperationId, cancellationToken)
                     .ConfigureAwait(false);
             }
+            RecordedUpdateDownload? reusedDownload = null;
+            string? reusedDownloadSha256 = null;
+            var download = CachePath(source.Provider, target, request.OperationId);
+            if (reuseAuthorization is not null)
+            {
+                (download, reusedDownload, reusedDownloadSha256) = await ResolveReviewedDownloadAsync(
+                    server, source, target, request, reuseAuthorization, cancellationToken).ConfigureAwait(false);
+            }
             Report(UpdateOperationState.Snapshotting, "Creating verified full rollback snapshot", 10, "");
             var snapshot = await snapshots.CreateAsync(server, source,
                 source.Provider == UpdateProvider.CurseForge
                     ? CurseForgePersistencePolicy.LocalSnapshotDescription
                     : $"Pre-update snapshot before {target.VersionName}", cancellationToken).ConfigureAwait(false);
             previousSnapshot = snapshot;
-            var download = CachePath(source.Provider, target, request.OperationId);
-            if (!File.Exists(download))
+            if (reusedDownload is not null)
+            {
+                Report(UpdateOperationState.Verifying,
+                    "Reusing the verified package from the confirmed migration review", 35, download);
+            }
+            else if (!File.Exists(download))
             {
                 Report(UpdateOperationState.Downloading, "Downloading target server pack", 25, target.DownloadUrl);
                 await DownloadAsync(source.Provider, target, download, progress, request.OperationId, logPath, cancellationToken)
@@ -1038,10 +1063,12 @@ public sealed class ServerPackUpdateService
                 File.Delete(download);
                 throw;
             }
-            var downloadSha256 = await PackMigrationPlanner.Sha256Async(download, cancellationToken)
-                .ConfigureAwait(false);
+            var downloadSha256 = reusedDownloadSha256 ??
+                await PackMigrationPlanner.Sha256Async(download, cancellationToken).ConfigureAwait(false);
             await store.RecordUpdateDownloadAsync(request.OperationId, server.Id, source.Provider, target,
-                new FileInfo(download).Length, downloadSha256, "Verified", cancellationToken).ConfigureAwait(false);
+                new FileInfo(download).Length, downloadSha256,
+                reusedDownload is null ? "Verified" : "Verified reuse from migration review",
+                cancellationToken).ConfigureAwait(false);
 
             Directory.CreateDirectory(candidate);
             Report(UpdateOperationState.Extracting, "Extracting target package into isolated candidate", 52, candidate);
@@ -1733,6 +1760,71 @@ public sealed class ServerPackUpdateService
         foreach (var directory in Directory.EnumerateDirectories(wrapper, "*", SearchOption.TopDirectoryOnly))
             Directory.Move(directory, Path.Combine(candidate, Path.GetFileName(directory)));
         Directory.Delete(wrapper);
+    }
+
+    internal async Task<(string Path, RecordedUpdateDownload Evidence, string LocalSha256)>
+        ResolveReviewedDownloadAsync(
+        ServerDefinition server,
+        UpdateSource source,
+        PackVersionInfo target,
+        UpdateInstallRequest request,
+        ReviewedUpdateArtifactAuthorization authorization,
+        CancellationToken cancellationToken = default)
+    {
+        if (source.Provider != UpdateProvider.CurseForge || authorization.Provider != UpdateProvider.CurseForge)
+            throw new InvalidOperationException(
+                "Operation-scoped migration-review download reuse is available only for CurseForge updates.");
+        if (authorization.ReviewedOperationId == Guid.Empty ||
+            authorization.ReviewedOperationId == request.OperationId ||
+            authorization.ServerId != server.Id || request.ServerId != server.Id ||
+            authorization.Provider != source.Provider ||
+            !authorization.ProjectId.Equals(source.ProjectId, StringComparison.Ordinal) ||
+            !authorization.TargetVersionId.Equals(target.VersionId, StringComparison.Ordinal) ||
+            !authorization.TargetProviderFileId.Equals(target.ProviderFileId, StringComparison.Ordinal))
+            throw new InvalidOperationException(
+                "The reviewed update package authorization does not match this server, provider, or target release.");
+        if (target.FileSize is not > 0)
+            throw new InvalidDataException(
+                "The reviewed CurseForge package has no exact expected size and cannot be reused.");
+        if (string.IsNullOrWhiteSpace(target.Sha512) &&
+            string.IsNullOrWhiteSpace(target.Sha256) &&
+            string.IsNullOrWhiteSpace(target.Sha1))
+            throw new InvalidDataException(
+                "The reviewed CurseForge package has no provider hash and cannot be reused.");
+
+        var evidence = await store.GetRecordedUpdateDownloadAsync(
+            authorization.ReviewedOperationId, cancellationToken).ConfigureAwait(false)
+            ?? throw new InvalidOperationException(
+                "The reviewed update no longer has verified local download evidence.");
+        if (evidence.OperationId != authorization.ReviewedOperationId ||
+            evidence.ServerId != server.Id ||
+            evidence.Provider != source.Provider ||
+            !evidence.Status.Equals("Verified", StringComparison.Ordinal) ||
+            evidence.SizeBytes != target.FileSize.Value ||
+            evidence.Sha256.Length != 64 ||
+            !evidence.Sha256.All(Uri.IsHexDigit))
+            throw new InvalidDataException(
+                "The reviewed update download evidence is stale or does not match this exact package.");
+
+        var path = CachePath(source.Provider, target, authorization.ReviewedOperationId);
+        CreationPathSafety.EnsureWithin(paths.UpdateCache, path);
+        if (CreationPathSafety.IsReparsePoint(paths.UpdateCache) || CreationPathSafety.IsReparsePoint(path))
+            throw new InvalidDataException(
+                "The reviewed update package path is a reparse point and cannot be reused safely.");
+        if (!File.Exists(path))
+            throw new FileNotFoundException(
+                "The reviewed update package is no longer available; run the update review again.", path);
+        if (new FileInfo(path).Length != evidence.SizeBytes)
+            throw new InvalidDataException(
+                "The reviewed update package size changed after verification and cannot be reused.");
+        var localSha256 = await PackMigrationPlanner.Sha256Async(path, cancellationToken).ConfigureAwait(false);
+        if (!localSha256.Equals(evidence.Sha256, StringComparison.OrdinalIgnoreCase))
+        {
+            File.Delete(path);
+            throw new InvalidDataException(
+                "The reviewed update package changed after local verification and cannot be reused.");
+        }
+        return (path, evidence, localSha256);
     }
 
     private static void Validate(ServerDefinition server, UpdateSource source, UpdateInstallRequest request)

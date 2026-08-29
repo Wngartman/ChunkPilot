@@ -163,6 +163,54 @@ public sealed class VersionUpdateIntegrationTests : IAsyncLifetime
     }
 
     [Fact(Timeout = 30_000)]
+    public async Task Mark_healthy_accepts_only_the_exact_active_pending_version()
+    {
+        var serverId = Guid.NewGuid();
+        var source = Source(serverId);
+        await store.UpsertUpdateSourceAsync(source);
+        var pending = new VersionSnapshot
+        {
+            ServerId = serverId,
+            VersionId = "v2",
+            VersionName = "Version 2",
+            SourceProvider = source.Provider,
+            ProviderProjectId = source.ProjectId,
+            IsActive = true,
+            Health = VersionHealth.PendingValidation,
+            Verified = true
+        };
+        var previous = new VersionSnapshot
+        {
+            ServerId = serverId,
+            VersionId = "v1",
+            VersionName = "Version 1",
+            IsActive = false,
+            Health = VersionHealth.Healthy,
+            Verified = true
+        };
+        await store.UpsertVersionSnapshotAsync(pending);
+        await store.UpsertVersionSnapshotAsync(previous);
+        await using var supervisor = new ServerSupervisor(store, paths, new ProcessStatisticsProvider(),
+            new MinecraftStatusClient(), new BackupService(paths, store), loggerFactory);
+        await supervisor.InitializeAsync();
+        var coordinator = new ServerUpdateCoordinator(store, supervisor, new UpdateSourceDetector(),
+            new UpdateProviderRegistry([new LocalPackageHistoryUpdateProvider()]),
+            new PackUpdateCompatibilityService(), CreateUpdateService(), new VersionSnapshotService(paths, store));
+
+        await coordinator.MarkHealthyAsync(serverId, pending.Id, retentionDays: 30);
+
+        var updated = Assert.Single(await store.GetVersionSnapshotsAsync(serverId), item => item.Id == pending.Id);
+        Assert.Equal(VersionHealth.Healthy, updated.Health);
+        Assert.Contains("User confirmed", updated.LastStartupResult, StringComparison.Ordinal);
+        Assert.NotNull(Assert.Single(await store.GetVersionSnapshotsAsync(serverId), item => item.Id == previous.Id)
+            .RetainUntil);
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            coordinator.MarkHealthyAsync(serverId, pending.Id, retentionDays: 30));
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            coordinator.MarkHealthyAsync(serverId, Guid.NewGuid(), retentionDays: 30));
+    }
+
+    [Fact(Timeout = 30_000)]
     public async Task Exact_local_archive_is_up_to_date_and_repairs_legacy_pack_display_name()
     {
         var definition = await CreateOldServerAsync();
@@ -246,6 +294,157 @@ public sealed class VersionUpdateIntegrationTests : IAsyncLifetime
             Path.Combine(definition.RootPath, "mods", "old-pack.jar")));
         Assert.Equal("world-v1", await File.ReadAllTextAsync(
             Path.Combine(definition.RootPath, "world", "level.dat")));
+    }
+
+    [Fact]
+    public void Agent_authorizes_reviewed_download_reuse_only_for_the_same_server_and_target()
+    {
+        var serverId = Guid.NewGuid();
+        var reviewedOperationId = Guid.NewGuid();
+        var target = new PackVersionInfo
+        {
+            PackId = "123",
+            VersionId = "500-client",
+            ProviderFileId = "501-server",
+            VersionName = "Reviewed release",
+            FileSize = 4096,
+            Sha1 = new string('a', 40),
+            PackageType = "curseforge-server-pack"
+        };
+        var source = Source(serverId) with
+        {
+            Provider = UpdateProvider.CurseForge,
+            ProjectId = "123"
+        };
+        var reviewedRequest = new UpdateInstallRequest
+        {
+            OperationId = reviewedOperationId,
+            ServerId = serverId,
+            TargetVersion = target,
+            ConfirmedMigrationWarnings = false
+        };
+        var currentRequest = reviewedRequest with
+        {
+            OperationId = Guid.NewGuid(),
+            ReviewedOperationId = reviewedOperationId,
+            ConfirmedMigrationWarnings = true,
+            MigrationResolutions = new Dictionary<string, MigrationResolution>
+            {
+                ["config/reviewed.toml"] = new() { Kind = MigrationResolutionKind.KeepOld }
+            }
+        };
+        var plan = new MigrationPlan { Conflicts = ["config/reviewed.toml"] };
+        var reviewedSnapshot = new UpdateOperationSnapshot
+        {
+            OperationId = reviewedOperationId,
+            IsTerminal = true,
+            Success = false,
+            Progress = new UpdateProgress
+            {
+                OperationId = reviewedOperationId,
+                State = UpdateOperationState.PlanningMigration
+            },
+            Result = new UpdateExecutionResult
+            {
+                OperationId = reviewedOperationId,
+                ServerId = serverId,
+                TargetVersionId = target.VersionId,
+                MigrationPlan = plan
+            }
+        };
+
+        var authorization = ServerUpdateCoordinator.ValidateReviewedOperationForReuse(
+            currentRequest, source, reviewedRequest, source, reviewedSnapshot);
+
+        Assert.Equal(reviewedOperationId, authorization.ReviewedOperationId);
+        Assert.Equal(serverId, authorization.ServerId);
+        var otherServerId = Guid.NewGuid();
+        Assert.Throws<InvalidOperationException>(() =>
+            ServerUpdateCoordinator.ValidateReviewedOperationForReuse(
+                currentRequest with { ServerId = otherServerId },
+                source with { ServerId = otherServerId },
+                reviewedRequest,
+                source,
+                reviewedSnapshot));
+        Assert.Throws<InvalidOperationException>(() =>
+            ServerUpdateCoordinator.ValidateReviewedOperationForReuse(
+                currentRequest with
+                {
+                    TargetVersion = target with { ProviderFileId = "different-server-pack" }
+                },
+                source,
+                reviewedRequest,
+                source,
+                reviewedSnapshot));
+    }
+
+    [Fact(Timeout = 45_000)]
+    public async Task Reviewed_curseforge_download_requires_exact_verified_artifact_evidence()
+    {
+        var definition = await CreateOldServerAsync();
+        var source = Source(definition.Id) with
+        {
+            Provider = UpdateProvider.CurseForge,
+            ProjectId = "123",
+            InstalledVersionId = "400-client",
+            InstalledFileId = "401-server"
+        };
+        var package = CreateUpdatePackage("reviewed-reuse.zip", "normal");
+        var packageBytes = await File.ReadAllBytesAsync(package);
+        var localSha256 = Convert.ToHexString(SHA256.HashData(packageBytes)).ToLowerInvariant();
+        var target = Request(definition.Id, package, "500-client").TargetVersion with
+        {
+            PackId = "123",
+            ProviderFileId = "501-server",
+            FileSize = packageBytes.LongLength,
+            Sha256 = localSha256,
+            PackageType = "curseforge-server-pack"
+        };
+        var reviewedOperationId = Guid.NewGuid();
+        var request = new UpdateInstallRequest
+        {
+            OperationId = Guid.NewGuid(),
+            ServerId = definition.Id,
+            TargetVersion = target,
+            ReviewedOperationId = reviewedOperationId,
+            ConfirmedMigrationWarnings = true
+        };
+        var authorization = new ReviewedUpdateArtifactAuthorization(
+            reviewedOperationId,
+            definition.Id,
+            UpdateProvider.CurseForge,
+            source.ProjectId,
+            target.VersionId,
+            target.ProviderFileId);
+        var reviewedCache = Path.Combine(paths.UpdateCache, $"local-{reviewedOperationId:N}.package");
+        File.Copy(package, reviewedCache);
+        await store.RecordUpdateDownloadAsync(
+            reviewedOperationId,
+            definition.Id,
+            UpdateProvider.CurseForge,
+            target,
+            packageBytes.LongLength,
+            localSha256,
+            "Verified");
+        var service = CreateUpdateService();
+
+        var resolved = await service.ResolveReviewedDownloadAsync(
+            definition, source, target, request, authorization);
+
+        Assert.Equal(reviewedCache, resolved.Path);
+        Assert.Equal(localSha256, resolved.LocalSha256);
+        await ServerPackUpdateService.VerifyDownloadAsync(resolved.Path, target);
+
+        File.Delete(reviewedCache);
+        await Assert.ThrowsAsync<FileNotFoundException>(() =>
+            service.ResolveReviewedDownloadAsync(definition, source, target, request, authorization));
+
+        var tampered = packageBytes.ToArray();
+        tampered[0] ^= 0xff;
+        await File.WriteAllBytesAsync(reviewedCache, tampered);
+        await Assert.ThrowsAsync<InvalidDataException>(() =>
+            service.ResolveReviewedDownloadAsync(definition, source, target, request, authorization));
+        Assert.False(File.Exists(reviewedCache));
     }
 
     [Fact(Timeout = 45_000)]

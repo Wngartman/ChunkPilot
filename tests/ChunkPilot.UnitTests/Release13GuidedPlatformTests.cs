@@ -92,6 +92,45 @@ public sealed class Release13GuidedPlatformTests : IDisposable
         Assert.Equal("new", CatalogPolicy.SelectDefaultVersion(item, query)?.VersionId);
     }
 
+    [Fact]
+    public void Catalog_keeps_unchecked_search_summaries_but_filters_checked_unsupported_projects()
+    {
+        var uncheckedZulu = new CatalogItem
+        {
+            Name = "Zulu",
+            InstallationSupport = InstallationSupportState.ManualPackageRequired,
+            ServerPathChecked = false
+        };
+        var uncheckedAlpha = uncheckedZulu with { Name = "alpha" };
+        var checkedUnsupported = uncheckedZulu with
+        {
+            Name = "Checked",
+            ServerPathChecked = true
+        };
+
+        var results = CatalogPolicy.Filter([uncheckedZulu, checkedUnsupported, uncheckedAlpha],
+            new CatalogQuery { ServerPackRequired = true, Sort = CatalogSort.Name });
+
+        Assert.Equal(["alpha", "Zulu"], results.Select(item => item.Name));
+    }
+
+    [Fact]
+    public void Catalog_treats_a_verified_generated_candidate_as_a_managed_server_path()
+    {
+        var item = new CatalogItem
+        {
+            Name = "Generated candidate",
+            ServerPathChecked = true,
+            InstallationSupport = InstallationSupportState.AutomatedWithReview,
+            Versions = [new CatalogVersion { VersionId = "client-file", CanGenerateServerCandidate = true }]
+        };
+
+        var result = CatalogPolicy.Filter([item], new CatalogQuery { ServerPackRequired = true });
+
+        Assert.Single(result);
+        Assert.Equal("client-file", Assert.Single(result[0].Versions).VersionId);
+    }
+
     [Theory]
     [InlineData("1.16.5", 8)]
     [InlineData("1.17.1", 16)]

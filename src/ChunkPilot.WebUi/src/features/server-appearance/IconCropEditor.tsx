@@ -3,6 +3,7 @@ import { Image as ImageIcon, RotateCcw, RotateCw, ZoomIn } from '../../design-sy
 import { Button } from '../../design-system/Primitives';
 import { useAppStore } from '../../state/store';
 import { normalizedCropRect } from './iconCrop';
+import { isFixtureMode } from '../../fixtures/mode';
 import styles from './ServerAppearance.module.css';
 
 interface IconSourceResult { cancelled: boolean; sourceUrl?: string; width?: number; height?: number; fileName?: string; }
@@ -67,7 +68,7 @@ export function IconCropEditor({ serverName, savedIconUrl, stagedIconUrl, onStag
   const fixtureAutoOpened = useRef(false);
   useEffect(() => {
     const query = new URLSearchParams(window.location.search);
-    if (fixtureAutoOpened.current || !query.has('fixture') || query.get('mode') !== 'icon-editor') return;
+    if (fixtureAutoOpened.current || !isFixtureMode() || query.get('mode') !== 'icon-editor') return;
     fixtureAutoOpened.current = true;
     void choose();
   }, []);
