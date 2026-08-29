@@ -4,6 +4,7 @@ using System.Text.Json;
 using ChunkPilot.Agent;
 using ChunkPilot.Core;
 using ChunkPilot.Infrastructure;
+using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging;
 
 namespace ChunkPilot.IntegrationTests;
@@ -35,7 +36,10 @@ public sealed class VersionUpdateIntegrationTests : IAsyncLifetime
         await store.UpsertUpdateSourceAsync(source);
         var package = CreateUpdatePackage("v2-success.zip", "normal");
         var service = CreateUpdateService();
-        var request = Request(definition.Id, package, "v2");
+        var request = Request(definition.Id, package, "v2") with
+        {
+            TargetVersion = Request(definition.Id, package, "v2").TargetVersion with { LoaderVersion = "" }
+        };
 
         var result = await managed.RunExclusivePackUpdateAsync(
             request,
@@ -56,7 +60,9 @@ public sealed class VersionUpdateIntegrationTests : IAsyncLifetime
         var versions = await store.GetVersionSnapshotsAsync(definition.Id);
         var active = Assert.Single(versions, item => item.IsActive);
         Assert.Equal("v2", active.VersionId);
+        Assert.Equal("fixture", active.LoaderVersion);
         Assert.Equal(VersionHealth.PendingValidation, active.Health);
+        Assert.Equal("fixture", (await store.GetUpdateSourceAsync(definition.Id))!.LoaderVersion);
         var previous = Assert.Single(versions, item => !item.IsActive && item.Verified);
         Assert.True(previous.IncludesWorldData);
         Assert.True(await VersionSnapshotService.VerifyAsync(previous.SnapshotPath));
@@ -70,6 +76,90 @@ public sealed class VersionUpdateIntegrationTests : IAsyncLifetime
         Assert.False(File.Exists(Path.Combine(definition.RootPath, "mods", "new-pack.jar")));
         Assert.Equal("user-note", await File.ReadAllTextAsync(
             Path.Combine(definition.RootPath, "notes", "mine.txt")));
+    }
+
+    [Fact(Timeout = 45_000)]
+    public async Task CurseForge_snapshot_and_rollback_restore_the_exact_installed_file_identity()
+    {
+        var definition = await CreateOldServerAsync();
+        await store.UpsertServerAsync(definition);
+        var source = Source(definition.Id) with
+        {
+            Provider = UpdateProvider.CurseForge,
+            ProjectId = "123",
+            InstalledVersionId = "456-client",
+            InstalledVersionName = "provider-label",
+            InstalledFileId = "789-server",
+            IdentityOrigin = ProviderIdentityOrigin.ApiDerivedOperationalIdentity,
+            SourceUrl = "https://mediafilez.forgecdn.net/files/789/server.zip"
+        };
+        await store.UpsertUpdateSourceAsync(source);
+        var snapshots = new VersionSnapshotService(paths, store);
+
+        _ = await snapshots.CreateAsync(definition, source, "exact identity fixture");
+
+        var snapshot = Assert.Single(await store.GetVersionSnapshotsAsync(definition.Id));
+        Assert.Equal("456-client", snapshot.VersionId);
+        Assert.Equal("123", snapshot.ProviderProjectId);
+        Assert.Equal("789-server", snapshot.ProviderFileId);
+        Assert.Equal(ProviderIdentityOrigin.ApiDerivedOperationalIdentity, snapshot.IdentityOrigin);
+        var manifest = JsonSerializer.Deserialize<VersionSnapshotManifest>(
+            await File.ReadAllTextAsync(snapshot.ManifestPath), ProtocolJson.Options)!;
+        Assert.Equal(UpdateProvider.CurseForge, manifest.SourceProvider);
+        Assert.Equal("123", manifest.ProviderProjectId);
+        Assert.Equal("789-server", manifest.ProviderFileId);
+        Assert.Equal(ProviderIdentityOrigin.ApiDerivedOperationalIdentity, manifest.IdentityOrigin);
+
+        await store.UpsertUpdateSourceAsync(source with
+        {
+            InstalledVersionId = "999-new-client",
+            InstalledFileId = "1000-new-server"
+        });
+        await CreateUpdateService().RollbackAsync(definition, snapshot, Guid.NewGuid());
+
+        var restored = Assert.IsType<UpdateSource>(await store.GetUpdateSourceAsync(definition.Id));
+        Assert.Equal("123", restored.ProjectId);
+        Assert.Equal("456-client", restored.InstalledVersionId);
+        Assert.Equal("789-server", restored.InstalledFileId);
+        Assert.Equal(ProviderIdentityOrigin.ApiDerivedOperationalIdentity, restored.IdentityOrigin);
+    }
+
+    [Fact(Timeout = 45_000)]
+    public async Task CurseForge_update_requires_exact_client_manifest_preflight_before_snapshot_or_switch()
+    {
+        var definition = await CreateOldServerAsync();
+        var source = Source(definition.Id) with
+        {
+            Provider = UpdateProvider.CurseForge,
+            ProjectId = "123",
+            InstalledVersionId = "400-client",
+            InstalledFileId = "401-server"
+        };
+        await store.UpsertUpdateSourceAsync(source);
+        var package = CreateUpdatePackage("cf-preflight-gate.zip", "normal");
+        var request = Request(definition.Id, package, "500-client") with
+        {
+            TargetVersion = Request(definition.Id, package, "500-client").TargetVersion with
+            {
+                PackId = "123",
+                ProviderFileId = "501-server",
+                PackageType = "curseforge-server-pack",
+                LoaderVersion = ""
+            }
+        };
+        var preflight = new RejectingCurseForgePreflight();
+
+        var error = await Assert.ThrowsAsync<InvalidDataException>(() =>
+            CreateUpdateService(preflight).PrepareAndSwitchAsync(definition, source, request));
+
+        Assert.Contains("fixture exact manifest rejection", error.Message, StringComparison.Ordinal);
+        Assert.Equal(request.OperationId, preflight.Request!.OperationId);
+        Assert.Equal("123", preflight.Request.ProjectId);
+        Assert.Equal("500-client", preflight.Request.ClientFileId);
+        Assert.Equal("501-server", preflight.Request.ExpectedServerPackFileId);
+        Assert.Empty(await store.GetVersionSnapshotsAsync(definition.Id));
+        Assert.Equal("world-v1", await File.ReadAllTextAsync(
+            Path.Combine(definition.RootPath, "world", "level.dat")));
     }
 
     [Fact(Timeout = 30_000)]
@@ -176,6 +266,56 @@ public sealed class VersionUpdateIntegrationTests : IAsyncLifetime
         Assert.NotEmpty(Directory.EnumerateFiles(paths.UpdateCache));
         Assert.Empty(Directory.EnumerateDirectories(
             Directory.GetParent(definition.RootPath)!.FullName, ".chunkpilot-previous-*"));
+    }
+
+    [Fact(Timeout = 45_000)]
+    public async Task CurseForge_download_persists_only_local_digest_and_opaque_cache_identity()
+    {
+        var definition = await CreateOldServerAsync();
+        var source = Source(definition.Id) with
+        {
+            Provider = UpdateProvider.CurseForge,
+            ProjectId = "123",
+            ProjectName = "cf-project-label-sentinel",
+            ProjectSlug = "cf-project-slug-sentinel",
+            InstalledVersionId = "456",
+            InstalledVersionName = "cf-old-version-label-sentinel",
+            InstalledFileId = "789",
+            SourceUrl = "https://provider.invalid/cf-source-url-sentinel.zip"
+        };
+        var package = CreateUpdatePackage("cf-file-name-sentinel.zip", "normal");
+        var request = Request(definition.Id, package, "500") with
+        {
+            TargetVersion = Request(definition.Id, package, "500").TargetVersion with
+            {
+                PackId = "123",
+                ProviderFileId = "501",
+                VersionName = "cf-new-version-label-sentinel",
+                FileName = "cf-file-name-sentinel.zip",
+                Sha1 = new string('a', 40)
+            }
+        };
+
+        var result = await CreateUpdateService().DownloadAndVerifyOnlyAsync(definition, source, request);
+
+        Assert.True(result.Success, result.Message);
+        var cache = Assert.Single(Directory.EnumerateFiles(paths.UpdateCache));
+        Assert.Equal($"local-{request.OperationId:N}.package", Path.GetFileName(cache));
+        await using var connection = new SqliteConnection($"Data Source={paths.DatabasePath}");
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT version_id, source_url, file_name, sha256, provider_hash
+            FROM update_downloads WHERE operation_id=$operation
+            """;
+        command.Parameters.AddWithValue("$operation", request.OperationId.ToString("D"));
+        await using var reader = await command.ExecuteReaderAsync();
+        Assert.True(await reader.ReadAsync());
+        Assert.Empty(reader.GetString(0));
+        Assert.Empty(reader.GetString(1));
+        Assert.Empty(reader.GetString(2));
+        Assert.Equal(request.TargetVersion.Sha256, reader.GetString(3));
+        Assert.Empty(reader.GetString(4));
     }
 
     [Fact(Timeout = 45_000)]
@@ -327,12 +467,14 @@ public sealed class VersionUpdateIntegrationTests : IAsyncLifetime
         new(definition, new ProcessStatisticsProvider(), new MinecraftStatusClient(),
             store, paths, loggerFactory.CreateLogger<ManagedServer>(), consoleCapacity: 2_000);
 
-    private ServerPackUpdateService CreateUpdateService()
+    private ServerPackUpdateService CreateUpdateService(
+        ICurseForgeModpackPreflightService? curseForgePreflight = null)
     {
         var snapshots = new VersionSnapshotService(paths, store);
         return new ServerPackUpdateService(paths, store, snapshots, new PackMigrationPlanner(),
             new ServerDetectionService(new JavaDiscoveryService()),
-            new WorldManager(paths, new SafeFileService(paths)));
+            new WorldManager(paths, new SafeFileService(paths)),
+            curseForgePreflight: curseForgePreflight);
     }
 
     private string CreateUpdatePackage(string name, string mode)
@@ -420,6 +562,27 @@ public sealed class VersionUpdateIntegrationTests : IAsyncLifetime
         var port = ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
         listener.Stop();
         return port;
+    }
+
+    private sealed class RejectingCurseForgePreflight : ICurseForgeModpackPreflightService
+    {
+        public CurseForgeModpackPreflightRequest? Request { get; private set; }
+
+        public Task<CurseForgeModpackPreflightResult> InspectAsync(
+            CurseForgeModpackPreflightRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            Request = request;
+            return Task.FromResult(new CurseForgeModpackPreflightResult
+            {
+                OperationId = request.OperationId,
+                ProjectId = request.ProjectId,
+                ClientFileId = request.ClientFileId,
+                ServerPackFileId = request.ExpectedServerPackFileId,
+                State = CatalogReleasePreflightState.Unsupported,
+                Detail = "fixture exact manifest rejection"
+            });
+        }
     }
 
     public async Task DisposeAsync()

@@ -278,6 +278,7 @@ public partial class WebUiWindow : Window
             "modpacks.cache" => SearchModpacksAsync(parameters, cacheOnly: true, cancellationToken),
             "modpacks.search" => SearchModpacksAsync(parameters, cacheOnly: false, cancellationToken),
             "modpacks.resolveLink" => ResolveModpackLinkAsync(parameters, cancellationToken),
+            "modpacks.preflight" => PreflightCurseForgeModpackAsync(parameters, cancellationToken),
             _ => DispatchAsync(method, parameters)
         };
 
@@ -404,6 +405,8 @@ public partial class WebUiWindow : Window
                 return await SearchModpacksAsync(parameters, cacheOnly: false, CancellationToken.None).ConfigureAwait(true);
             case "modpacks.resolveLink":
                 return await ResolveModpackLinkAsync(parameters, CancellationToken.None).ConfigureAwait(true);
+            case "modpacks.preflight":
+                return await PreflightCurseForgeModpackAsync(parameters, CancellationToken.None).ConfigureAwait(true);
             case "modpacks.image":
                 return await LoadModpackImageAsync(parameters).ConfigureAwait(true);
             case "modpacks.chooseLocal":
@@ -1079,6 +1082,11 @@ public partial class WebUiWindow : Window
                 ? "This update is not compatible with the selected server."
                 : string.Join(Environment.NewLine, check.CompatibilityReasons));
 
+        var migrationResolutions = ValidateMigrationReviewParameters(
+            parameters,
+            server.Definition.Id,
+            target,
+            viewModel.CurrentUpdateOperation);
         var requestedOperationId = parameters["operationId"]?.GetValue<Guid?>() ?? Guid.NewGuid();
         var started = await client.SendAsync<UpdateOperationRequest>("BeginPackUpdate", new UpdateInstallRequest
         {
@@ -1086,7 +1094,9 @@ public partial class WebUiWindow : Window
             ServerId = server.Definition.Id,
             TargetVersion = target,
             PlayerCountdownSeconds = server.State == ServerState.Running ? 30 : 0,
-            StartForValidation = true
+            StartForValidation = true,
+            ConfirmedMigrationWarnings = migrationResolutions.Count > 0,
+            MigrationResolutions = migrationResolutions
         }).ConfigureAwait(true);
         EnsureUpdateOperationObserver(started.OperationId, server.Definition.Id);
         return JsonSerializer.SerializeToNode(new
@@ -1475,7 +1485,9 @@ public partial class WebUiWindow : Window
             result.FailedStage,
             result.RetrievedAt,
             result.FromCache,
-            result.Stale
+            result.Stale,
+            result.NextIndex,
+            result.HasMore
         }, WebUiProtocol.Json);
     }
 
@@ -1539,6 +1551,127 @@ public partial class WebUiWindow : Window
         }, WebUiProtocol.Json);
     }
 
+    internal static IReadOnlyDictionary<string, MigrationResolution> ValidateMigrationReviewParameters(
+        JsonObject parameters,
+        Guid selectedServerId,
+        PackVersionInfo authoritativeTarget,
+        UpdateOperationSnapshot? currentOperation)
+    {
+        var requestedTarget = RequiredString(parameters, "targetVersionId", 160);
+        if (!requestedTarget.Equals(authoritativeTarget.VersionId, StringComparison.Ordinal))
+            throw new InvalidOperationException("The reviewed update target is stale. Check for updates again.");
+
+        var confirmed = parameters["confirmedMigrationWarnings"]?.GetValue<bool?>() ?? false;
+        if (!confirmed)
+        {
+            if (parameters.ContainsKey("reviewedOperationId") || parameters.ContainsKey("migrationResolutions"))
+                throw new ArgumentException("Migration review fields require explicit confirmation.");
+            return new Dictionary<string, MigrationResolution>(StringComparer.OrdinalIgnoreCase);
+        }
+
+        if (!Guid.TryParse(RequiredString(parameters, "reviewedOperationId", 64), out var reviewedOperationId))
+            throw new ArgumentException("reviewedOperationId is invalid.");
+        if (currentOperation is not
+            {
+                IsTerminal: true,
+                Success: false,
+                Progress.State: UpdateOperationState.PlanningMigration,
+                Result: { } result
+            } ||
+            currentOperation.OperationId != reviewedOperationId ||
+            result.OperationId != reviewedOperationId ||
+            result.ServerId != selectedServerId ||
+            !result.TargetVersionId.Equals(authoritativeTarget.VersionId, StringComparison.Ordinal) ||
+            !result.MigrationPlan.RequiresManualReview)
+            throw new InvalidOperationException("The migration review is stale or belongs to another server or target.");
+
+        var conflictPaths = WebUiSnapshotMapper.MigrationConflictPaths(result.MigrationPlan);
+        var conflictSet = conflictPaths.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (conflictPaths.Count == 0 ||
+            conflictPaths.Count != result.MigrationPlan.Conflicts.Count ||
+            conflictPaths.Count != conflictSet.Count ||
+            conflictPaths.Count > WebUiSnapshotMapper.MaximumMigrationConflicts ||
+            conflictPaths.Any(path => path.Length > 1024 || !result.MigrationPlan.Changes.Any(change =>
+                change.RelativePath.Equals(path, StringComparison.OrdinalIgnoreCase))))
+            throw new InvalidOperationException("The migration review cannot be resolved safely in the WebUI.");
+
+        if (parameters["migrationResolutions"] is not JsonObject supplied || supplied.Count != conflictPaths.Count)
+            throw new ArgumentException("Choose a resolution for every migration conflict.");
+        var resolutions = new Dictionary<string, MigrationResolution>(StringComparer.OrdinalIgnoreCase);
+        foreach (var pair in supplied)
+        {
+            if (!conflictSet.Contains(pair.Key) || !resolutions.TryAdd(pair.Key, new MigrationResolution()))
+                throw new ArgumentException("Migration resolutions contain an unexpected or duplicate path.");
+            var choice = pair.Value?.GetValue<string>() ?? "";
+            var kind = choice switch
+            {
+                "KeepOld" => MigrationResolutionKind.KeepOld,
+                "NewBaseline" => MigrationResolutionKind.NewBaseline,
+                _ => throw new ArgumentException(
+                    "Each migration conflict must use KeepOld or NewBaseline.")
+            };
+            resolutions[pair.Key] = new MigrationResolution { Kind = kind };
+        }
+        if (conflictPaths.Any(path => !resolutions.ContainsKey(path)))
+            throw new ArgumentException("Choose a resolution for every migration conflict.");
+        return resolutions;
+    }
+
+    private async Task<JsonNode?> PreflightCurseForgeModpackAsync(
+        JsonObject parameters,
+        CancellationToken cancellationToken)
+    {
+        var projectId = RequiredString(parameters, "projectId", 80);
+        var versionId = RequiredString(parameters, "versionId", 80);
+        var key = CatalogKey(CatalogProvider.CurseForge, projectId);
+        if (!modpackCatalog.TryGetValue(key, out var project) ||
+            project.Provider != CatalogProvider.CurseForge)
+            throw new ArgumentException("Refresh the CurseForge catalog before inspecting this release.");
+        var release = project.Versions.FirstOrDefault(candidate =>
+            candidate.VersionId.Equals(versionId, StringComparison.OrdinalIgnoreCase));
+        if (release is null || !release.ClientFileId.Equals(versionId, StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException("The exact CurseForge client release is no longer selected.");
+        if (!(release.HasServerPackage && release.Sha1.Length == 40 && release.SizeBytes is > 0) &&
+            !(release.CanGenerateServerCandidate && release.ClientSha1.Length == 40 &&
+              release.ClientSizeBytes is > 0))
+            throw new ArgumentException("This exact CurseForge release has no integrity-verifiable server path.");
+
+        var result = await client.SendAsync<CurseForgeModpackPreflightResult>(
+            "PreflightCurseForgeModpack",
+            new CurseForgeModpackPreflightRequest(
+                Guid.NewGuid(), project.ProjectId, release.ClientFileId, release.ServerPackFileId),
+            cancellationToken).ConfigureAwait(true);
+        if (!result.ProjectId.Equals(project.ProjectId, StringComparison.Ordinal) ||
+            !result.ClientFileId.Equals(release.ClientFileId, StringComparison.Ordinal) ||
+            !result.ServerPackFileId.Equals(release.ServerPackFileId, StringComparison.Ordinal) ||
+            result.OperationId == Guid.Empty)
+            throw new InvalidDataException("CurseForge preflight returned a contradictory release identity.");
+
+        var updated = release with
+        {
+            MinecraftVersion = result.State == CatalogReleasePreflightState.Ready
+                ? result.MinecraftVersion : release.MinecraftVersion,
+            Loader = result.State == CatalogReleasePreflightState.Ready ? result.Loader : release.Loader,
+            LoaderVersion = result.State == CatalogReleasePreflightState.Ready ? result.LoaderVersion : "",
+            RequiredJavaMajor = result.State == CatalogReleasePreflightState.Ready
+                ? result.RequiredJavaMajor : release.RequiredJavaMajor,
+            ClientDownloadUrl = result.ClientDownloadUrl,
+            ClientSha1 = result.ClientSha1,
+            ClientSha256 = result.ClientSha256,
+            ClientSizeBytes = result.ClientSizeBytes,
+            CreationPreflightState = result.State,
+            CreationPreflightDetail = result.Detail
+        };
+        project = project with
+        {
+            Versions = project.Versions.Select(candidate =>
+                candidate.VersionId.Equals(updated.VersionId, StringComparison.OrdinalIgnoreCase)
+                    ? updated : candidate).ToArray()
+        };
+        modpackCatalog[key] = project;
+        return JsonSerializer.SerializeToNode(ToWebModpackRelease(project, updated), WebUiProtocol.Json);
+    }
+
     private static object ToWebModpackProject(CatalogItem item) => new
         {
             provider = item.Provider.ToString(),
@@ -1564,8 +1697,15 @@ public partial class WebUiWindow : Window
                         (item.Provider == CatalogProvider.CurseForge || version.Sha512.Length == 128);
         var generated = item.Provider == CatalogProvider.CurseForge && version.CanGenerateServerCandidate &&
                         version.ClientSha1.Length == 40 && version.ClientSizeBytes is > 0;
-        var canCreate = official || generated;
-        var limitation = canCreate ? "" : !version.HasServerPackage && !version.CanGenerateServerCandidate
+        var serverPathAvailable = official || generated;
+        var preflightReady = item.Provider != CatalogProvider.CurseForge ||
+                             version.CreationPreflightState == CatalogReleasePreflightState.Ready;
+        var canCreate = serverPathAvailable && preflightReady;
+        var limitation = item.Provider == CatalogProvider.CurseForge && serverPathAvailable && !preflightReady
+            ? version.CreationPreflightState == CatalogReleasePreflightState.Unsupported
+                ? version.CreationPreflightDetail
+                : "Inspecting the exact client manifest is required before this release can be created."
+            : canCreate ? "" : !version.HasServerPackage && !version.CanGenerateServerCandidate
                 ? "No supportable official server pack or exact generated-server input was found."
                 : "This release is missing the complete integrity metadata required for managed creation.";
         return new
@@ -1574,6 +1714,7 @@ public partial class WebUiWindow : Window
             version.VersionName,
             version.MinecraftVersion,
             version.Loader,
+            version.LoaderVersion,
             releaseChannel = version.ReleaseChannel.ToString(),
             version.PublishedAt,
             sizeBytes = generated ? version.ClientSizeBytes : version.SizeBytes,
@@ -1585,6 +1726,8 @@ public partial class WebUiWindow : Window
                 version.Sha1.Length == 40 &&
                 (item.Provider == CatalogProvider.CurseForge || version.Sha512.Length == 128),
             canCreate,
+            preflightState = version.CreationPreflightState.ToString(),
+            preflightDetail = version.CreationPreflightDetail,
             serverPath = official ? "Official server pack" : generated
                 ? "ChunkPilot can generate and validate a server candidate"
                 : "No supportable server setup found",
@@ -2295,6 +2438,9 @@ public partial class WebUiWindow : Window
                 throw new ArgumentException("Refresh the selected provider catalog before creating this pack.");
             var release = project.Versions.FirstOrDefault(version =>
                 version.VersionId.Equals(versionId, StringComparison.OrdinalIgnoreCase) &&
+                (provider != CatalogProvider.CurseForge ||
+                 version.CreationPreflightState == CatalogReleasePreflightState.Ready &&
+                 version.LoaderVersion.Length > 0 && version.ClientSha256.Length == 64) &&
                 (version.HasServerPackage && version.Sha1.Length == 40 &&
                  (provider == CatalogProvider.CurseForge || version.Sha512.Length == 128) &&
                  version.SizeBytes is > 0 ||
@@ -2326,8 +2472,11 @@ public partial class WebUiWindow : Window
                     ? release.RequiredJavaMajor
                     : JavaRuntimePolicy.RequiredMajorForMinecraft(release.MinecraftVersion),
                 ExpectedSha1 = generatedCandidate ? release.ClientSha1 : release.Sha1,
+                ExpectedSha256 = generatedCandidate ? release.ClientSha256 : "",
                 ExpectedSha512 = release.Sha512,
-                ExpectedSizeBytes = generatedCandidate ? release.ClientSizeBytes : release.SizeBytes
+                ExpectedSizeBytes = generatedCandidate ? release.ClientSizeBytes : release.SizeBytes,
+                VerifiedClientArchiveSha256 = provider == CatalogProvider.CurseForge
+                    ? release.ClientSha256 : ""
             });
         }
 

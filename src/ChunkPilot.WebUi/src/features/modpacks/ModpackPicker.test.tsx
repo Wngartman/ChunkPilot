@@ -184,6 +184,31 @@ describe('modpack provider browser', () => {
     await waitFor(() => expect(calls.some(call => call.method === 'modpacks.search' && call.params.index === 20)).toBe(true));
     expect(screen.queryByRole('button', { name: 'Load more' })).toBeNull();
   });
+
+  it('keeps provider pagination available when policy filtering underfills a raw page', async () => {
+    const fixture = new FixtureBridge('running');
+    const bridge: BridgeAdapter = {
+      request: async <T,>(method: BridgeMethod, params: Record<string, unknown> = {}) => {
+        calls.push({ method, params });
+        if (method === 'modpacks.cache') return { provider: 'CurseForge', state: 'Empty', items: [], detail: '', failedStage: '', retrievedAt: null, fromCache: false, stale: false, nextIndex: 0, hasMore: false } as T;
+        if (method === 'modpacks.search' && params.index === 2) return { provider: 'CurseForge', state: 'Ready', items: [catalogProject('accepted-later', 'Accepted later')], detail: 'Ready.', failedStage: '', retrievedAt: null, fromCache: false, stale: false, nextIndex: 4, hasMore: false } as T;
+        if (method === 'modpacks.search') return { provider: 'CurseForge', state: 'Ready', items: [catalogProject('accepted-first', 'Accepted first')], detail: 'Ready.', failedStage: '', retrievedAt: null, fromCache: false, stale: false, nextIndex: 2, hasMore: true } as T;
+        return fixture.request<T>(method, params);
+      },
+      subscribe: listener => fixture.subscribe(listener),
+      dispose: () => fixture.dispose()
+    };
+    useAppStore.setState({ bridge });
+    render(<ModpackPicker value={null} onChange={() => undefined} />);
+    fireEvent.click(await screen.findByRole('tab', { name: /CurseForge/ }));
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Load more' }));
+
+    await waitFor(() => expect(calls.some(call => call.method === 'modpacks.search' && call.params.index === 2)).toBe(true));
+    expect(screen.getByRole('button', { name: /Accepted first/ })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Accepted later/ })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Load more' })).toBeNull();
+  });
 });
 
 function catalogProject(projectId: string, name: string): ModpackProject {

@@ -100,6 +100,7 @@ public sealed class ServerCreationAgentRecoverySmokeTests
         };
         process.StartInfo.Environment["CHUNKPILOT_DATA_ROOT"] = root;
         process.StartInfo.Environment["CHUNKPILOT_INSTANCE_ID"] = instanceId;
+        IntegrationTestRuntime.IsolateAgentCredentialSource(process.StartInfo, root);
         process.Start();
 
         try

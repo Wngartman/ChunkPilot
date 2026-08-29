@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { Archive, Box, Check, CircleAlert, CircleHelp, CloudOff, Code2, File, Folder, FolderOpen, Globe2, History, MoreHorizontal, Play, RotateCw, Send, Server as ServerIcon, Settings, Share2, ShieldCheck, Square, Terminal, Trash2, Users, Wifi } from '../design-system/Icons';
-import type { ConnectivitySnapshot, ManagedContentOperation, PlayerEntry, PluginInstallPlan, PluginProject, PluginProviderStatus, PluginRelease, ServerDeletionMode, ServerDeletionPreflight, ServerHealthIssue, ServerSummary, TextFileContent, UpdateSummary } from '../bridge/types';
+import type { ConnectivitySnapshot, ManagedContentOperation, MigrationResolutionChoice, PlayerEntry, PluginInstallPlan, PluginProject, PluginProviderStatus, PluginRelease, ServerDeletionMode, ServerDeletionPreflight, ServerHealthIssue, ServerSummary, TextFileContent, UpdateMigrationReview, UpdateSummary } from '../bridge/types';
 import { Button, ConfirmDialog, Dialog, EmptyState, PanelTitle, SearchInput, SelectInput, Sparkline, StatusBadge, Switch, TextInput } from '../design-system/Primitives';
 import { ActionMenu } from '../design-system/ActionMenu';
 import { useAppStore } from '../state/store';
@@ -234,9 +234,13 @@ function UpdateInstallDialog({ open, onClose, server, update }: {
   const compatibility = update.compatibilityReasons?.length ? update.compatibilityReasons : ['No compatibility changes were reported by the provider.'];
   const confirm = () => {
     onClose();
-    void command('versions.install', { serverId: server.id, operationId: crypto.randomUUID() });
+    void command('versions.install', {
+      serverId: server.id,
+      operationId: crypto.randomUUID(),
+      targetVersionId: update.targetVersionId
+    });
   };
-  return <Dialog open={open} title={`Install ${target}?`} wide onClose={onClose} footer={<><Button onClick={onClose}>Cancel</Button><Button variant="primary" disabled={busy} onClick={confirm}>{busy ? 'Starting…' : 'Install update'}</Button></>}>
+  return <Dialog open={open} title={`Install ${target}?`} wide onClose={onClose} footer={<><Button onClick={onClose}>Cancel</Button><Button variant="primary" disabled={busy || !update.targetVersionId} onClick={confirm}>{busy ? 'Starting…' : 'Install update'}</Button></>}>
     <div className={styles.updateProposal}>
       <dl>
         <div><dt>Server</dt><dd>{server.name}</dd></div>
@@ -250,6 +254,45 @@ function UpdateInstallDialog({ open, onClose, server, update }: {
       </dl>
       <section><strong>Compatibility</strong><ul>{compatibility.map(reason => <li key={reason}>{reason}</li>)}</ul></section>
       <p>ChunkPilot will save and stop the owned process when needed, create and verify a rollback snapshot, stage and verify the package, switch atomically, start for validation, and roll back if activation fails.</p>
+    </div>
+  </Dialog>;
+}
+
+function MigrationReviewDialog({ open, onClose, server, review }: {
+  open: boolean; onClose: () => void; server: ServerSummary; review: UpdateMigrationReview;
+}) {
+  const command = useAppStore(state => state.command);
+  const busy = useAppStore(state => state.busy.has('versions.install'));
+  const [resolutions, setResolutions] = useState<Record<string, MigrationResolutionChoice>>({});
+  useEffect(() => setResolutions({}), [review.reviewOperationId]);
+  const ready = review.canResolve && review.conflicts.every(path => Boolean(resolutions[path]));
+  const submit = () => {
+    if (!ready) return;
+    onClose();
+    void command('versions.install', {
+      serverId: server.id,
+      operationId: crypto.randomUUID(),
+      targetVersionId: review.targetVersionId,
+      reviewedOperationId: review.reviewOperationId,
+      confirmedMigrationWarnings: true,
+      migrationResolutions: resolutions
+    });
+  };
+  return <Dialog open={open} title={`Review ${review.conflictCount} update conflict${review.conflictCount === 1 ? '' : 's'}`} wide onClose={onClose} footer={<><Button onClick={onClose}>Review later</Button><Button variant="primary" disabled={busy || !ready} onClick={submit}>{busy ? 'Starting…' : 'Continue update'}</Button></>}>
+    <div className={styles.migrationReview}>
+      <p>{review.detail}</p>
+      <div className={styles.migrationSummary}><span><strong>{review.conflictCount}</strong> decisions required</span><span><strong>{review.changeCount}</strong> planned file changes</span></div>
+      {!review.canResolve && <div className={styles.migrationBlocked} role="alert">This review cannot be submitted in the WebUI. No active server files were switched.</div>}
+      <div className={styles.migrationConflicts}>{review.conflicts.map(path => {
+        const change = review.changes.find(item => item.relativePath.toLowerCase() === path.toLowerCase());
+        return <label key={path} className={styles.migrationConflict}>
+          <span><code>{path}</code><small>{change?.reason ?? 'This path requires an explicit migration decision.'}</small></span>
+          <SelectInput aria-label={`Decision for ${path}`} value={resolutions[path] ?? ''} disabled={!review.canResolve || busy} onChange={event => setResolutions(current => ({ ...current, [path]: event.target.value as MigrationResolutionChoice }))}>
+            <option value="">Choose…</option><option value="KeepOld">Keep installed copy</option><option value="NewBaseline">Use new pack</option>
+          </SelectInput>
+        </label>;
+      })}</div>
+      {review.changes.length > review.conflicts.length && <details className={styles.migrationChanges}><summary>Review the other planned changes ({review.changes.length - review.conflicts.length}{review.truncated ? '+' : ''})</summary><ul>{review.changes.filter(change => !change.requiresResolution).map(change => <li key={change.relativePath}><code>{change.relativePath}</code><span>{change.change} · {change.reason}</span></li>)}</ul></details>}
     </div>
   </Dialog>;
 }
@@ -480,6 +523,8 @@ function ModpackPage({ server }: { server: ServerSummary }) {
   const busy = useAppStore(state => state.busy);
   const update = snapshot.update;
   const [showInstall, setShowInstall] = useState(false);
+  const [dismissedReviewId, setDismissedReviewId] = useState<string | null>(null);
+  const migrationReview = update?.migrationReview ?? null;
   const pack = server.modpack;
   const providerUpdates = pack?.provider === 'Modrinth' || pack?.provider === 'CurseForge';
   const updateAvailable = update?.status.startsWith('Update available') ?? false;
@@ -507,6 +552,7 @@ function ModpackPage({ server }: { server: ServerSummary }) {
         {update.operationPercent != null && <div className={styles.updateProgress} aria-label={`Pack update progress ${update.operationPercent.toFixed(0)} percent`}><i><b style={{ width: `${Math.max(0, Math.min(100, update.operationPercent))}%` }} /></i><span>{update.operationStep || update.operationState} · {update.operationPercent.toFixed(0)}%</span>{update.operationDetail && update.operationDetail !== update.operationStep && <small>{update.operationDetail}</small>}</div>}
       </div>
       <UpdateInstallDialog open={showInstall} onClose={() => setShowInstall(false)} server={server} update={update} />
+      {migrationReview && <MigrationReviewDialog key={migrationReview.reviewOperationId} open={dismissedReviewId !== migrationReview.reviewOperationId} onClose={() => setDismissedReviewId(migrationReview.reviewOperationId)} server={server} review={migrationReview} />}
     </section>
     <section className={styles.packEvidence}>
       <header><div><strong>Verified pack identity</strong><p>These exact identifiers bind updates and recovery history to this installed release.</p></div><StatusBadge tone="info">Exact release linked</StatusBadge></header>
@@ -791,6 +837,7 @@ function VersionsPage({ server }: { server: ServerSummary }) {
   const snapshot = useAppStore(state => state.snapshot)!;
   const command = useAppStore(state => state.command);
   const [showInstall, setShowInstall] = useState(false);
+  const [dismissedReviewId, setDismissedReviewId] = useState<string | null>(null);
   const busy = useAppStore(state => state.busy);
   const update = snapshot.update;
   const isPaper = server.capabilities.versioning === 'paper';
@@ -877,6 +924,7 @@ function VersionsPage({ server }: { server: ServerSummary }) {
         {update.operationPercent != null && <div className={styles.updateProgress} aria-label={`Update progress ${update.operationPercent.toFixed(0)} percent`}><i><b style={{ width: `${Math.max(0, Math.min(100, update.operationPercent))}%` }} /></i><span>{update.operationStep || update.operationState} · {update.operationPercent.toFixed(0)}%</span>{update.operationDetail && update.operationDetail !== update.operationStep && <small>{update.operationDetail}</small>}</div>}
       </div>}
       {update && <UpdateInstallDialog open={showInstall} onClose={() => setShowInstall(false)} server={server} update={update} />}
+      {update?.migrationReview && <MigrationReviewDialog key={update.migrationReview.reviewOperationId} open={dismissedReviewId !== update.migrationReview.reviewOperationId} onClose={() => setDismissedReviewId(update.migrationReview!.reviewOperationId)} server={server} review={update.migrationReview} />}
       {snapshot.versions.length ? <table className={styles.table}><thead><tr><th>Version</th><th>Platform</th><th>Installed</th><th>Snapshot</th><th>Status</th><th /></tr></thead><tbody>{snapshot.versions.map(version => <tr key={version.id}><td><strong>{version.version}</strong><small className={styles.cellMeta}>{version.health}</small></td><td>{version.platform}</td><td>{version.installedAt ? new Date(version.installedAt).toLocaleDateString() : 'Unavailable'}</td><td>{version.snapshotSizeBytes > 0 ? bytes(version.snapshotSizeBytes) : version.active ? 'Active files' : 'Unavailable'}{version.includesWorldData && <small className={styles.cellMeta}>World data included</small>}</td><td><StatusBadge tone={version.active ? 'success' : version.rollbackReady ? 'info' : version.verified ? 'neutral' : 'warning'}>{version.active ? 'Active' : version.rollbackReady ? 'Rollback ready' : version.verified ? 'Verified' : 'Unverified'}</StatusBadge></td><td><div className={styles.tableActions}><Button disabled={versionBusy} variant="subtle" onClick={() => void command('versions.verify', { serverId: server.id, versionId: version.id })}>Verify</Button>{version.rollbackReady && <Button disabled={versionBusy} variant="subtle" onClick={() => void command('versions.rollback', { serverId: server.id, versionId: version.id })}>Roll back</Button>}</div></td></tr>)}</tbody></table> : <EmptyState title="No rollback snapshots recorded" detail="The current installed version is shown above. ChunkPilot will list verified version snapshots here after an update or rollback creates them." />}
     </section>
     <section className={styles.versionEvidence}>

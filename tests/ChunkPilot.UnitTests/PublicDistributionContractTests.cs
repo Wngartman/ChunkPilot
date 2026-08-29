@@ -212,6 +212,13 @@ public sealed class PublicDistributionContractTests
         Assert.Contains("curseforge-api-key", portable, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("\\.secrets?", portable, StringComparison.Ordinal);
         Assert.DoesNotContain("SetCurseForgeApiKey", pipe, StringComparison.Ordinal);
+        Assert.DoesNotContain("RemoveCurseForgeApiKey", pipe, StringComparison.Ordinal);
+        Assert.Contains("case \"HasCurseForgeApiKey\"", pipe, StringComparison.Ordinal);
+        Assert.Contains("uiSessions.Demand(session, \"Checking CurseForge credential status\")",
+            pipe, StringComparison.Ordinal);
+        Assert.Contains("secrets.Contains(CurseForgeUpdateProvider.ApiKeyName)", pipe,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("secrets.GetSecret(", pipe, StringComparison.Ordinal);
         Assert.DoesNotContain("private string curseForgeApiKey", viewModel, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("x-api-key", webUi, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("CURSEFORGE_KEY_FILE", webUi, StringComparison.Ordinal);

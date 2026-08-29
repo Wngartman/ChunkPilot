@@ -6,7 +6,15 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 $webUi = Join-Path $repoRoot 'src\ChunkPilot.WebUi'
 $lockPath = Join-Path $webUi 'package-lock.json'
 $marker = Join-Path $webUi 'node_modules\.chunkpilot-lock-sha256'
-$expected = (Get-FileHash -LiteralPath $lockPath -Algorithm SHA256).Hash.ToLowerInvariant()
+$lockStream = [IO.File]::OpenRead($lockPath)
+$sha256 = [Security.Cryptography.SHA256]::Create()
+try {
+    $expected = ([BitConverter]::ToString($sha256.ComputeHash($lockStream))).Replace('-', '').ToLowerInvariant()
+}
+finally {
+    $sha256.Dispose()
+    $lockStream.Dispose()
+}
 $actual = if (Test-Path -LiteralPath $marker) { (Get-Content -LiteralPath $marker -Raw).Trim().ToLowerInvariant() } else { '' }
 $npm = Join-Path (Split-Path -Parent (Get-Command node -ErrorAction Stop).Source) 'npm.cmd'
 

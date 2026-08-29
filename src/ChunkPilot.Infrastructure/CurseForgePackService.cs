@@ -28,6 +28,13 @@ public sealed record CurseForgeMaterializedFile(
     bool ManifestEntry,
     string SideEvidence);
 
+internal sealed record CurseForgeInstalledFileEvidence(
+    string RelativePath,
+    string LocalSha256,
+    long SizeBytes,
+    bool ManifestEntry,
+    string SideEvidence);
+
 public sealed record CurseForgePackLaunchResult(
     CurseForgePackManifest Manifest,
     ServerEcosystem Ecosystem,
@@ -249,16 +256,16 @@ public sealed class CurseForgePackService
             {
                 schemaVersion = 1,
                 provider = "CurseForge",
-                manifest.Name,
-                manifest.Version,
                 manifest.MinecraftVersion,
                 loader = manifest.Loader.ToString(),
                 manifest.LoaderVersion,
                 generatedAtUtc = DateTimeOffset.UtcNow,
                 validationState = "pending-first-launch",
-                materializedFiles = materialized,
-                skippedOptionalProjects = optional,
-                ignoredOverridePaths = ignoredOverrides
+                materializedFiles = materialized
+                    .Select(file => CreateInstalledFileEvidence(destination, file))
+                    .ToArray(),
+                skippedOptionalProjectCount = optional.Count,
+                ignoredOverridePathCount = ignoredOverrides.Count
             };
             await File.WriteAllTextAsync(Path.Combine(evidenceRoot, "curseforge-pack-evidence.json"),
                 JsonSerializer.Serialize(evidence, ProtocolJson.Options), new UTF8Encoding(false), cancellationToken)
@@ -348,6 +355,24 @@ public sealed class CurseForgePackService
         }
     }
 
+    internal static CurseForgeInstalledFileEvidence CreateInstalledFileEvidence(
+        string destinationRoot,
+        CurseForgeMaterializedFile file)
+    {
+        var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(destinationRoot));
+        var relative = PersistentDataClassifier.Normalize(file.RelativePath);
+        if (Path.IsPathFullyQualified(relative))
+            throw new InvalidDataException("CurseForge installed-file evidence requires a relative path.");
+        var installedPath = Path.GetFullPath(Path.Combine(root,
+            relative.Replace('/', Path.DirectorySeparatorChar)));
+        EnsureChild(root, installedPath);
+        var installed = new FileInfo(installedPath);
+        if (!installed.Exists || installed.Attributes.HasFlag(FileAttributes.ReparsePoint))
+            throw new InvalidDataException("CurseForge installed-file evidence requires a regular installed file.");
+        return new CurseForgeInstalledFileEvidence(relative, file.LocalSha256, installed.Length,
+            file.ManifestEntry, file.SideEvidence);
+    }
+
     private async Task<IReadOnlyList<CurseForgeMaterializedFile>> DownloadFilesAsync(
         IReadOnlyList<(PluginRelease Release, bool ManifestEntry)> releases,
         string destination,
@@ -405,7 +430,7 @@ public sealed class CurseForgePackService
                     System.Globalization.CultureInfo.InvariantCulture),
                 long.Parse(release.VersionId, System.Globalization.CultureInfo.InvariantCulture),
                 PersistentDataClassifier.Normalize(Path.GetRelativePath(destination, target)), release.Sha1,
-                localSha256, release.SizeBytes, item.ManifestEntry, "unknown-until-staged-validation"));
+                localSha256, new FileInfo(target).Length, item.ManifestEntry, "unknown-until-staged-validation"));
         }
         return result;
     }

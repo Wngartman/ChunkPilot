@@ -457,7 +457,11 @@ public sealed class VersionSnapshotService
         var id = Guid.NewGuid();
         var directory = Path.Combine(paths.VersionSnapshots, server.Id.ToString("D"));
         Directory.CreateDirectory(directory);
-        var baseName = $"{DateTime.Now:yyyyMMdd-HHmmss}-{Safe(source.InstalledVersionName, "installed")}-{id:N}";
+        var isCurseForge = source.Provider == UpdateProvider.CurseForge;
+        var durableVersionName = isCurseForge
+            ? "installed"
+            : Safe(source.InstalledVersionName, "installed");
+        var baseName = $"{DateTime.Now:yyyyMMdd-HHmmss}-{durableVersionName}-{id:N}";
         var temporary = Path.Combine(directory, baseName + ".zip.partial");
         var archivePath = Path.Combine(directory, baseName + ".zip");
         var manifestPath = archivePath + ".manifest.json";
@@ -503,6 +507,10 @@ public sealed class VersionSnapshotService
                     SnapshotId = id,
                     ServerId = server.Id,
                     VersionId = source.InstalledVersionId,
+                    SourceProvider = source.Provider,
+                    ProviderProjectId = source.ProjectId,
+                    ProviderFileId = source.InstalledFileId,
+                    IdentityOrigin = source.IdentityOrigin,
                     CreatedAt = DateTimeOffset.UtcNow,
                     IncludesWorldData = true,
                     Files = entries,
@@ -528,11 +536,16 @@ public sealed class VersionSnapshotService
                 Id = id,
                 ServerId = server.Id,
                 VersionId = source.InstalledVersionId,
-                VersionName = string.IsNullOrWhiteSpace(source.InstalledVersionName)
+                VersionName = isCurseForge
+                    ? ""
+                    : string.IsNullOrWhiteSpace(source.InstalledVersionName)
                     ? source.InstalledVersionId : source.InstalledVersionName,
+                ProviderProjectId = source.ProjectId,
+                ProviderFileId = source.InstalledFileId,
+                IdentityOrigin = source.IdentityOrigin,
                 InstalledAt = source.InstalledAt ?? server.ImportedAt,
                 SourceProvider = source.Provider,
-                Source = source.SourceUrl,
+                Source = isCurseForge ? "" : source.SourceUrl,
                 MinecraftVersion = server.MinecraftVersion,
                 Loader = server.Ecosystem.ToString(),
                 LoaderVersion = server.LoaderVersion,
@@ -542,7 +555,9 @@ public sealed class VersionSnapshotService
                 IncludesWorldData = true,
                 Verified = true,
                 Health = VersionHealth.Healthy,
-                UpdateNotes = reason,
+                UpdateNotes = isCurseForge
+                    ? CurseForgePersistencePolicy.LocalSnapshotDescription
+                    : reason,
                 Definition = server
             };
             await store.UpsertVersionSnapshotAsync(snapshot, cancellationToken).ConfigureAwait(false);
@@ -853,6 +868,7 @@ public sealed class ServerPackUpdateService
     private readonly ManagedJavaRuntimeService? managedJava;
     private readonly CurseForgeApiClient? curseForge;
     private readonly CurseForgePackService? curseForgePacks;
+    private readonly ICurseForgeModpackPreflightService? curseForgePreflight;
     private readonly HttpClient http;
 
     public ServerPackUpdateService(
@@ -866,7 +882,8 @@ public sealed class ServerPackUpdateService
         HttpClient? client = null,
         ManagedJavaRuntimeService? managedJava = null,
         CurseForgeApiClient? curseForge = null,
-        CurseForgePackService? curseForgePacks = null)
+        CurseForgePackService? curseForgePacks = null,
+        ICurseForgeModpackPreflightService? curseForgePreflight = null)
     {
         this.paths = paths;
         this.store = store;
@@ -880,6 +897,7 @@ public sealed class ServerPackUpdateService
         this.curseForgePacks = curseForgePacks ?? (curseForge is null
             ? null
             : new CurseForgePackService(curseForge, loaders: this.loaderInstaller));
+        this.curseForgePreflight = curseForgePreflight;
         modrinthPacks = new ModrinthPackServerService(loaderInstaller: this.loaderInstaller);
         http = client ?? new HttpClient { Timeout = TimeSpan.FromMinutes(30) };
         if (http.DefaultRequestHeaders.UserAgent.Count == 0)
@@ -895,7 +913,7 @@ public sealed class ServerPackUpdateService
     {
         Validate(server, source, request);
         var target = request.TargetVersion;
-        var download = CachePath(target);
+        var download = CachePath(source.Provider, target, request.OperationId);
         var logPath = Path.Combine(paths.Staging, $"update-{request.OperationId:N}.log");
         progress?.Report(new UpdateProgress
         {
@@ -947,6 +965,7 @@ public sealed class ServerPackUpdateService
         {
             OperationId = request.OperationId,
             ServerId = server.Id,
+            TargetVersionId = target.VersionId,
             Success = true,
             PreviousDefinition = server,
             UpdatedDefinition = server,
@@ -980,11 +999,20 @@ public sealed class ServerPackUpdateService
 
         try
         {
+            if (source.Provider == UpdateProvider.CurseForge)
+            {
+                Report(UpdateOperationState.Querying,
+                    "Verifying the exact CurseForge client manifest identity", 5, target.VersionId);
+                target = await EstablishCurseForgeTargetAsync(source, target, request.OperationId, cancellationToken)
+                    .ConfigureAwait(false);
+            }
             Report(UpdateOperationState.Snapshotting, "Creating verified full rollback snapshot", 10, "");
             var snapshot = await snapshots.CreateAsync(server, source,
-                $"Pre-update snapshot before {target.VersionName}", cancellationToken).ConfigureAwait(false);
+                source.Provider == UpdateProvider.CurseForge
+                    ? CurseForgePersistencePolicy.LocalSnapshotDescription
+                    : $"Pre-update snapshot before {target.VersionName}", cancellationToken).ConfigureAwait(false);
             previousSnapshot = snapshot;
-            var download = CachePath(target);
+            var download = CachePath(source.Provider, target, request.OperationId);
             if (!File.Exists(download))
             {
                 Report(UpdateOperationState.Downloading, "Downloading target server pack", 25, target.DownloadUrl);
@@ -1137,18 +1165,27 @@ public sealed class ServerPackUpdateService
             }
 
             var previous = snapshot with { IsActive = false, Health = VersionHealth.Healthy };
+            var targetProjectId = string.IsNullOrWhiteSpace(target.PackId) ? source.ProjectId : target.PackId;
+            var targetFileId = string.IsNullOrWhiteSpace(target.ProviderFileId)
+                ? target.VersionId
+                : target.ProviderFileId;
+            var targetIdentityOrigin = source.Provider == UpdateProvider.CurseForge
+                ? ProviderIdentityOrigin.ApiDerivedOperationalIdentity
+                : source.IdentityOrigin;
             var active = new VersionSnapshot
             {
                 ServerId = server.Id,
                 VersionId = target.VersionId,
                 VersionName = target.VersionName,
+                ProviderProjectId = targetProjectId,
+                ProviderFileId = targetFileId,
+                IdentityOrigin = targetIdentityOrigin,
                 InstalledAt = DateTimeOffset.UtcNow,
                 SourceProvider = source.Provider,
                 Source = target.DownloadUrl,
-                MinecraftVersion = string.IsNullOrWhiteSpace(target.MinecraftVersion)
-                    ? server.MinecraftVersion : target.MinecraftVersion,
-                Loader = string.IsNullOrWhiteSpace(target.Loader) ? server.Ecosystem.ToString() : target.Loader,
-                LoaderVersion = target.LoaderVersion,
+                MinecraftVersion = updatedDefinition.MinecraftVersion,
+                Loader = updatedDefinition.Ecosystem.ToString(),
+                LoaderVersion = updatedDefinition.LoaderVersion,
                 JavaVersion = actualJavaVersion,
                 IsActive = true,
                 Health = VersionHealth.PendingValidation,
@@ -1169,10 +1206,11 @@ public sealed class ServerPackUpdateService
             await store.UpsertVersionSnapshotAsync(active, cancellationToken).ConfigureAwait(false);
             var updatedSource = source with
             {
+                ProjectId = targetProjectId,
                 InstalledVersionId = target.VersionId,
                 InstalledVersionName = target.VersionName,
-                InstalledFileId = string.IsNullOrWhiteSpace(target.ProviderFileId)
-                    ? target.VersionId : target.ProviderFileId,
+                InstalledFileId = targetFileId,
+                IdentityOrigin = targetIdentityOrigin,
                 MinecraftVersion = active.MinecraftVersion,
                 Loader = active.Loader,
                 LoaderVersion = active.LoaderVersion,
@@ -1180,9 +1218,13 @@ public sealed class ServerPackUpdateService
                 InstalledAt = active.InstalledAt
             };
             await store.UpsertUpdateSourceAsync(updatedSource, cancellationToken).ConfigureAwait(false);
-            await store.RecordInstanceHistoryAsync(server.Id, "Updated", target.DownloadUrl,
+            var isCurseForge = source.Provider == UpdateProvider.CurseForge;
+            await store.RecordInstanceHistoryAsync(server.Id, "Updated",
+                isCurseForge ? "" : target.DownloadUrl,
                 downloadSha256,
-                $"From={source.InstalledVersionName}; To={target.VersionName}; Provider={source.Provider}",
+                isCurseForge
+                    ? CurseForgePersistencePolicy.LocalUpdateHistoryDetail
+                    : $"From={source.InstalledVersionName}; To={target.VersionName}; Provider={source.Provider}",
                 cancellationToken).ConfigureAwait(false);
             Report(UpdateOperationState.Starting, "Candidate switched; ready for startup validation", 92, "");
             return new PreparedPackUpdate(
@@ -1190,6 +1232,7 @@ public sealed class ServerPackUpdateService
                 {
                     OperationId = request.OperationId,
                     ServerId = server.Id,
+                    TargetVersionId = target.VersionId,
                     Success = true,
                     PreviousDefinition = server,
                     UpdatedDefinition = updatedDefinition,
@@ -1262,8 +1305,11 @@ public sealed class ServerPackUpdateService
                 Detail = detail,
                 LogPath = logPath
             });
-            File.AppendAllText(logPath, $"{DateTimeOffset.Now:O} {state}: {step} {detail}{Environment.NewLine}");
-            _ = Journal(state, detail, candidate, CancellationToken.None);
+            var durableDetail = CurseForgePersistencePolicy.DurableUpdateDetail(source.Provider, state, detail);
+            var durableStep = source.Provider == UpdateProvider.CurseForge ? "Local update operation" : step;
+            File.AppendAllText(logPath,
+                $"{DateTimeOffset.Now:O} {state}: {durableStep} {durableDetail}{Environment.NewLine}");
+            _ = Journal(state, durableDetail, candidate, CancellationToken.None);
         }
 
         Task Journal(
@@ -1275,7 +1321,8 @@ public sealed class ServerPackUpdateService
                 state is UpdateOperationState.Completed ? InstallState.Completed :
                 state is UpdateOperationState.Failed ? InstallState.Failed :
                 state is UpdateOperationState.Cancelled ? InstallState.Cancelled : InstallState.Installing,
-                server.RootPath, staging, $"{state}: {detail}", token);
+                server.RootPath, staging,
+                $"{state}: {CurseForgePersistencePolicy.DurableUpdateDetail(source.Provider, state, detail)}", token);
     }
 
     private async Task<string> ResolveInstallerJavaAsync(
@@ -1353,16 +1400,9 @@ public sealed class ServerPackUpdateService
             }, cancellationToken).ConfigureAwait(false);
         var source = await store.GetUpdateSourceAsync(server.Id, cancellationToken).ConfigureAwait(false);
         if (source is not null)
-            await store.UpsertUpdateSourceAsync(source with
-            {
-                Provider = snapshot.SourceProvider,
-                InstalledVersionId = snapshot.VersionId,
-                InstalledVersionName = snapshot.VersionName,
-                MinecraftVersion = snapshot.MinecraftVersion,
-                Loader = snapshot.Loader,
-                LoaderVersion = snapshot.LoaderVersion,
-                InstalledAt = DateTimeOffset.UtcNow
-            }, cancellationToken).ConfigureAwait(false);
+            await store.UpsertUpdateSourceAsync(
+                CurseForgePersistencePolicy.RestoreInstalledIdentity(source, snapshot), cancellationToken)
+                .ConfigureAwait(false);
         await store.RecordRollbackAsync(server.Id,
             versions.FirstOrDefault(version => version.IsActive)?.VersionName ?? "unknown",
             snapshot.VersionName, "Success", snapshot.SnapshotPath, cancellationToken).ConfigureAwait(false);
@@ -1432,15 +1472,9 @@ public sealed class ServerPackUpdateService
                         await store.UpsertServerAsync(restoredDefinition, cancellationToken).ConfigureAwait(false);
                         var source = await store.GetUpdateSourceAsync(server.Id, cancellationToken).ConfigureAwait(false);
                         if (source is not null)
-                            await store.UpsertUpdateSourceAsync(source with
-                            {
-                                InstalledVersionId = rollbackVersion.VersionId,
-                                InstalledVersionName = rollbackVersion.VersionName,
-                                MinecraftVersion = rollbackVersion.MinecraftVersion,
-                                Loader = rollbackVersion.Loader,
-                                LoaderVersion = rollbackVersion.LoaderVersion,
-                                InstalledAt = DateTimeOffset.UtcNow
-                            }, cancellationToken).ConfigureAwait(false);
+                            await store.UpsertUpdateSourceAsync(
+                                CurseForgePersistencePolicy.RestoreInstalledIdentity(source, rollbackVersion),
+                                cancellationToken).ConfigureAwait(false);
                         await store.RecordRollbackAsync(server.Id, "interrupted update",
                             rollbackVersion.VersionName, "Recovered", rollbackVersion.SnapshotPath, cancellationToken)
                             .ConfigureAwait(false);
@@ -1597,6 +1631,57 @@ public sealed class ServerPackUpdateService
         };
     }
 
+    private async Task<PackVersionInfo> EstablishCurseForgeTargetAsync(
+        UpdateSource source,
+        PackVersionInfo target,
+        Guid operationId,
+        CancellationToken cancellationToken)
+    {
+        if (curseForgePreflight is null)
+            throw new InvalidOperationException(
+                "The native CurseForge client-manifest preflight boundary is unavailable.");
+        var projectId = string.IsNullOrWhiteSpace(target.PackId) ? source.ProjectId : target.PackId;
+        var clientFileId = target.VersionId;
+        var expectedServerPackFileId = target.PackageType.Equals(
+            "curseforge-manifest", StringComparison.OrdinalIgnoreCase)
+            ? ""
+            : target.ProviderFileId;
+        var result = await curseForgePreflight.InspectAsync(
+            new CurseForgeModpackPreflightRequest(
+                operationId, projectId, clientFileId, expectedServerPackFileId), cancellationToken)
+            .ConfigureAwait(false);
+        if (!result.ProjectId.Equals(projectId, StringComparison.Ordinal) ||
+            !result.ClientFileId.Equals(clientFileId, StringComparison.Ordinal) ||
+            !result.ServerPackFileId.Equals(expectedServerPackFileId, StringComparison.Ordinal) ||
+            result.OperationId != operationId)
+            throw new InvalidDataException(
+                "CurseForge update preflight returned a contradictory project or file identity.");
+        if (result.State != CatalogReleasePreflightState.Ready ||
+            string.IsNullOrWhiteSpace(result.MinecraftVersion) ||
+            string.IsNullOrWhiteSpace(result.Loader) ||
+            string.IsNullOrWhiteSpace(result.LoaderVersion) ||
+            result.RequiredJavaMajor <= 0)
+            throw new InvalidDataException(string.IsNullOrWhiteSpace(result.Detail)
+                ? "The exact CurseForge client manifest did not establish a supported update target."
+                : result.Detail);
+        if (!string.IsNullOrWhiteSpace(target.MinecraftVersion) &&
+            !target.MinecraftVersion.Equals(result.MinecraftVersion, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException(
+                "The exact CurseForge client manifest disagrees with the reviewed Minecraft version.");
+        if (!string.IsNullOrWhiteSpace(target.Loader) &&
+            !target.Loader.Equals(result.Loader, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException(
+                "The exact CurseForge client manifest disagrees with the reviewed loader family.");
+        return target with
+        {
+            PackId = projectId,
+            MinecraftVersion = result.MinecraftVersion,
+            Loader = result.Loader,
+            LoaderVersion = result.LoaderVersion,
+            RequiredJavaMajor = result.RequiredJavaMajor
+        };
+    }
+
     private static void ValidateCandidate(string candidate, ServerDefinition definition)
     {
         if (!Directory.EnumerateFiles(candidate, "*.jar", SearchOption.AllDirectories).Any() &&
@@ -1705,8 +1790,10 @@ public sealed class ServerPackUpdateService
             .ToArray());
     }
 
-    private string CachePath(PackVersionInfo target)
+    private string CachePath(UpdateProvider provider, PackVersionInfo target, Guid operationId)
     {
+        if (provider == UpdateProvider.CurseForge)
+            return Path.Combine(paths.UpdateCache, $"local-{operationId:N}.package");
         var identity = !string.IsNullOrWhiteSpace(target.Sha512) ? target.Sha512[..Math.Min(24, target.Sha512.Length)] :
             !string.IsNullOrWhiteSpace(target.Sha256) ? target.Sha256[..Math.Min(24, target.Sha256.Length)] :
             !string.IsNullOrWhiteSpace(target.Sha1) ? target.Sha1[..Math.Min(24, target.Sha1.Length)] :

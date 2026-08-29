@@ -12,6 +12,50 @@ namespace ChunkPilot.IntegrationTests;
 public sealed class AgentReconnectIntegrationTests
 {
     [Fact(Timeout = 30_000)]
+    public async Task Raw_pipe_cannot_remove_or_probe_the_CurseForge_credential()
+    {
+        var root = Path.Combine(Path.GetTempPath(),
+            "ChunkPilot-curseforge-pipe-auth-" + Guid.NewGuid().ToString("N"));
+        var instanceId = Guid.NewGuid().ToString("N");
+        var pipeName = ChunkPilotConstants.PipeNameFor(instanceId);
+        Directory.CreateDirectory(root);
+
+        using var agent = StartAgent(root, instanceId);
+        try
+        {
+            await WaitForAgentAsync(pipeName);
+            var removal = await SendRawAsync(pipeName, JsonSerializer.Serialize(new AgentRequest
+            {
+                Operation = "RemoveCurseForgeApiKey",
+                Payload = JsonSerializer.SerializeToElement(new { }, ProtocolJson.Options)
+            }, ProtocolJson.Options));
+            Assert.False(removal.Success);
+            Assert.Contains("unknown agent operation", removal.Error, StringComparison.OrdinalIgnoreCase);
+
+            var probe = await SendRawAsync(pipeName, JsonSerializer.Serialize(new AgentRequest
+            {
+                Operation = "HasCurseForgeApiKey",
+                Payload = JsonSerializer.SerializeToElement(new UiSessionCredential(), ProtocolJson.Options)
+            }, ProtocolJson.Options));
+            Assert.False(probe.Success);
+            Assert.Contains("UI session capability", probe.Error, StringComparison.OrdinalIgnoreCase);
+
+            Assert.True((await SendAsync<OperationResult>(pipeName, "Ping")).Success);
+            Assert.True((await SendAsync<OperationResult>(pipeName, "ShutdownAgent")).Success);
+            await agent.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        }
+        finally
+        {
+            if (!agent.HasExited)
+            {
+                agent.Kill(entireProcessTree: true);
+                await agent.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+            }
+            await DeleteFixtureRootAsync(root);
+        }
+    }
+
+    [Fact(Timeout = 30_000)]
     public async Task Agent_pipe_rejects_an_oversized_request_and_remains_responsive()
     {
         var root = Path.Combine(Path.GetTempPath(), "ChunkPilot-pipe-size-" + Guid.NewGuid().ToString("N"));
@@ -354,6 +398,7 @@ public sealed class AgentReconnectIntegrationTests
         };
         process.StartInfo.Environment["CHUNKPILOT_DATA_ROOT"] = root;
         process.StartInfo.Environment["CHUNKPILOT_INSTANCE_ID"] = instanceId;
+        IntegrationTestRuntime.IsolateAgentCredentialSource(process.StartInfo, root);
         process.Start();
         try
         {
@@ -760,6 +805,7 @@ public sealed class AgentReconnectIntegrationTests
         };
         process.StartInfo.Environment["CHUNKPILOT_DATA_ROOT"] = root;
         process.StartInfo.Environment["CHUNKPILOT_INSTANCE_ID"] = instanceId;
+        IntegrationTestRuntime.IsolateAgentCredentialSource(process.StartInfo, root);
         Assert.True(process.Start());
         try
         {
@@ -886,6 +932,7 @@ public sealed class AgentReconnectIntegrationTests
         };
         process.StartInfo.Environment["CHUNKPILOT_DATA_ROOT"] = root;
         process.StartInfo.Environment["CHUNKPILOT_INSTANCE_ID"] = instanceId;
+        IntegrationTestRuntime.IsolateAgentCredentialSource(process.StartInfo, root);
         Assert.True(process.Start());
         return process;
     }

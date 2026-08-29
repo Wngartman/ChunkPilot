@@ -35,6 +35,12 @@ public sealed record ModpackCreationPlan
     public string ExpectedSha256 { get; init; } = "";
     public string ExpectedSha512 { get; init; } = "";
     public long? ExpectedSizeBytes { get; init; }
+    /// <summary>
+    /// Native preflight evidence for the exact CurseForge client manifest archive. Official
+    /// server packs still require this client-side manifest proof because loader identity is not
+    /// present in the server-pack relationship or the API game-version labels.
+    /// </summary>
+    public string VerifiedClientArchiveSha256 { get; init; } = "";
     public string ServerName { get; init; } = "";
     public VanillaEulaAcceptance Eula { get; init; } = new();
     public int MaxPlayers { get; init; } = 10;
@@ -73,6 +79,11 @@ public sealed record ModpackCreationPlan
             if (SourceKind == ModpackCreationSource.CurseForgeOfficialServerPack &&
                 string.IsNullOrWhiteSpace(ServerPackFileId))
                 problems.Add("The official CurseForge server-pack relationship is incomplete.");
+            if ((SourceKind is ModpackCreationSource.CurseForgeOfficialServerPack or
+                    ModpackCreationSource.CurseForgeGeneratedCandidate) &&
+                (VerifiedClientArchiveSha256.Length != 64 ||
+                 VerifiedClientArchiveSha256.Any(character => !Uri.IsHexDigit(character))))
+                problems.Add("The exact CurseForge client manifest was not verified before creation.");
         }
         else if (SourceKind == ModpackCreationSource.LocalCurseForgeManifest)
         {
@@ -110,6 +121,30 @@ public sealed record ModpackCreationPlan
 
 public sealed record BeginModpackCreationRequest(ModpackCreationPlan Plan);
 public sealed record ModpackCreationsResult(IReadOnlyList<InstallOperationSnapshot> Operations);
+
+public sealed record CurseForgeModpackPreflightRequest(
+    Guid OperationId,
+    string ProjectId,
+    string ClientFileId,
+    string ExpectedServerPackFileId);
+
+public sealed record CurseForgeModpackPreflightResult
+{
+    public Guid OperationId { get; init; }
+    public string ProjectId { get; init; } = "";
+    public string ClientFileId { get; init; } = "";
+    public string ServerPackFileId { get; init; } = "";
+    public CatalogReleasePreflightState State { get; init; }
+    public string Detail { get; init; } = "";
+    public string MinecraftVersion { get; init; } = "";
+    public string Loader { get; init; } = "";
+    public string LoaderVersion { get; init; } = "";
+    public int RequiredJavaMajor { get; init; }
+    public string ClientDownloadUrl { get; init; } = "";
+    public string ClientSha1 { get; init; } = "";
+    public string ClientSha256 { get; init; } = "";
+    public long ClientSizeBytes { get; init; }
+}
 
 public sealed record ModrinthPackInspectRequest(string ArchivePath);
 

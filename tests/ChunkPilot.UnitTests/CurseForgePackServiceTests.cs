@@ -11,6 +11,28 @@ namespace ChunkPilot.UnitTests;
 public sealed class CurseForgePackServiceTests
 {
     [Fact]
+    public void Generated_evidence_recomputes_size_from_the_installed_local_file()
+    {
+        var root = TempRoot();
+        try
+        {
+            var relativePath = "mods/local-size.jar";
+            var installedPath = Path.Combine(root, "mods", "local-size.jar");
+            Directory.CreateDirectory(Path.GetDirectoryName(installedPath)!);
+            File.WriteAllBytes(installedPath, [1, 2, 3]);
+            var materialized = new CurseForgeMaterializedFile(10, 100, relativePath,
+                new string('a', 40), new string('b', 64), 999, true, "server");
+
+            var evidence = CurseForgePackService.CreateInstalledFileEvidence(root, materialized);
+
+            Assert.Equal(3, evidence.SizeBytes);
+            Assert.Equal(relativePath, evidence.RelativePath);
+            Assert.Equal(materialized.LocalSha256, evidence.LocalSha256);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
     public async Task Reader_requires_exact_primary_loader_and_project_file_inventory()
     {
         var root = TempRoot();
@@ -85,8 +107,8 @@ public sealed class CurseForgePackServiceTests
             var handler = new FixtureHandler(request => Response(request, first, second, loader));
             var secrets = new MemorySecrets();
             secrets.SetSecret(CurseForgeUpdateProvider.ApiKeyName, "fixture-key");
-            using var http = new HttpClient(handler);
-            using var api = new CurseForgeApiClient(secrets, http);
+            using var http = new HttpClient(handler, disposeHandler: false);
+            using var api = new CurseForgeApiClient(secrets, handler);
             var loaderService = new LoaderInstallationService(new LoaderMetadataService(http), http);
             var service = new CurseForgePackService(api, loaders: loaderService);
             var destination = Path.Combine(root, "candidate");
@@ -142,7 +164,7 @@ public sealed class CurseForgePackServiceTests
             });
             var secrets = new MemorySecrets();
             secrets.SetSecret(CurseForgeUpdateProvider.ApiKeyName, "fixture-key");
-            using var api = new CurseForgeApiClient(secrets, new HttpClient(handler));
+            using var api = new CurseForgeApiClient(secrets, handler);
             var destination = Path.Combine(root, "candidate");
             Directory.CreateDirectory(destination);
             var java = Path.Combine(root, "java.exe");
@@ -176,8 +198,8 @@ public sealed class CurseForgePackServiceTests
             Directory.CreateDirectory(destination);
             var secrets = new MemorySecrets();
             secrets.SetSecret(CurseForgeUpdateProvider.ApiKeyName, "fixture-key");
-            using var api = new CurseForgeApiClient(secrets, new HttpClient(new FixtureHandler(_ =>
-                throw new InvalidOperationException())));
+            using var api = new CurseForgeApiClient(secrets, new FixtureHandler(_ =>
+                throw new InvalidOperationException()));
             await Assert.ThrowsAsync<InvalidDataException>(() =>
                 new CurseForgePackService(api).MaterializeAndInstallAsync(unsafeArchive, destination,
                     Path.Combine(root, "java.exe"), Path.Combine(root, "loader.log")));
@@ -193,7 +215,7 @@ public sealed class CurseForgePackServiceTests
                     ? Json(Project(10))
                     : Json(ApiFile(10, 100, "bad.jar", bytes, [], sha1: new string('a', 40), size: bytes.Length + 1))
                 : Bytes(bytes));
-            using var mismatchApi = new CurseForgeApiClient(secrets, new HttpClient(handler));
+            using var mismatchApi = new CurseForgeApiClient(secrets, handler);
             await File.WriteAllBytesAsync(Path.Combine(root, "java.exe"), [1]);
             await Assert.ThrowsAsync<InvalidDataException>(() =>
                 new CurseForgePackService(mismatchApi).MaterializeAndInstallAsync(archivePath, destination,

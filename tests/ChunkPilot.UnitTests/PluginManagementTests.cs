@@ -2,6 +2,7 @@ using System.IO.Compression;
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using ChunkPilot.Core;
 using ChunkPilot.Infrastructure;
 
@@ -269,6 +270,34 @@ public sealed class PluginManagementTests : IDisposable
         Assert.Equal("fixture", installed.ProviderProjectId);
         Assert.Equal("release-1", installed.ProviderVersionId);
         Assert.Equal("Modrinth", installed.InstallSource);
+    }
+
+    [Fact]
+    public void CurseForge_mod_provenance_tags_the_minimum_API_derived_operational_identity()
+    {
+        var server = PaperServer("curseforge-provenance");
+        var jar = Path.Combine(server.RootPath, "plugins", "Fixture.jar");
+        CreateJar(jar, "plugin.yml", "name: Fixture\nversion: 1.0\n");
+        var paths = new AppDataPaths(Path.Combine(root, "curseforge-provenance-data"),
+            Path.Combine(root, "managed"));
+        paths.EnsureCreated();
+        var jars = new JarInventoryService(new SafeFileService(paths), paths);
+
+        jars.RecordProviderProvenance(server, jar, new PluginRelease
+        {
+            Provider = PluginProviderKind.CurseForge,
+            ProjectId = "123",
+            VersionId = "456",
+            VersionName = "provider-label-must-not-persist"
+        });
+
+        var provenancePath = Assert.Single(Directory.EnumerateFiles(paths.PluginProvenance, "*.json"));
+        using var document = JsonDocument.Parse(File.ReadAllText(provenancePath));
+        var entry = Assert.Single(document.RootElement.EnumerateArray().ToArray());
+        Assert.Equal("123", entry.GetProperty("projectId").GetString());
+        Assert.Equal("456", entry.GetProperty("versionId").GetString());
+        Assert.Equal("ApiDerivedOperationalIdentity", entry.GetProperty("identityOrigin").GetString());
+        Assert.Equal("", entry.GetProperty("versionName").GetString());
     }
 
     [Fact]

@@ -458,6 +458,14 @@ public static class QuickStartPresetFactory
         values.ToDictionary(item => item.Key, item => item.Value, StringComparer.OrdinalIgnoreCase);
 }
 
+public enum CatalogReleasePreflightState
+{
+    NotRequired,
+    Required,
+    Ready,
+    Unsupported
+}
+
 public sealed record CatalogVersion
 {
     public string VersionId { get; init; } = "";
@@ -480,8 +488,15 @@ public sealed record CatalogVersion
     public string ServerPackFileId { get; init; } = "";
     public string ClientDownloadUrl { get; init; } = "";
     public string ClientSha1 { get; init; } = "";
+    /// <summary>
+    /// Local SHA-256 of the exact provider client archive inspected during native preflight.
+    /// CurseForge does not publish this digest; it is never populated from API metadata alone.
+    /// </summary>
+    public string ClientSha256 { get; init; } = "";
     public long? ClientSizeBytes { get; init; }
     public bool CanGenerateServerCandidate { get; init; }
+    public CatalogReleasePreflightState CreationPreflightState { get; init; }
+    public string CreationPreflightDetail { get; init; } = "";
     public bool Available { get; init; } = true;
     public bool DistributionAllowed { get; init; } = true;
     public int RequiredJavaMajor { get; init; }
@@ -576,6 +591,8 @@ public sealed record CatalogBrowseResult
     public DateTimeOffset? RetrievedAt { get; init; }
     public bool FromCache { get; init; }
     public bool Stale { get; init; }
+    public int NextIndex { get; init; }
+    public bool HasMore { get; init; }
 }
 
 /// <summary>

@@ -229,7 +229,8 @@ public sealed partial class JarInventoryService
             release.Provider,
             release.ProjectId,
             release.VersionId,
-            release.VersionName,
+            release.Provider == PluginProviderKind.CurseForge ? "" : release.VersionName,
+            ProviderIdentityOrigin.ApiDerivedOperationalIdentity,
             DateTimeOffset.UtcNow));
         if (entries.Count > 5_000)
             entries = entries.OrderByDescending(entry => entry.RecordedAt).Take(5_000).ToList();
@@ -642,5 +643,6 @@ public sealed partial class JarInventoryService
         string ProjectId,
         string VersionId,
         string VersionName,
+        ProviderIdentityOrigin IdentityOrigin,
         DateTimeOffset RecordedAt);
 }

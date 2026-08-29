@@ -48,6 +48,9 @@ services.AddSingleton<RamArgumentService>();
 services.AddSingleton<ISecretStore, DpapiSecretStore>();
 services.AddSingleton<CurseForgeCredentialProvisioner>();
 services.AddSingleton<CurseForgeApiClient>();
+services.AddSingleton<CurseForgeModpackPreflightService>();
+services.AddSingleton<ICurseForgeModpackPreflightService>(provider =>
+    provider.GetRequiredService<CurseForgeModpackPreflightService>());
 services.AddSingleton<ServerCapabilityDetectionService>();
 services.AddSingleton<CanonicalPathLockManager>();
 services.AddSingleton<DatapackService>();
@@ -145,14 +148,32 @@ await using var provider = services.BuildServiceProvider();
 var store = provider.GetRequiredService<ChunkPilotStore>();
 await store.InitializeAsync().ConfigureAwait(false);
 var credentialProvisioner = provider.GetRequiredService<CurseForgeCredentialProvisioner>();
-var credentialProvisioning = credentialProvisioner.ProvisionFromEnvironment();
+var curseForgeApi = provider.GetRequiredService<CurseForgeApiClient>();
+CurseForgeCredentialProvisioningResult credentialProvisioning;
+try
+{
+    credentialProvisioning = await credentialProvisioner
+        .ProvisionFromEnvironmentAsync(curseForgeApi)
+        .ConfigureAwait(false);
+}
+finally
+{
+    // The source-file location is bootstrap-only and must not be inherited by Java, mods,
+    // installers, diagnostics, or any other process the long-lived Agent starts later.
+    CurseForgeCredentialEnvironment.ClearFromCurrentProcess();
+}
 if (credentialProvisioning.SourcePresent)
 {
     var credentialLog = provider.GetRequiredService<ILoggerFactory>().CreateLogger("CurseForgeCredential");
     if (credentialProvisioning.Imported)
-        credentialLog.LogInformation("The approved local CurseForge credential was imported into native protected storage.");
+        credentialLog.LogInformation(
+            "The approved local CurseForge credential was authenticated and imported into native protected storage.");
+    else if (credentialProvisioning.FailureKind == CurseForgeFailureKind.Authentication)
+        credentialLog.LogWarning(
+            "CurseForge rejected the candidate credential; native protected storage was not changed.");
     else
-        credentialLog.LogWarning("The approved local CurseForge credential source was rejected.");
+        credentialLog.LogWarning(
+            "The approved local CurseForge credential could not be validated; native protected storage was not changed.");
 }
 var updateService = provider.GetRequiredService<ServerPackUpdateService>();
 _ = await updateService.RecoverInterruptedOperationsAsync().ConfigureAwait(false);

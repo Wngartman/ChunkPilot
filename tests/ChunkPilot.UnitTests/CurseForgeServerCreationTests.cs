@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Json;
 using ChunkPilot.Core;
 using ChunkPilot.Infrastructure;
+using Microsoft.Data.Sqlite;
 
 namespace ChunkPilot.UnitTests;
 
@@ -27,11 +28,47 @@ public sealed class CurseForgeServerCreationTests
         var source = JsonSerializer.Deserialize<UpdateSource>(await File.ReadAllTextAsync(
             Path.Combine(result.Definition.RootPath, ".chunkpilot", "update-source.json")), ProtocolJson.Options)!;
         Assert.Equal("123", source.ProjectId);
-        Assert.Equal("fixture-pack", source.ProjectSlug);
+        Assert.Empty(source.ProjectSlug);
+        Assert.Empty(source.ProjectName);
+        Assert.Empty(source.InstalledVersionName);
+        Assert.Empty(source.SourceUrl);
         Assert.Contains(await fixture.Store.GetServersAsync(), server => server.Id == result.Definition.Id);
         Assert.DoesNotContain("fixture-key", await File.ReadAllTextAsync(
             Path.Combine(result.Definition.RootPath, ".chunkpilot", "update-source.json")),
             StringComparison.Ordinal);
+        var properties = await File.ReadAllTextAsync(Path.Combine(result.Definition.RootPath, "server.properties"));
+        Assert.Contains("server-ip=127.0.0.1", properties, StringComparison.Ordinal);
+        Assert.Contains("enable-query=false", properties, StringComparison.Ordinal);
+        Assert.Contains("enable-rcon=false", properties, StringComparison.Ordinal);
+        Assert.Contains("broadcast-rcon-to-ops=false", properties, StringComparison.Ordinal);
+
+        var durable = new StringBuilder(File.Exists(result.StagingLogPath)
+            ? await File.ReadAllTextAsync(result.StagingLogPath)
+            : "");
+        await using (var connection = new SqliteConnection($"Data Source={fixture.Paths.DatabasePath}"))
+        {
+            await connection.OpenAsync();
+            foreach (var query in new[]
+                     {
+                         "SELECT source, sha256, detail FROM instance_history",
+                         "SELECT json FROM creation_journal"
+                     })
+            {
+                await using var command = connection.CreateCommand();
+                command.CommandText = query;
+                await using var reader = await command.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                    for (var index = 0; index < reader.FieldCount; index++)
+                        durable.Append('|').Append(reader.GetString(index));
+            }
+        }
+        var durableText = durable.ToString();
+        Assert.DoesNotContain(fixture.Request.Source, durableText, StringComparison.Ordinal);
+        Assert.DoesNotContain(fixture.Request.PackProjectName, durableText, StringComparison.Ordinal);
+        Assert.DoesNotContain(fixture.Request.PackVersionName, durableText, StringComparison.Ordinal);
+        Assert.DoesNotContain(fixture.Request.ExpectedSha1, durableText, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("provider-validation-tail-sentinel", durableText, StringComparison.Ordinal);
+        Assert.Contains(CurseForgePersistencePolicy.LocalCreationHistoryDetail, durableText, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -102,11 +139,12 @@ public sealed class CurseForgeServerCreationTests
             var sha1 = Sha1(serverPack);
             var secrets = new MemorySecrets();
             secrets.SetSecret(CurseForgeUpdateProvider.ApiKeyName, "fixture-key");
-            var http = new HttpClient(new Handler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+            var handler = new Handler(_ => new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = new ByteArrayContent(serverPack)
-            }));
-            var api = new CurseForgeApiClient(secrets, http);
+            });
+            var http = new HttpClient(handler, disposeHandler: false);
+            var api = new CurseForgeApiClient(secrets, handler);
             var validator = new FakeValidator(validationSucceeds, cancelValidation);
             var installer = new ManagedServerInstaller(paths, store, new ServerDownloadCatalog(http), http,
                 curseForge: api, stagedValidator: validator);
@@ -124,6 +162,7 @@ public sealed class CurseForgeServerCreationTests
                 MinimumRamMb = 1024,
                 MaximumRamMb = 2048,
                 Port = 25565,
+                CreationNetworkingPreference = VanillaNetworkingPreference.ThisComputerOnly,
                 EulaAccepted = true,
                 EulaAcceptedAt = DateTimeOffset.UtcNow,
                 ExpectedSha1 = sha1,
@@ -180,7 +219,8 @@ public sealed class CurseForgeServerCreationTests
             Calls++;
             if (cancel) throw new OperationCanceledException(cancellationToken);
             return Task.FromResult(new StagedServerValidationResult(succeeds, succeeds, succeeds, succeeds,
-                succeeds, succeeds ? "Fixture validation passed." : "Fixture validation failed.", []));
+                succeeds, succeeds ? "Fixture validation passed." : "Fixture validation failed.",
+                ["provider-validation-tail-sentinel fixture-server.zip"]));
         }
     }
 

@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using ChunkPilot.Core;
 using ChunkPilot.Infrastructure;
 
@@ -44,6 +45,29 @@ public sealed class CurseForgeProviderTests
     }
 
     [Fact]
+    public async Task CurseForge_file_game_versions_establish_loader_family_but_not_an_exact_loader_version()
+    {
+        var handler = new Handler(request => request.RequestUri!.AbsolutePath.EndsWith("/files/222", StringComparison.Ordinal)
+            ? Json(ServerFile(222, 123, Cdn, "fixture-server.zip"))
+            : Json(SearchProject()));
+        using var provider = Provider(handler);
+
+        var item = Assert.Single(await provider.BrowseAsync(new CatalogQuery
+        {
+            Provider = CatalogProvider.CurseForge,
+            MinecraftVersion = "1.21.1",
+            Loader = "NeoForge"
+        }));
+
+        var release = Assert.Single(item.Versions);
+        Assert.Equal("NeoForge", release.Loader);
+        Assert.Empty(release.LoaderVersion);
+        Assert.Equal(CatalogReleasePreflightState.Required, release.CreationPreflightState);
+        Assert.Contains("exact client manifest", release.CreationPreflightDetail,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task Slug_and_exact_file_link_resolution_verifies_project_and_keeps_exact_release()
     {
         var handler = new Handler(request => request.RequestUri!.AbsolutePath switch
@@ -82,15 +106,55 @@ public sealed class CurseForgeProviderTests
         }));
     }
 
-    [Fact]
-    public async Task Distribution_restricted_or_unavailable_projects_never_become_results()
+    [Theory]
+    [InlineData("distribution-false")]
+    [InlineData("distribution-null")]
+    [InlineData("distribution-missing")]
+    [InlineData("unavailable")]
+    [InlineData("availability-null")]
+    [InlineData("availability-missing")]
+    public async Task Distribution_unconfirmed_restricted_or_unavailable_projects_never_become_results(string state)
     {
-        var restricted = SearchProject().Replace("\"allowModDistribution\":true",
-            "\"allowModDistribution\":false", StringComparison.Ordinal);
+        var restricted = state switch
+        {
+            "distribution-false" => SearchProject().Replace("\"allowModDistribution\":true",
+                "\"allowModDistribution\":false", StringComparison.Ordinal),
+            "distribution-null" => SearchProject().Replace("\"allowModDistribution\":true",
+                "\"allowModDistribution\":null", StringComparison.Ordinal),
+            "distribution-missing" => SearchProject().Replace(",\"allowModDistribution\":true",
+                "", StringComparison.Ordinal),
+            "unavailable" => SearchProject().Replace("\"isAvailable\":true",
+                "\"isAvailable\":false", StringComparison.Ordinal),
+            "availability-null" => SearchProject().Replace("\"isAvailable\":true",
+                "\"isAvailable\":null", StringComparison.Ordinal),
+            "availability-missing" => SearchProject().Replace(",\"isAvailable\":true",
+                "", StringComparison.Ordinal),
+            _ => throw new ArgumentOutOfRangeException(nameof(state))
+        };
         var handler = new Handler(_ => Json(restricted));
         using var provider = Provider(handler);
 
         Assert.Empty(await provider.BrowseAsync(new CatalogQuery { Provider = CatalogProvider.CurseForge }));
+        Assert.Equal(1, handler.Count);
+    }
+
+    [Theory]
+    [InlineData("false")]
+    [InlineData("null")]
+    [InlineData("missing")]
+    public async Task File_availability_must_be_explicit_true(string state)
+    {
+        var response = JsonNode.Parse(SearchProject())!.AsObject();
+        var file = response["data"]!.AsArray()[0]!["latestFiles"]!.AsArray()[0]!.AsObject();
+        if (state == "missing") file.Remove("isAvailable");
+        else file["isAvailable"] = state == "false" ? false : null;
+        var handler = new Handler(_ => Json(response.ToJsonString()));
+        using var provider = Provider(handler);
+
+        var item = Assert.Single(await provider.BrowseAsync(
+            new CatalogQuery { Provider = CatalogProvider.CurseForge }));
+
+        Assert.Empty(item.Versions);
         Assert.Equal(1, handler.Count);
     }
 
@@ -117,6 +181,50 @@ public sealed class CurseForgeProviderTests
                                             uri.Query.Contains("classId=4471", StringComparison.Ordinal));
         Assert.Contains(handler.Uris, uri => uri.AbsolutePath == "/v1/mods/search" &&
                                             uri.Query.Contains("categoryId=612", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Pagination_uses_the_provider_cursor_even_when_distribution_policy_underfills_the_page()
+    {
+        var body = JsonSerializer.Serialize(new
+        {
+            data = new object[]
+            {
+                new { id = 900, slug = "blocked", name = "Blocked", isAvailable = true, allowModDistribution = false },
+                new
+                {
+                    id = 123, slug = "fixture-pack", name = "Fixture Pack", summary = "A fixture.",
+                    isAvailable = true, allowModDistribution = true, authors = new[] { new { name = "Author" } },
+                    categories = Array.Empty<object>(), downloadCount = 10, dateModified = "2026-08-01T00:00:00Z",
+                    latestFiles = new[]
+                    {
+                        new
+                        {
+                            id = 111, modId = 123, fileName = "client.zip", displayName = "Fixture 1.0",
+                            fileDate = "2026-08-01T00:00:00Z", releaseType = 1, isAvailable = true,
+                            gameVersions = new[] { "1.21.1", "NeoForge" }, serverPackFileId = 222,
+                            downloadUrl = "https://mediafilez.forgecdn.net/files/111/client.zip", fileLength = 10,
+                            hashes = new[] { new { algo = 1, value = Sha1 } }
+                        }
+                    }
+                }
+            },
+            pagination = new { index = 0, pageSize = 2, resultCount = 2, totalCount = 4 }
+        });
+        var handler = new Handler(request => request.RequestUri!.AbsolutePath.EndsWith("/files/222", StringComparison.Ordinal)
+            ? Json(ServerFile(222, 123, Cdn, "fixture-server.zip"))
+            : Json(body));
+        using var provider = Provider(handler);
+
+        var page = await provider.BrowsePageAsync(new CatalogQuery
+        {
+            Provider = CatalogProvider.CurseForge,
+            Limit = 2
+        });
+
+        Assert.Single(page.Items);
+        Assert.Equal(2, page.NextIndex);
+        Assert.True(page.HasMore);
     }
 
     [Fact]
@@ -201,7 +309,7 @@ public sealed class CurseForgeProviderTests
     {
         var secrets = new MemorySecrets();
         secrets.SetSecret(CurseForgeUpdateProvider.ApiKeyName, "fixture-approved-key");
-        return new CurseForgeApiClient(secrets, new HttpClient(handler));
+        return new CurseForgeApiClient(secrets, handler);
     }
 
     private static string SearchProject() => JsonSerializer.Serialize(new

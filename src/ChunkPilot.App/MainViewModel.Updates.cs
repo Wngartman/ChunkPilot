@@ -593,7 +593,7 @@ public sealed partial class MainViewModel
         Replace(UpdateHistory, await client.SendAsync<IReadOnlyList<UpdateHistoryEntry>>("GetUpdateHistory",
             new ServerIdRequest(id)).ConfigureAwait(true));
         SelectedVersion = Versions.FirstOrDefault(item => item.IsActive) ?? Versions.FirstOrDefault();
-        var key = await client.SendAsync<TextResponse>("HasCurseForgeApiKey").ConfigureAwait(true);
+        var key = await client.SendAsync<TextResponse>("HasCurseForgeApiKey", uiSession).ConfigureAwait(true);
         CurseForgeKeyConfigured = key.Value == "configured";
     }
 

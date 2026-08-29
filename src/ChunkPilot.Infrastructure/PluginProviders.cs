@@ -206,9 +206,9 @@ public sealed class CurseForgePluginProvider : IPluginCatalogProvider
     }
 
     private static bool ProjectAvailable(JsonElement project) =>
-        (!project.TryGetProperty("isAvailable", out var available) || available.ValueKind != JsonValueKind.False) &&
-        (!project.TryGetProperty("allowModDistribution", out var distribution) ||
-         distribution.ValueKind is JsonValueKind.True or JsonValueKind.Null);
+        project.TryGetProperty("isAvailable", out var available) && available.ValueKind == JsonValueKind.True &&
+        project.TryGetProperty("allowModDistribution", out var distribution) &&
+        distribution.ValueKind == JsonValueKind.True;
 
     private static int LoaderType(string loader) => loader.Trim().ToLowerInvariant() switch
     {

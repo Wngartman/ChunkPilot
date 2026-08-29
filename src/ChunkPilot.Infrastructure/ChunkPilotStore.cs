@@ -831,6 +831,7 @@ public sealed class ChunkPilotStore : IAsyncDisposable
 
     public async Task UpsertUpdateSourceAsync(UpdateSource source, CancellationToken cancellationToken = default)
     {
+        source = CurseForgePersistencePolicy.Minimize(source);
         await using var connection = await OpenAsync(cancellationToken).ConfigureAwait(false);
         await using var command = connection.CreateCommand();
         command.CommandText = """
@@ -857,15 +858,19 @@ public sealed class ChunkPilotStore : IAsyncDisposable
     {
         await using var connection = await OpenAsync(cancellationToken).ConfigureAwait(false);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+        var curseForge = result.Source?.Provider == UpdateProvider.CurseForge;
         await using (var insert = connection.CreateCommand())
         {
             insert.Transaction = (SqliteTransaction)transaction;
-            insert.CommandText = """
-                INSERT INTO update_checks(server_id, checked_utc, json) VALUES($server, $checked, $json)
-                """;
+            insert.CommandText = curseForge
+                ? "DELETE FROM update_checks WHERE server_id=$server"
+                : "INSERT INTO update_checks(server_id, checked_utc, json) VALUES($server, $checked, $json)";
             insert.Parameters.AddWithValue("$server", result.ServerId.ToString("D"));
-            insert.Parameters.AddWithValue("$checked", result.CheckedAt.UtcDateTime.ToString("O"));
-            insert.Parameters.AddWithValue("$json", JsonSerializer.Serialize(result, ProtocolJson.Options));
+            if (!curseForge)
+            {
+                insert.Parameters.AddWithValue("$checked", result.CheckedAt.UtcDateTime.ToString("O"));
+                insert.Parameters.AddWithValue("$json", JsonSerializer.Serialize(result, ProtocolJson.Options));
+            }
             await insert.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
         if (result.Source is not null)
@@ -876,7 +881,8 @@ public sealed class ChunkPilotStore : IAsyncDisposable
                 INSERT INTO update_sources(server_id, json, updated_utc) VALUES($server, $json, $updated)
                 ON CONFLICT(server_id) DO UPDATE SET json=excluded.json, updated_utc=excluded.updated_utc
                 """;
-            var source = result.Source with { LastCheckedAt = result.CheckedAt };
+            var source = CurseForgePersistencePolicy.Minimize(
+                result.Source with { LastCheckedAt = result.CheckedAt });
             update.Parameters.AddWithValue("$server", source.ServerId.ToString("D"));
             update.Parameters.AddWithValue("$json", JsonSerializer.Serialize(source, ProtocolJson.Options));
             update.Parameters.AddWithValue("$updated", result.CheckedAt.UtcDateTime.ToString("O"));
@@ -889,6 +895,9 @@ public sealed class ChunkPilotStore : IAsyncDisposable
         Guid serverId,
         CancellationToken cancellationToken = default)
     {
+        var source = await GetUpdateSourceAsync(serverId, cancellationToken).ConfigureAwait(false);
+        if (source?.Provider == UpdateProvider.CurseForge)
+            return null;
         await using var connection = await OpenAsync(cancellationToken).ConfigureAwait(false);
         await using var command = connection.CreateCommand();
         command.CommandText = "SELECT json FROM update_checks WHERE server_id=$server ORDER BY checked_utc DESC LIMIT 1";
@@ -899,6 +908,7 @@ public sealed class ChunkPilotStore : IAsyncDisposable
 
     public async Task UpsertVersionSnapshotAsync(VersionSnapshot snapshot, CancellationToken cancellationToken = default)
     {
+        snapshot = CurseForgePersistencePolicy.Minimize(snapshot);
         await using var connection = await OpenAsync(cancellationToken).ConfigureAwait(false);
         await using var command = connection.CreateCommand();
         command.CommandText = """
@@ -1019,15 +1029,17 @@ public sealed class ChunkPilotStore : IAsyncDisposable
         command.Parameters.AddWithValue("$operation", operationId.ToString("D"));
         command.Parameters.AddWithValue("$server", serverId.ToString("D"));
         command.Parameters.AddWithValue("$provider", provider.ToString());
-        command.Parameters.AddWithValue("$version", version.VersionId);
-        command.Parameters.AddWithValue("$url", version.DownloadUrl);
-        command.Parameters.AddWithValue("$file", version.FileName);
+        command.Parameters.AddWithValue("$version", provider == UpdateProvider.CurseForge ? "" : version.VersionId);
+        command.Parameters.AddWithValue("$url", provider == UpdateProvider.CurseForge ? "" : version.DownloadUrl);
+        command.Parameters.AddWithValue("$file", provider == UpdateProvider.CurseForge ? "" : version.FileName);
         command.Parameters.AddWithValue("$size", sizeBytes);
         command.Parameters.AddWithValue("$sha256", sha256);
-        command.Parameters.AddWithValue("$providerHash",
-            !string.IsNullOrWhiteSpace(version.Sha512) ? $"sha512:{version.Sha512}" :
-            !string.IsNullOrWhiteSpace(version.Sha256) ? $"sha256:{version.Sha256}" :
-            !string.IsNullOrWhiteSpace(version.Sha1) ? $"sha1:{version.Sha1}" : "");
+        command.Parameters.AddWithValue("$providerHash", provider == UpdateProvider.CurseForge
+            ? ""
+            : !string.IsNullOrWhiteSpace(version.Sha512) ? $"sha512:{version.Sha512}"
+            : !string.IsNullOrWhiteSpace(version.Sha256) ? $"sha256:{version.Sha256}"
+            : !string.IsNullOrWhiteSpace(version.Sha1) ? $"sha1:{version.Sha1}"
+            : "");
         command.Parameters.AddWithValue("$status", status);
         command.Parameters.AddWithValue("$completed", DateTimeOffset.UtcNow.ToString("O"));
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);

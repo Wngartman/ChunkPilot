@@ -35,6 +35,9 @@ public sealed class UpdateSourceDetector
                         ProjectId = project,
                         InstalledVersionId = version,
                         InstalledVersionName = version,
+                        IdentityOrigin = provider == UpdateProvider.CurseForge
+                            ? ProviderIdentityOrigin.InstalledArtifactMetadata
+                            : ProviderIdentityOrigin.Unknown,
                         MinecraftVersion = server.MinecraftVersion,
                         Loader = server.Ecosystem.ToString(),
                         LoaderVersion = server.LoaderVersion,
@@ -100,6 +103,9 @@ public sealed class UpdateSourceDetector
                             ProjectId = project,
                             InstalledVersionId = version,
                             InstalledVersionName = version,
+                            IdentityOrigin = provider == UpdateProvider.CurseForge
+                                ? ProviderIdentityOrigin.InstalledArtifactMetadata
+                                : ProviderIdentityOrigin.Unknown,
                             MinecraftVersion = server.MinecraftVersion,
                             Loader = server.Ecosystem.ToString(),
                             LoaderVersion = server.LoaderVersion,
@@ -136,6 +142,8 @@ public sealed class UpdateSourceDetector
                             ProjectId = project,
                             InstalledVersionId = version,
                             InstalledVersionName = version,
+                            InstalledFileId = version,
+                            IdentityOrigin = ProviderIdentityOrigin.ArchiveManifest,
                             MinecraftVersion = server.MinecraftVersion,
                             Loader = server.Ecosystem.ToString(),
                             LoaderVersion = server.LoaderVersion,

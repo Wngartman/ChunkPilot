@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -6,7 +7,22 @@ namespace ChunkPilot.Infrastructure;
 public sealed record CurseForgeCredentialProvisioningResult(
     bool SourcePresent,
     bool Imported,
-    string Detail);
+    string Detail,
+    CurseForgeFailureKind? FailureKind = null,
+    bool ExistingCredentialPreserved = false);
+
+public static class CurseForgeCredentialEnvironment
+{
+    public static void ClearFromCurrentProcess() =>
+        Environment.SetEnvironmentVariable(
+            CurseForgeCredentialProvisioner.KeyFileEnvironmentVariable, null);
+
+    public static void RemoveFromChild(ProcessStartInfo startInfo)
+    {
+        ArgumentNullException.ThrowIfNull(startInfo);
+        startInfo.Environment.Remove(CurseForgeCredentialProvisioner.KeyFileEnvironmentVariable);
+    }
+}
 
 /// <summary>
 /// Imports an approved local CurseForge application credential directly into the Windows-protected
@@ -18,23 +34,44 @@ public sealed class CurseForgeCredentialProvisioner(ISecretStore secrets)
     public const string DefaultKeyFilePath = @"D:\ChunkPilot\.secrets\curseforge-api-key.txt";
     internal const int MaximumKeyFileBytes = 4 * 1024;
 
-    public CurseForgeCredentialProvisioningResult ProvisionFromEnvironment()
+    public Task<CurseForgeCredentialProvisioningResult> ProvisionFromEnvironmentAsync(
+        CurseForgeApiClient api,
+        CancellationToken cancellationToken = default)
     {
         var configuredPath = Environment.GetEnvironmentVariable(KeyFileEnvironmentVariable);
         if (!TryResolveSourcePath(configuredPath, out var sourcePath, out var error))
-            return new(false, false, error);
-        return ProvisionFromFile(sourcePath);
+            return Task.FromResult(new CurseForgeCredentialProvisioningResult(
+                false,
+                false,
+                error,
+                ExistingCredentialPreserved: HasExistingCredential()));
+        return ProvisionFromFileAsync(sourcePath, api, cancellationToken);
     }
 
-    internal CurseForgeCredentialProvisioningResult ProvisionFromFile(string sourcePath)
+    internal async Task<CurseForgeCredentialProvisioningResult> ProvisionFromFileAsync(
+        string sourcePath,
+        CurseForgeApiClient api,
+        CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(sourcePath);
+        ArgumentNullException.ThrowIfNull(api);
+        var hadExistingCredential = HasExistingCredential();
         if (!File.Exists(sourcePath))
-            return new(false, false, "No approved local CurseForge credential file is present.");
+            return new(false, false, "No approved local CurseForge credential file is present.",
+                ExistingCredentialPreserved: hadExistingCredential);
 
-        var info = new FileInfo(sourcePath);
-        if (info.Length is <= 0 or > MaximumKeyFileBytes)
-            return new(true, false, "The approved CurseForge credential file has an invalid bounded size.");
+        try
+        {
+            var info = new FileInfo(sourcePath);
+            if (info.Length is <= 0 or > MaximumKeyFileBytes)
+                return new(true, false, "The approved CurseForge credential file has an invalid bounded size.",
+                    ExistingCredentialPreserved: hadExistingCredential);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return new(true, false, "The approved CurseForge credential file could not be read.",
+                ExistingCredentialPreserved: hadExistingCredential);
+        }
 
         byte[] bytes;
         var length = 0;
@@ -45,7 +82,8 @@ public sealed class CurseForgeCredentialProvisioner(ISecretStore secrets)
             bytes = new byte[MaximumKeyFileBytes + 1];
             while (length < bytes.Length)
             {
-                var read = input.Read(bytes, length, bytes.Length - length);
+                var read = await input.ReadAsync(bytes.AsMemory(length, bytes.Length - length), cancellationToken)
+                    .ConfigureAwait(false);
                 if (read == 0)
                     break;
                 length += read;
@@ -53,13 +91,15 @@ public sealed class CurseForgeCredentialProvisioner(ISecretStore secrets)
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            return new(true, false, "The approved CurseForge credential file could not be read.");
+            return new(true, false, "The approved CurseForge credential file could not be read.",
+                ExistingCredentialPreserved: hadExistingCredential);
         }
 
         if (length > MaximumKeyFileBytes)
         {
             CryptographicOperations.ZeroMemory(bytes);
-            return new(true, false, "The approved CurseForge credential file exceeds its bounded size.");
+            return new(true, false, "The approved CurseForge credential file exceeds its bounded size.",
+                ExistingCredentialPreserved: hadExistingCredential);
         }
         Array.Resize(ref bytes, length);
 
@@ -67,9 +107,25 @@ public sealed class CurseForgeCredentialProvisioner(ISecretStore secrets)
         {
             var key = Encoding.UTF8.GetString(bytes).Trim();
             if (!IsValidKey(key))
-                return new(true, false, "The approved CurseForge credential file is not one non-empty credential value.");
+                return new(true, false,
+                    "The approved CurseForge credential file is not one non-empty credential value.",
+                    ExistingCredentialPreserved: hadExistingCredential);
+
+            try
+            {
+                await api.ValidateCredentialAsync(key, cancellationToken).ConfigureAwait(false);
+            }
+            catch (CurseForgeApiException exception)
+            {
+                var detail = exception.Kind == CurseForgeFailureKind.Authentication
+                    ? "CurseForge rejected the candidate credential; native protected storage was not changed."
+                    : "CurseForge credential validation is temporarily unavailable; native protected storage was not changed.";
+                return new(true, false, detail, exception.Kind, hadExistingCredential);
+            }
+
             secrets.SetSecret(CurseForgeUpdateProvider.ApiKeyName, key);
-            return new(true, true, "CurseForge credential imported into Windows-protected native storage.");
+            return new(true, true,
+                "CurseForge credential authenticated and imported into Windows-protected native storage.");
         }
         finally
         {
@@ -112,4 +168,7 @@ public sealed class CurseForgeCredentialProvisioner(ISecretStore secrets)
         key.Length is >= 8 and <= MaximumKeyFileBytes &&
         !key.Equals("REPLACE_WITH_APPROVED_CURSEFORGE_APPLICATION_KEY", StringComparison.Ordinal) &&
         key.All(character => !char.IsWhiteSpace(character) && !char.IsControl(character));
+
+    private bool HasExistingCredential() =>
+        secrets.Contains(CurseForgeUpdateProvider.ApiKeyName);
 }

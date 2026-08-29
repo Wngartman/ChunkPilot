@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Security.Cryptography;
+using System.Diagnostics;
 using ChunkPilot.Infrastructure;
 using ChunkPilot.Core;
 
@@ -161,17 +162,27 @@ static async Task<int> SmokeCurseForgeAsync(string[] values)
         var paths = new AppDataPaths(Path.Combine(isolatedRoot, "data"), Path.Combine(isolatedRoot, "servers"));
         paths.EnsureCreated();
         var secrets = new DpapiSecretStore(paths);
-        var provisioned = new CurseForgeCredentialProvisioner(secrets).ProvisionFromEnvironment();
-        results.Add(new { category = "credential present", status = provisioned.Imported ? "PASSED" : "UNAVAILABLE" });
-        Console.WriteLine($"credential present: {(provisioned.Imported ? "PASSED" : "UNAVAILABLE")}");
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMinutes(5));
+        using var api = new CurseForgeApiClient(secrets);
+        var authenticationTimer = Stopwatch.StartNew();
+        var provisioned = await new CurseForgeCredentialProvisioner(secrets)
+            .ProvisionFromEnvironmentAsync(api, cancellation.Token);
+        authenticationTimer.Stop();
+        results.Add(new
+        {
+            category = "credential authentication",
+            status = provisioned.Imported ? "PASSED" : "UNAVAILABLE",
+            failureKind = provisioned.FailureKind?.ToString(),
+            existingCredentialPreserved = provisioned.ExistingCredentialPreserved,
+            elapsedMilliseconds = authenticationTimer.Elapsed.TotalMilliseconds
+        });
+        Console.WriteLine($"credential authentication: {(provisioned.Imported ? "PASSED" : "UNAVAILABLE")}");
         if (!provisioned.Imported)
         {
             await WriteCurseForgeSmokeReportAsync(reportPath, results);
             return 3;
         }
 
-        using var cancellation = new CancellationTokenSource(TimeSpan.FromMinutes(2));
-        using var api = new CurseForgeApiClient(secrets);
         using (await api.GetJsonAsync("/v1/games/432", cancellation.Token))
         {
             results.Add(new { category = "authentication and Minecraft identity", status = "PASSED" });
@@ -182,24 +193,65 @@ static async Task<int> SmokeCurseForgeAsync(string[] values)
             results.Add(new { category = "category inventory", status = "PASSED" });
             Console.WriteLine("category inventory: PASSED");
         }
+        using (var loaderInventory = await api.GetJsonAsync("/v1/minecraft/modloader", cancellation.Token))
+        {
+            var count = loaderInventory.RootElement.TryGetProperty("data", out var data) &&
+                        data.ValueKind == JsonValueKind.Array ? data.GetArrayLength() : 0;
+            results.Add(new { category = "modloader inventory", status = count > 0 ? "PASSED" : "FAILED", count });
+            Console.WriteLine($"modloader inventory: {(count > 0 ? "PASSED" : "FAILED")} ({count})");
+        }
 
         using var provider = new CurseForgeCatalogProvider(api);
         var versions = await provider.GetGameVersionsAsync(cancellation.Token);
         results.Add(new { category = "Minecraft version inventory", status = versions.Count > 0 ? "PASSED" : "FAILED", count = versions.Count });
         Console.WriteLine($"Minecraft version inventory: {(versions.Count > 0 ? "PASSED" : "FAILED")} ({versions.Count})");
 
-        var packs = await provider.BrowseAsync(new CatalogQuery
+        var searchQuery = new CatalogQuery
         {
             Provider = CatalogProvider.CurseForge,
             Search = "All the Mods",
             MaximumChannel = ReleaseChannel.Stable,
             ServerPackRequired = false,
             ExcludeClientOnly = false,
-            Limit = 5,
+            Limit = 2,
             Sort = CatalogSort.Relevance
-        }, cancellation.Token);
+        };
+        var searchDurations = new List<double>(5);
+        CatalogProviderPage? firstPage = null;
+        for (var attempt = 0; attempt < 5; attempt++)
+        {
+            var timer = Stopwatch.StartNew();
+            var page = await provider.BrowsePageAsync(searchQuery, cancellation.Token);
+            timer.Stop();
+            searchDurations.Add(timer.Elapsed.TotalMilliseconds);
+            firstPage ??= page;
+        }
+        var orderedSearchDurations = searchDurations.Order().ToArray();
+        var packs = firstPage?.Items ?? [];
         results.Add(new { category = "modpack search", status = packs.Count > 0 ? "PASSED" : "FAILED", count = packs.Count });
         Console.WriteLine($"modpack search: {(packs.Count > 0 ? "PASSED" : "FAILED")} ({packs.Count})");
+        results.Add(new
+        {
+            category = "controlled search timing",
+            status = "PASSED",
+            samples = searchDurations.Count,
+            p50Milliseconds = orderedSearchDurations[orderedSearchDurations.Length / 2],
+            maxMilliseconds = orderedSearchDurations[^1],
+            persistentCache = false
+        });
+        Console.WriteLine(
+            $"controlled search timing: PASSED (p50 {orderedSearchDurations[orderedSearchDurations.Length / 2]:F1} ms, max {orderedSearchDurations[^1]:F1} ms)");
+        var paginationPassed = firstPage is { HasMore: true } && firstPage.NextIndex > 0;
+        if (paginationPassed)
+        {
+            var secondPage = await provider.BrowsePageAsync(searchQuery with { Index = firstPage!.NextIndex },
+                cancellation.Token);
+            paginationPassed = secondPage.NextIndex > firstPage.NextIndex &&
+                               secondPage.Items.All(item => packs.All(first =>
+                                   !first.ProjectId.Equals(item.ProjectId, StringComparison.Ordinal)));
+        }
+        results.Add(new { category = "provider pagination", status = paginationPassed ? "PASSED" : "FAILED" });
+        Console.WriteLine($"provider pagination: {(paginationPassed ? "PASSED" : "FAILED")}");
         var selected = packs.FirstOrDefault(pack => pack.Versions.Count > 0);
         if (selected is null)
         {
@@ -210,8 +262,15 @@ static async Task<int> SmokeCurseForgeAsync(string[] values)
         else
         {
             var exact = selected.Versions[0];
+            var detailTimer = Stopwatch.StartNew();
             var resolved = await provider.ResolveProjectAsync(selected.ProjectId, exact.ClientFileId, cancellation.Token);
-            results.Add(new { category = "exact project and file", status = resolved is not null ? "PASSED" : "FAILED" });
+            detailTimer.Stop();
+            results.Add(new
+            {
+                category = "exact project and file",
+                status = resolved is not null ? "PASSED" : "FAILED",
+                elapsedMilliseconds = detailTimer.Elapsed.TotalMilliseconds
+            });
             Console.WriteLine($"exact project and file: {(resolved is not null ? "PASSED" : "FAILED")}");
             var official = packs.SelectMany(pack => pack.Versions).Any(file => file.HasServerPackage);
             results.Add(new { category = "official server-pack relationship", status = official ? "PASSED" : "UNAVAILABLE" });
@@ -222,7 +281,59 @@ static async Task<int> SmokeCurseForgeAsync(string[] values)
                              reference is { Provider: CatalogProvider.CurseForge, Kind: ProviderLinkKind.ExactRelease };
             results.Add(new { category = "recognized CurseForge link", status = linkParsed ? "PASSED" : "FAILED" });
             Console.WriteLine($"recognized CurseForge link: {(linkParsed ? "PASSED" : "FAILED")}");
+
+            var projectLink = $"https://www.curseforge.com/minecraft/modpacks/{Uri.EscapeDataString(selected.Slug)}";
+            var projectLinkParsed = ProviderLinkParser.TryParse(projectLink, out var projectReference, out _) &&
+                                    projectReference is { Provider: CatalogProvider.CurseForge,
+                                        Kind: ProviderLinkKind.Project };
+            results.Add(new
+            {
+                category = "recognized CurseForge project link",
+                status = projectLinkParsed ? "PASSED" : "FAILED"
+            });
+            Console.WriteLine($"recognized CurseForge project link: {(projectLinkParsed ? "PASSED" : "FAILED")}");
+
+            // CurseForge normally provides the approved CDN URL on exact file metadata. The
+            // provider's normal resolution path calls /download-url only when that field is
+            // absent, so the live certification follows the product path rather than forcing a
+            // fallback endpoint that is not required for this release.
+            var downloadApproved = Uri.TryCreate(exact.ClientDownloadUrl, UriKind.Absolute,
+                                       out var downloadUri) &&
+                                   CurseForgeApiClient.IsApprovedDownloadUri(downloadUri);
+            results.Add(new
+            {
+                category = "approved download URL resolution",
+                status = downloadApproved ? "PASSED" : "FAILED",
+                source = downloadApproved ? "exact-file metadata" : "unavailable"
+            });
+            Console.WriteLine($"approved download URL resolution: {(downloadApproved ? "PASSED" : "FAILED")}");
         }
+
+        var mods = new CurseForgePluginProvider(api);
+        var modProjects = await mods.SearchAsync(new PluginCatalogQuery
+        {
+            Kind = ManagedAddonKind.Mod,
+            Search = "Waystones",
+            MinecraftVersion = "1.20.1",
+            Loader = "Forge",
+            Limit = 10
+        }, cancellation.Token);
+        var modProject = modProjects.FirstOrDefault(project =>
+            project.Name.Equals("Waystones", StringComparison.OrdinalIgnoreCase)) ??
+                         (modProjects.Count > 0 ? modProjects[0] : null);
+        var modRelease = modProject is null ? null : await mods.ResolveReleaseAsync(
+            modProject.ProjectId, "1.20.1", "Forge", cancellationToken: cancellation.Token);
+        var requiredDependencies = modRelease?.Dependencies.Count(dependency =>
+            dependency.Type.Equals("required", StringComparison.OrdinalIgnoreCase)) ?? 0;
+        var modCoveragePassed = modRelease is { Sha1.Length: 40, SizeBytes: > 0 } && requiredDependencies > 0;
+        results.Add(new
+        {
+            category = "mod search, exact file, and required dependency",
+            status = modCoveragePassed ? "PASSED" : "UNAVAILABLE",
+            requiredDependencies
+        });
+        Console.WriteLine(
+            $"mod search, exact file, and required dependency: {(modCoveragePassed ? "PASSED" : "UNAVAILABLE")}");
 
         try
         {

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NavigationGuardProvider } from '../app/NavigationGuard';
 import type { BridgeAdapter } from '../bridge/client';
 import type { BridgeMethod } from '../bridge/types';
@@ -24,7 +24,7 @@ beforeEach(() => {
   };
   useAppStore.setState({ snapshot: structuredClone(fixtures.modpack), bridge, busy: new Set(), pendingOperations: new Map(), completedOperations: new Set(), error: null });
 });
-afterEach(cleanup);
+afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 describe('installed modpack workspace', () => {
   it('does not offer the already-installed release even if a stale renderer flag says it is installable', () => {
@@ -75,6 +75,60 @@ describe('installed modpack workspace', () => {
     expect(calls.some(call => call.method === 'versions.install')).toBe(false);
 
     fireEvent.click(screen.getByRole('button', { name: 'Install update' }));
-    await waitFor(() => expect(calls.some(call => call.method === 'versions.install' && call.params.serverId === server.id)).toBe(true));
+    await waitFor(() => expect(calls.some(call => call.method === 'versions.install' &&
+      call.params.serverId === server.id && call.params.targetVersionId === 'release-2.5.0')).toBe(true));
+  });
+
+  it('requires one explicit bounded decision per migration conflict and resubmits the fenced review', async () => {
+    vi.spyOn(globalThis.crypto, 'randomUUID').mockReturnValue('77777777-7777-4777-8777-777777777777');
+    const snapshot = structuredClone(fixtures.modpack);
+    const server = snapshot.servers[0];
+    snapshot.update = {
+      ...snapshot.update!,
+      status: 'Update available',
+      targetVersionId: 'release-2.5.0',
+      latestVersionName: '2.5.0',
+      canInstall: true,
+      operationState: 'PlanningMigration',
+      migrationReview: {
+        reviewOperationId: '66666666-6666-4666-8666-666666666666',
+        serverId: server.id,
+        targetVersionId: 'release-2.5.0',
+        conflictCount: 2,
+        changeCount: 3,
+        conflicts: ['config/a.toml', 'mods/removed.jar'],
+        changes: [
+          { relativePath: 'config/a.toml', ownership: 'Unknown', change: 'Kept local modification pending review', reason: 'Installed and target values differ.', oldSha256: 'old-a', newSha256: 'new-a', requiresResolution: true },
+          { relativePath: 'mods/removed.jar', ownership: 'PackManaged', change: 'Removed from active pack', reason: 'The target pack removed this JAR.', oldSha256: 'old-b', newSha256: '', requiresResolution: true },
+          { relativePath: 'mods/new.jar', ownership: 'PackManaged', change: 'Added by new pack', reason: 'The target pack introduced this file.', oldSha256: '', newSha256: 'new-c', requiresResolution: false }
+        ],
+        truncated: false,
+        canResolve: true,
+        detail: 'Choose one explicit result for every conflict.'
+      }
+    };
+    useAppStore.setState({ snapshot });
+    render(<NavigationGuardProvider><ServerWorkspace serverId={server.id} /></NavigationGuardProvider>);
+
+    expect(screen.getByRole('dialog', { name: 'Review 2 update conflicts' })).toBeTruthy();
+    const continueButton = screen.getByRole('button', { name: 'Continue update' });
+    expect((continueButton as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(screen.getByRole('combobox', { name: 'Decision for config/a.toml' }), { target: { value: 'KeepOld' } });
+    expect((continueButton as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(screen.getByRole('combobox', { name: 'Decision for mods/removed.jar' }), { target: { value: 'NewBaseline' } });
+    expect((continueButton as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(continueButton);
+
+    await waitFor(() => expect(calls).toContainEqual({
+      method: 'versions.install',
+      params: {
+        serverId: server.id,
+        operationId: '77777777-7777-4777-8777-777777777777',
+        targetVersionId: 'release-2.5.0',
+        reviewedOperationId: '66666666-6666-4666-8666-666666666666',
+        confirmedMigrationWarnings: true,
+        migrationResolutions: { 'config/a.toml': 'KeepOld', 'mods/removed.jar': 'NewBaseline' }
+      }
+    }));
   });
 });

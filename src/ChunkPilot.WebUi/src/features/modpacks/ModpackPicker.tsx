@@ -48,6 +48,7 @@ function BrowseModpackPicker({ value, onChange }: {
   const [providerStatuses, setProviderStatuses] = useState<ModpackProviderStatus[]>([]);
   const [providerVersions, setProviderVersions] = useState<ModpackVersionInventory | null>(null);
   const [canLoadMore, setCanLoadMore] = useState(false);
+  const nextIndex = useRef(0);
   const [loadingMore, setLoadingMore] = useState(false);
   const generation = useRef(0);
   const paginationRequest = useRef<AbortController | null>(null);
@@ -96,7 +97,8 @@ function BrowseModpackPicker({ value, onChange }: {
     const apply = (result: ModpackCatalogResult) => {
       if (requestGeneration !== generation.current) return;
       setProjects(result.items);
-      setCanLoadMore(result.items.length === 20);
+      nextIndex.current = Number.isInteger(result.nextIndex) ? result.nextIndex : result.items.length;
+      setCanLoadMore(result.hasMore ?? result.items.length === 20);
       setDetail(result.detail);
       setFailedStage(result.failedStage);
       setState(toBrowserState(result));
@@ -169,14 +171,18 @@ function BrowseModpackPicker({ value, onChange }: {
     paginationRequest.current = controller;
     setLoadingMore(true);
     try {
+      const requestedIndex = nextIndex.current;
       const result = await bridge.request<ModpackCatalogResult>('modpacks.search',
-        { provider, ...query, limit: 20, index: projects.length, includeExperimental: false }, controller.signal);
+        { provider, ...query, limit: 20, index: requestedIndex, includeExperimental: false }, controller.signal);
       if (requestGeneration !== generation.current) return;
       const existing = new Set(projects.map(project => `${project.provider}:${project.projectId}`));
       const appended = result.items.filter(project => !existing.has(`${project.provider}:${project.projectId}`));
       const merged = [...projects, ...appended];
       setProjects(merged);
-      setCanLoadMore(result.items.length === 20 && appended.length > 0);
+      nextIndex.current = Number.isInteger(result.nextIndex)
+        ? result.nextIndex
+        : requestedIndex + result.items.length;
+      setCanLoadMore(result.hasMore ?? result.items.length === 20);
       setDetail(result.detail);
       setFailedStage(result.failedStage);
       if (result.state !== 'Ready') setState(toBrowserState(result));
@@ -398,6 +404,12 @@ function reconcileSelection(projects: ModpackProject[], provider: ModpackProvide
   if (current && currentRelease) {
     if (current !== value?.project || currentRelease !== value?.release)
       onChange({ kind: 'remote', project: current, release: currentRelease });
+    return;
+  }
+  // CurseForge preflight downloads the exact client manifest archive. Provider browsing alone is
+  // not consent to that transfer, so require an explicit project/release selection first.
+  if (provider === 'CurseForge') {
+    onChange(null);
     return;
   }
   const first = projects.map(project => ({ project, release: project.versions.find(release => release.canCreate) ?? project.versions[0] }))

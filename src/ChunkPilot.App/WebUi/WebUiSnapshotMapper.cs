@@ -9,6 +9,8 @@ internal sealed class WebUiSnapshotMapper
 {
     internal const int MaximumConsoleLines = 2_000;
     internal const long MaximumServerIconBytes = 512 * 1024;
+    internal const int MaximumMigrationConflicts = 200;
+    internal const int MaximumMigrationChanges = 500;
     private readonly Dictionary<Guid, IconCacheEntry> iconCache = [];
     private long revision;
 
@@ -193,7 +195,11 @@ internal sealed class WebUiSnapshotMapper
                 operationStep = viewModel.CurrentUpdateOperation?.Progress.CurrentStep,
                 operationDetail = viewModel.CurrentUpdateOperation?.Progress.Detail,
                 operationPercent = viewModel.CurrentUpdateOperation is null ? (double?)null : viewModel.CurrentUpdateOperation.Progress.Percent,
-                cancellable = viewModel.CurrentUpdateOperation is { IsTerminal: false }
+                cancellable = viewModel.CurrentUpdateOperation is { IsTerminal: false },
+                migrationReview = MapMigrationReview(
+                    selectedId,
+                    viewModel.CurrentUpdateCheck?.LatestVersion?.VersionId,
+                    viewModel.CurrentUpdateOperation)
             },
             activity = viewModel.Activity.Select(activity => new
             {
@@ -232,6 +238,66 @@ internal sealed class WebUiSnapshotMapper
 
         return JsonSerializer.SerializeToNode(snapshot, WebUiProtocol.Json)!;
     }
+
+    internal static WebUiMigrationReview? MapMigrationReview(
+        Guid? selectedServerId,
+        string? targetVersionId,
+        UpdateOperationSnapshot? operation)
+    {
+        if (selectedServerId is null || string.IsNullOrWhiteSpace(targetVersionId) ||
+            operation is not { IsTerminal: true, Success: false, Result: { } result } ||
+            operation.Progress.State != UpdateOperationState.PlanningMigration ||
+            result.ServerId != selectedServerId.Value ||
+            !result.TargetVersionId.Equals(targetVersionId, StringComparison.Ordinal) ||
+            !result.MigrationPlan.RequiresManualReview)
+            return null;
+
+        var plan = result.MigrationPlan;
+        var conflictPaths = MigrationConflictPaths(plan);
+        var conflictPathSet = conflictPaths.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var allConflictsMapped = conflictPaths.Count == plan.Conflicts.Count &&
+            conflictPaths.Count == conflictPathSet.Count &&
+            conflictPaths.All(path => plan.Changes.Any(change =>
+                change.RelativePath.Equals(path, StringComparison.OrdinalIgnoreCase)));
+        var canResolve = allConflictsMapped && conflictPaths.Count <= MaximumMigrationConflicts;
+        var changes = plan.Changes
+            .OrderByDescending(change => conflictPathSet.Contains(change.RelativePath))
+            .ThenBy(change => change.RelativePath, StringComparer.OrdinalIgnoreCase)
+            .Take(MaximumMigrationChanges)
+            .Select(change => new WebUiMigrationChange(
+                change.RelativePath,
+                change.Ownership.ToString(),
+                change.Change,
+                change.Reason,
+                change.OldSha256,
+                change.NewSha256,
+                conflictPathSet.Contains(change.RelativePath)))
+            .ToArray();
+        var truncated = changes.Length < plan.Changes.Count || plan.Conflicts.Count > MaximumMigrationConflicts;
+        var detail = canResolve
+            ? "Choose Keep installed copy or Use new pack for every conflict. The verified rollback snapshot keeps the previous state recoverable."
+            : "This migration review is too large or internally inconsistent to resolve in the WebUI. No active-version switch was attempted.";
+        return new WebUiMigrationReview(
+            operation.OperationId,
+            selectedServerId.Value,
+            targetVersionId,
+            plan.Conflicts.Count,
+            plan.Changes.Count,
+            conflictPaths.Take(MaximumMigrationConflicts).ToArray(),
+            changes,
+            truncated,
+            canResolve,
+            detail);
+    }
+
+    internal static IReadOnlyList<string> MigrationConflictPaths(MigrationPlan plan) => plan.Conflicts
+        .Select(conflict =>
+        {
+            var separator = conflict.IndexOf(':');
+            return separator <= 0 ? "" : conflict[..separator].Replace('\\', '/').TrimStart('/');
+        })
+        .Where(path => path.Length > 0)
+        .ToArray();
 
     internal static (string State, string Detail) PluginLoadEvidence(
         ModPluginEntry plugin,
@@ -697,3 +763,24 @@ internal sealed class WebUiSnapshotMapper
         string PrimaryAction,
         bool Dismissible);
 }
+
+internal sealed record WebUiMigrationChange(
+    string RelativePath,
+    string Ownership,
+    string Change,
+    string Reason,
+    string OldSha256,
+    string NewSha256,
+    bool RequiresResolution);
+
+internal sealed record WebUiMigrationReview(
+    Guid ReviewOperationId,
+    Guid ServerId,
+    string TargetVersionId,
+    int ConflictCount,
+    int ChangeCount,
+    IReadOnlyList<string> Conflicts,
+    IReadOnlyList<WebUiMigrationChange> Changes,
+    bool Truncated,
+    bool CanResolve,
+    string Detail);

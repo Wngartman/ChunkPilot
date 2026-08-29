@@ -19,6 +19,30 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 describe('existing world creation', () => {
+  it('offers a loopback-only choice and carries it through review and creation', async () => {
+    window.history.replaceState({}, '', '/?fixture=running&page=create&stage=5');
+    const fixture = new FixtureBridge('running');
+    const bridge: BridgeAdapter = {
+      request: async <T,>(method: BridgeMethod, params: Record<string, unknown> = {}) => {
+        calls.push({ method, params });
+        return fixture.request<T>(method, params);
+      },
+      subscribe: listener => fixture.subscribe(listener),
+      dispose: () => fixture.dispose()
+    };
+    useAppStore.setState({ bridge });
+    render(<CreateServerPage onDone={() => undefined} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /This computer only/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Continue/ }));
+    expect(await screen.findByText('This computer only · bound to 127.0.0.1')).toBeTruthy();
+    fireEvent.click(screen.getByRole('checkbox'));
+    fireEvent.click(screen.getByRole('button', { name: 'Create server' }));
+
+    await waitFor(() => expect(calls.some(call => call.method === 'creation.begin')).toBe(true));
+    expect(calls.find(call => call.method === 'creation.begin')!.params.networking).toBe('ThisComputerOnly');
+  });
+
   it('reviews a native world without exposing its path and sends only the one-time token', async () => {
     vi.spyOn(globalThis.crypto, 'randomUUID').mockReturnValue('88888888-8888-4888-8888-888888888888');
     const fixture = new FixtureBridge('running');

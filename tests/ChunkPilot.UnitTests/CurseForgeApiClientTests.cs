@@ -20,7 +20,7 @@ public sealed class CurseForgeApiClientTests
             Assert.Contains("ChunkPilot", request.Headers.UserAgent.ToString(), StringComparison.Ordinal);
             return Json("""{"data":{"id":432}}""");
         });
-        using var client = new CurseForgeApiClient(secrets, new HttpClient(handler));
+        using var client = new CurseForgeApiClient(secrets, handler);
 
         using var result = await client.GetJsonAsync("/v1/games/432");
 
@@ -41,7 +41,7 @@ public sealed class CurseForgeApiClientTests
         {
             Content = new StringContent("sensitive-provider-body")
         });
-        using var client = new CurseForgeApiClient(WithKey(), new HttpClient(handler));
+        using var client = new CurseForgeApiClient(WithKey(), handler);
 
         var exception = await Assert.ThrowsAsync<CurseForgeApiException>(() =>
             client.GetJsonAsync("/v1/games/432"));
@@ -67,7 +67,7 @@ public sealed class CurseForgeApiClientTests
         {
             Headers = { RetryAfter = new RetryConditionHeaderValue(TimeSpan.Zero) }
         });
-        using var client = new CurseForgeApiClient(WithKey(), new HttpClient(handler));
+        using var client = new CurseForgeApiClient(WithKey(), handler);
 
         using var result = await client.GetJsonAsync("/v1/mods/search?gameId=432");
 
@@ -84,7 +84,7 @@ public sealed class CurseForgeApiClientTests
             await release.Task.WaitAsync(cancellationToken);
             return Json("""{"data":[]}""");
         });
-        using var client = new CurseForgeApiClient(WithKey(), new HttpClient(handler));
+        using var client = new CurseForgeApiClient(WithKey(), handler);
 
         var first = client.GetJsonAsync("/v1/mods/search?gameId=432");
         var second = client.GetJsonAsync("/v1/mods/search?gameId=432");
@@ -106,7 +106,7 @@ public sealed class CurseForgeApiClientTests
             await Task.Delay(TimeSpan.FromSeconds(30), cancellationToken);
             return Json("""{"data":[]}""");
         });
-        using var client = new CurseForgeApiClient(WithKey(), new HttpClient(handler));
+        using var client = new CurseForgeApiClient(WithKey(), handler);
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
 
@@ -115,10 +115,34 @@ public sealed class CurseForgeApiClientTests
     }
 
     [Fact]
+    public async Task Cancelled_waiter_cannot_turn_a_completed_request_into_a_response_cache()
+    {
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var handler = new Handler(async (_, cancellationToken) =>
+        {
+            await release.Task.WaitAsync(cancellationToken);
+            return Json("""{"data":[]}""");
+        });
+        using var client = new CurseForgeApiClient(WithKey(), handler);
+        using var cancellation = new CancellationTokenSource();
+
+        var cancelled = client.GetJsonAsync("/v1/mods/search?gameId=432", cancellation.Token);
+        await WaitForAsync(() => handler.Count == 1);
+        cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => cancelled);
+
+        release.SetResult();
+        await WaitForAsync(() => client.InFlightRequestCount == 0);
+        using var second = await client.GetJsonAsync("/v1/mods/search?gameId=432");
+
+        Assert.Equal(2, handler.Count);
+    }
+
+    [Fact]
     public async Task Transport_timeout_is_distinct()
     {
         var handler = new Handler((_, _) => throw new TaskCanceledException("fixture timeout"));
-        using var client = new CurseForgeApiClient(WithKey(), new HttpClient(handler));
+        using var client = new CurseForgeApiClient(WithKey(), handler);
 
         var exception = await Assert.ThrowsAsync<CurseForgeApiException>(() =>
             client.GetJsonAsync("/v1/games/432"));
@@ -135,7 +159,7 @@ public sealed class CurseForgeApiClientTests
         CurseForgeFailureKind kind)
     {
         var handler = new Handler(_ => Response(HttpStatusCode.OK, body, contentType));
-        using var client = new CurseForgeApiClient(WithKey(), new HttpClient(handler));
+        using var client = new CurseForgeApiClient(WithKey(), handler);
 
         var exception = await Assert.ThrowsAsync<CurseForgeApiException>(() =>
             client.GetJsonAsync("/v1/games/432"));
@@ -152,7 +176,7 @@ public sealed class CurseForgeApiClientTests
             response.Content.Headers.ContentLength = CurseForgeApiClient.MaximumJsonBytes + 1;
             return response;
         });
-        using var client = new CurseForgeApiClient(WithKey(), new HttpClient(handler));
+        using var client = new CurseForgeApiClient(WithKey(), handler);
 
         var exception = await Assert.ThrowsAsync<CurseForgeApiException>(() =>
             client.GetJsonAsync("/v1/games/432"));
@@ -163,11 +187,16 @@ public sealed class CurseForgeApiClientTests
     [Fact]
     public async Task Redirect_and_unapproved_hosts_are_rejected()
     {
-        var handler = new Handler(_ => new HttpResponseMessage(HttpStatusCode.Redirect)
+        var requests = new List<(string Host, bool SentCredential)>();
+        var handler = new Handler(request =>
         {
-            Headers = { Location = new Uri("https://evil.example/escape") }
+            requests.Add((request.RequestUri!.IdnHost, request.Headers.Contains("x-api-key")));
+            return new HttpResponseMessage(HttpStatusCode.Redirect)
+            {
+                Headers = { Location = new Uri("https://evil.example/escape") }
+            };
         });
-        using var client = new CurseForgeApiClient(WithKey(), new HttpClient(handler));
+        using var client = new CurseForgeApiClient(WithKey(), handler);
 
         var redirect = await Assert.ThrowsAsync<CurseForgeApiException>(() =>
             client.GetJsonAsync("/v1/games/432"));
@@ -176,6 +205,12 @@ public sealed class CurseForgeApiClientTests
 
         Assert.Equal(CurseForgeFailureKind.Redirect, redirect.Kind);
         Assert.Equal(CurseForgeFailureKind.UnapprovedHost, unapproved.Kind);
+        Assert.Equal(1, handler.Count);
+        var request = Assert.Single(requests);
+        Assert.Equal(CurseForgeApiClient.ApiHost, request.Host);
+        Assert.True(request.SentCredential);
+        Assert.DoesNotContain(requests, seen =>
+            seen.Host.Equals("evil.example", StringComparison.OrdinalIgnoreCase));
         Assert.True(CurseForgeApiClient.IsApprovedDownloadUri(
             new Uri("https://mediafilez.forgecdn.net/files/1/file.jar")));
     }
@@ -184,7 +219,7 @@ public sealed class CurseForgeApiClientTests
     public async Task Missing_credential_fails_before_network_access()
     {
         var handler = new Handler(_ => throw new InvalidOperationException("network must not run"));
-        using var client = new CurseForgeApiClient(new MemorySecrets(), new HttpClient(handler));
+        using var client = new CurseForgeApiClient(new MemorySecrets(), handler);
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => client.GetJsonAsync("/v1/games/432"));
 

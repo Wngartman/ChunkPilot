@@ -96,6 +96,7 @@ public sealed class StagedServerValidator : IStagedServerValidator
                 start.ArgumentList.Add(launch);
             }
             start.ArgumentList.Add("nogui");
+            CurseForgeCredentialEnvironment.RemoveFromChild(start);
             process = Process.Start(start) ?? throw new InvalidOperationException("Windows did not start the owned validation server.");
             void Capture(string source, string? line)
             {

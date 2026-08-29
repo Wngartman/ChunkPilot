@@ -382,8 +382,9 @@ public sealed class ManagedServerInstaller
                     var validation = await stagedValidator.ValidateAsync(runtimeJava, context.StagingPath,
                         relativeLaunchPath, payload.UsesArgumentFile, TimeSpan.FromMinutes(3), token)
                         .ConfigureAwait(false);
-                    foreach (var line in validation.Tail)
-                        await AppendLogAsync(context.LogPath, "[staged-validation] " + line, token).ConfigureAwait(false);
+                    await AppendLogAsync(context.LogPath,
+                        "[staged-validation] Local candidate validation completed; server output was not retained.",
+                        token).ConfigureAwait(false);
                     await WriteValidationEvidenceAsync(context.StagingPath, validation, token).ConfigureAwait(false);
                     if (!validation.Succeeded)
                         throw new InvalidDataException(
@@ -398,8 +399,12 @@ public sealed class ManagedServerInstaller
 
         if (!result.Succeeded)
         {
+            var durableFailure = request.SourceType is InstallSourceType.CurseForgeServerPack or
+                InstallSourceType.CurseForgeGeneratedPack
+                ? CurseForgePersistencePolicy.LocalCreationFailureDetail
+                : string.Join(" ", result.Warnings);
             await AppendLogAsync(logPath,
-                $"{result.Phase}: {string.Join(" ", result.Warnings)}", CancellationToken.None).ConfigureAwait(false);
+                $"{result.Phase}: {durableFailure}", CancellationToken.None).ConfigureAwait(false);
             if (result.Failure is not null)
                 ExceptionDispatchInfo.Capture(result.Failure).Throw();
             throw new InvalidOperationException(CreationPhasePolicy.Describe(result.Outcome));
@@ -876,9 +881,21 @@ public sealed class ManagedServerInstaller
             document.Set(property.Key, property.Value);
         if (request.InitialWorld is { } initialWorld)
             document.Set("level-name", initialWorld.WorldName);
+        if (request.CreationNetworkingPreference == VanillaNetworkingPreference.ThisComputerOnly)
+            document.Set("server-ip", "127.0.0.1");
+        if (IsModpackCreation(request.SourceType))
+        {
+            document.Set("enable-query", "false");
+            document.Set("enable-rcon", "false");
+            document.Set("broadcast-rcon-to-ops", "false");
+        }
         await File.WriteAllTextAsync(path, document.ToString(), new UTF8Encoding(false), cancellationToken)
             .ConfigureAwait(false);
     }
+
+    private static bool IsModpackCreation(InstallSourceType sourceType) =>
+        sourceType is InstallSourceType.ModrinthPack or InstallSourceType.CurseForgeServerPack or
+            InstallSourceType.CurseForgeGeneratedPack;
 
     private static async Task WritePackIdentityAsync(
         string stagingPath,
@@ -905,6 +922,7 @@ public sealed class ManagedServerInstaller
             InstalledFileId = string.IsNullOrWhiteSpace(request.PackServerFileId)
                 ? string.IsNullOrWhiteSpace(request.PackVersionId) ? payload.Sha256 : request.PackVersionId
                 : request.PackServerFileId,
+            IdentityOrigin = CurseForgePersistencePolicy.IdentityOriginFor(request),
             MinecraftVersion = payload.MinecraftVersion,
             Loader = payload.Ecosystem.ToString(),
             LoaderVersion = payload.Build,
@@ -923,6 +941,7 @@ public sealed class ManagedServerInstaller
                 ? "Recorded from the exact reviewed Modrinth project and release; archive and all indexed files were verified."
                 : "Recorded from a locally selected .mrpack. Provider updates require a separately proven project identity."
         };
+        source = CurseForgePersistencePolicy.Minimize(source);
         await File.WriteAllTextAsync(Path.Combine(metadataRoot, "update-source.json"),
             JsonSerializer.Serialize(source, ProtocolJson.Options), new UTF8Encoding(false), cancellationToken)
             .ConfigureAwait(false);

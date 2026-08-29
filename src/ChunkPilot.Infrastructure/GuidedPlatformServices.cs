@@ -253,6 +253,18 @@ public interface IGuidedCatalogProvider
         Task.FromResult<CatalogItem?>(null);
 }
 
+public sealed record CatalogProviderPage(
+    IReadOnlyList<CatalogItem> Items,
+    int NextIndex,
+    bool HasMore);
+
+public interface IPaginatedGuidedCatalogProvider
+{
+    Task<CatalogProviderPage> BrowsePageAsync(
+        CatalogQuery query,
+        CancellationToken cancellationToken = default);
+}
+
 public sealed class GuidedCatalogService
 {
     private static readonly TimeSpan ProviderRequestBudget = TimeSpan.FromSeconds(10);
@@ -354,7 +366,9 @@ public sealed class GuidedCatalogService
                 : "The cached provider result contains no matching server packs.",
             RetrievedAt = cached.CreatedAt,
             FromCache = true,
-            Stale = DateTimeOffset.UtcNow - cached.CreatedAt > cacheLifetime
+            Stale = DateTimeOffset.UtcNow - cached.CreatedAt > cacheLifetime,
+            NextIndex = query.Index + query.Limit,
+            HasMore = items.Count == query.Limit
         };
     }
 
@@ -376,8 +390,13 @@ public sealed class GuidedCatalogService
 
         try
         {
-            var items = CatalogPolicy.Filter(
-                await adapter.BrowseAsync(query, cancellationToken).ConfigureAwait(false), query);
+            var page = adapter is IPaginatedGuidedCatalogProvider paginated
+                ? await paginated.BrowsePageAsync(query, cancellationToken).ConfigureAwait(false)
+                : new CatalogProviderPage(
+                    await adapter.BrowseAsync(query, cancellationToken).ConfigureAwait(false),
+                    query.Index + query.Limit,
+                    false);
+            var items = CatalogPolicy.Filter(page.Items, query);
             if (provider != CatalogProvider.CurseForge)
                 await WriteCacheAsync(provider, query, items, cancellationToken).ConfigureAwait(false);
             return new CatalogBrowseResult
@@ -388,7 +407,11 @@ public sealed class GuidedCatalogService
                 Detail = items.Count > 0
                     ? $"Loaded {items.Count} exact provider result{(items.Count == 1 ? "" : "s")}."
                     : "No server-capable pack matched the current filters.",
-                RetrievedAt = DateTimeOffset.UtcNow
+                RetrievedAt = DateTimeOffset.UtcNow,
+                NextIndex = page.NextIndex,
+                HasMore = provider == CatalogProvider.CurseForge
+                    ? page.HasMore
+                    : items.Count == query.Limit
             };
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -983,15 +1006,20 @@ public sealed class ModrinthCatalogProvider : HttpCatalogProvider, IGuidedCatalo
     }
 }
 
-public sealed class CurseForgeCatalogProvider : IGuidedCatalogProvider, IDisposable
+public sealed class CurseForgeCatalogProvider : IGuidedCatalogProvider, IPaginatedGuidedCatalogProvider, IDisposable
 {
     private const int MinecraftGameId = 432;
     private const int ModpackClassId = 4471;
     private readonly CurseForgeApiClient api;
     private readonly bool ownsApi;
 
-    public CurseForgeCatalogProvider(ISecretStore secrets, HttpClient? httpClient = null)
-        : this(new CurseForgeApiClient(secrets, httpClient), ownsApi: true)
+    public CurseForgeCatalogProvider(ISecretStore secrets)
+        : this(new CurseForgeApiClient(secrets), ownsApi: true)
+    {
+    }
+
+    internal CurseForgeCatalogProvider(ISecretStore secrets, HttpMessageHandler fixtureTransport)
+        : this(new CurseForgeApiClient(secrets, fixtureTransport), ownsApi: true)
     {
     }
 
@@ -1035,11 +1063,17 @@ public sealed class CurseForgeCatalogProvider : IGuidedCatalogProvider, IDisposa
     public async Task<IReadOnlyList<CatalogItem>> BrowseAsync(
         CatalogQuery query,
         CancellationToken cancellationToken = default)
+        => (await BrowsePageAsync(query, cancellationToken).ConfigureAwait(false)).Items;
+
+    public async Task<CatalogProviderPage> BrowsePageAsync(
+        CatalogQuery query,
+        CancellationToken cancellationToken = default)
     {
-        if (!IsAvailable) return [];
+        if (!IsAvailable) return new CatalogProviderPage([], Math.Max(0, query.Index), false);
         var loaderType = LoaderType(query.Loader);
         var categoryId = await ResolveCategoryIdAsync(query.Category, cancellationToken).ConfigureAwait(false);
-        if (!string.IsNullOrWhiteSpace(query.Category) && categoryId is null) return [];
+        if (!string.IsNullOrWhiteSpace(query.Category) && categoryId is null)
+            return new CatalogProviderPage([], Math.Max(0, query.Index), false);
         var sortField = query.Sort switch
         {
             CatalogSort.Downloads => 6,
@@ -1066,7 +1100,22 @@ public sealed class CurseForgeCatalogProvider : IGuidedCatalogProvider, IDisposa
             var parsed = await ParseProjectAsync(project, query, cancellationToken).ConfigureAwait(false);
             if (parsed is not null) items.Add(parsed);
         }
-        return items;
+        var requestedIndex = Math.Max(0, query.Index);
+        var rawCount = data.GetArrayLength();
+        var nextIndex = Math.Min(10_000, requestedIndex + rawCount);
+        var hasMore = rawCount > 0 && nextIndex < 10_000;
+        if (document.RootElement.TryGetProperty("pagination", out var pagination) &&
+            pagination.ValueKind == JsonValueKind.Object)
+        {
+            var responseIndex = Number(pagination, "index") ?? requestedIndex;
+            var resultCount = Number(pagination, "resultCount") ?? rawCount;
+            var totalCount = Math.Min(10_000, Number(pagination, "totalCount") ?? nextIndex);
+            if (responseIndex < 0 || resultCount < 0 || totalCount < 0)
+                throw new InvalidDataException("CurseForge returned invalid pagination metadata.");
+            nextIndex = checked((int)Math.Min(10_000, responseIndex + resultCount));
+            hasMore = resultCount > 0 && nextIndex < totalCount;
+        }
+        return new CatalogProviderPage(items, nextIndex, hasMore);
     }
 
     private async Task<long?> ResolveCategoryIdAsync(string category, CancellationToken cancellationToken)
@@ -1244,6 +1293,9 @@ public sealed class CurseForgeCatalogProvider : IGuidedCatalogProvider, IDisposa
             ReleaseChannel = ReleaseType(file),
             PublishedAt = Date(file, "fileDate"),
             HasServerPackage = false,
+            CreationPreflightState = CatalogReleasePreflightState.Required,
+            CreationPreflightDetail =
+                "Inspect the exact client manifest to establish its loader version before creation.",
             Available = FileAvailable(file),
             DistributionAllowed = true,
             RequiredJavaMajor = JavaRuntimePolicy.TryRequiredMajorForMinecraft(minecraft) ?? 0
@@ -1337,12 +1389,12 @@ public sealed class CurseForgeCatalogProvider : IGuidedCatalogProvider, IDisposa
     }
 
     internal static bool FileAvailable(JsonElement file) =>
-        !file.TryGetProperty("isAvailable", out var available) || available.ValueKind != JsonValueKind.False;
+        file.TryGetProperty("isAvailable", out var available) && available.ValueKind == JsonValueKind.True;
 
     private static bool IsProjectAvailable(JsonElement project) =>
-        (!project.TryGetProperty("isAvailable", out var available) || available.ValueKind != JsonValueKind.False) &&
-        (!project.TryGetProperty("allowModDistribution", out var distribution) ||
-         distribution.ValueKind is JsonValueKind.True or JsonValueKind.Null);
+        project.TryGetProperty("isAvailable", out var available) && available.ValueKind == JsonValueKind.True &&
+        project.TryGetProperty("allowModDistribution", out var distribution) &&
+        distribution.ValueKind == JsonValueKind.True;
 
     internal static string Hash(JsonElement file, int algorithm) =>
         file.TryGetProperty("hashes", out var hashes) && hashes.ValueKind == JsonValueKind.Array

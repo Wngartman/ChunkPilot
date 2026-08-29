@@ -346,8 +346,12 @@ public sealed class ServerCreationTransaction
                 if (request.EulaAcceptedAt != default)
                     await store.RecordEulaAcceptanceAsync(entry.ServerId, request.EulaAcceptedAt,
                         request.EulaUrl, "Minecraft EULA", cancellationToken).ConfigureAwait(false);
-                await store.RecordInstanceHistoryAsync(entry.ServerId, "Installed", candidate.SourceUrl,
-                    candidate.Sha256, candidate.HistoryDetail, cancellationToken).ConfigureAwait(false);
+                var curseForgeCreation = CurseForgePersistencePolicy.IsCurseForgeCreation(request.CreationKind);
+                await store.RecordInstanceHistoryAsync(entry.ServerId, "Installed",
+                    curseForgeCreation ? "" : candidate.SourceUrl,
+                    candidate.Sha256,
+                    curseForgeCreation ? CurseForgePersistencePolicy.LocalCreationHistoryDetail : candidate.HistoryDetail,
+                    cancellationToken).ConfigureAwait(false);
 
                 entry = await CommitAsync(
                     entry with
@@ -850,6 +854,9 @@ public sealed class ServerCreationTransaction
         CancellationToken cancellationToken)
     {
         var stamped = entry with { Phase = phase, UpdatedUtc = DateTimeOffset.UtcNow };
+        if (CurseForgePersistencePolicy.IsCurseForgeCreation(request.CreationKind) &&
+            !string.IsNullOrWhiteSpace(stamped.LastError))
+            stamped = stamped with { LastError = CurseForgePersistencePolicy.LocalCreationFailureDetail };
         await store.UpsertCreationJournalAsync(stamped, cancellationToken).ConfigureAwait(false);
         Report(progress, request, stamped);
         if (observer is not null)

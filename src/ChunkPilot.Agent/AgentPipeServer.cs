@@ -37,6 +37,7 @@ public sealed class AgentPipeServer
     private readonly ServerUpdateCoordinator updates;
     private readonly ServerCapabilityDetectionService capabilities;
     private readonly GuidedCatalogService guidedCatalog;
+    private readonly CurseForgeModpackPreflightService curseForgeModpackPreflight;
     private readonly ManagedJavaRuntimeService managedJava;
     private readonly DatapackService datapacks;
     private readonly DatapackManagementService packContent;
@@ -78,6 +79,7 @@ public sealed class AgentPipeServer
         ServerUpdateCoordinator updates,
         ServerCapabilityDetectionService capabilities,
         GuidedCatalogService guidedCatalog,
+        CurseForgeModpackPreflightService curseForgeModpackPreflight,
         ManagedJavaRuntimeService managedJava,
         DatapackService datapacks,
         DatapackManagementService packContent,
@@ -113,6 +115,7 @@ public sealed class AgentPipeServer
         this.updates = updates;
         this.capabilities = capabilities;
         this.guidedCatalog = guidedCatalog;
+        this.curseForgeModpackPreflight = curseForgeModpackPreflight;
         this.managedJava = managedJava;
         this.datapacks = datapacks;
         this.packContent = packContent;
@@ -531,6 +534,13 @@ public sealed class AgentPipeServer
                 return JsonSerializer.SerializeToElement(
                     await guidedCatalog.ResolveProjectAsync(input.Provider, input.ProjectReference,
                         input.ExactReleaseReference, cancellationToken).ConfigureAwait(false),
+                    ProtocolJson.Options);
+            }
+            case "PreflightCurseForgeModpack":
+            {
+                var input = Deserialize<CurseForgeModpackPreflightRequest>(request);
+                return JsonSerializer.SerializeToElement(
+                    await curseForgeModpackPreflight.InspectAsync(input, cancellationToken).ConfigureAwait(false),
                     ProtocolJson.Options);
             }
             case "BrowseCatalog":
@@ -1805,16 +1815,11 @@ public sealed class AgentPipeServer
             }
             case "HasCurseForgeApiKey":
             {
+                var session = Deserialize<UiSessionCredential>(request);
+                uiSessions.Demand(session, "Checking CurseForge credential status");
                 cancellationToken.ThrowIfCancellationRequested();
-                var configured = !string.IsNullOrWhiteSpace(secrets.GetSecret("curseforge-api-key"));
+                var configured = secrets.Contains(CurseForgeUpdateProvider.ApiKeyName);
                 return JsonSerializer.SerializeToElement(new TextResponse(configured ? "configured" : ""), ProtocolJson.Options);
-            }
-            case "RemoveCurseForgeApiKey":
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                secrets.Delete("curseforge-api-key");
-                return JsonSerializer.SerializeToElement(
-                    OperationResult.Ok("CurseForge connection removed."), ProtocolJson.Options);
             }
             case "SelfTest":
                 return JsonSerializer.SerializeToElement(await SelfTestAsync(cancellationToken).ConfigureAwait(false), ProtocolJson.Options);
@@ -2085,8 +2090,8 @@ public sealed class AgentPipeServer
         results.Add(new("Update database migration", FindingSeverity.Pass,
             "Update source, check history, version snapshot, migration, rollback, and preference tables are readable."));
         results.Add(new("CurseForge API access",
-            string.IsNullOrWhiteSpace(secrets.GetSecret("curseforge-api-key"))
-                ? FindingSeverity.Unavailable : FindingSeverity.Pass,
+            secrets.Contains(CurseForgeUpdateProvider.ApiKeyName)
+                ? FindingSeverity.Pass : FindingSeverity.Unavailable,
             "Optional API key is stored with current-user Windows data protection and is never returned by the agent."));
         return results;
     }

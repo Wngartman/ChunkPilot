@@ -240,7 +240,7 @@ public sealed class Release12Tests : IDisposable
             Assert.Equal("/v1/minecraft/version", request.RequestUri!.AbsolutePath);
             return Json("""{"data":[{"versionString":"1.21.8","dateModified":"2026-08-01T00:00:00Z"},{"versionString":"b1.8.1","dateModified":"2011-09-19T00:00:00Z"},{"versionString":"a1.2.6","dateModified":"2010-12-03T00:00:00Z"}]}""");
         });
-        var provider = new CurseForgeCatalogProvider(secrets, new HttpClient(handler));
+        var provider = new CurseForgeCatalogProvider(secrets, handler);
         Assert.Empty(await provider.GetGameVersionsAsync());
         Assert.Equal(0, handler.RequestCount);
 
@@ -256,7 +256,7 @@ public sealed class Release12Tests : IDisposable
     public async Task CurseForge_requires_key_before_network_access()
     {
         var handler = new StubHandler(_ => throw new InvalidOperationException("Network should not be called."));
-        var provider = new CurseForgeUpdateProvider(new MemorySecrets(), new HttpClient(handler));
+        var provider = new CurseForgeUpdateProvider(new MemorySecrets(), handler);
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             provider.GetVersionsAsync(Source(UpdateProvider.CurseForge) with { ProjectId = "123" },
                 new UpdatePreferences()));
@@ -273,10 +273,10 @@ public sealed class Release12Tests : IDisposable
         {
             Assert.Equal("secret", request.Headers.GetValues("x-api-key").Single());
             if (request.RequestUri!.AbsolutePath.EndsWith("/files/222", StringComparison.Ordinal))
-                return Json("""{"data":{"id":222,"modId":123,"fileName":"fixture-server.zip","displayName":"server","fileDate":"2026-07-24T12:00:00Z","releaseType":1,"gameVersions":[],"downloadUrl":"https://mediafilez.forgecdn.net/files/222/fixture-server.zip","fileLength":12,"hashes":[{"algo":1,"value":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}}""");
-            return Json("""{"data":[{"id":111,"fileName":"client.zip","displayName":"Pack 2","fileDate":"2026-07-24T12:00:00Z","releaseType":1,"gameVersions":["1.21.1","NeoForge"],"serverPackFileId":222,"hashes":[]}]}""");
+                return Json("""{"data":{"id":222,"modId":123,"isAvailable":true,"fileName":"fixture-server.zip","displayName":"server","fileDate":"2026-07-24T12:00:00Z","releaseType":1,"gameVersions":[],"downloadUrl":"https://mediafilez.forgecdn.net/files/222/fixture-server.zip","fileLength":12,"hashes":[{"algo":1,"value":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}}""");
+            return Json("""{"data":[{"id":111,"isAvailable":true,"fileName":"client.zip","displayName":"Pack 2","fileDate":"2026-07-24T12:00:00Z","releaseType":1,"gameVersions":["1.21.1","NeoForge"],"serverPackFileId":222,"hashes":[]}]}""");
         });
-        var provider = new CurseForgeUpdateProvider(secrets, new HttpClient(handler));
+        var provider = new CurseForgeUpdateProvider(secrets, handler);
         var result = Assert.Single(await provider.GetVersionsAsync(
             Source(UpdateProvider.CurseForge) with
             {
@@ -300,7 +300,7 @@ public sealed class Release12Tests : IDisposable
             Assert.Equal("secret", request.Headers.GetValues("x-api-key").Single());
             return Json("""{"data":[{"id":333,"modId":123,"fileName":"client.zip","displayName":"Generated Pack 3","fileDate":"2026-07-25T12:00:00Z","releaseType":1,"isAvailable":true,"gameVersions":["1.21.1","NeoForge"],"downloadUrl":"https://mediafilez.forgecdn.net/files/333/client.zip","fileLength":25,"hashes":[{"algo":1,"value":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}]}]}""");
         });
-        var provider = new CurseForgeUpdateProvider(secrets, new HttpClient(handler));
+        var provider = new CurseForgeUpdateProvider(secrets, handler);
 
         var result = Assert.Single(await provider.GetVersionsAsync(
             Source(UpdateProvider.CurseForge) with
@@ -537,6 +537,14 @@ public sealed class Release12Tests : IDisposable
         Assert.Contains(reasons, item => item.Contains("stable", StringComparison.OrdinalIgnoreCase));
         Assert.Contains(reasons, item => item.Contains("compatibility", StringComparison.OrdinalIgnoreCase));
         Assert.Contains(reasons, item => item.Contains("Minecraft", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void CurseForge_provider_work_is_never_scheduled_in_the_background()
+    {
+        Assert.False(UpdatePolicy.AllowsAutomaticProviderWork(UpdateProvider.CurseForge));
+        Assert.True(UpdatePolicy.AllowsAutomaticProviderWork(UpdateProvider.Modrinth));
+        Assert.True(UpdatePolicy.AllowsAutomaticProviderWork(UpdateProvider.PaperMC));
     }
 
     [Fact]

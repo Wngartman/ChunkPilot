@@ -12,6 +12,15 @@ public enum UpdateProvider
     ManagedLoader
 }
 
+public enum ProviderIdentityOrigin
+{
+    Unknown,
+    ApiDerivedOperationalIdentity,
+    ArchiveManifest,
+    UserEnteredReference,
+    InstalledArtifactMetadata
+}
+
 public enum ReleaseChannel
 {
     Stable,
@@ -100,6 +109,7 @@ public sealed record UpdateSource
     public string InstalledVersionId { get; init; } = "";
     public string InstalledVersionName { get; init; } = "";
     public string InstalledFileId { get; init; } = "";
+    public ProviderIdentityOrigin IdentityOrigin { get; init; }
     public string MinecraftVersion { get; init; } = "";
     public string Loader { get; init; } = "";
     public string LoaderVersion { get; init; } = "";
@@ -174,6 +184,9 @@ public sealed record VersionSnapshot
     public Guid ServerId { get; init; }
     public string VersionId { get; init; } = "";
     public string VersionName { get; init; } = "";
+    public string ProviderProjectId { get; init; } = "";
+    public string ProviderFileId { get; init; } = "";
+    public ProviderIdentityOrigin IdentityOrigin { get; init; }
     public DateTimeOffset InstalledAt { get; init; } = DateTimeOffset.UtcNow;
     public UpdateProvider SourceProvider { get; init; }
     public string Source { get; init; } = "";
@@ -202,6 +215,10 @@ public sealed record VersionSnapshotManifest
     public Guid SnapshotId { get; init; }
     public Guid ServerId { get; init; }
     public string VersionId { get; init; } = "";
+    public UpdateProvider SourceProvider { get; init; }
+    public string ProviderProjectId { get; init; } = "";
+    public string ProviderFileId { get; init; } = "";
+    public ProviderIdentityOrigin IdentityOrigin { get; init; }
     public DateTimeOffset CreatedAt { get; init; }
     public bool IncludesWorldData { get; init; }
     public IReadOnlyList<BackupManifestEntry> Files { get; init; } = [];
@@ -282,6 +299,7 @@ public sealed record UpdateExecutionResult
 {
     public Guid OperationId { get; init; }
     public Guid ServerId { get; init; }
+    public string TargetVersionId { get; init; } = "";
     public bool Success { get; init; }
     public bool RolledBack { get; init; }
     public bool WasRunning { get; init; }
@@ -334,6 +352,9 @@ public sealed record UpdateHistoryEntry
 
 public static class UpdatePolicy
 {
+    public static bool AllowsAutomaticProviderWork(UpdateProvider provider) =>
+        provider != UpdateProvider.CurseForge;
+
     public static bool Allows(ReleaseChannel channel, UpdatePreferences preferences) =>
         channel switch
         {

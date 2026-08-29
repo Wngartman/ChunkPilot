@@ -2,6 +2,16 @@ namespace ChunkPilot.IntegrationTests;
 
 internal static class IntegrationTestRuntime
 {
+    public static void IsolateAgentCredentialSource(
+        System.Diagnostics.ProcessStartInfo startInfo,
+        string fixtureRoot)
+    {
+        ArgumentNullException.ThrowIfNull(startInfo);
+        ArgumentException.ThrowIfNullOrWhiteSpace(fixtureRoot);
+        startInfo.Environment[ChunkPilot.Infrastructure.CurseForgeCredentialProvisioner.KeyFileEnvironmentVariable] =
+            Path.Combine(Path.GetFullPath(fixtureRoot), ".missing-curseforge-api-key");
+    }
+
     public static string DotnetPath(string repositoryRoot)
     {
         var repositoryLocal = Path.Combine(repositoryRoot, ".tools", "dotnet", "dotnet.exe");

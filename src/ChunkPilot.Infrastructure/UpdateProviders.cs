@@ -31,7 +31,12 @@ public sealed class DpapiSecretStore : ISecretStore
 
     public DpapiSecretStore(AppDataPaths paths) => path = paths.SecretsPath;
 
-    public bool Contains(string key) => GetSecret(key) is not null;
+    public bool Contains(string key)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(key);
+        lock (gate)
+            return Read().ContainsKey(key);
+    }
 
     public void SetSecret(string key, string value)
     {
@@ -42,10 +47,21 @@ public sealed class DpapiSecretStore : ISecretStore
             if (!OperatingSystem.IsWindows())
                 throw new PlatformNotSupportedException("ChunkPilot protects provider keys with Windows DPAPI.");
             var values = Read();
-            var protectedBytes = ProtectedData.Protect(
-                Encoding.UTF8.GetBytes(value), Entropy, DataProtectionScope.CurrentUser);
-            values[key] = Convert.ToBase64String(protectedBytes);
-            Write(values);
+            var plaintextBytes = Encoding.UTF8.GetBytes(value);
+            byte[]? protectedBytes = null;
+            try
+            {
+                protectedBytes = ProtectedData.Protect(
+                    plaintextBytes, Entropy, DataProtectionScope.CurrentUser);
+                values[key] = Convert.ToBase64String(protectedBytes);
+                Write(values);
+            }
+            finally
+            {
+                CryptographicOperations.ZeroMemory(plaintextBytes);
+                if (protectedBytes is not null)
+                    CryptographicOperations.ZeroMemory(protectedBytes);
+            }
         }
     }
 
@@ -58,15 +74,25 @@ public sealed class DpapiSecretStore : ISecretStore
             var values = Read();
             if (!values.TryGetValue(key, out var encoded))
                 return null;
+            byte[]? protectedBytes = null;
+            byte[]? plaintextBytes = null;
             try
             {
-                var bytes = ProtectedData.Unprotect(
-                    Convert.FromBase64String(encoded), Entropy, DataProtectionScope.CurrentUser);
-                return Encoding.UTF8.GetString(bytes);
+                protectedBytes = Convert.FromBase64String(encoded);
+                plaintextBytes = ProtectedData.Unprotect(
+                    protectedBytes, Entropy, DataProtectionScope.CurrentUser);
+                return Encoding.UTF8.GetString(plaintextBytes);
             }
-            catch (CryptographicException)
+            catch (Exception exception) when (exception is CryptographicException or FormatException)
             {
                 return null;
+            }
+            finally
+            {
+                if (plaintextBytes is not null)
+                    CryptographicOperations.ZeroMemory(plaintextBytes);
+                if (protectedBytes is not null)
+                    CryptographicOperations.ZeroMemory(protectedBytes);
             }
         }
     }
@@ -386,9 +412,15 @@ public sealed class CurseForgeUpdateProvider : IUpdateProviderAdapter, IDisposab
     private readonly bool ownsApi;
     public UpdateProvider Provider => UpdateProvider.CurseForge;
 
-    public CurseForgeUpdateProvider(ISecretStore secrets, HttpClient? client = null)
+    public CurseForgeUpdateProvider(ISecretStore secrets)
     {
-        api = new CurseForgeApiClient(secrets, client);
+        api = new CurseForgeApiClient(secrets);
+        ownsApi = true;
+    }
+
+    internal CurseForgeUpdateProvider(ISecretStore secrets, HttpMessageHandler fixtureTransport)
+    {
+        api = new CurseForgeApiClient(secrets, fixtureTransport);
         ownsApi = true;
     }
 

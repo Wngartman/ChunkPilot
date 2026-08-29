@@ -51,29 +51,23 @@ public sealed class CurseForgeApiClient : IDisposable
 
     private readonly ISecretStore secrets;
     private readonly HttpClient http;
-    private readonly bool ownsHttp;
     private readonly ConcurrentDictionary<string, Lazy<Task<byte[]>>> inFlight =
         new(StringComparer.Ordinal);
 
-    public CurseForgeApiClient(ISecretStore secrets, HttpClient? httpClient = null)
+    public CurseForgeApiClient(ISecretStore secrets)
+        : this(secrets, CreateProductionHandler())
     {
-        this.secrets = secrets;
-        if (httpClient is null)
-        {
-            var handler = new SocketsHttpHandler
-            {
-                AllowAutoRedirect = false,
-                UseCookies = false,
-                ConnectTimeout = TimeSpan.FromSeconds(5),
-                AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate
-            };
-            http = new HttpClient(handler, disposeHandler: true) { Timeout = Timeout.InfiniteTimeSpan };
-            ownsHttp = true;
-        }
-        else
-        {
-            http = httpClient;
-        }
+    }
+
+    /// <summary>
+    /// Test-only transport seam. Production callers cannot supply an HttpClient whose redirect
+    /// policy is unknown; the public constructor always owns a no-redirect SocketsHttpHandler.
+    /// </summary>
+    internal CurseForgeApiClient(ISecretStore secrets, HttpMessageHandler fixtureTransport)
+    {
+        this.secrets = secrets ?? throw new ArgumentNullException(nameof(secrets));
+        ArgumentNullException.ThrowIfNull(fixtureTransport);
+        http = new HttpClient(fixtureTransport, disposeHandler: true) { Timeout = Timeout.InfiniteTimeSpan };
 
         if (http.DefaultRequestHeaders.UserAgent.Count == 0)
             http.DefaultRequestHeaders.UserAgent.ParseAdd(
@@ -84,14 +78,39 @@ public sealed class CurseForgeApiClient : IDisposable
 
     public bool HasCredential => secrets.Contains(CurseForgeUpdateProvider.ApiKeyName);
 
+    internal int InFlightRequestCount => inFlight.Count;
+
+    internal async Task ValidateCredentialAsync(
+        string candidate,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(candidate);
+        var uri = ValidateApiUri("/v1/games/432");
+        var bytes = await GetJsonBytesAsync(uri, candidate, cancellationToken).ConfigureAwait(false);
+        using var document = JsonDocument.Parse(bytes, new JsonDocumentOptions { MaxDepth = 64 });
+        if (!document.RootElement.TryGetProperty("data", out var data) ||
+            data.ValueKind != JsonValueKind.Object ||
+            !data.TryGetProperty("id", out var id) ||
+            !id.TryGetInt64(out var gameId) || gameId != 432)
+            throw new CurseForgeApiException(CurseForgeFailureKind.MalformedResponse,
+                "CurseForge authentication returned an unexpected Minecraft identity.");
+    }
+
+    private static SocketsHttpHandler CreateProductionHandler() => new()
+    {
+        AllowAutoRedirect = false,
+        UseCookies = false,
+        ConnectTimeout = TimeSpan.FromSeconds(5),
+        AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate
+    };
+
     public async Task<JsonDocument> GetJsonAsync(
         string relativePathAndQuery,
         CancellationToken cancellationToken = default)
     {
         var uri = ValidateApiUri(relativePathAndQuery);
         var key = uri.PathAndQuery;
-        var lazy = inFlight.GetOrAdd(key, _ => new Lazy<Task<byte[]>>(
-            () => GetJsonBytesAsync(uri), LazyThreadSafetyMode.ExecutionAndPublication));
+        var lazy = inFlight.GetOrAdd(key, _ => CreateInFlightRequest(key, uri));
         try
         {
             var bytes = await lazy.Value.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -102,11 +121,23 @@ public sealed class CurseForgeApiClient : IDisposable
             throw new CurseForgeApiException(CurseForgeFailureKind.MalformedResponse,
                 "CurseForge returned malformed JSON.", innerException: exception);
         }
-        finally
+    }
+
+    private Lazy<Task<byte[]>> CreateInFlightRequest(string key, Uri uri)
+    {
+        Lazy<Task<byte[]>>? request = null;
+        request = new Lazy<Task<byte[]>>(async () =>
         {
-            if (lazy.IsValueCreated && lazy.Value.IsCompleted)
-                inFlight.TryRemove(new KeyValuePair<string, Lazy<Task<byte[]>>>(key, lazy));
-        }
+            try
+            {
+                return await GetJsonBytesAsync(uri).ConfigureAwait(false);
+            }
+            finally
+            {
+                inFlight.TryRemove(new KeyValuePair<string, Lazy<Task<byte[]>>>(key, request!));
+            }
+        }, LazyThreadSafetyMode.ExecutionAndPublication);
+        return request;
     }
 
     public async Task<HttpResponseMessage> SendDownloadAsync(
@@ -166,14 +197,20 @@ public sealed class CurseForgeApiClient : IDisposable
                host.EndsWith(".forgecdn.net", StringComparison.OrdinalIgnoreCase);
     }
 
-    private async Task<byte[]> GetJsonBytesAsync(Uri uri)
+    private Task<byte[]> GetJsonBytesAsync(Uri uri) =>
+        GetJsonBytesAsync(uri, RequireCredential(), CancellationToken.None);
+
+    private async Task<byte[]> GetJsonBytesAsync(
+        Uri uri,
+        string credential,
+        CancellationToken callerToken)
     {
-        var credential = RequireCredential();
         for (var attempt = 0; attempt < 2; attempt++)
         {
             using var request = new HttpRequestMessage(HttpMethod.Get, uri);
             request.Headers.TryAddWithoutValidation("x-api-key", credential);
-            using var timeout = new CancellationTokenSource(RequestTimeout);
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(callerToken);
+            timeout.CancelAfter(RequestTimeout);
             try
             {
                 using var response = await http.SendAsync(
@@ -181,10 +218,17 @@ public sealed class CurseForgeApiClient : IDisposable
                 if (IsRedirect(response.StatusCode))
                     throw new CurseForgeApiException(CurseForgeFailureKind.Redirect,
                         "CurseForge API redirects are not followed automatically.", response.StatusCode);
+                // The owned production handler always supplies RequestMessage and cannot redirect.
+                // Minimal fixture handlers may omit it, so the already-validated original URI is
+                // the only safe fallback available through the internal test seam.
+                var final = response.RequestMessage?.RequestUri ?? request.RequestUri;
+                if (final is null || !IsApprovedApiUri(final))
+                    throw new CurseForgeApiException(CurseForgeFailureKind.UnapprovedHost,
+                        "The CurseForge API response left the approved host boundary.");
                 if (response.StatusCode == HttpStatusCode.TooManyRequests && attempt == 0 &&
                     RetryDelay(response.Headers.RetryAfter) is { } delay)
                 {
-                    await Task.Delay(delay).ConfigureAwait(false);
+                    await Task.Delay(delay, callerToken).ConfigureAwait(false);
                     continue;
                 }
                 if (!response.IsSuccessStatusCode)
@@ -222,6 +266,10 @@ public sealed class CurseForgeApiClient : IDisposable
                 }
                 return bytes;
             }
+            catch (OperationCanceledException) when (callerToken.IsCancellationRequested)
+            {
+                throw;
+            }
             catch (OperationCanceledException exception)
             {
                 throw new CurseForgeApiException(CurseForgeFailureKind.Timeout,
@@ -258,6 +306,11 @@ public sealed class CurseForgeApiClient : IDisposable
         return uri;
     }
 
+    private static bool IsApprovedApiUri(Uri uri) =>
+        uri.Scheme == Uri.UriSchemeHttps &&
+        uri.IsDefaultPort &&
+        uri.IdnHost.TrimEnd('.').Equals(ApiHost, StringComparison.OrdinalIgnoreCase);
+
     private static TimeSpan? RetryDelay(RetryConditionHeaderValue? retryAfter)
     {
         if (retryAfter is null) return null;
@@ -289,6 +342,7 @@ public sealed class CurseForgeApiClient : IDisposable
 
     public void Dispose()
     {
-        if (ownsHttp) http.Dispose();
+        inFlight.Clear();
+        http.Dispose();
     }
 }

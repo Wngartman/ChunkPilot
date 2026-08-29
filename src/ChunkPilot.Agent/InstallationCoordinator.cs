@@ -1166,6 +1166,7 @@ public sealed class InstallationCoordinator
                     InstalledFileId = string.IsNullOrWhiteSpace(request.PackServerFileId)
                         ? string.IsNullOrWhiteSpace(request.PackVersionId) ? result.Sha256 : request.PackVersionId
                         : request.PackServerFileId,
+                    IdentityOrigin = CurseForgePersistencePolicy.IdentityOriginFor(request),
                     MinecraftVersion = result.Definition.MinecraftVersion,
                     Loader = result.Definition.Ecosystem.ToString(),
                     LoaderVersion = result.Definition.LoaderVersion,

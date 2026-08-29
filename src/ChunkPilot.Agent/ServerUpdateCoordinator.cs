@@ -51,6 +51,7 @@ public sealed class ServerUpdateCoordinator
         await store.UpsertUpdateSourceAsync(source with
         {
             IsUserLinked = true,
+            IdentityOrigin = ProviderIdentityOrigin.UserEnteredReference,
             DetectionEvidence = "Linked explicitly by the user."
         }, cancellationToken).ConfigureAwait(false);
     }
@@ -232,14 +233,17 @@ public sealed class ServerUpdateCoordinator
                      ?? throw new KeyNotFoundException("Version snapshot was not found.");
         if (target.IsActive)
             throw new InvalidOperationException("The selected version is already active.");
+        var current = versions.FirstOrDefault(version => version.IsActive);
         var source = await store.GetUpdateSourceAsync(serverId, cancellationToken).ConfigureAwait(false)
                      ?? new UpdateSource
                      {
                          ServerId = serverId,
-                         Provider = target.SourceProvider,
-                         ProjectId = target.Source,
-                         InstalledVersionId = versions.FirstOrDefault(version => version.IsActive)?.VersionId ?? "current",
-                         InstalledVersionName = versions.FirstOrDefault(version => version.IsActive)?.VersionName ?? "current"
+                         Provider = current?.SourceProvider ?? target.SourceProvider,
+                         ProjectId = current?.ProviderProjectId ?? target.ProviderProjectId,
+                         InstalledVersionId = current?.VersionId ?? "current",
+                         InstalledVersionName = current?.VersionName ?? "current",
+                         InstalledFileId = current?.ProviderFileId ?? "",
+                         IdentityOrigin = current?.IdentityOrigin ?? ProviderIdentityOrigin.Unknown
                      };
         var result = await managed.RunExclusiveVersionRollbackAsync(
             target.VersionName,
@@ -254,15 +258,9 @@ public sealed class ServerUpdateCoordinator
                     WorkingDirectory = managed.Definition.RootPath
                 });
                 await store.UpsertServerAsync(managed.Definition, token).ConfigureAwait(false);
-                await store.UpsertUpdateSourceAsync(source with
-                {
-                    InstalledVersionId = target.VersionId,
-                    InstalledVersionName = target.VersionName,
-                    MinecraftVersion = target.MinecraftVersion,
-                    Loader = target.Loader,
-                    LoaderVersion = target.LoaderVersion,
-                    InstalledAt = DateTimeOffset.Now
-                }, token).ConfigureAwait(false);
+                await store.UpsertUpdateSourceAsync(
+                    CurseForgePersistencePolicy.RestoreInstalledIdentity(source, target), token)
+                    .ConfigureAwait(false);
             },
             cancellationToken).ConfigureAwait(false);
         if (!result.Success)
@@ -386,15 +384,9 @@ public sealed class ServerUpdateCoordinator
                 (prepared, token) => updates.FinalizeOperationAsync(prepared, token),
                 state.Cancellation.Token).ConfigureAwait(false);
             if (result.RolledBack && result.PreviousSnapshot is not null)
-                await store.UpsertUpdateSourceAsync(source with
-                {
-                    InstalledVersionId = result.PreviousSnapshot.VersionId,
-                    InstalledVersionName = result.PreviousSnapshot.VersionName,
-                    MinecraftVersion = result.PreviousSnapshot.MinecraftVersion,
-                    Loader = result.PreviousSnapshot.Loader,
-                    LoaderVersion = result.PreviousSnapshot.LoaderVersion,
-                    InstalledAt = DateTimeOffset.Now
-                }, CancellationToken.None).ConfigureAwait(false);
+                await store.UpsertUpdateSourceAsync(
+                    CurseForgePersistencePolicy.RestoreInstalledIdentity(source, result.PreviousSnapshot),
+                    CancellationToken.None).ConfigureAwait(false);
             var effectiveSource = await store.GetUpdateSourceAsync(request.ServerId, CancellationToken.None)
                 .ConfigureAwait(false) ?? source;
             var effectiveVersion = result.RolledBack ? result.PreviousSnapshot : result.ActiveVersion;
@@ -456,6 +448,7 @@ public sealed class ServerUpdateCoordinator
             {
                 OperationId = request.OperationId,
                 ServerId = request.ServerId,
+                TargetVersionId = request.TargetVersion.VersionId,
                 Success = false,
                 PreviousDefinition = definition,
                 UpdatedDefinition = definition,
@@ -509,8 +502,9 @@ public sealed class ServerUpdateCoordinator
 
     private static PackVersionInfo ToPackVersion(VersionSnapshot version) => new()
     {
-        PackId = version.Source,
+        PackId = version.ProviderProjectId,
         VersionId = version.VersionId,
+        ProviderFileId = version.ProviderFileId,
         VersionName = version.VersionName,
         PublishedAt = version.InstalledAt,
         MinecraftVersion = version.MinecraftVersion,

@@ -441,6 +441,8 @@ public sealed class VanillaLiveCreationIntegrationTests : IDisposable
             services.AddSingleton<ConnectionTestService>();
             services.AddSingleton<RamArgumentService>();
             services.AddSingleton<ISecretStore, DpapiSecretStore>();
+            services.AddSingleton<CurseForgeApiClient>();
+            services.AddSingleton<CurseForgeModpackPreflightService>();
             services.AddSingleton<ServerCapabilityDetectionService>();
             services.AddSingleton<CanonicalPathLockManager>();
             services.AddSingleton<DatapackService>();

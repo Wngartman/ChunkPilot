@@ -1253,6 +1253,7 @@ public sealed class ManagedServer : IAsyncDisposable
         };
         foreach (var pair in Definition.Environment)
             startInfo.Environment[pair.Key] = pair.Value;
+        CurseForgeCredentialEnvironment.RemoveFromChild(startInfo);
         var newProcess = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
         try
         {
@@ -2378,7 +2379,13 @@ public sealed class ManagedServer : IAsyncDisposable
         lifetime.Cancel();
         if (State is not ServerState.Stopped)
         {
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(Math.Max(5, Definition.ShutdownTimeoutSeconds)));
+            // Disposal may arrive while a restart is still unwinding. Give StopAsync its full
+            // serialized-operation takeover deadline plus the configured process shutdown window;
+            // a shorter caller token used to cancel the gate wait before StopAsync could return its
+            // truthful bounded failure result.
+            var disposeDeadline = ManualStopGateDeadline +
+                                  TimeSpan.FromSeconds(Math.Max(5, Definition.ShutdownTimeoutSeconds));
+            using var timeout = new CancellationTokenSource(disposeDeadline);
             await StopAsync(saveFirst: true, source: "Agent shutdown", timeout.Token).ConfigureAwait(false);
         }
         if (stdoutTask is not null)

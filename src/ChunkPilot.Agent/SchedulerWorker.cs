@@ -97,6 +97,10 @@ public sealed class SchedulerWorker
             {
                 var preferences = await store.GetUpdatePreferencesAsync(definition.Id, cancellationToken)
                     .ConfigureAwait(false);
+                var source = await store.GetUpdateSourceAsync(definition.Id, cancellationToken)
+                    .ConfigureAwait(false);
+                if (source is not null && !UpdatePolicy.AllowsAutomaticProviderWork(source.Provider))
+                    continue;
                 var check = await store.GetLatestUpdateCheckAsync(definition.Id, cancellationToken)
                     .ConfigureAwait(false);
                 var interval = TimeSpan.FromHours(Math.Clamp(preferences.CheckIntervalHours, 1, 24 * 30));

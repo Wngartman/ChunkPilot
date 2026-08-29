@@ -83,6 +83,62 @@ public sealed class WebUiContractTests
     }
 
     [Fact]
+    public void Migration_review_mapping_is_bounded_and_fenced_to_server_target_and_operation()
+    {
+        var serverId = Guid.NewGuid();
+        var operation = MigrationReviewOperation(serverId, "release-2");
+
+        var review = WebUiSnapshotMapper.MapMigrationReview(serverId, "release-2", operation);
+
+        Assert.NotNull(review);
+        Assert.Equal(operation.OperationId, review.ReviewOperationId);
+        Assert.Equal(2, review.ConflictCount);
+        Assert.Equal(3, review.ChangeCount);
+        Assert.True(review.CanResolve);
+        Assert.All(review.Changes.Take(2), change => Assert.True(change.RequiresResolution));
+        Assert.Null(WebUiSnapshotMapper.MapMigrationReview(Guid.NewGuid(), "release-2", operation));
+        Assert.Null(WebUiSnapshotMapper.MapMigrationReview(serverId, "release-3", operation));
+        Assert.Null(WebUiSnapshotMapper.MapMigrationReview(serverId, "release-2",
+            operation with { OperationId = Guid.NewGuid(), Progress = operation.Progress with { State = UpdateOperationState.Failed } }));
+    }
+
+    [Fact]
+    public void Migration_review_resubmission_requires_exact_complete_non_merged_resolutions()
+    {
+        var serverId = Guid.NewGuid();
+        var operation = MigrationReviewOperation(serverId, "release-2");
+        var target = new PackVersionInfo { VersionId = "release-2", VersionName = "Release 2" };
+        var parameters = new JsonObject
+        {
+            ["targetVersionId"] = "release-2",
+            ["confirmedMigrationWarnings"] = true,
+            ["reviewedOperationId"] = operation.OperationId.ToString(),
+            ["migrationResolutions"] = new JsonObject
+            {
+                ["config/a.toml"] = "KeepOld",
+                ["mods/removed.jar"] = "NewBaseline"
+            }
+        };
+
+        var resolutions = WebUiWindow.ValidateMigrationReviewParameters(parameters, serverId, target, operation);
+
+        Assert.Equal(MigrationResolutionKind.KeepOld, resolutions["config/a.toml"].Kind);
+        Assert.Equal(MigrationResolutionKind.NewBaseline, resolutions["mods/removed.jar"].Kind);
+        var missing = parameters.DeepClone().AsObject();
+        missing["migrationResolutions"]!.AsObject().Remove("mods/removed.jar");
+        Assert.Throws<ArgumentException>(() =>
+            WebUiWindow.ValidateMigrationReviewParameters(missing, serverId, target, operation));
+        var merged = parameters.DeepClone().AsObject();
+        merged["migrationResolutions"]!["config/a.toml"] = "UseMergedText";
+        Assert.Throws<ArgumentException>(() =>
+            WebUiWindow.ValidateMigrationReviewParameters(merged, serverId, target, operation));
+        var stale = parameters.DeepClone().AsObject();
+        stale["targetVersionId"] = "release-3";
+        Assert.Throws<InvalidOperationException>(() =>
+            WebUiWindow.ValidateMigrationReviewParameters(stale, serverId, target, operation));
+    }
+
+    [Fact]
     public void Players_workspace_follows_game_kind_not_detected_minecraft_ecosystem()
     {
         Assert.True(WebUiSnapshotMapper.HasPlayersWorkspace(new ServerDefinition
@@ -162,6 +218,7 @@ public sealed class WebUiContractTests
         Assert.True(WebUiMethodPolicy.IsAllowed("modpacks.providers"));
         Assert.True(WebUiMethodPolicy.IsAllowed("modpacks.versions"));
         Assert.True(WebUiMethodPolicy.IsAllowed("modpacks.resolveLink"));
+        Assert.True(WebUiMethodPolicy.IsAllowed("modpacks.preflight"));
         Assert.True(WebUiMethodPolicy.IsAllowed("modpacks.image"));
         Assert.True(WebUiMethodPolicy.IsAllowed("modpacks.chooseLocal"));
         Assert.True(WebUiMethodPolicy.IsAllowed("creation.chooseLegacyArtifact"));
@@ -418,6 +475,43 @@ public sealed class WebUiContractTests
         viewModel.SelectedServer = bravo;
         await WaitUntilAsync(() => viewModel.WebUiDetailsServerId == bravoId, TimeSpan.FromSeconds(2));
         Assert.Equal(new[] { alphaId, bravoId, bravoId }, client.CapabilityServerIds);
+    }
+
+    private static UpdateOperationSnapshot MigrationReviewOperation(Guid serverId, string targetVersionId)
+    {
+        var operationId = Guid.NewGuid();
+        var plan = new MigrationPlan
+        {
+            Changes =
+            [
+                new PackFileChange { RelativePath = "config/a.toml", Ownership = FileOwnership.Unknown, Change = "Review", Reason = "Values differ" },
+                new PackFileChange { RelativePath = "mods/removed.jar", Ownership = FileOwnership.PackManaged, Change = "Removed", Reason = "Target removed it" },
+                new PackFileChange { RelativePath = "mods/new.jar", Ownership = FileOwnership.PackManaged, Change = "Added", Reason = "Target added it" }
+            ],
+            Conflicts =
+            [
+                "config/a.toml: old and new pack versions differ.",
+                "mods/removed.jar: removed JAR will not be copied into the new active pack."
+            ]
+        };
+        return new UpdateOperationSnapshot
+        {
+            OperationId = operationId,
+            IsTerminal = true,
+            Success = false,
+            Progress = new UpdateProgress
+            {
+                OperationId = operationId,
+                State = UpdateOperationState.PlanningMigration
+            },
+            Result = new UpdateExecutionResult
+            {
+                OperationId = operationId,
+                ServerId = serverId,
+                TargetVersionId = targetVersionId,
+                MigrationPlan = plan
+            }
+        };
     }
 
     private static ServerSnapshot SelectionServer(Guid id, string name) => new()
