@@ -46,6 +46,7 @@ public sealed class CurseForgeApiClient : IDisposable
 {
     public const string ApiHost = "api.curseforge.com";
     public const int MaximumJsonBytes = 8 * 1024 * 1024;
+    internal const int MaximumDownloadRedirects = 5;
     public static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(20);
     public static readonly TimeSpan MaximumRetryAfter = TimeSpan.FromSeconds(5);
 
@@ -148,33 +149,63 @@ public sealed class CurseForgeApiClient : IDisposable
             throw new CurseForgeApiException(CurseForgeFailureKind.UnapprovedHost,
                 "CurseForge returned an unapproved download destination.");
         var credential = RequireCredential();
-        using var request = new HttpRequestMessage(HttpMethod.Get, uri);
-        request.Headers.TryAddWithoutValidation("x-api-key", credential);
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(RequestTimeout);
         try
         {
-            var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token)
-                .ConfigureAwait(false);
-            if (IsRedirect(response.StatusCode))
+            var current = uri;
+            var redirectsFollowed = 0;
+            while (true)
             {
-                response.Dispose();
-                throw new CurseForgeApiException(CurseForgeFailureKind.Redirect,
-                    "CurseForge download redirects are not followed automatically.", response.StatusCode);
+                using var request = new HttpRequestMessage(HttpMethod.Get, current);
+                request.Headers.TryAddWithoutValidation("x-api-key", credential);
+                var response = await http.SendAsync(
+                    request, HttpCompletionOption.ResponseHeadersRead, timeout.Token).ConfigureAwait(false);
+                var final = response.RequestMessage?.RequestUri ?? request.RequestUri;
+                if (final is null || !IsApprovedDownloadUri(final))
+                {
+                    response.Dispose();
+                    throw new CurseForgeApiException(CurseForgeFailureKind.UnapprovedHost,
+                        "The CurseForge download left the approved CDN boundary.");
+                }
+                if (IsRedirect(response.StatusCode))
+                {
+                    var location = response.Headers.Location;
+                    var status = response.StatusCode;
+                    response.Dispose();
+                    if (location is null)
+                        throw new CurseForgeApiException(CurseForgeFailureKind.Redirect,
+                            "A CurseForge download redirect did not include a destination.", status);
+                    if (redirectsFollowed >= MaximumDownloadRedirects)
+                        throw new CurseForgeApiException(CurseForgeFailureKind.Redirect,
+                            $"A CurseForge download exceeded {MaximumDownloadRedirects} redirects.", status);
+
+                    Uri destination;
+                    try
+                    {
+                        destination = location.IsAbsoluteUri ? location : new Uri(current, location);
+                    }
+                    catch (UriFormatException exception)
+                    {
+                        throw new CurseForgeApiException(CurseForgeFailureKind.Redirect,
+                            "A CurseForge download redirect contained an invalid destination.", status, exception);
+                    }
+                    if (!IsApprovedDownloadUri(destination))
+                        throw new CurseForgeApiException(CurseForgeFailureKind.UnapprovedHost,
+                            "A CurseForge download redirect left the approved CDN boundary.", status);
+
+                    current = destination;
+                    redirectsFollowed++;
+                    continue;
+                }
+                if (!response.IsSuccessStatusCode)
+                {
+                    var error = MapStatus(response.StatusCode);
+                    response.Dispose();
+                    throw error;
+                }
+                return response;
             }
-            if (!response.IsSuccessStatusCode)
-            {
-                var error = MapStatus(response.StatusCode);
-                response.Dispose();
-                throw error;
-            }
-            if (response.RequestMessage?.RequestUri is not { } final || !IsApprovedDownloadUri(final))
-            {
-                response.Dispose();
-                throw new CurseForgeApiException(CurseForgeFailureKind.UnapprovedHost,
-                    "The CurseForge download left the approved CDN boundary.");
-            }
-            return response;
         }
         catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested)
         {
@@ -190,7 +221,8 @@ public sealed class CurseForgeApiClient : IDisposable
 
     public static bool IsApprovedDownloadUri(Uri? uri)
     {
-        if (uri is null || uri.Scheme != Uri.UriSchemeHttps || !uri.IsDefaultPort)
+        if (uri is null || !uri.IsAbsoluteUri || uri.Scheme != Uri.UriSchemeHttps ||
+            !uri.IsDefaultPort || uri.UserInfo.Length != 0)
             return false;
         var host = uri.IdnHost.TrimEnd('.');
         return host.Equals("forgecdn.net", StringComparison.OrdinalIgnoreCase) ||

@@ -213,6 +213,97 @@ public sealed class CurseForgeApiClientTests
             seen.Host.Equals("evil.example", StringComparison.OrdinalIgnoreCase));
         Assert.True(CurseForgeApiClient.IsApprovedDownloadUri(
             new Uri("https://mediafilez.forgecdn.net/files/1/file.jar")));
+        Assert.False(CurseForgeApiClient.IsApprovedDownloadUri(
+            new Uri("https://user@mediafilez.forgecdn.net/files/1/file.jar")));
+        Assert.False(CurseForgeApiClient.IsApprovedDownloadUri(
+            new Uri("https://evilforgecdn.net/files/1/file.jar")));
+    }
+
+    [Fact]
+    public async Task Download_follows_bounded_approved_redirect_and_authenticates_each_cdn_request()
+    {
+        var requests = new List<(Uri Uri, string Credential)>();
+        var handler = new Handler(request =>
+        {
+            requests.Add((request.RequestUri!, request.Headers.GetValues("x-api-key").Single()));
+            if (requests.Count == 1)
+                return new HttpResponseMessage(HttpStatusCode.TemporaryRedirect)
+                {
+                    Headers =
+                    {
+                        Location = new Uri("https://edge.forgecdn.net/files/1/final.jar")
+                    }
+                };
+            return Response(HttpStatusCode.OK, "fixture", "application/octet-stream");
+        });
+        using var client = new CurseForgeApiClient(WithKey(), handler);
+
+        using var response = await client.SendDownloadAsync(
+            new Uri("https://mediafilez.forgecdn.net/files/1/start.jar"));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(2, requests.Count);
+        Assert.All(requests, request =>
+        {
+            Assert.True(CurseForgeApiClient.IsApprovedDownloadUri(request.Uri));
+            Assert.Equal("fixture-approved-key", request.Credential);
+        });
+        Assert.Equal("mediafilez.forgecdn.net", requests[0].Uri.IdnHost);
+        Assert.Equal("edge.forgecdn.net", requests[1].Uri.IdnHost);
+    }
+
+    [Fact]
+    public async Task Download_redirect_never_forwards_credential_to_an_unapproved_host()
+    {
+        var requests = new List<(string Host, bool SentCredential)>();
+        var handler = new Handler(request =>
+        {
+            requests.Add((request.RequestUri!.IdnHost, request.Headers.Contains("x-api-key")));
+            return new HttpResponseMessage(HttpStatusCode.Redirect)
+            {
+                Headers = { Location = new Uri("https://evil.example/stolen.jar") }
+            };
+        });
+        using var client = new CurseForgeApiClient(WithKey(), handler);
+
+        var exception = await Assert.ThrowsAsync<CurseForgeApiException>(() =>
+            client.SendDownloadAsync(new Uri("https://mediafilez.forgecdn.net/files/1/start.jar")));
+
+        Assert.Equal(CurseForgeFailureKind.UnapprovedHost, exception.Kind);
+        var request = Assert.Single(requests);
+        Assert.Equal("mediafilez.forgecdn.net", request.Host);
+        Assert.True(request.SentCredential);
+    }
+
+    [Fact]
+    public async Task Download_redirect_chain_is_bounded_and_requires_a_destination()
+    {
+        var redirectCount = 0;
+        var handler = new Handler(_ =>
+        {
+            redirectCount++;
+            return new HttpResponseMessage(HttpStatusCode.Redirect)
+            {
+                Headers =
+                {
+                    Location = new Uri($"/files/1/redirect-{redirectCount}.jar", UriKind.Relative)
+                }
+            };
+        });
+        using var client = new CurseForgeApiClient(WithKey(), handler);
+
+        var excessive = await Assert.ThrowsAsync<CurseForgeApiException>(() =>
+            client.SendDownloadAsync(new Uri("https://mediafilez.forgecdn.net/files/1/start.jar")));
+
+        Assert.Equal(CurseForgeFailureKind.Redirect, excessive.Kind);
+        Assert.Equal(CurseForgeApiClient.MaximumDownloadRedirects + 1, redirectCount);
+
+        using var missingDestinationClient = new CurseForgeApiClient(WithKey(),
+            new Handler(_ => new HttpResponseMessage(HttpStatusCode.Redirect)));
+        var missing = await Assert.ThrowsAsync<CurseForgeApiException>(() =>
+            missingDestinationClient.SendDownloadAsync(
+                new Uri("https://mediafilez.forgecdn.net/files/1/start.jar")));
+        Assert.Equal(CurseForgeFailureKind.Redirect, missing.Kind);
     }
 
     [Fact]
