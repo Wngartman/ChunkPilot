@@ -1043,6 +1043,59 @@ public sealed class CurseForgeRuntimeCertificationTests
     }
 
     [Fact]
+    public async Task RecoverableCleanupRejectsMissingRecycleProofEvenWhenSourceVanishes()
+    {
+        var root = NewRoot();
+        try
+        {
+            var repository = Path.Combine(root, "repository");
+            Directory.CreateDirectory(repository);
+            var runtime = OwnedCertificationRuntime.Prepare(
+                repository, Path.Combine(repository, "artifacts", "runtime"));
+            var runRoot = Path.Combine(runtime, "runs", "run-unrecoverable-delete");
+            var data = Path.Combine(runRoot, "data");
+            var servers = Path.Combine(runRoot, "servers");
+            var temporary = Path.Combine(runRoot, "temp");
+            Directory.CreateDirectory(data);
+            Directory.CreateDirectory(servers);
+            Directory.CreateDirectory(temporary);
+            await File.WriteAllTextAsync(Path.Combine(data, "state.db"), "state");
+            var fakeRecycle = new RecordingRecycleBin(
+                Path.Combine(root, "fake-unrecoverable-destination"),
+                recycleConfirmed: false);
+            var options = Options(repository, CurseForgeRuntimeCertificationPhase.Metadata) with
+            {
+                RuntimeRoot = runtime,
+                DataRoot = data,
+                ManagedServersRoot = servers,
+                TemporaryRoot = temporary,
+                PayloadLedgerPath = Path.Combine(
+                    runtime, "evidence", "curseforge-payload-ledger.json")
+            };
+
+            var evidence = await OwnedCertificationRunCleanup.MoveToRecycleBinAsync(
+                options, fakeRecycle, CancellationToken.None);
+
+            Assert.True(fakeRecycle.Called);
+            Assert.True(evidence.Attempted);
+            Assert.True(evidence.ExactOwnedRunProven);
+            Assert.True(evidence.SourceRunRootAbsent);
+            Assert.False(evidence.Success);
+            Assert.Equal(0, evidence.BytesMovedToRecycleBin);
+            Assert.Equal(0, evidence.FilesMovedToRecycleBin);
+            Assert.Equal(0, evidence.DirectoriesMovedToRecycleBin);
+            Assert.Contains(
+                "without returning a recoverable Recycle Bin item",
+                evidence.Outcome,
+                StringComparison.Ordinal);
+        }
+        finally
+        {
+            DeleteTree(root);
+        }
+    }
+
+    [Fact]
     public async Task RecoverableCleanupRetainsRunWithUnexpectedSibling()
     {
         var root = NewRoot();
@@ -1161,6 +1214,98 @@ public sealed class CurseForgeRuntimeCertificationTests
             AgentProcessId = 202,
             AgentExited = exited
         };
+    }
+
+    [Fact]
+    public void TaskServerCleanupRequiresEveryApplicablePostcondition()
+    {
+        var passed = new CertificationCleanupPostconditionsEvidence
+        {
+            TaskServerInactive = true,
+            TaskServerProcessIdentityCaptured = true,
+            TaskServerRootProcessExited = true,
+            PortListenerAbsent = true,
+            NoPartialArtifacts = true,
+            NoUnsafeStagingResidue = true,
+            ExactOwnedAgentTreeExited = true,
+            ExactOwnedAgentExitCodeZero = true,
+            ListenerPidOwnershipVerified = true
+        };
+
+        Assert.True(CurseForgeRuntimeCertificationSession.TaskServerCleanupPassed(passed));
+        Assert.False(CurseForgeRuntimeCertificationSession.TaskServerCleanupPassed(null));
+        Assert.False(CurseForgeRuntimeCertificationSession.TaskServerCleanupPassed(
+            passed with { PortListenerAbsent = false }));
+    }
+
+    [Fact]
+    public async Task FailureBeforeServerMaterializationStillReportsExactAgentAndRunCleanup()
+    {
+        var root = NewRoot();
+        try
+        {
+            var repository = Path.Combine(root, "repository");
+            Directory.CreateDirectory(repository);
+            File.WriteAllText(Path.Combine(repository, "ChunkPilot.sln"), "fixture");
+            var runtime = OwnedCertificationRuntime.Prepare(
+                repository, Path.Combine(repository, "artifacts", "runtime"));
+            var runRoot = Path.Combine(runtime, "runs", "run-early-provider-failure");
+            var temporary = Path.Combine(runRoot, "temp");
+            Directory.CreateDirectory(temporary);
+            var agent = Path.Combine(root, "ChunkPilot.Agent.exe");
+            File.WriteAllBytes(agent, []);
+            var key = Path.Combine(root, "approved.key");
+            File.WriteAllText(key, "not-a-real-key");
+            var reportPath = Path.Combine(
+                runtime, "evidence", "certification-early-provider-failure.json");
+            var pendingPath = Path.Combine(
+                runtime, "evidence", "certification-early-provider-failure.pending.json");
+            var recycleBin = new RecordingRecycleBin(Path.Combine(root, "fake-recycle"));
+            var options = Options(repository, CurseForgeRuntimeCertificationPhase.Full) with
+            {
+                RuntimeRoot = runtime,
+                DataRoot = Path.Combine(runRoot, "data"),
+                ManagedServersRoot = Path.Combine(runRoot, "servers"),
+                TemporaryRoot = temporary,
+                AgentExecutablePath = agent,
+                ApprovedKeyFilePath = key,
+                PayloadLedgerPath = Path.Combine(
+                    runtime, "evidence", "curseforge-payload-ledger.json")
+            };
+            var controller = new CurseForgeRuntimeCertificationController(
+                recycleBin: recycleBin,
+                operations: new CurseForgeRuntimeCertificationControllerOperations
+                {
+                    ValidateOptions = static _ => { },
+                    ExecuteAgentCampaignAsync = static (_, report, _) =>
+                    {
+                        report.BootstrapCleanupSucceeded = true;
+                        report.CertifiedCleanupSucceeded = true;
+                        report.DpapiRelaunchAuthenticatedCatalogResolve = true;
+                        throw new InvalidDataException(
+                            "injected failure before server materialization");
+                    },
+                    ValidateFinalPackageFreshness = static _ => { }
+                },
+                evidenceJournal: new CertificationEvidenceJournal(reportPath, pendingPath));
+
+            var report = await controller.RunAsync(options, CancellationToken.None);
+
+            Assert.False(report.Success);
+            Assert.Equal("FAILED", report.Result);
+            Assert.Contains("before server materialization", report.Error, StringComparison.Ordinal);
+            Assert.Null(report.ServerId);
+            Assert.False(report.CertifiedTaskServerCleanupApplicable);
+            Assert.False(report.CertifiedTaskServerCleanupSucceeded);
+            Assert.True(report.CertifiedCleanupSucceeded);
+            Assert.True(report.FreshRunRecycle.Success);
+            Assert.True(report.CleanupSucceeded);
+            Assert.False(Directory.Exists(runRoot));
+        }
+        finally
+        {
+            DeleteTree(root);
+        }
     }
 
     [Fact]
@@ -2015,7 +2160,8 @@ public sealed class CurseForgeRuntimeCertificationTests
             var target = Path.Combine(root, "isolated-recycle-adapter-proof");
             Directory.CreateDirectory(target);
             File.WriteAllText(Path.Combine(target, "proof.txt"), "recoverable");
-            new SilentWindowsCertificationRecycleBin().MoveDirectory(target);
+            var recycled = new SilentWindowsCertificationRecycleBin().MoveDirectory(target);
+            Assert.True(recycled);
             Assert.False(Directory.Exists(target));
         }
         finally
@@ -2324,17 +2470,19 @@ public sealed class CurseForgeRuntimeCertificationTests
 
     private sealed class RecordingRecycleBin(
         string destination,
-        string? expectedPendingEvidencePath = null) : ICertificationRecycleBin
+        string? expectedPendingEvidencePath = null,
+        bool recycleConfirmed = true) : ICertificationRecycleBin
     {
         public bool Called { get; private set; }
         public bool PendingObservedBeforeMove { get; private set; }
 
-        public void MoveDirectory(string path)
+        public bool MoveDirectory(string path)
         {
             Called = true;
             PendingObservedBeforeMove = expectedPendingEvidencePath is null ||
                                         File.Exists(expectedPendingEvidencePath);
             Directory.Move(path, destination);
+            return recycleConfirmed;
         }
     }
 
@@ -2342,9 +2490,10 @@ public sealed class CurseForgeRuntimeCertificationTests
     {
         public bool Called { get; private set; }
 
-        public void MoveDirectory(string path)
+        public bool MoveDirectory(string path)
         {
             Called = true;
+            return false;
         }
     }
 }

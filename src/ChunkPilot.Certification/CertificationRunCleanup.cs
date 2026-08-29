@@ -18,7 +18,7 @@ internal sealed record CertificationRunRecycleEvidence
 
 internal interface ICertificationRecycleBin
 {
-    void MoveDirectory(string path);
+    bool MoveDirectory(string path);
 }
 
 /// <summary>
@@ -41,12 +41,13 @@ internal sealed class SilentWindowsCertificationRecycleBin : ICertificationRecyc
     private static readonly Guid ShellItemInterfaceId =
         new("43826d1e-e718-42ee-bc55-a1e261c37bfe");
 
-    public void MoveDirectory(string path)
+    public bool MoveDirectory(string path)
     {
         if (!OperatingSystem.IsWindows())
             throw new PlatformNotSupportedException(
                 "Windows Recycle Bin cleanup is available only on Windows.");
         Exception? failure = null;
+        var recycled = false;
         var thread = new Thread(() =>
         {
             try
@@ -54,7 +55,7 @@ internal sealed class SilentWindowsCertificationRecycleBin : ICertificationRecyc
                 if (!OperatingSystem.IsWindows())
                     throw new PlatformNotSupportedException(
                         "Windows Recycle Bin cleanup is available only on Windows.");
-                MoveDirectoryOnStaThread(path);
+                recycled = MoveDirectoryOnStaThread(path);
             }
             catch (Exception exception) when (exception is not OutOfMemoryException)
             {
@@ -72,13 +73,15 @@ internal sealed class SilentWindowsCertificationRecycleBin : ICertificationRecyc
                 "The no-dialog Windows Recycle Bin operation exceeded its bounded deadline.");
         if (failure is not null)
             ExceptionDispatchInfo.Capture(failure).Throw();
+        return recycled;
     }
 
     [SupportedOSPlatform("windows")]
-    private static void MoveDirectoryOnStaThread(string path)
+    private static bool MoveDirectoryOnStaThread(string path)
     {
         IShellItem? shellItem = null;
         IFileOperation? operation = null;
+        var progressSink = new DeleteProgressSink();
         try
         {
             var itemId = ShellItemInterfaceId;
@@ -94,15 +97,17 @@ internal sealed class SilentWindowsCertificationRecycleBin : ICertificationRecyc
                 FileOperationSilent | FileOperationNoConfirmation | FileOperationNoErrorUi |
                 FileOperationNoConfirmMakeDirectory | FileOperationRecycleOnDelete |
                 FileOperationEarlyFailure | FileOperationNoMinimizeBox | FileOperationAddUndoRecord);
-            operation.DeleteItem(shellItem, IntPtr.Zero);
+            operation.DeleteItem(shellItem, progressSink);
             operation.PerformOperations();
             operation.GetAnyOperationsAborted(out var aborted);
             if (aborted)
                 throw new OperationCanceledException(
                     "The Windows shell did not complete the recoverable cleanup operation.");
+            return progressSink.ConfirmedRecoverableDelete;
         }
         finally
         {
+            GC.KeepAlive(progressSink);
             if (operation is not null && Marshal.IsComObject(operation))
                 _ = Marshal.FinalReleaseComObject(operation);
             if (shellItem is not null && Marshal.IsComObject(shellItem))
@@ -141,7 +146,9 @@ internal sealed class SilentWindowsCertificationRecycleBin : ICertificationRecyc
             [MarshalAs(UnmanagedType.LPWStr)] string copyName,
             IntPtr progressSink);
         void CopyItems(IntPtr items, IShellItem destinationFolder);
-        void DeleteItem(IShellItem item, IntPtr progressSink);
+        void DeleteItem(
+            IShellItem item,
+            [MarshalAs(UnmanagedType.Interface)] IFileOperationProgressSink progressSink);
         void DeleteItems(IntPtr items);
         void NewItem(
             IShellItem destinationFolder,
@@ -151,6 +158,178 @@ internal sealed class SilentWindowsCertificationRecycleBin : ICertificationRecyc
             IntPtr progressSink);
         void PerformOperations();
         void GetAnyOperationsAborted([MarshalAs(UnmanagedType.Bool)] out bool aborted);
+    }
+
+    [ComVisible(true)]
+    [Guid("04b0f1a7-9490-44bc-96e1-4296a31252e2")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IFileOperationProgressSink
+    {
+        [PreserveSig]
+        int StartOperations();
+
+        [PreserveSig]
+        int FinishOperations(int result);
+
+        [PreserveSig]
+        int PreRenameItem(
+            uint flags,
+            IShellItem item,
+            [MarshalAs(UnmanagedType.LPWStr)] string? newName);
+
+        [PreserveSig]
+        int PostRenameItem(
+            uint flags,
+            IShellItem item,
+            [MarshalAs(UnmanagedType.LPWStr)] string? newName,
+            int renameResult,
+            IShellItem? newlyCreated);
+
+        [PreserveSig]
+        int PreMoveItem(
+            uint flags,
+            IShellItem item,
+            IShellItem destinationFolder,
+            [MarshalAs(UnmanagedType.LPWStr)] string? newName);
+
+        [PreserveSig]
+        int PostMoveItem(
+            uint flags,
+            IShellItem item,
+            IShellItem destinationFolder,
+            [MarshalAs(UnmanagedType.LPWStr)] string? newName,
+            int moveResult,
+            IShellItem? newlyCreated);
+
+        [PreserveSig]
+        int PreCopyItem(
+            uint flags,
+            IShellItem item,
+            IShellItem destinationFolder,
+            [MarshalAs(UnmanagedType.LPWStr)] string? newName);
+
+        [PreserveSig]
+        int PostCopyItem(
+            uint flags,
+            IShellItem item,
+            IShellItem destinationFolder,
+            [MarshalAs(UnmanagedType.LPWStr)] string? newName,
+            int copyResult,
+            IShellItem? newlyCreated);
+
+        [PreserveSig]
+        int PreDeleteItem(uint flags, IShellItem item);
+
+        [PreserveSig]
+        int PostDeleteItem(
+            uint flags,
+            IShellItem item,
+            int deleteResult,
+            IShellItem? newlyCreated);
+
+        [PreserveSig]
+        int PreNewItem(
+            uint flags,
+            IShellItem destinationFolder,
+            [MarshalAs(UnmanagedType.LPWStr)] string? newName);
+
+        [PreserveSig]
+        int PostNewItem(
+            uint flags,
+            IShellItem destinationFolder,
+            [MarshalAs(UnmanagedType.LPWStr)] string? newName,
+            [MarshalAs(UnmanagedType.LPWStr)] string? templateName,
+            uint fileAttributes,
+            int newItemResult,
+            IShellItem? newItem);
+
+        [PreserveSig]
+        int UpdateProgress(uint workTotal, uint workSoFar);
+
+        [PreserveSig]
+        int ResetTimer();
+
+        [PreserveSig]
+        int PauseTimer();
+
+        [PreserveSig]
+        int ResumeTimer();
+    }
+
+    [ComVisible(true)]
+    [ClassInterface(ClassInterfaceType.None)]
+    private sealed class DeleteProgressSink : IFileOperationProgressSink
+    {
+        private int postDeleteCount;
+        private bool deleteSucceeded;
+        private bool recycleItemCreated;
+
+        public bool ConfirmedRecoverableDelete =>
+            postDeleteCount == 1 && deleteSucceeded && recycleItemCreated;
+
+        public int StartOperations() => 0;
+        public int FinishOperations(int result) => 0;
+        public int PreRenameItem(uint flags, IShellItem item, string? newName) => 0;
+        public int PostRenameItem(
+            uint flags,
+            IShellItem item,
+            string? newName,
+            int renameResult,
+            IShellItem? newlyCreated) => 0;
+        public int PreMoveItem(
+            uint flags,
+            IShellItem item,
+            IShellItem destinationFolder,
+            string? newName) => 0;
+        public int PostMoveItem(
+            uint flags,
+            IShellItem item,
+            IShellItem destinationFolder,
+            string? newName,
+            int moveResult,
+            IShellItem? newlyCreated) => 0;
+        public int PreCopyItem(
+            uint flags,
+            IShellItem item,
+            IShellItem destinationFolder,
+            string? newName) => 0;
+        public int PostCopyItem(
+            uint flags,
+            IShellItem item,
+            IShellItem destinationFolder,
+            string? newName,
+            int copyResult,
+            IShellItem? newlyCreated) => 0;
+        public int PreDeleteItem(uint flags, IShellItem item) => 0;
+
+        public int PostDeleteItem(
+            uint flags,
+            IShellItem item,
+            int deleteResult,
+            IShellItem? newlyCreated)
+        {
+            postDeleteCount++;
+            deleteSucceeded = deleteResult >= 0;
+            recycleItemCreated = newlyCreated is not null;
+            return 0;
+        }
+
+        public int PreNewItem(
+            uint flags,
+            IShellItem destinationFolder,
+            string? newName) => 0;
+        public int PostNewItem(
+            uint flags,
+            IShellItem destinationFolder,
+            string? newName,
+            string? templateName,
+            uint fileAttributes,
+            int newItemResult,
+            IShellItem? newItem) => 0;
+        public int UpdateProgress(uint workTotal, uint workSoFar) => 0;
+        public int ResetTimer() => 0;
+        public int PauseTimer() => 0;
+        public int ResumeTimer() => 0;
     }
 
     [ComImport]
@@ -229,9 +408,10 @@ internal static class OwnedCertificationRunCleanup
         var directories = inventory.Count(entry => entry.IsDirectory) + 1;
 
         cancellationToken.ThrowIfCancellationRequested();
+        bool recycled;
         try
         {
-            recycleBin.MoveDirectory(runRoot);
+            recycled = recycleBin.MoveDirectory(runRoot);
         }
         catch (Exception exception) when (exception is not OutOfMemoryException)
         {
@@ -249,18 +429,23 @@ internal static class OwnedCertificationRunCleanup
         }
 
         var absent = !Directory.Exists(runRoot) && !File.Exists(runRoot);
+        var success = recycled && absent;
         return Task.FromResult(new CertificationRunRecycleEvidence
         {
             Attempted = true,
             ExactOwnedRunProven = true,
-            BytesMovedToRecycleBin = absent ? bytes : 0,
-            FilesMovedToRecycleBin = absent ? files : 0,
-            DirectoriesMovedToRecycleBin = absent ? directories : 0,
+            BytesMovedToRecycleBin = success ? bytes : 0,
+            FilesMovedToRecycleBin = success ? files : 0,
+            DirectoriesMovedToRecycleBin = success ? directories : 0,
             SourceRunRootAbsent = absent,
-            Success = absent,
-            Outcome = absent
+            Success = success,
+            Outcome = success
                 ? "Exact fresh data/server run moved to the Windows Recycle Bin."
-                : "Windows reported success but the exact fresh run root remained; cleanup was not certified."
+                : !recycled && absent
+                    ? "Windows removed the exact fresh run root without returning a recoverable Recycle Bin item; cleanup was not certified and no permanent-delete fallback was used."
+                    : !recycled
+                        ? "Windows did not confirm a recoverable Recycle Bin item; cleanup was not certified and no permanent-delete fallback was used."
+                        : "Windows confirmed a recoverable Recycle Bin item but the exact fresh run root remained; cleanup was not certified."
         });
     }
 }

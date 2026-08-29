@@ -653,6 +653,8 @@ internal sealed class CurseForgeRuntimeCertificationReport
     public bool ExactOwnedTreeForceKillAttempted { get; set; }
     public bool ExactOwnedTreeForceKillSucceeded { get; set; }
     public bool CertifiedCleanupSucceeded { get; set; }
+    public bool CertifiedTaskServerCleanupApplicable { get; set; }
+    public bool CertifiedTaskServerCleanupSucceeded { get; set; }
     public bool CleanupSucceeded { get; set; }
     public string ProjectId { get; set; } = "";
     public string ClientFileId { get; set; } = "";
@@ -776,7 +778,9 @@ internal sealed class CurseForgeRuntimeCertificationController
                     (session, token) => session.ExecuteCertifiedWorkAsync(options, report, token),
                     controllerCreationTicks, cancellationToken).ConfigureAwait(false);
             }
-            if (!report.BootstrapCleanupSucceeded || !report.CertifiedCleanupSucceeded)
+            if (!report.BootstrapCleanupSucceeded || !report.CertifiedCleanupSucceeded ||
+                report.CertifiedTaskServerCleanupApplicable &&
+                !report.CertifiedTaskServerCleanupSucceeded)
                 throw new InvalidOperationException(
                     "The exact Agent/server cleanup gate failed; the fresh run was retained for review.");
             var finalFreshness = Stopwatch.StartNew();
@@ -853,7 +857,9 @@ internal sealed class CurseForgeRuntimeCertificationController
                                  string.IsNullOrWhiteSpace(report.Error) &&
                                  report.Success &&
                                  report.DpapiRelaunchAuthenticatedCatalogResolve &&
-                                 report.CleanupSucceeded;
+                                 report.CleanupSucceeded &&
+                                 (!report.CertifiedTaskServerCleanupApplicable ||
+                                  report.CertifiedTaskServerCleanupSucceeded);
                 if (!report.Success && string.IsNullOrWhiteSpace(report.Error))
                     report.Error = "The headless certification or its exact-owned cleanup did not complete successfully.";
                 report.Result = report.Success ? "PASSED" : cancellationToken.IsCancellationRequested ? "CANCELLED" : "FAILED";
@@ -989,25 +995,19 @@ internal sealed class CurseForgeRuntimeCertificationController
                             rootExited && exactTreeExited &&
                             !forceKillAttempted && exitCode == 0;
                     if (!bootstrap && (options.Phase is CurseForgeRuntimeCertificationPhase.Official or
-                        CurseForgeRuntimeCertificationPhase.Full))
+                        CurseForgeRuntimeCertificationPhase.Full) &&
+                        report.CertifiedTaskServerCleanupApplicable)
                     {
                         if (report.CleanupPostconditions is { } postconditions)
                         {
                             postconditions.ExactOwnedAgentTreeExited = exactTreeExited;
                             postconditions.ExactOwnedAgentExitCodeZero = exitCode == 0;
-                            clean = clean && postconditions.TaskServerInactive &&
-                                postconditions.TaskServerProcessIdentityCaptured &&
-                                postconditions.TaskServerRootProcessExited &&
-                                postconditions.PortListenerAbsent &&
-                                postconditions.NoPartialArtifacts &&
-                                postconditions.NoUnsafeStagingResidue &&
-                                postconditions.ListenerPidOwnershipVerified &&
-                                postconditions.ExactOwnedAgentTreeExited &&
-                                postconditions.ExactOwnedAgentExitCodeZero;
+                            report.CertifiedTaskServerCleanupSucceeded =
+                                CurseForgeRuntimeCertificationSession.TaskServerCleanupPassed(postconditions);
                         }
                         else
                         {
-                            clean = false;
+                            report.CertifiedTaskServerCleanupSucceeded = false;
                         }
                     }
                     if (bootstrap)
@@ -1468,6 +1468,10 @@ internal sealed partial class CurseForgeRuntimeCertificationSession(
         Guid serverId,
         CancellationToken cancellationToken)
     {
+        report.ServerId = serverId;
+        report.CleanupPostconditions = null;
+        report.CertifiedTaskServerCleanupApplicable = true;
+        report.CertifiedTaskServerCleanupSucceeded = false;
         var startWatch = Stopwatch.StartNew();
         var started = await transport.SendAsync<OperationResult>(
             "Start",
@@ -1748,6 +1752,7 @@ internal sealed partial class CurseForgeRuntimeCertificationSession(
         var passed = inactive && processCaptured && processExited && portAbsent &&
                      partials.Length == 0 && noUnsafeStagingResidue &&
                      listenerPidOwnershipVerified;
+        report.CertifiedTaskServerCleanupSucceeded = passed;
         watch.Stop();
         report.Steps.Add(new CertificationStepEvidence
         {
@@ -1763,6 +1768,20 @@ internal sealed partial class CurseForgeRuntimeCertificationSession(
                 "The exact task server did not satisfy every bounded cleanup postcondition.");
         return postconditions;
     }
+
+    internal static bool TaskServerCleanupPassed(
+        CertificationCleanupPostconditionsEvidence? postconditions) => postconditions is
+    {
+        TaskServerInactive: true,
+        TaskServerProcessIdentityCaptured: true,
+        TaskServerRootProcessExited: true,
+        PortListenerAbsent: true,
+        NoPartialArtifacts: true,
+        NoUnsafeStagingResidue: true,
+        ListenerPidOwnershipVerified: true,
+        ExactOwnedAgentTreeExited: true,
+        ExactOwnedAgentExitCodeZero: true
+    };
 
     private static bool CanonicalStagingContainsOnlyTerminalLogs(
         string canonicalStaging,
