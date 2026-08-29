@@ -8,6 +8,7 @@ namespace ChunkPilot.App.WebUi;
 internal static class WebUiFixtureLauncher
 {
     internal const string FixtureArgument = "--webui-fixture";
+    internal const string ProviderArgument = "--webui-provider";
     internal const string RenderArgument = "--render";
     private const string FixtureHost = "fixture.chunkpilot.local";
 
@@ -24,6 +25,7 @@ internal static class WebUiFixtureLauncher
             return false;
 
         var fixture = ReadOption(arguments, FixtureArgument) ?? "several";
+        var provider = NormalizeFixtureProvider(ReadOption(arguments, ProviderArgument));
         var page = ReadOption(arguments, "--webui-page") ?? "dashboard";
         var stage = ReadOption(arguments, "--webui-stage");
         var tab = ReadOption(arguments, "--webui-tab");
@@ -37,7 +39,7 @@ internal static class WebUiFixtureLauncher
         var scale = ReadNumber(arguments, "--scale", 1, 1, 2);
         var highContrast = arguments.Any(argument => string.Equals(argument, "--forced-colors", StringComparison.OrdinalIgnoreCase));
         var reducedMotion = arguments.Any(argument => string.Equals(argument, "--reduced-motion", StringComparison.OrdinalIgnoreCase));
-        var window = new FixtureWindow(fixture, page, stage, tab, settingsSection, mode, dirty, render, renderSet, width, height, scale, highContrast, reducedMotion);
+        var window = new FixtureWindow(fixture, provider, page, stage, tab, settingsSection, mode, dirty, render, renderSet, width, height, scale, highContrast, reducedMotion);
         application.ShutdownMode = ShutdownMode.OnMainWindowClose;
         application.MainWindow = window;
         window.Show();
@@ -56,6 +58,9 @@ internal static class WebUiFixtureLauncher
     private static double ReadNumber(string[] arguments, string option, double fallback, double minimum, double maximum) =>
         double.TryParse(ReadOption(arguments, option), out var value) ? Math.Clamp(value, minimum, maximum) : fallback;
 
+    internal static string NormalizeFixtureProvider(string? provider) =>
+        string.Equals(provider, "CurseForge", StringComparison.OrdinalIgnoreCase) ? "CurseForge" : "Modrinth";
+
     private sealed class FixtureWindow : Window
     {
         private readonly WebView2 browser = new()
@@ -63,6 +68,7 @@ internal static class WebUiFixtureLauncher
             DefaultBackgroundColor = WebUiNativeTheme.ResolveWebViewColor("AppSurfaceCanvas")
         };
         private readonly string fixture;
+        private readonly string provider;
         private readonly string page;
         private readonly string? stage;
         private readonly string? tab;
@@ -75,9 +81,10 @@ internal static class WebUiFixtureLauncher
         private readonly bool highContrast;
         private readonly bool reducedMotion;
 
-        public FixtureWindow(string fixture, string page, string? stage, string? tab, string? settingsSection, string? mode, bool dirty, string? renderPath, string? renderSetDirectory, double width, double height, double scale, bool highContrast, bool reducedMotion)
+        public FixtureWindow(string fixture, string provider, string page, string? stage, string? tab, string? settingsSection, string? mode, bool dirty, string? renderPath, string? renderSetDirectory, double width, double height, double scale, bool highContrast, bool reducedMotion)
         {
             this.fixture = fixture;
+            this.provider = provider;
             this.page = page;
             this.stage = stage;
             this.tab = tab;
@@ -129,7 +136,7 @@ internal static class WebUiFixtureLauncher
                     Close();
                     return;
                 }
-                await NavigateAsync(fixture, page, tab, stage, settingsSection, mode, dirty).ConfigureAwait(true);
+                await NavigateAsync(fixture, provider, page, tab, stage, settingsSection, mode, dirty).ConfigureAwait(true);
                 await Task.Delay(350).ConfigureAwait(true);
                 if (renderPath is null)
                     return;
@@ -155,9 +162,9 @@ internal static class WebUiFixtureLauncher
             }
         }
 
-        private async Task NavigateAsync(string fixtureName, string pageName, string? tabName, string? stageName, string? settingsName, string? modeName, bool isDirty)
+        private async Task NavigateAsync(string fixtureName, string providerName, string pageName, string? tabName, string? stageName, string? settingsName, string? modeName, bool isDirty)
         {
-            var query = $"?fixture={Uri.EscapeDataString(fixtureName)}&page={Uri.EscapeDataString(pageName)}" +
+            var query = $"?fixture={Uri.EscapeDataString(fixtureName)}&provider={Uri.EscapeDataString(providerName)}&page={Uri.EscapeDataString(pageName)}" +
                 (stageName is null ? "" : $"&stage={Uri.EscapeDataString(stageName)}") +
                 (tabName is null ? "" : $"&tab={Uri.EscapeDataString(tabName)}") +
                 (settingsName is null ? "" : $"&settings={Uri.EscapeDataString(settingsName)}") +
@@ -223,6 +230,9 @@ internal static class WebUiFixtureLauncher
                 ("create-forge-version", "running", "create", null, "1", "forge", false, 1280, 820),
                 ("create-quilt-version", "running", "create", null, "1", "quilt", false, 1280, 820),
                 ("create-modpack-version", "running", "create", null, "1", "modpack", false, 1280, 820),
+                ("create-modpack-curseforge-many", "curseforge-many", "create", null, "1", "modpack", false, 1280, 820),
+                ("create-modpack-curseforge-unavailable", "curseforge-unavailable", "create", null, "1", "modpack", false, 1280, 820),
+                ("create-modpack-curseforge-rate-limited", "curseforge-rate-limited", "create", null, "1", "modpack", false, 1280, 820),
                 ("modpack-installed", "modpack", "servers", "content", null, null, false, 1280, 820),
                 ("create-performance", "running", "create", null, "2", null, false, 1280, 820),
                 ("create-review", "running", "create", null, "6", null, false, 1280, 820),
@@ -246,7 +256,10 @@ internal static class WebUiFixtureLauncher
                 Width = capture.Width;
                 Height = capture.Height;
                 await Dispatcher.InvokeAsync(() => { }, System.Windows.Threading.DispatcherPriority.Render);
-                await NavigateAsync(capture.Fixture, capture.Page, capture.Tab, capture.Stage,
+                var captureProvider = capture.Name.StartsWith("create-modpack-curseforge-", StringComparison.Ordinal)
+                    ? "CurseForge"
+                    : provider;
+                await NavigateAsync(capture.Fixture, captureProvider, capture.Page, capture.Tab, capture.Stage,
                     capture.Name is "connectivity-pending" or "connectivity-owned" ? "Connectivity"
                         : capture.Name == "help-center" ? "Help & troubleshooting"
                         : null,

@@ -260,6 +260,15 @@ public sealed class DesignSystemContractTests
         Assert.True(missing.Length == 0, "Components absent from the Design Gallery: " + string.Join(", ", missing));
     }
 
+    [Fact]
+    public void Design_gallery_fixture_evidence_never_points_at_the_canonical_repository()
+    {
+        var gallery = string.Concat(DesignSystemFiles.GalleryXaml().Select(File.ReadAllText));
+
+        Assert.DoesNotContain(@"D:\ChunkPilot\", gallery, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(@"C:\Synthetic\ChunkPilotFixture\", gallery, StringComparison.Ordinal);
+    }
+
     // ---------------------------------------------------------------- icons
 
     [Fact]

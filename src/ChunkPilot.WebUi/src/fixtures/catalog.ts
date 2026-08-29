@@ -1,5 +1,5 @@
 import type { BridgeAdapter } from '../bridge/client';
-import type { BridgeEvent, BridgeMethod, ConnectivitySnapshot, ServerSummary, WebUiSnapshot } from '../bridge/types';
+import type { BridgeEvent, BridgeMethod, ConnectivitySnapshot, ModpackProject, ModpackProvider, ServerSummary, WebUiSnapshot } from '../bridge/types';
 
 const now = '2026-08-14T16:42:00-06:00';
 const gib = 1024 ** 3;
@@ -241,6 +241,57 @@ const terraria = server({ id: 'e8cb796d-66fd-4b54-a40d-cd5266926e4a', name: 'Ter
 const modpackSnapshot = snapshot([modpack]);
 modpackSnapshot.update = { status: 'Up to date', detail: 'Adventure Ridge Pack 2.4.1 is the current exact Modrinth release.', sourceLinked: true, provider: 'Modrinth', projectId: 'adventure-ridge', projectName: 'Adventure Ridge Pack', installedVersionId: 'adventure-ridge-2.4.1', installedVersionName: '2.4.1', releaseChannel: 'Stable', minecraftVersion: '1.21.8', loader: 'Fabric', loaderVersion: '0.19.3', checkedAt: '2026-08-14T15:30:00-06:00', latestVersionName: '2.4.1', compatibility: 'Compatible', canInstall: false, operationState: null, operationPercent: null, cancellable: false, migrationReview: null };
 
+type FixtureServerPath = 'official' | 'generated' | 'unsupported';
+
+function fixtureModpackProject(provider: ModpackProvider, ordinal?: number, requestedPath?: FixtureServerPath): ModpackProject {
+  const serverPath = requestedPath ?? (provider === 'Modrinth' ? 'official' : 'generated');
+  const suffix = ordinal === undefined ? '' : `-${ordinal.toString().padStart(3, '0')}`;
+  const projectId = `fixture-pack${suffix}`;
+  const versionId = ordinal === undefined ? 'fixture-pack-4' : `${projectId}-release`;
+  const canCreate = serverPath !== 'unsupported';
+  return {
+    provider,
+    projectId,
+    slug: projectId,
+    name: ordinal === undefined ? 'Copper Trails' : `Copper Trails ${ordinal.toString().padStart(3, '0')}`,
+    author: 'ChunkPilot fixture',
+    summary: serverPath === 'official'
+      ? 'A deterministic fixture with an official dedicated server pack.'
+      : serverPath === 'generated'
+        ? 'A deterministic fixture whose generated server candidate requires isolated validation.'
+        : 'A deterministic browse-only fixture with no supportable managed server path.',
+    downloadCount: 1_240_000 - (ordinal ?? 0),
+    updatedAt: now,
+    categories: ['fabric', 'adventure'],
+    hasImage: false,
+    serverPathChecked: true,
+    serverSupport: serverPath === 'official' ? 'FullyAutomated'
+      : serverPath === 'generated' ? 'AutomatedWithReview' : 'Unsupported',
+    clientRequirement: 'MatchingPackRequired',
+    trend: { available: false, detail: 'No local period snapshot history exists yet.' },
+    versions: [{
+      versionId,
+      versionName: ordinal === undefined ? '4.2.0' : `4.${Math.floor((ordinal ?? 0) / 10)}.${(ordinal ?? 0) % 10}`,
+      minecraftVersion: '1.21.8',
+      loader: 'fabric',
+      releaseChannel: 'Stable',
+      publishedAt: now,
+      sizeBytes: 1_240_000 + (ordinal ?? 0) * 1_024,
+      changelog: 'Deterministic fixture release.',
+      requiredJavaMajor: 21,
+      hasIntegrity: true,
+      canCreate,
+      preflightState: serverPath === 'unsupported' ? 'Unsupported' : 'Ready',
+      serverPath: serverPath === 'official' ? 'Official server pack'
+        : serverPath === 'generated' ? 'ChunkPilot can generate and validate a server candidate'
+          : 'No supportable server setup found',
+      limitation: serverPath === 'generated'
+        ? 'Every required file and the staged launch must verify before promotion.'
+        : serverPath === 'unsupported' ? 'This exact release has no complete managed server path.' : ''
+    }]
+  };
+}
+
 export const fixtures: Record<string, WebUiSnapshot> = {
   zero: snapshot([]),
   stopped: snapshot([stopped]),
@@ -264,6 +315,8 @@ export const fixtures: Record<string, WebUiSnapshot> = {
   starting: snapshot([server({ state: 'Starting', playersOnline: null, playersMaximum: null, uptimeSeconds: null, cpuPercent: null, memoryBytes: null, samples: [] })]),
   unknown: snapshot([server({ playersOnline: null, playersMaximum: null, cpuPercent: null, memoryBytes: null, samples: [], publicReachability: 'unavailable', lastBackupAt: null })]),
   curseforge: snapshot([server()]),
+  'curseforge-many': snapshot([server()]),
+  'curseforge-unavailable': snapshot([server()]),
   'curseforge-rate-limited': snapshot([server()])
 };
 
@@ -272,11 +325,13 @@ export class FixtureBridge implements BridgeAdapter {
   private current: WebUiSnapshot;
   private curseForgeConfigured = false;
   private curseForgeRateLimited = false;
+  private largeCurseForgeCatalog = false;
   constructor(name = 'several') {
     this.current = structuredClone(fixtures[name] ?? fixtures.several);
     const mode = new URLSearchParams(window.location.search).get('mode');
-    this.curseForgeConfigured = name === 'curseforge' || name === 'curseforge-rate-limited';
+    this.curseForgeConfigured = name === 'curseforge' || name === 'curseforge-many' || name === 'curseforge-rate-limited';
     this.curseForgeRateLimited = name === 'curseforge-rate-limited';
+    this.largeCurseForgeCatalog = name === 'curseforge-many';
     if (mode === 'library-public' && this.current.servers.length > 0) {
       const target = this.current.servers[0];
       this.current.servers[0] = {
@@ -418,17 +473,39 @@ export class FixtureBridge implements BridgeAdapter {
     }
     if (method === 'modpacks.cache' || method === 'modpacks.search') {
       const provider = params.provider === 'CurseForge' ? 'CurseForge' : 'Modrinth';
-      const item = { provider, projectId: 'fixture-pack', slug: 'fixture-pack', name: 'Copper Trails', author: 'ChunkPilot fixture', summary: 'A deterministic server-capable fixture pack for visual review.', downloadCount: 1_240_000, updatedAt: now, categories: ['fabric', 'adventure'], hasImage: false, serverSupport: 'AutomatedWithReview', clientRequirement: 'MatchingPackRequired', trend: { available: false, detail: 'No local period snapshot history exists yet.' }, versions: [{ versionId: 'fixture-pack-4', versionName: '4.2.0', minecraftVersion: '1.21.8', loader: 'fabric', releaseChannel: 'Stable', publishedAt: now, sizeBytes: 1_240_000, changelog: 'Fixture release.', requiredJavaMajor: 21, hasIntegrity: true, canCreate: true, serverPath: provider === 'CurseForge' ? 'ChunkPilot can generate and validate a server candidate' : 'Official server pack', limitation: provider === 'CurseForge' ? 'Every required file and the staged launch must verify before promotion.' : '' }] };
       if (provider === 'CurseForge' && !this.curseForgeConfigured) return { provider, state: 'AuthenticationRequired', items: [], detail: 'Approved native CurseForge credential is missing.', failedStage: 'native credential', retrievedAt: null, fromCache: false, stale: false } as T;
       if (provider === 'CurseForge' && this.curseForgeRateLimited) return { provider, state: 'RateLimited', items: [], detail: 'The CurseForge rate limit is active. Try again shortly.', failedStage: 'provider request', retrievedAt: null, fromCache: false, stale: false } as T;
-      return { provider, state: 'Ready', items: [item], detail: 'Fixture catalog ready.', failedStage: '', retrievedAt: now, fromCache: method === 'modpacks.cache', stale: false } as T;
+      if (provider === 'CurseForge' && this.largeCurseForgeCatalog) {
+        const totalCount = 150;
+        const index = typeof params.index === 'number' && Number.isInteger(params.index)
+          ? Math.max(0, params.index) : 0;
+        const limit = typeof params.limit === 'number' && Number.isInteger(params.limit)
+          ? Math.min(50, Math.max(1, params.limit)) : 50;
+        const end = Math.min(totalCount, index + limit);
+        const items = Array.from({ length: Math.max(0, end - index) }, (_, offset) => {
+          const ordinal = index + offset + 1;
+          const paths: FixtureServerPath[] = ['official', 'generated', 'unsupported'];
+          return fixtureModpackProject(provider, ordinal, paths[(ordinal - 1) % paths.length]);
+        });
+        return {
+          provider, state: 'Ready', items, detail: 'Deterministic 150-pack CurseForge fixture catalog.',
+          failedStage: '', retrievedAt: now, fromCache: false, stale: false,
+          nextIndex: end, hasMore: end < totalCount, totalCount
+        } as T;
+      }
+      const item = fixtureModpackProject(provider);
+      return {
+        provider, state: 'Ready', items: [item], detail: 'Fixture catalog ready.', failedStage: '',
+        retrievedAt: now, fromCache: method === 'modpacks.cache', stale: false,
+        nextIndex: 1, hasMore: false, totalCount: 1
+      } as T;
     }
     if (method === 'modpacks.resolveLink') {
       const url = String(params.url ?? '');
       const provider = url.includes('curseforge.com') ? 'CurseForge' : 'Modrinth';
       if (provider === 'CurseForge' && !this.curseForgeConfigured) throw new Error('The approved native CurseForge credential is missing. Modrinth links and local pack imports remain available.');
-      const release = { versionId: 'fixture-pack-4', versionName: '4.2.0', minecraftVersion: '1.21.8', loader: 'fabric', releaseChannel: 'Stable', publishedAt: now, sizeBytes: 1_240_000, changelog: 'Fixture release.', requiredJavaMajor: 21, hasIntegrity: true, canCreate: true, serverPath: provider === 'CurseForge' ? 'ChunkPilot can generate and validate a server candidate' : 'Official server pack' };
-      const project = { provider, projectId: 'fixture-pack', slug: 'fixture-pack', name: 'Copper Trails', author: 'ChunkPilot fixture', summary: 'A deterministic server-capable fixture pack for visual review.', downloadCount: 1_240_000, updatedAt: now, categories: ['fabric', 'adventure'], hasImage: false, serverSupport: 'AutomatedWithReview', clientRequirement: 'MatchingPackRequired', trend: { available: false, detail: 'No local period snapshot history exists yet.' }, versions: [release] };
+      const project = fixtureModpackProject(provider);
+      const release = project.versions[0];
       const exactRelease = url.includes('/version/') || url.includes('/files/');
       return { canonicalUrl: provider === 'CurseForge' ? `${'https:'}//www.curseforge.com/minecraft/modpacks/fixture-pack${exactRelease ? '/files/123456' : ''}` : `${'https:'}//modrinth.com/modpack/fixture-pack`, exactRelease, project, release, detail: exactRelease ? 'Resolved the exact release from the provider link.' : 'Selected the newest stable server-capable release.' } as T;
     }

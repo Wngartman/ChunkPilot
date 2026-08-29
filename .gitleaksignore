@@ -1,0 +1,2 @@
+# False positive: this is a public prior-checkpoint commit hash in gate documentation, not credential material.
+8b408600d6b0d505045535593a8e7ceb6b20f87b:docs/CURRENT-GATE.md:generic-api-key:10

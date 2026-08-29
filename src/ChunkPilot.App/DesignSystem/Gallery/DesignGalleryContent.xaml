@@ -633,7 +633,7 @@
 
                     <components:AppProgressPanel Title="Downloading Paper 1.21.4"
                                                  StatusText="Verifying SHA-256 of the staged file"
-                                                 DetailText="operation 8f2c41 · staging D:\ChunkPilot\Staging\8f2c41"
+                                                 DetailText="operation 8f2c41 · staging C:\Synthetic\ChunkPilotFixture\Staging\8f2c41"
                                                  Progress="72" />
                     <components:AppProgressPanel Title="Creating recovery point"
                                                  StatusText="Working · total size not yet known"

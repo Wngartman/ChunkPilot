@@ -2,7 +2,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { BridgeAdapter } from '../../bridge/client';
-import type { BridgeMethod, ModpackProject } from '../../bridge/types';
+import type { BridgeMethod, ModpackCatalogResult, ModpackProject } from '../../bridge/types';
 import { FixtureBridge, fixtures } from '../../fixtures/catalog';
 import { useAppStore } from '../../state/store';
 import { ModpackPicker, PackImage, type ModpackSelection } from './ModpackPicker';
@@ -11,6 +11,7 @@ const calls: { method: BridgeMethod; params: Record<string, unknown> }[] = [];
 
 beforeEach(() => {
   calls.length = 0;
+  window.history.replaceState({}, '', '/');
   const fixture = new FixtureBridge('running');
   const bridge: BridgeAdapter = {
     request: async <T,>(method: BridgeMethod, params: Record<string, unknown> = {}) => {
@@ -25,6 +26,91 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('modpack provider browser', () => {
+  it('uses roving tab focus and the standard provider-tab keyboard commands', async () => {
+    render(<ModpackPicker value={null} onChange={() => undefined} />);
+    const modrinth = await screen.findByRole('tab', { name: /Modrinth/ });
+    const curseForge = screen.getByRole('tab', { name: /CurseForge/ });
+
+    expect(modrinth.tabIndex).toBe(0);
+    expect(curseForge.tabIndex).toBe(-1);
+    modrinth.focus();
+
+    fireEvent.keyDown(modrinth, { key: 'ArrowLeft' });
+    await waitFor(() => expect(curseForge.getAttribute('aria-selected')).toBe('true'));
+    expect(document.activeElement).toBe(curseForge);
+    expect(curseForge.tabIndex).toBe(0);
+    expect(modrinth.tabIndex).toBe(-1);
+    expect(screen.getByRole('tabpanel').getAttribute('aria-labelledby')).toBe(curseForge.id);
+
+    fireEvent.keyDown(curseForge, { key: 'Home' });
+    await waitFor(() => expect(modrinth.getAttribute('aria-selected')).toBe('true'));
+    expect(document.activeElement).toBe(modrinth);
+
+    fireEvent.keyDown(modrinth, { key: 'End' });
+    await waitFor(() => expect(curseForge.getAttribute('aria-selected')).toBe('true'));
+    expect(document.activeElement).toBe(curseForge);
+
+    fireEvent.keyDown(curseForge, { key: 'ArrowRight' });
+    await waitFor(() => expect(modrinth.getAttribute('aria-selected')).toBe('true'));
+    expect(document.activeElement).toBe(modrinth);
+  });
+
+  it('preselects a provider only inside an explicit fixture origin', async () => {
+    window.history.replaceState({}, '', '/?fixture=curseforge&provider=CurseForge');
+    const fixture = new FixtureBridge('curseforge');
+    useAppStore.setState({ bridge: fixture });
+    const { unmount } = render(<ModpackPicker value={null} onChange={() => undefined} />);
+
+    expect((await screen.findByRole('tab', { name: /CurseForge/ })).getAttribute('aria-selected')).toBe('true');
+    expect(await screen.findByRole('searchbox', { name: 'Search CurseForge modpacks' })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: /Copper Trails/ })).toBeTruthy();
+
+    unmount();
+    window.history.replaceState({}, '', '/?provider=CurseForge');
+    useAppStore.setState({ bridge: new FixtureBridge('curseforge') });
+    render(<ModpackPicker value={null} onChange={() => undefined} />);
+    expect((await screen.findByRole('tab', { name: /Modrinth/ })).getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByRole('searchbox', { name: 'Search Modrinth modpacks' })).toBeTruthy();
+  });
+
+  it('paginates the deterministic 150-pack fixture and exposes every server-path state', async () => {
+    window.history.replaceState({}, '', '/?fixture=curseforge-many&provider=CurseForge');
+    const fixture = new FixtureBridge('curseforge-many');
+    const firstPage = await fixture.request<ModpackCatalogResult>('modpacks.search',
+      { provider: 'CurseForge', limit: 50 });
+    expect(firstPage.items.map(project => project.serverSupport)).toEqual(expect.arrayContaining([
+      'FullyAutomated', 'AutomatedWithReview', 'Unsupported'
+    ]));
+    expect(firstPage.items.map(project => project.versions[0]?.serverPath)).toEqual(expect.arrayContaining([
+      'Official server pack',
+      'ChunkPilot can generate and validate a server candidate',
+      'No supportable server setup found'
+    ]));
+    useAppStore.setState({ bridge: fixture });
+    render(<ModpackPicker value={null} onChange={() => undefined} />);
+
+    expect(await screen.findByText('Showing 50 of 150 packs')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Load more' }));
+    expect(await screen.findByText('Showing 100 of 150 packs')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Load more' }));
+    expect(await screen.findByText('Showing 150 of 150 packs')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Load more' })).toBeNull();
+  });
+
+  it('preselects deterministic unavailable and rate-limited CurseForge states', async () => {
+    window.history.replaceState({}, '', '/?fixture=curseforge-unavailable&provider=CurseForge');
+    useAppStore.setState({ bridge: new FixtureBridge('curseforge-unavailable') });
+    const { unmount } = render(<ModpackPicker value={null} onChange={() => undefined} />);
+    expect(await screen.findByText('CurseForge unavailable')).toBeTruthy();
+
+    unmount();
+    window.history.replaceState({}, '', '/?fixture=curseforge-rate-limited&provider=CurseForge');
+    useAppStore.setState({ bridge: new FixtureBridge('curseforge-rate-limited') });
+    render(<ModpackPicker value={null} onChange={() => undefined} />);
+    expect(await screen.findByText('CurseForge rate limit active')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy();
+  });
+
   it('loads immediately, searches on explicit submit, and selects one exact createable release', async () => {
     let selected: ModpackSelection | null = null;
     const { rerender } = render(<ModpackPicker value={selected} onChange={value => { selected = value; rerender(<ModpackPicker value={selected} onChange={next => { selected = next; }} />); }} />);

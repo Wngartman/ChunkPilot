@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { Box, Clipboard, File, Image, Info, Link, Search } from '../../design-system/Icons';
 import { Button, Combobox, StatusBadge, TextInput } from '../../design-system/Primitives';
+import { isFixtureMode } from '../../fixtures/mode';
 import { useAppStore } from '../../state/store';
 import type {
   LocalModpackSelection, ModpackCatalogResult, ModpackProject, ModpackProvider,
@@ -21,6 +22,13 @@ interface Query { search: string; minecraftVersion: string; loader: string; cate
 const emptyQuery: Query = { search: '', minecraftVersion: '', loader: '', category: '', sort: 'Downloads' };
 const discoveryPageSize = 50;
 const sessionResultLimit = 200;
+const providers = ['Modrinth', 'CurseForge'] as const satisfies readonly ModpackProvider[];
+
+function initialFixtureProvider(): ModpackProvider {
+  if (!isFixtureMode()) return 'Modrinth';
+  const requested = new URLSearchParams(window.location.search).get('provider');
+  return providers.find(provider => provider.toLowerCase() === requested?.toLowerCase()) ?? 'Modrinth';
+}
 
 interface ProviderSession {
   draft: Query;
@@ -69,7 +77,7 @@ function BrowseModpackPicker({ value, onChange }: {
 }) {
   const bridge = useAppStore(state => state.bridge);
   const command = useAppStore(state => state.command);
-  const [provider, setProvider] = useState<ModpackProvider>('Modrinth');
+  const [provider, setProvider] = useState<ModpackProvider>(initialFixtureProvider);
   const [sessions, setSessions] = useState<Record<ModpackProvider, ProviderSession>>(() => ({
     Modrinth: createProviderSession(), CurseForge: createProviderSession()
   }));
@@ -83,6 +91,7 @@ function BrowseModpackPicker({ value, onChange }: {
   const paginationRequest = useRef<AbortController | null>(null);
   const detailRequest = useRef<AbortController | null>(null);
   const resultsRef = useRef<HTMLDivElement>(null);
+  const providerTabs = useRef<Record<ModpackProvider, HTMLButtonElement | null>>({ Modrinth: null, CurseForge: null });
   const scrollPositions = useRef<Record<ModpackProvider, number>>({ Modrinth: 0, CurseForge: 0 });
   const onChangeRef = useRef(onChange);
   const valueRef = useRef(value);
@@ -296,6 +305,18 @@ function BrowseModpackPicker({ value, onChange }: {
     setProvider(nextProvider);
     onChangeRef.current(sessionsRef.current[nextProvider].selection);
   };
+  const moveProviderFocus = (event: React.KeyboardEvent<HTMLButtonElement>, currentProvider: ModpackProvider) => {
+    const currentIndex = providers.indexOf(currentProvider);
+    const nextProvider = event.key === 'Home' ? providers[0]
+      : event.key === 'End' ? providers[providers.length - 1]
+        : event.key === 'ArrowRight' ? providers[(currentIndex + 1) % providers.length]
+          : event.key === 'ArrowLeft' ? providers[(currentIndex - 1 + providers.length) % providers.length]
+            : null;
+    if (!nextProvider) return;
+    event.preventDefault();
+    switchProvider(nextProvider);
+    providerTabs.current[nextProvider]?.focus();
+  };
   const chooseLocal = () => {
     void command<LocalModpackSelection>('modpacks.chooseLocal').then(local => {
       if (!local.cancelled && local.inspection?.canCreate) onChange({ kind: 'local', local });
@@ -400,8 +421,12 @@ function BrowseModpackPicker({ value, onChange }: {
   return <section className={styles.root} aria-label="Modpack catalog">
     <div className={styles.providerBar}>
       <div className={styles.providerTabs} role="tablist" aria-label="Modpack providers">
-        {(['Modrinth', 'CurseForge'] as const).map(item => <button key={item} type="button" role="tab"
+        {providers.map(item => <button key={item} type="button" role="tab"
+          ref={element => { providerTabs.current[item] = element; }}
+          id={`modpack-provider-${item.toLowerCase()}`} aria-controls="modpack-provider-catalog"
+          tabIndex={provider === item ? 0 : -1}
           aria-selected={provider === item} data-selected={provider === item}
+          onKeyDown={event => moveProviderFocus(event, item)}
           onClick={() => switchProvider(item)}>
           {item}{providerStatuses.length > 0 && <span aria-hidden="true" data-ready={providerStatuses.find(statusItem => statusItem.provider === item)?.available || undefined} />}
         </button>)}
@@ -429,7 +454,8 @@ function BrowseModpackPicker({ value, onChange }: {
     {(session.state === 'Failed' || session.state === 'Rate limited') && <div className={styles.error} role="alert"><strong>{session.state === 'Rate limited' ? `${provider} rate limit active` : `${provider} catalog unavailable`}</strong><span>{session.detail}</span><Button onClick={() => updateSession(provider, current => ({ ...current, revision: current.revision + 1, loadedKey: '' }))}>Retry</Button>{session.failedStage && <details><summary>Technical details</summary><code>Failed stage: {session.failedStage}</code></details>}</div>}
     {session.state === 'Offline cache' && <div className={styles.cacheNotice} role="status">{session.detail}</div>}
     {(session.projects.length > 0 || refreshing) && <div className={styles.resultsSummary} role="status" aria-live="polite"><strong>{resultSummary}</strong><span>{refreshing ? `Refreshing ${provider}…` : session.projects.length >= sessionResultLimit && session.canLoadMore === false ? 'Session limit reached — narrow the filters to continue.' : 'Exact server setup is checked when you open a pack.'}</span></div>}
-    <div className={styles.layout}>
+    <div className={styles.layout} id="modpack-provider-catalog" role="tabpanel"
+      aria-labelledby={`modpack-provider-${provider.toLowerCase()}`}>
       <div ref={resultsRef} className={styles.list} aria-busy={pending || refreshing} onScroll={event => {
         const element = event.currentTarget;
         scrollPositions.current[provider] = element.scrollTop;

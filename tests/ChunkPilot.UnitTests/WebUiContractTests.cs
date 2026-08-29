@@ -450,7 +450,11 @@ public sealed class WebUiContractTests
     public void FixtureLauncherRemainsAnExplicitDevelopmentRoute()
     {
         Assert.Equal("--webui-fixture", WebUiFixtureLauncher.FixtureArgument);
+        Assert.Equal("--webui-provider", WebUiFixtureLauncher.ProviderArgument);
         Assert.Equal("--render", WebUiFixtureLauncher.RenderArgument);
+        Assert.Equal("Modrinth", WebUiFixtureLauncher.NormalizeFixtureProvider(null));
+        Assert.Equal("Modrinth", WebUiFixtureLauncher.NormalizeFixtureProvider("unexpected-provider"));
+        Assert.Equal("CurseForge", WebUiFixtureLauncher.NormalizeFixtureProvider("curseforge"));
         Assert.True(WebUiFixtureLauncher.IsTrustedFixtureSource("https://fixture.chunkpilot.local/index.html?fixture=running"));
         Assert.False(WebUiFixtureLauncher.IsTrustedFixtureSource("https://chunkpilot.local/index.html"));
         Assert.False(WebUiFixtureLauncher.IsTrustedFixtureSource("https://fixture.chunkpilot.local.evil.example/index.html"));
