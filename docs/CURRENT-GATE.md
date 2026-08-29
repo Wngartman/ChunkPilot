@@ -1,107 +1,127 @@
 # Current ChunkPilot Gate
 
-> Git and directly inspected runtime evidence override this file. Automated work may establish a candidate
-> but may not declare visual, credential-policy, external-network, installer, signing, or user acceptance on
-> the user's behalf.
+> Git and inspected live behavior override this checkpoint. Automated work may establish a candidate but
+> may not declare public credential permission, external-network behavior, installer/signing readiness, or
+> user acceptance on the user's behalf.
 
 ## Repository state
 
-- Worktree: repository-local `temp\curseforge-modpack-platform`
-- Branch: `codex/curseforge-modpack-platform`
-- Starting HEAD and accepted Beta base: `592d1c1478f229ef335611c7952f145a1112d66b`
-- Base ancestry: accepted Beta Candidate, itself based on public `origin/main` at
-  `7cea6e2f2365d5e582d82ed8c9aa7d5bbae5a763`
-- Server-switch checkpoint: `655e86e` (`Make server switching immediate and isolated`)
-- Provider/credential checkpoint: `c34bf76` (`Activate the native CurseForge catalog and credential boundary`)
-- Final lifecycle checkpoint: the commit containing this document; resolve it with `git rev-parse HEAD`.
+- Worktree: `D:\ChunkPilot\temp\curseforge-live-certification`
+- Branch: `codex/curseforge-live-certification`
+- Starting provider-platform base: `35e8eb7ca059c3ae98cc917fd3260354c3a77b33`
+- Live-certification implementation commit: `3f505aa1bdf3a9b57b99ddff909132da9b18394d`
+- Final verification checkpoint: the commit containing this document; resolve it with `git rev-parse HEAD`.
 - Version: `1.3.0-alpha.5`; database schema: `6`
-- Primary checkout, preservation stash, installed Alpha 5, real servers, and real network state are excluded.
-- Nothing from this phase is pushed, tagged, published, or released.
+- The primary checkout, installed Alpha 5, real servers, real worlds, firewall, router, registry, services, and
+  unrelated Java processes were not modified. Nothing was pushed, tagged, published, installed, or released.
 
-## Current gate
+## Current result
 
-The instant-switch and first-class CurseForge/modpack implementation is an unpushed local Beta Candidate.
-The automated and isolated runtime gates are green. Public CurseForge credential delivery, live provider
-validation, representative real-pack acceptance, and final user acceptance remain open.
+The live CurseForge key was accepted and the bounded official metadata/API campaign passed all 15 sanitized
+categories. Four live defects and one credential-isolation audit defect were corrected with deterministic
+regressions. The real archive/runtime campaign did not run: an unrelated Windows Security firewall dialog for a
+Prism Launcher/OpenJDK/Minecraft process covered the candidate UI and could not be dismissed without the user.
 
-## Evidence entering this phase
+The candidate is therefore **not ready for CurseForge real-pack user acceptance**. API activation is verified;
+official-pack creation, generated-candidate creation, Mods installation, provider-backed update/rollback, and
+DPAPI close/relaunch remain unavailable rather than passed.
 
-- VERIFIED: the accepted Beta base and its automated package evidence are present and clean.
-- REPORTED: the user accepted the candidate except that switching servers shows a full-page
-  `Opening <server>` state for roughly ten seconds.
-- REPORTED: CurseForge application access is approved.
-- VERIFIED: official terms require the application credential but do not establish permission to distribute
-  one shared credential in an arbitrary desktop binary. `PUBLIC CREDENTIAL DELIVERY STILL GATED`.
-- VERIFIED: the one authorized local credential file was absent. No credential value was read, no alternate
-  secret location was inspected, and live CurseForge authentication was not attempted.
-- VERIFIED: the native selection result was discarded by the renderer, which then waited for a periodic
-  presentation refresh that can include unrelated Agent and connectivity work. There was no intentional
-  ten-second navigation timer.
-- VERIFIED: selection now applies the authoritative response immediately, native details remain behind an
-  exact server-ID loading/ready fence, unstamped native models are cleared on identity change, and the
-  renderer's ready-workspace cache is bounded to eight exact IDs.
-- VERIFIED: 30 cached warm switches measured p50/p95/max `0.001/0.009/0.049 ms`; 10 cold authoritative
-  acknowledgements measured `0.308/0.499/0.499 ms`; 20 reverse-completed rapid requests settled in
-  `5.735 ms`. The boundary issued 30 native selection requests and zero provider requests.
-- VERIFIED: deterministic coverage implements official CurseForge discovery and exact link/file resolution,
-  official server packs, supportable generated candidates, local manifest import, exact dependencies,
-  ownership-aware whole-pack updates, rollback, and CurseForge Mods operations.
-- VERIFIED: WebUI `151/151`, unit `1388/1388`, integration `351/351`, Release typecheck/lint/build, and the
-  self-contained development package completed successfully. Packaged Agent, normal-close ownership, and
-  three-iteration startup/idle/close smokes passed in isolated temporary data.
-- VERIFIED: final 1440-class, compact 125%, high-contrast/reduced-motion 150%, and keyboard-focus fixture
-  inspection found and corrected one compact rate-limit-card wrapping defect. No horizontal page overflow or
-  stale provider/server content was observed in the reviewed states.
-- UNKNOWN/manual: real router/firewall/outside-in, fresh-PC, signing, installer, personal-server, real-pack,
-  and final visual/workflow acceptance remain external.
+## Credential authentication
 
-## Completed bounded unit
+- AUTHORIZED: the user explicitly authorized local use of the one approved credential file for this campaign.
+- VERIFIED: native validate-before-store provisioning accepted official Minecraft game identity `432` and
+  imported the credential into isolated DPAPI data.
+- VERIFIED: rejected, unavailable, cancelled, and malformed rotation paths preserve the last accepted native
+  credential in deterministic regressions.
+- VERIFIED: ordinary status and SelfTest presence checks do not decrypt the credential; raw named-pipe key
+  mutation is unavailable; fixture and packaged test children receive a fixture-local missing key path.
+- SECURITY: no credential value, prefix, suffix, length, hash, header, source contents, or serialized request was
+  printed, committed, packaged, or written to campaign evidence.
 
-1. Make target identity and cached server workspace usable immediately while preserving immutable identity,
-   generation fencing, cancellation, and wrong-server mutation protection.
-2. Add a native-only, excluded, redacted CurseForge credential boundary and determine the honest public
-   delivery policy from current official terms.
-3. Extend the existing provider, creation, Content, update, backup, validation, and rollback architecture for
-   exact supportable CurseForge modpacks and server mods. Unsupported packs must fail truthfully.
+## Live API evidence
 
-## Non-goals
+The real provider session verified authentication/Minecraft identity, categories, 5,007 modloader rows,
+103 Minecraft versions, modpack search, two-page provider pagination, exact project/file detail, official
+server-pack relationship, project and exact-file link resolution, approved CDN URL metadata resolution, one
+exact mod with a required dependency, and bounded not-found mapping. No persistent provider cache was used.
 
-No public release, signing, license decision, hosted credential proxy, API-key UI, client launcher, client
-sync, scraping, arbitrary script execution, new game/provider breadth, Terraria expansion, remote management,
-telemetry, cloud account, or general visual redesign.
+The selected live identities were:
 
-## Stop conditions
+- SkyFactory 5 project `392141`: release `5.0.8`, client file `6290684`, official server file `6290699`,
+  Forge/Minecraft 1.20.1, server archive metadata size `295,045,888` bytes. Adjacent release `5.0.7` used client
+  file `6132545` and server file `6132552`, with server archive metadata size `291,998,635` bytes.
+- DarkRPG project `515345`: release `9.0.2`, client file `8658606`, official server file `8658669`,
+  Fabric/Minecraft 1.20.1, server archive metadata size `3,334,980` bytes.
+- Waystones project `245755`, file `7682270`, Forge/Minecraft 1.20.1, metadata size `533,738` bytes; required
+  Balm dependency project `531761`, file `8545415`, metadata size `561,670` bytes.
 
-Stop expansion for unclear credential-distribution permission, required scraping/proxying, guessed
-compatibility, unsafe/destructive real-data testing, unresolved wrong-server mutation, failed transactional
-rollback, or any unbounded provider/network behavior. Public CurseForge activation remains gated when direct
-desktop delivery is not explicitly permitted.
+No CurseForge archive or mod payload was downloaded. The approved CDN URL was resolved from official metadata
+only. Consequently, published hash verification, local SHA-256, extraction, Java/loader materialization,
+readiness, handshake, promotion, update/rollback, controlled-failure recovery, and provider-owned file cleanup
+have no live-runtime result.
 
-## Required verification
+## Runtime and package evidence
 
-- Server-switch warm/cold/rapid timing and identity regressions, with zero provider requests from selection.
-- Credential exclusion/redaction/sentinel scans and official-source policy record.
-- Deterministic provider, link, server-pack, generated-candidate, dependency, Content, update, rollback,
-  cancellation, recovery, archive, SSRF, rate-limit, and failure-path tests.
-- Full WebUI and .NET suites; Release build; self-contained package; packaged Agent/UI/close ownership smoke;
-  dependency, publication, package-secret, documentation, and diff audits.
-- Bounded live CurseForge smoke only after protections exist and only from the one authorized key-file path.
+- VERIFIED: the actual packaged dashboard rendered at `1280x820`; the blocking Windows dialog belonged to an
+  unrelated Prism Launcher/OpenJDK/Minecraft process, not ChunkPilot.
+- VERIFIED: after the campaign was stopped, exact candidate App PID `3876` and Agent PID `12428` were resolved by
+  executable path, the App was terminated, UI-death cleanup completed, and zero candidate-owned processes and
+  zero listeners on the isolated port remained. No unrelated process or security dialog was manipulated.
+- VERIFIED: the ignored isolated campaign state was moved to the Windows Recycle Bin after evidence capture,
+  recovering `32,026,112` bytes; small sanitized reports and the development package remain.
+- VERIFIED: final deterministic evidence before this checkpoint was WebUI `156/156`, unit `1424/1424`,
+  integration `355/355`, typecheck, lint, Vite production build, Release solution build with zero warnings/errors,
+  restore, npm audit, NuGet audit, publication audit, and package secret/path scan.
+- VERIFIED: packaged Agent self-test/shutdown and normal-close/process-ownership smokes pass with isolated data and
+  an explicitly missing fixture-local CurseForge key source.
+- UNAVAILABLE: actual packaged CurseForge search/review, EULA, download progress, creation/start/readiness/stop,
+  Mods dependency review, update/rollback, controlled failure, and DPAPI close/relaunch inspection.
 
-## Manual acceptance still required
+## Defects corrected
 
-Fast/cold switching UX, CurseForge discovery/details/exact selection, representative real supportable and
-unsupported packs, update conflict review, real networking/privilege behavior, fresh-PC experience, signing,
-and any public credential/release authorization.
+1. Credential rotation stored locally valid input before live authentication; it now validates exact official
+   identity before DPAPI mutation and preserves the prior accepted value on all non-success paths.
+2. Missing/null project or file distribution state could be treated as permission, and filtered pages could
+   corrupt the provider cursor; availability now requires explicit `true` and pagination uses the raw cursor.
+3. Creation/update could proceed without exact client-manifest loader proof; exact bounded preflight now runs
+   before snapshot, materialization, or active switch.
+4. API labels, URLs, hashes, descriptions, and cache filenames could become durable state; one persistence policy
+   now retains only minimal exact numeric identity plus local rollback/ownership evidence.
+5. SelfTest decrypted a credential merely to check presence, while isolated integration/release harness children
+   could inherit the approved key-file source; presence is non-decrypting and every child fixture now overrides
+   the source with a missing fixture-local path.
 
-The exact local candidate can be opened from the isolated worktree with:
+## Public credential and persistence boundary
+
+`PUBLIC CREDENTIAL DELIVERY STILL GATED`. The approved key is non-transferable, and local authentication does not
+authorize embedding or sharing it with end users. Current terms broadly prohibit saving/caching API data. Public
+activation remains gated until CurseForge gives written clarification that ChunkPilot may retain the smallest
+installed-state evidence required for exact launch, ownership, recovery, and rollback: numeric project/client/
+server-file IDs, compatibility, fixed origin, and locally computed hashes/sizes/paths.
+
+Distribution controls fail closed: project and file availability must be explicit, links cannot bypass exact
+compatibility review, redirects/cookies are disabled, and final API/CDN hosts are revalidated.
+
+## Remaining limitations
+
+- Critical: the mandatory end-to-end live official server-pack workflow is unavailable.
+- High: live generated-candidate, mod/dependency, compatible update/rollback, controlled failure, and DPAPI
+  relaunch evidence are unavailable.
+- Medium: live cancellation responsiveness, archive download throughput, extraction time, staged startup time,
+  actual CurseForge UI failure states, and a natural distribution-disabled/`429` response were not observed.
+- Provider-policy: written permission for public key delivery and minimum installed-state persistence is absent.
+- External/manual: cancel the unrelated Windows Security prompt, relaunch the isolated candidate, and complete the
+  real-pack campaign. Fresh-PC, signing, installer, and final visual/workflow acceptance remain external.
+
+## Manual launch
 
 ```powershell
-$chunkPilotRoot = (Resolve-Path '.').Path
-Set-Location (Join-Path $chunkPilotRoot 'temp\curseforge-modpack-platform')
-$env:CHUNKPILOT_CURSEFORGE_KEY_FILE = Join-Path $chunkPilotRoot '.secrets\curseforge-api-key.txt'
-& '.\artifacts\dev-current\ChunkPilot.exe'
+Set-Location 'D:\ChunkPilot\temp\curseforge-live-certification'
+$env:CHUNKPILOT_CURSEFORGE_KEY_FILE = 'D:\ChunkPilot\.secrets\curseforge-api-key.txt'
+& 'D:\ChunkPilot\temp\curseforge-live-certification\artifacts\dev-current\ChunkPilot.exe'
 ```
 
 ## Next blocked roadmap step
 
-CurseForge/modpack user acceptance and representative real-pack validation.
+`CurseForge real-pack user acceptance`, after the mandatory live runtime campaign is completed. If accepted, the
+next step is `Daily Minecraft management completeness and the equal-High friction register`.

@@ -24,6 +24,7 @@ $processInfo.UseShellExecute = $false
 $processInfo.CreateNoWindow = $true
 $processInfo.Environment["CHUNKPILOT_DATA_ROOT"] = $smokeRoot
 $processInfo.Environment["CHUNKPILOT_INSTANCE_ID"] = $instanceId
+$processInfo.Environment["CHUNKPILOT_CURSEFORGE_KEY_FILE"] = Join-Path $smokeRoot ".missing-curseforge-api-key"
 $agent = [Diagnostics.Process]::Start($processInfo)
 
 function Invoke-AgentRequest([string]$Operation) {

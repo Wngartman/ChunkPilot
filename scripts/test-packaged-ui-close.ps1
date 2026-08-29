@@ -98,6 +98,7 @@ function Start-IsolatedAgent([string]$AgentPath, [string]$DataRoot, [string]$Ins
     $info.CreateNoWindow = $true
     $info.Environment["CHUNKPILOT_DATA_ROOT"] = $DataRoot
     $info.Environment["CHUNKPILOT_INSTANCE_ID"] = $InstanceId
+    $info.Environment["CHUNKPILOT_CURSEFORGE_KEY_FILE"] = Join-Path $DataRoot ".missing-curseforge-api-key"
     $process = [Diagnostics.Process]::Start($info)
     if ($null -eq $process) { throw "Windows did not start the unrelated isolated Agent." }
     return $process
@@ -164,6 +165,7 @@ try {
     $appInfo.UseShellExecute = $false
     $appInfo.Environment["CHUNKPILOT_DATA_ROOT"] = $targetRoot
     $appInfo.Environment["CHUNKPILOT_INSTANCE_ID"] = $targetInstanceId
+    $appInfo.Environment["CHUNKPILOT_CURSEFORGE_KEY_FILE"] = Join-Path $targetRoot ".missing-curseforge-api-key"
     $app = [Diagnostics.Process]::Start($appInfo)
     Assert-Condition ($null -ne $app) "Windows did not start the packaged App."
     $script:Result.AppLaunched = $true

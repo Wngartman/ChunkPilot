@@ -6,6 +6,257 @@ become the durable record and the entry can leave this active register.
 
 ---
 
+## CP-2026-044 — Credential presence and isolated harnesses could cross the approved source boundary
+
+| Field | Value |
+|---|---|
+| Date | 2026-08-29 |
+| Git state | `codex/curseforge-live-certification`; implementation commit `3f505aa1bdf3a9b57b99ddff909132da9b18394d` plus the final verification checkpoint containing this entry |
+| Provider identity | Official Minecraft game `432`; no credential value, derivative, or source-file detail retained |
+| Severity | High — a presence check unnecessarily decrypted protected data, and an isolated test child could use the developer-approved live source instead of proving missing-credential behavior |
+| Area | Agent SelfTest, integration fixtures, portable Agent smoke, packaged normal-close ownership smoke |
+| Status | **Fixed locally** — presence is non-decrypting and every isolated App/Agent child receives an explicitly missing fixture-local key source |
+| Validation | Focused security `35/35`, raw named-pipe behavior `1/1`, full isolated integration `355/355`, public-distribution contract `15/15`, packaged Agent smoke, and packaged normal-close/process-ownership smoke passed |
+
+### Reproduction
+
+Agent SelfTest called `GetSecret` only to report whether the CurseForge key existed. Separately, integration and
+release harness children set isolated data/instance roots but did not override
+`CHUNKPILOT_CURSEFORGE_KEY_FILE`. On a developer machine with the approved default source present, a test intended
+to exercise isolated or missing-credential behavior could authenticate against the live provider. The audit found
+this as a potential unintended live-auth path; no request count is inferred from the source review.
+
+The first real-child regression also exposed a Windows assertion mistake: `cmd.exe /c set <missing-variable>`
+correctly returns nonzero and writes a "variable not defined" diagnostic to stderr. That was a test expectation
+failure, not credential exposure; the final assertion requires nonzero exit and proves the synthetic source path
+is absent from child output.
+
+### Root cause and impact
+
+Credential isolation was enforced for managed Java/staged validation but not treated as a universal property of
+all verification children. SelfTest also reused the decrypting retrieval operation instead of the protected
+store's presence operation. This extended plaintext lifetime without need and made local test behavior dependent
+on an authorized developer-machine input outside each fixture root.
+
+### Resolution
+
+SelfTest now calls the non-decrypting `ISecretStore.Contains`. A harmless real child proves the key-file variable
+is absent after provisioning, and a behavioral raw named-pipe regression proves removal is unknown while status
+requires the authenticated UI capability. Every integration-launched App/Agent and both release smoke harnesses
+override the source with a nonexistent path inside their temporary fixture root. Public-distribution contract
+tests retain that boundary.
+
+### Final boundary
+
+**VERIFIED:** the focused security, behavioral pipe, full integration, distribution-contract, packaged Agent,
+and normal-close ownership reruns pass. The release harnesses create and remove only isolated temporary roots and
+cannot authenticate with the approved source through environment inheritance.
+
+**UNAVAILABLE:** this fix does not substitute for the blocked live UI close/relaunch DPAPI campaign. The real key
+file was not altered, removed, printed, hashed, or copied.
+
+---
+
+## CP-2026-043 — CurseForge API response fields could become durable installed-state records
+
+| Field | Value |
+|---|---|
+| Date | 2026-08-29 |
+| Git state | `codex/curseforge-live-certification`, implementation commit `3f505aa1bdf3a9b57b99ddff909132da9b18394d` |
+| Provider identity | Live game `432`; deterministic rollback identity project `123`, client file `456`, installed/server file `789` |
+| Severity | High — update checks, labels, URLs, provider hashes, and response descriptions could outlive the user-requested provider session and exceed the reviewed persistence boundary |
+| Area | CurseForge update source, histories, journals/logs, generated evidence, mod provenance, snapshots, and update cache |
+| Status | **Fixed locally** — one persistence policy now minimizes every reviewed durable sink while retaining exact local rollback identity |
+| Validation | `CurseForgePersistencePolicyTests`, `CurseForgeServerCreationTests`, CurseForge identity/rollback and opaque-cache integration regressions; focused security/unit `55/55` and CurseForge update integration `3/3` passed |
+
+### Reproduction
+
+Before the correction, recording a CurseForge update check serialized the complete result. Update sources and
+snapshots retained project/release labels, source URLs, changelogs, update notes, and provider-derived names.
+Download history retained the provider URL, filename, version and provider digest; cache filenames embedded a
+provider hash and filename. Creation/update history and operation logs/journals accepted provider response text,
+and generated-pack evidence copied manifest labels, optional project IDs, ignored override paths, and an API size.
+
+These are locally observable persistence defects; no credential is required to reproduce them. The synthetic
+sentinel regressions use deliberately recognizable provider labels, descriptions, URLs, filenames, and digests,
+then inspect the SQLite rows, operation log/journal text, snapshot metadata, and cache names.
+
+### Root cause and impact
+
+The original transactional model correctly needed an exact installed identity for update and rollback, but it
+had no distinction between that safety state and the larger API object that supplied it. Provider models flowed
+straight into generic persistence methods and human-readable descriptions. A rollback snapshot also carried only
+the client/release ID, so restoring it could not prove the exact installed server file and was tempted to reuse a
+newer identity.
+
+This was not a world-integrity failure, but it could create an offline provider-response cache in everything but
+name and make a support bundle or local database contain provider data unrelated to recovery.
+
+### Resolution
+
+CurseForge update checks are no longer persisted. The durable update source retains only exact numeric project,
+client-file and installed-file IDs, fixed identity origin, launch compatibility, installed time, and fixed local
+evidence. Snapshot manifests carry the exact project/client/installed-file tuple and locally computed hashes;
+provider release name, URL, changelog, update notes, and release label are removed. A legacy snapshot without exact
+installed-file identity fails closed on restore.
+
+Download rows keep local byte count, local SHA-256 and local status, but not provider URL, filename, version or
+digest. Cache files use an opaque operation identity. Creation/update history, journals, logs, and recovery
+descriptions use fixed local text. Generated evidence recomputes size from the installed file and stores local
+relative path/hash/size plus counts, not API label/path lists. Mod provenance uses a fixed origin enum to separate
+API-derived operational identity from archive-manifest and user-entered identity.
+
+### Final boundary
+
+**VERIFIED:** deterministic source, download, snapshot, rollback, creation-log/history, generated-evidence,
+provenance, and opaque-cache regressions pass (`55/55` focused unit/security and `3/3` CurseForge update
+integration); the Infrastructure Release build completed with zero warnings or errors.
+
+**UNAVAILABLE:** no completed live pack install/update existed at this checkpoint, so a post-operation scan of a
+real provider-backed server database, snapshot, journal, and cache cannot be claimed. Written CurseForge approval
+for retaining even the minimum installed identity/local ownership evidence also remains unavailable; public
+activation stays gated.
+
+---
+
+## CP-2026-042 — CurseForge creation and update lacked exact client-manifest loader proof
+
+| Field | Value |
+|---|---|
+| Date | 2026-08-29 |
+| Git state | `codex/curseforge-live-certification`, implementation commit `3f505aa1bdf3a9b57b99ddff909132da9b18394d` |
+| Provider identity | Deterministic project `10`, client file `111`, official server-pack file `222`; live exact-project/file discovery was verified but the live identity was intentionally not copied into this durable register |
+| Severity | Critical — an official server archive could be materialized using only a loader family, without proving the exact loader version required to launch it |
+| Area | Create Server v2, exact CurseForge release review, generated candidate, official server pack, update preflight |
+| Status | **Fixed locally** — creation and update now require a verified exact client manifest before snapshot, materialization, or active switch |
+| Validation | `CurseForgeModpackPreflightServiceTests`, creation-plan contract, WebUI preflight bridge/UI regressions, and `CurseForge_update_requires_exact_client_manifest_preflight_before_snapshot_or_switch` |
+
+### Reproduction
+
+The live file response established values such as Minecraft version and `Forge`/`Fabric`, but that list is a
+compatibility family, not an exact loader build. The prior release mapper could still mark an integrity-verifiable
+official server pack or generated path as creatable while `LoaderVersion` was empty or inferred from incomplete
+API metadata. An update could reach recovery-point creation before discovering that uncertainty.
+
+The deterministic fixture makes the API list deliberately misleading while the exact downloaded client
+`manifest.json` declares `forge-47.3.0`. Before this gate, the API family could be treated as sufficient evidence.
+
+### Resolution
+
+The native Agent now performs an operation-scoped preflight for the exact project/client/server-file tuple. It
+downloads the exact client archive from the approved CDN path, enforces declared size and provider SHA-1,
+computes a local SHA-256, safely reads the bounded manifest, establishes the primary loader and version,
+Minecraft version and required Java major, and removes staging on success, unsupported content, hash failure,
+or cancellation. The official-server-pack path still requires this client-manifest proof.
+
+The WebUI can create only the exact release returned ready by preflight and carries its local client-archive
+SHA-256 into the Agent request. The Agent independently rechecks the creation plan. CurseForge update preflight
+runs before a recovery snapshot or active-directory mutation and fails if the returned identities disagree.
+
+### Final boundary
+
+**VERIFIED:** exact Forge loader extraction, unsupported-primary-loader handling, hash failure, cancellation,
+staging cleanup, creation gating, identity contradiction, and pre-switch update rejection are deterministic and
+covered.
+
+**UNAVAILABLE:** the live checkpoint resolved an exact client file and approved CDN URL but did not download and
+preflight that archive, build a candidate, or launch it. Real-pack loader/runtime certification remains open.
+
+---
+
+## CP-2026-041 — Unknown CurseForge distribution state was allowed and filtered pages lost provider position
+
+| Field | Value |
+|---|---|
+| Date | 2026-08-29 |
+| Git state | `codex/curseforge-live-certification`, implementation commit `3f505aa1bdf3a9b57b99ddff909132da9b18394d` |
+| Provider identity | Minecraft game `432`, modpack class `4471`; synthetic availability IDs `123/456/789`; live dynamically selected two-page result |
+| Severity | High — absent/null distribution evidence could become selectable, while filtering a provider page could repeat or skip later results |
+| Area | CurseForge modpack/mod discovery, distribution control, provider pagination |
+| Status | **Fixed locally** — availability and distribution now require explicit affirmative evidence and pagination follows the raw provider cursor |
+| Validation | Live two-page pagination with no repeated project; distribution/file fail-closed fixtures; exact-category and underfilled-page regressions |
+
+### Reproduction
+
+`FileAvailable` previously treated a missing `isAvailable` field as available. Project filtering accepted a
+missing `allowModDistribution` field and also accepted JSON `null`. That turns uncertain provider permission into
+permission. Separately, the generic catalog layer inferred the next page from the count of post-policy visible
+items; when distribution or server-capability filtering removed rows, the UI position no longer matched the
+provider's raw page.
+
+### Resolution
+
+A project is eligible only when both `isAvailable` and `allowModDistribution` are explicit JSON `true`; an exact
+file likewise requires explicit `isAvailable: true`. False, null, absent, malformed, unavailable, contradictory
+server-pack, or unapproved-host evidence fails closed.
+
+The CurseForge adapter now returns its own `NextIndex` and `HasMore` from the official pagination object using
+the raw result count/total, capped by the provider's 10,000-row boundary. Local filtering no longer changes the
+provider cursor. Categories are first resolved through the official inventory and sent as exact numeric IDs.
+
+### Final boundary
+
+**VERIFIED:** the authenticated live campaign traversed two provider pages without repeating the first-page
+projects; exact project/file, official server-pack relationship, links, and one required mod dependency also
+resolved. Deterministic regressions prove explicit distribution/file permission and underfilled-page behavior.
+
+**UNAVAILABLE:** the campaign did not encounter a naturally distribution-disabled live file. That negative class
+is therefore deterministic-only and is not presented as live provider evidence.
+
+---
+
+## CP-2026-040 — CurseForge credential bootstrap and request lifetime did not enforce the live security boundary
+
+| Field | Value |
+|---|---|
+| Date | 2026-08-29 |
+| Git state | `codex/curseforge-live-certification`, implementation commit `3f505aa1bdf3a9b57b99ddff909132da9b18394d` |
+| Provider identity | Official Minecraft game identity `432`; no credential value or derivative retained |
+| Severity | High — an unvalidated rotation could replace the last usable native credential, bootstrap path state could reach child processes, and one cancellation race could retain a completed response as a session cache |
+| Area | Native credential import/rotation, DPAPI, API transport, Agent/managed-process environment |
+| Status | **Fixed locally and live-authenticated** — validate-before-store, preserved last-known-good credential, fixed production transport, and request-owned in-flight cleanup |
+| Validation | Live official identity accepted in isolated DPAPI data; credential rotation/DPAPI/environment regressions; API redirect, cancellation, timeout, rate-limit, response-bound, and in-flight lifetime regressions |
+
+### Reproduction
+
+The previous provisioner validated only local file shape and immediately wrote the candidate to protected
+storage. It could replace an accepted credential with a rejected value and did not distinguish authentication
+rejection from temporary provider failure. The long-lived Agent also retained the key-file *path* environment
+variable, so managed Java or installer children could inherit a bootstrap detail they never needed.
+
+`ISecretStore.Contains` decrypted the stored value merely to answer whether it existed, extending plaintext
+handling. Production construction also accepted an arbitrary `HttpClient`, so redirect policy was not guaranteed.
+Finally, in-flight API cleanup lived in an individual waiter's `finally`: if that waiter cancelled before the
+shared request finished, no later owner was guaranteed to remove the completed task, turning coalescing into an
+unbounded session response cache.
+
+### Resolution
+
+The candidate credential is sent directly to exact HTTPS `api.curseforge.com/v1/games/432` and persisted only
+after the response proves Minecraft identity `432`. Authentication rejection, timeout/offline failure and caller
+cancellation leave the prior DPAPI entry unchanged; a rejected first import leaves storage empty. Temporary byte
+buffers are zeroed. DPAPI presence inspection reads only the protected dictionary entry and decryption buffers are
+zeroed after use.
+
+The key-file variable accepts an absolute path only, is cleared from the Agent immediately after bootstrap, and
+is removed from every managed child `ProcessStartInfo`. There is no pipe method to set/remove a key and React sees
+only authenticated availability. Production API construction owns a no-cookie/no-redirect handler, validates the
+final exact host, separates caller cancellation from timeout, retries one bounded `Retry-After`, and removes an
+in-flight task from inside the shared task itself.
+
+### Final boundary
+
+**VERIFIED:** the authorized credential authenticated successfully and survived isolated DPAPI round-trip; live
+metadata then completed 15/15 bounded categories. Deterministic tests cover rejected/offline/cancelled rotation,
+child-environment removal, malformed protected values, redirect/host rejection, completed-request cleanup, and
+zero network access when the credential is missing.
+
+**UNAVAILABLE:** a real rejected key and live rate-limit were deliberately not induced. Public desktop key
+sharing is not authorized by this result and remains gated; only this user's approved local native credential was
+used.
+
+---
+
 ## CP-2026-039 — Server selection discards its immediate snapshot and waits behind unrelated detail work
 
 | Field | Value |

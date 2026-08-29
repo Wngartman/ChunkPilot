@@ -198,6 +198,8 @@ public sealed class PublicDistributionContractTests
         var ignore = File.ReadAllText(Path.Combine(Root, ".gitignore"));
         var audit = File.ReadAllText(Path.Combine(Root, "scripts", "audit-publication.ps1"));
         var portable = File.ReadAllText(Path.Combine(Root, "scripts", "test-portable-package.ps1"));
+        var portableSmoke = File.ReadAllText(Path.Combine(Root, "scripts", "smoke-portable.ps1"));
+        var packagedClose = File.ReadAllText(Path.Combine(Root, "scripts", "test-packaged-ui-close.ps1"));
         var pipe = File.ReadAllText(Path.Combine(Root, "src", "ChunkPilot.Agent", "AgentPipeServer.cs"));
         var viewModel = File.ReadAllText(Path.Combine(Root, "src", "ChunkPilot.App", "MainViewModel.Updates.cs"));
         var webUi = string.Join('\n', Directory.EnumerateFiles(
@@ -211,6 +213,10 @@ public sealed class PublicDistributionContractTests
         Assert.Contains("curseforge-api-key", audit, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("curseforge-api-key", portable, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("\\.secrets?", portable, StringComparison.Ordinal);
+        Assert.Contains("CHUNKPILOT_CURSEFORGE_KEY_FILE", portableSmoke, StringComparison.Ordinal);
+        Assert.Contains(".missing-curseforge-api-key", portableSmoke, StringComparison.Ordinal);
+        Assert.Contains("CHUNKPILOT_CURSEFORGE_KEY_FILE", packagedClose, StringComparison.Ordinal);
+        Assert.Contains(".missing-curseforge-api-key", packagedClose, StringComparison.Ordinal);
         Assert.DoesNotContain("SetCurseForgeApiKey", pipe, StringComparison.Ordinal);
         Assert.DoesNotContain("RemoveCurseForgeApiKey", pipe, StringComparison.Ordinal);
         Assert.Contains("case \"HasCurseForgeApiKey\"", pipe, StringComparison.Ordinal);
