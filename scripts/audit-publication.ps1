@@ -23,11 +23,21 @@ if (-not (Test-Path -LiteralPath $gitleaks)) {
 $reportPath = Join-Path $auditRoot 'gitleaks.json'
 & $gitleaks git --log-opts=$Revision --redact=100 --no-banner --report-format json --report-path $reportPath $repoRoot
 $gitleaksExit = $LASTEXITCODE
-if ($gitleaksExit -ne 0) {
-    $findingCount = if ((Test-Path -LiteralPath $reportPath) -and (Get-Item -LiteralPath $reportPath).Length -gt 0) {
-        @(Get-Content -LiteralPath $reportPath -Raw | ConvertFrom-Json).Count
-    } else { 0 }
-    throw "Gitleaks rejected $Revision with $findingCount redacted finding(s)."
+if ($gitleaksExit -notin 0, 1) {
+    throw "Gitleaks could not audit $Revision (exit code $gitleaksExit)."
+}
+
+$findings = if ((Test-Path -LiteralPath $reportPath) -and (Get-Item -LiteralPath $reportPath).Length -gt 0) {
+    @(Get-Content -LiteralPath $reportPath -Raw | ConvertFrom-Json)
+} else { @() }
+$knownFalsePositiveFingerprints = @(
+    # An immutable historical test fixture: a generated 64-hex certification token, never a provider key.
+    'e6f0acb36ffb3e2ee6874d5debc87f0078187913:tests/ChunkPilot.UnitTests/CertificationUpdateFaultInjectorTests.cs:generic-api-key:8'
+)
+$knownFalsePositives = @($findings | Where-Object Fingerprint -In $knownFalsePositiveFingerprints)
+$unexpectedFindings = @($findings | Where-Object Fingerprint -NotIn $knownFalsePositiveFingerprints)
+if ($unexpectedFindings.Count -ne 0) {
+    throw "Gitleaks rejected $Revision with $($unexpectedFindings.Count) unexpected redacted finding(s)."
 }
 
 $objects = @(git -C $repoRoot rev-list --objects $Revision)
@@ -68,7 +78,8 @@ $ignored = @(git -C $repoRoot status --ignored --short)
 $result = [PSCustomObject]@{
     Revision = (& git -C $repoRoot rev-parse $Revision).Trim()
     GitleaksVersion = (& $gitleaks version).Trim()
-    GitleaksFindings = 0
+    GitleaksFindings = $unexpectedFindings.Count
+    GitleaksKnownFalsePositives = $knownFalsePositives.Count
     ReachableBlobCount = $blobs.Count
     ReachableProhibitedPaths = 0
     LargeBlobs = $large
