@@ -168,7 +168,7 @@ public sealed class CurseForgeApiClient : IDisposable
                     throw new CurseForgeApiException(CurseForgeFailureKind.UnapprovedHost,
                         "The CurseForge download left the approved CDN boundary.");
                 }
-                if (IsRedirect(response.StatusCode))
+                if (IsFollowableDownloadRedirect(response.StatusCode))
                 {
                     var location = response.Headers.Location;
                     var status = response.StatusCode;
@@ -198,12 +198,20 @@ public sealed class CurseForgeApiClient : IDisposable
                     redirectsFollowed++;
                     continue;
                 }
+                if (IsRedirectionStatus(response.StatusCode))
+                {
+                    var status = response.StatusCode;
+                    response.Dispose();
+                    throw new CurseForgeApiException(CurseForgeFailureKind.Redirect,
+                        "CurseForge returned an unsupported download redirect status.", status);
+                }
                 if (!response.IsSuccessStatusCode)
                 {
                     var error = MapStatus(response.StatusCode);
                     response.Dispose();
                     throw error;
                 }
+                response.RequestMessage ??= request;
                 return response;
             }
         }
@@ -247,7 +255,7 @@ public sealed class CurseForgeApiClient : IDisposable
             {
                 using var response = await http.SendAsync(
                     request, HttpCompletionOption.ResponseHeadersRead, timeout.Token).ConfigureAwait(false);
-                if (IsRedirect(response.StatusCode))
+                if (IsRedirectionStatus(response.StatusCode))
                     throw new CurseForgeApiException(CurseForgeFailureKind.Redirect,
                         "CurseForge API redirects are not followed automatically.", response.StatusCode);
                 // The owned production handler always supplies RequestMessage and cannot redirect.
@@ -352,7 +360,11 @@ public sealed class CurseForgeApiClient : IDisposable
         return delay <= MaximumRetryAfter ? delay : null;
     }
 
-    private static bool IsRedirect(HttpStatusCode status) => (int)status is >= 300 and <= 399;
+    private static bool IsRedirectionStatus(HttpStatusCode status) => (int)status is >= 300 and <= 399;
+
+    private static bool IsFollowableDownloadRedirect(HttpStatusCode status) => status is
+        HttpStatusCode.MovedPermanently or HttpStatusCode.Redirect or HttpStatusCode.RedirectMethod or
+        HttpStatusCode.TemporaryRedirect or HttpStatusCode.PermanentRedirect;
 
     private static CurseForgeApiException MapStatus(HttpStatusCode status) => status switch
     {

@@ -223,16 +223,20 @@ public sealed class CurseForgeApiClientTests
     public async Task Download_follows_bounded_approved_redirect_and_authenticates_each_cdn_request()
     {
         var requests = new List<(Uri Uri, string Credential)>();
+        var intermediateContent = new TrackingContent();
         var handler = new Handler(request =>
         {
             requests.Add((request.RequestUri!, request.Headers.GetValues("x-api-key").Single()));
             if (requests.Count == 1)
                 return new HttpResponseMessage(HttpStatusCode.TemporaryRedirect)
                 {
-                    Headers =
-                    {
-                        Location = new Uri("https://edge.forgecdn.net/files/1/final.jar")
-                    }
+                    Headers = { Location = new Uri("/files/1/middle.jar", UriKind.Relative) },
+                    Content = intermediateContent
+                };
+            if (requests.Count == 2)
+                return new HttpResponseMessage(HttpStatusCode.Redirect)
+                {
+                    Headers = { Location = new Uri("https://edge.forgecdn.net/files/1/final.jar") }
                 };
             return Response(HttpStatusCode.OK, "fixture", "application/octet-stream");
         });
@@ -242,18 +246,27 @@ public sealed class CurseForgeApiClientTests
             new Uri("https://mediafilez.forgecdn.net/files/1/start.jar"));
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.Equal(2, requests.Count);
+        Assert.Equal("fixture", await response.Content.ReadAsStringAsync());
+        Assert.Equal("edge.forgecdn.net", response.RequestMessage!.RequestUri!.IdnHost);
+        Assert.True(intermediateContent.Disposed);
+        Assert.Equal(3, requests.Count);
         Assert.All(requests, request =>
         {
             Assert.True(CurseForgeApiClient.IsApprovedDownloadUri(request.Uri));
             Assert.Equal("fixture-approved-key", request.Credential);
         });
         Assert.Equal("mediafilez.forgecdn.net", requests[0].Uri.IdnHost);
-        Assert.Equal("edge.forgecdn.net", requests[1].Uri.IdnHost);
+        Assert.Equal("mediafilez.forgecdn.net", requests[1].Uri.IdnHost);
+        Assert.Equal("edge.forgecdn.net", requests[2].Uri.IdnHost);
     }
 
-    [Fact]
-    public async Task Download_redirect_never_forwards_credential_to_an_unapproved_host()
+    [Theory]
+    [InlineData("https://evil.example/stolen.jar")]
+    [InlineData("http://mediafilez.forgecdn.net/files/1/stolen.jar")]
+    [InlineData("https://mediafilez.forgecdn.net:444/files/1/stolen.jar")]
+    [InlineData("https://user@mediafilez.forgecdn.net/files/1/stolen.jar")]
+    [InlineData("https://evilforgecdn.net/files/1/stolen.jar")]
+    public async Task Download_redirect_never_forwards_credential_to_an_unapproved_host(string destination)
     {
         var requests = new List<(string Host, bool SentCredential)>();
         var handler = new Handler(request =>
@@ -261,7 +274,7 @@ public sealed class CurseForgeApiClientTests
             requests.Add((request.RequestUri!.IdnHost, request.Headers.Contains("x-api-key")));
             return new HttpResponseMessage(HttpStatusCode.Redirect)
             {
-                Headers = { Location = new Uri("https://evil.example/stolen.jar") }
+                Headers = { Location = new Uri(destination) }
             };
         });
         using var client = new CurseForgeApiClient(WithKey(), handler);
@@ -307,12 +320,57 @@ public sealed class CurseForgeApiClientTests
     }
 
     [Fact]
+    public async Task Download_rejects_nonstandard_redirection_without_following_it()
+    {
+        var content = new TrackingContent();
+        var handler = new Handler(_ => new HttpResponseMessage((HttpStatusCode)305)
+        {
+            Headers = { Location = new Uri("https://edge.forgecdn.net/files/1/final.jar") },
+            Content = content
+        });
+        using var client = new CurseForgeApiClient(WithKey(), handler);
+
+        var exception = await Assert.ThrowsAsync<CurseForgeApiException>(() =>
+            client.SendDownloadAsync(new Uri("https://mediafilez.forgecdn.net/files/1/start.jar")));
+
+        Assert.Equal(CurseForgeFailureKind.Redirect, exception.Kind);
+        Assert.Equal(1, handler.Count);
+        Assert.True(content.Disposed);
+    }
+
+    [Fact]
+    public async Task Download_distinguishes_caller_cancellation_from_transport_timeout()
+    {
+        var handler = new Handler(async (_, cancellationToken) =>
+        {
+            await Task.Delay(TimeSpan.FromSeconds(30), cancellationToken);
+            return Response(HttpStatusCode.OK, "fixture", "application/octet-stream");
+        });
+        using var client = new CurseForgeApiClient(WithKey(), handler);
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            client.SendDownloadAsync(
+                new Uri("https://mediafilez.forgecdn.net/files/1/start.jar"), cancellation.Token));
+
+        using var timeoutClient = new CurseForgeApiClient(WithKey(),
+            new Handler((_, _) => throw new TaskCanceledException("fixture timeout")));
+        var timeout = await Assert.ThrowsAsync<CurseForgeApiException>(() =>
+            timeoutClient.SendDownloadAsync(
+                new Uri("https://mediafilez.forgecdn.net/files/1/start.jar")));
+        Assert.Equal(CurseForgeFailureKind.Timeout, timeout.Kind);
+    }
+
+    [Fact]
     public async Task Missing_credential_fails_before_network_access()
     {
         var handler = new Handler(_ => throw new InvalidOperationException("network must not run"));
         using var client = new CurseForgeApiClient(new MemorySecrets(), handler);
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => client.GetJsonAsync("/v1/games/432"));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => client.SendDownloadAsync(
+            new Uri("https://mediafilez.forgecdn.net/files/1/file.jar")));
 
         Assert.Equal(0, handler.Count);
     }
@@ -371,6 +429,19 @@ public sealed class CurseForgeApiClientTests
             Interlocked.Increment(ref count);
             if (queued.TryDequeue(out var next)) return Task.FromResult(next);
             return response(request, cancellationToken);
+        }
+    }
+
+    private sealed class TrackingContent : ByteArrayContent
+    {
+        public TrackingContent() : base([]) { }
+
+        public bool Disposed { get; private set; }
+
+        protected override void Dispose(bool disposing)
+        {
+            Disposed = true;
+            base.Dispose(disposing);
         }
     }
 }
