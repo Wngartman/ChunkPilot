@@ -23,6 +23,8 @@ public interface IStagedServerValidator
         string stagingRoot,
         string launchRelativePath,
         bool usesArgumentFile,
+        int minimumRamMb,
+        int maximumRamMb,
         TimeSpan timeout,
         CancellationToken cancellationToken = default);
 }
@@ -40,6 +42,8 @@ public sealed class StagedServerValidator : IStagedServerValidator
         string stagingRoot,
         string launchRelativePath,
         bool usesArgumentFile,
+        int minimumRamMb,
+        int maximumRamMb,
         TimeSpan timeout,
         CancellationToken cancellationToken = default)
     {
@@ -48,6 +52,8 @@ public sealed class StagedServerValidator : IStagedServerValidator
         EnsureChild(root, launch);
         if (!File.Exists(launch)) throw new FileNotFoundException("The staged validation launcher was not found.", launch);
         if (!File.Exists(javaPath)) throw new FileNotFoundException("The staged validation Java runtime was not found.", javaPath);
+        if (MemoryAllocationPolicy.ValidatePair(minimumRamMb, maximumRamMb) is { } memoryProblem)
+            throw new ArgumentOutOfRangeException(nameof(maximumRamMb), memoryProblem);
         var propertiesPath = Path.Combine(root, "server.properties");
         var originalProperties = File.Exists(propertiesPath)
             ? await File.ReadAllBytesAsync(propertiesPath, cancellationToken).ConfigureAwait(false)
@@ -86,8 +92,8 @@ public sealed class StagedServerValidator : IStagedServerValidator
                 RedirectStandardOutput = true,
                 RedirectStandardError = true
             };
-            start.ArgumentList.Add("-Xms256M");
-            start.ArgumentList.Add("-Xmx1024M");
+            start.ArgumentList.Add($"-Xms{minimumRamMb}M");
+            start.ArgumentList.Add($"-Xmx{maximumRamMb}M");
             if (usesArgumentFile)
                 start.ArgumentList.Add("@" + launch);
             else

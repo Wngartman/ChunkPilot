@@ -380,7 +380,8 @@ public sealed class ManagedServerInstaller
                         "Starting the staged server on loopback for a bounded safety check", 84, 0, null, 0,
                         Path.GetFileName(relativeLaunchPath), context.LogPath);
                     var validation = await stagedValidator.ValidateAsync(runtimeJava, context.StagingPath,
-                        relativeLaunchPath, payload.UsesArgumentFile, TimeSpan.FromMinutes(3), token)
+                        relativeLaunchPath, payload.UsesArgumentFile,
+                        request.MinimumRamMb, request.MaximumRamMb, TimeSpan.FromMinutes(3), token)
                         .ConfigureAwait(false);
                     await AppendLogAsync(context.LogPath,
                         "[staged-validation] Local candidate validation completed; server output was not retained.",
@@ -388,7 +389,8 @@ public sealed class ManagedServerInstaller
                     await WriteValidationEvidenceAsync(context.StagingPath, validation, token).ConfigureAwait(false);
                     if (!validation.Succeeded)
                         throw new InvalidDataException(
-                            "ChunkPilot could not build a working server from this release. " + validation.Summary);
+                            "ChunkPilot could not build a working server from this release. " +
+                            DescribeStagedValidationFailure(validation));
                 }
                 return new CreationCandidate(definition, payload.SourceUrl, payload.Sha256,
                     $"Source={request.SourceType}; Version={payload.MinecraftVersion}; Build={payload.Build}");
@@ -420,6 +422,28 @@ public sealed class ManagedServerInstaller
             Outcome = result.Outcome,
             Warnings = result.Warnings
         };
+    }
+
+    private static string DescribeStagedValidationFailure(StagedServerValidationResult validation)
+    {
+        const int maximumLines = 12;
+        const int maximumLineCharacters = 512;
+        const int maximumTailCharacters = 4_000;
+        var lines = validation.Tail
+            .Where(line => !string.IsNullOrWhiteSpace(line))
+            .TakeLast(maximumLines)
+            .Select(line => SecretRedactor.Redact(line)
+                .Replace('\r', ' ')
+                .Replace('\n', ' ')
+                .Trim())
+            .Where(line => line.Length > 0)
+            .Select(line => line[..Math.Min(line.Length, maximumLineCharacters)])
+            .ToArray();
+        if (lines.Length == 0)
+            return validation.Summary;
+        var tail = string.Join(" | ", lines);
+        tail = tail[..Math.Min(tail.Length, maximumTailCharacters)];
+        return validation.Summary + " Recent redacted output: " + tail;
     }
 
     private async Task<StagedPayload> StagePayloadAsync(

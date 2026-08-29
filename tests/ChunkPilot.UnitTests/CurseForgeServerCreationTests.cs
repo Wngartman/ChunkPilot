@@ -23,6 +23,8 @@ public sealed class CurseForgeServerCreationTests
         Assert.Equal(ServerEcosystem.Forge, result.Definition.Ecosystem);
         Assert.Equal("47.3.0", result.Definition.LoaderVersion);
         Assert.Equal(1, fixture.Validator.Calls);
+        Assert.Equal(fixture.Request.MinimumRamMb, fixture.Validator.MinimumRamMb);
+        Assert.Equal(fixture.Request.MaximumRamMb, fixture.Validator.MaximumRamMb);
         Assert.True(File.Exists(Path.Combine(result.Definition.RootPath, ".chunkpilot", "update-source.json")));
         Assert.True(File.Exists(Path.Combine(result.Definition.RootPath, ".chunkpilot", "staged-validation.json")));
         var source = JsonSerializer.Deserialize<UpdateSource>(await File.ReadAllTextAsync(
@@ -81,11 +83,35 @@ public sealed class CurseForgeServerCreationTests
             fixture.Installer.InstallAsync(fixture.Request));
 
         Assert.Contains("could not build a working server", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("provider-validation-tail-sentinel", error.Message, StringComparison.Ordinal);
         Assert.Empty(await fixture.Store.GetServersAsync());
         Assert.False(Directory.Exists(Path.Combine(fixture.Paths.ManagedServers,
             ManagedServerInstaller.MakeSafeInstanceName(fixture.Request.ServerName))));
         Assert.DoesNotContain(Directory.EnumerateDirectories(fixture.Paths.ManagedServers), path =>
             Path.GetFileName(path).StartsWith(".chunkpilot-creating-", StringComparison.OrdinalIgnoreCase));
+
+        var durable = new StringBuilder();
+        foreach (var log in Directory.EnumerateFiles(
+                     fixture.Paths.Root, "*.log", SearchOption.AllDirectories))
+            durable.Append('|').Append(await File.ReadAllTextAsync(log));
+        await using (var connection = new SqliteConnection($"Data Source={fixture.Paths.DatabasePath}"))
+        {
+            await connection.OpenAsync();
+            foreach (var query in new[]
+                     {
+                         "SELECT detail FROM instance_history",
+                         "SELECT json FROM creation_journal"
+                     })
+            {
+                await using var command = connection.CreateCommand();
+                command.CommandText = query;
+                await using var reader = await command.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                    durable.Append('|').Append(reader.GetString(0));
+            }
+        }
+        Assert.DoesNotContain(
+            "provider-validation-tail-sentinel", durable.ToString(), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -211,12 +237,17 @@ public sealed class CurseForgeServerCreationTests
     private sealed class FakeValidator(bool succeeds, bool cancel) : IStagedServerValidator
     {
         public int Calls { get; private set; }
+        public int MinimumRamMb { get; private set; }
+        public int MaximumRamMb { get; private set; }
 
         public Task<StagedServerValidationResult> ValidateAsync(string javaPath, string stagingRoot,
-            string launchRelativePath, bool usesArgumentFile, TimeSpan timeout,
+            string launchRelativePath, bool usesArgumentFile, int minimumRamMb, int maximumRamMb,
+            TimeSpan timeout,
             CancellationToken cancellationToken = default)
         {
             Calls++;
+            MinimumRamMb = minimumRamMb;
+            MaximumRamMb = maximumRamMb;
             if (cancel) throw new OperationCanceledException(cancellationToken);
             return Task.FromResult(new StagedServerValidationResult(succeeds, succeeds, succeeds, succeeds,
                 succeeds, succeeds ? "Fixture validation passed." : "Fixture validation failed.",
