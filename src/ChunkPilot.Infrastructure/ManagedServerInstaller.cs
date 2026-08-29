@@ -381,7 +381,7 @@ public sealed class ManagedServerInstaller
                         Path.GetFileName(relativeLaunchPath), context.LogPath);
                     var validation = await stagedValidator.ValidateAsync(runtimeJava, context.StagingPath,
                         relativeLaunchPath, payload.UsesArgumentFile,
-                        request.MinimumRamMb, request.MaximumRamMb, TimeSpan.FromMinutes(3), token)
+                        request.MinimumRamMb, request.MaximumRamMb, TimeSpan.FromMinutes(10), token)
                         .ConfigureAwait(false);
                     await AppendLogAsync(context.LogPath,
                         "[staged-validation] Local candidate validation completed; server output was not retained.",

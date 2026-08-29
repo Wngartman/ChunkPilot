@@ -25,6 +25,7 @@ public sealed class CurseForgeServerCreationTests
         Assert.Equal(1, fixture.Validator.Calls);
         Assert.Equal(fixture.Request.MinimumRamMb, fixture.Validator.MinimumRamMb);
         Assert.Equal(fixture.Request.MaximumRamMb, fixture.Validator.MaximumRamMb);
+        Assert.Equal(TimeSpan.FromMinutes(10), fixture.Validator.Timeout);
         Assert.True(File.Exists(Path.Combine(result.Definition.RootPath, ".chunkpilot", "update-source.json")));
         Assert.True(File.Exists(Path.Combine(result.Definition.RootPath, ".chunkpilot", "staged-validation.json")));
         var source = JsonSerializer.Deserialize<UpdateSource>(await File.ReadAllTextAsync(
@@ -239,6 +240,7 @@ public sealed class CurseForgeServerCreationTests
         public int Calls { get; private set; }
         public int MinimumRamMb { get; private set; }
         public int MaximumRamMb { get; private set; }
+        public TimeSpan Timeout { get; private set; }
 
         public Task<StagedServerValidationResult> ValidateAsync(string javaPath, string stagingRoot,
             string launchRelativePath, bool usesArgumentFile, int minimumRamMb, int maximumRamMb,
@@ -248,6 +250,7 @@ public sealed class CurseForgeServerCreationTests
             Calls++;
             MinimumRamMb = minimumRamMb;
             MaximumRamMb = maximumRamMb;
+            Timeout = timeout;
             if (cancel) throw new OperationCanceledException(cancellationToken);
             return Task.FromResult(new StagedServerValidationResult(succeeds, succeeds, succeeds, succeeds,
                 succeeds, succeeds ? "Fixture validation passed." : "Fixture validation failed.",
