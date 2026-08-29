@@ -11,7 +11,9 @@
 - Provider-platform base: `35e8eb7ca059c3ae98cc917fd3260354c3a77b33`
 - Public-base ancestry: `origin/main` at `7cea6e2f2365d5e582d82ed8c9aa7d5bbae5a763`
 - Version: `1.3.0-alpha.5`; database schema: `6`
-- The browser checkpoint is implemented in the local worktree but is not yet a committed final candidate.
+- Browser/runtime-safety checkpoint: `8b408600d6b0d505045535593a8e7ceb6b20f87b`
+- The checkpoint was committed from a clean worktree after the full local browser, unit, integration, build,
+  documentation and fixture-render gates. It is not yet the final runtime-certified candidate.
 - The primary checkout and preservation stash remain untouched. Nothing in this phase may be pushed, tagged,
   published, signed, installed, or released.
 
@@ -42,9 +44,16 @@ user-acceptance checks.
   an official server pack.
 - **VERIFIED — regression boundary:** shallow/no-N+1 discovery, three raw 50-result pages, Modrinth offset,
   CurseForge raw-cursor advancement, provider isolation/restore, stale cancellation, query-scroll reset, lazy
-  detail, underfilled pages, preflight detail synchronization, and bounded rendering have automated coverage.
-- **PENDING — checkpoint finalization:** complete suites and packaging must be rerun after the remaining runtime
-  corrections, and the exact final committed/package identity must then be recorded.
+  detail, underfilled pages, optional-cache fallback, preflight detail synchronization, bounded rendering and a
+  four-slot cancellable/coalesced thumbnail pipeline have automated coverage.
+- **VERIFIED — runtime safety corrections:** long preflight/update/rollback timeouts are method-scoped; migration-
+  review downloads can be reused only once after exact Agent-side identity and hash revalidation; pending updates
+  can be deliberately marked healthy in the WebUI; rollback requires exact confirmation; and stale Mods/Plugins
+  metadata or install requests cannot reselect or target another server.
+- **VERIFIED — checkpoint finalization:** WebUI `180/180`, .NET unit `1,450/1,450`, integration `358/358`, Release
+  solution build with `0` warnings and `0` errors, npm audit with `0` vulnerabilities, public-document validation,
+  `git diff --check`, and an actual native fixture render all passed before commit.
+- **PENDING:** self-contained package rebuild and every mandatory live payload/runtime result below.
 
 ## Initial live-runtime failure
 
@@ -66,9 +75,9 @@ the campaign resumes.
 
 ## Current bounded unit
 
-1. Finish and verify the bounded extended-operation path, selected-server fencing, preflight-result propagation,
-   rollback tracking, Mods cross-server request isolation, and the certification harness's shallow-detail resolve.
-2. Rebuild the development package, reauthenticate through the approved native-only credential path, and repeat
+1. Rebuild the self-contained development package from the exact committed checkpoint, run its Agent/default-
+   WebUI/normal-close/security smokes, and record its embedded Git identity.
+2. Reauthenticate through the approved native-only credential path and repeat
    exact preflight under the `2 GiB` aggregate CurseForge payload budget.
 3. Complete official-pack create/start/status/stop, then generated-candidate disposition, real mod/dependency
    install/remove, adjacent-release update/rollback, and controlled-failure recovery in task-owned roots.
