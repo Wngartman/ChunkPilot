@@ -113,8 +113,25 @@ public sealed class AgentClient : IAgentClient
                        ?? throw new IOException("Agent returned an invalid response.");
         if (!response.Success)
             throw new InvalidOperationException(response.Error);
+        return DeserializeResponsePayload<TResponse>(operation, response);
+    }
+
+    internal static TResponse DeserializeResponsePayload<TResponse>(
+        string operation,
+        AgentResponse response)
+    {
         if (response.Payload is not { } responsePayload)
+        {
+            // These exact lookups deliberately use JSON null for "not found". JsonElement? cannot
+            // distinguish that value from an omitted property after deserialization, so preserve
+            // only their explicit nullable operation/type contracts.
+            if ((operation.Equals("ResolveCatalogProject", StringComparison.Ordinal) &&
+                 typeof(TResponse) == typeof(CatalogItem)) ||
+                (operation.Equals("PluginRelease", StringComparison.Ordinal) &&
+                 typeof(TResponse) == typeof(PluginRelease)))
+                return default!;
             throw new IOException("Agent returned no response payload.");
+        }
         return responsePayload.Deserialize<TResponse>(ProtocolJson.Options)
                ?? throw new IOException("Agent returned an unexpected payload.");
     }

@@ -6,6 +6,46 @@ become the durable record and the entry can leave this active register.
 
 ---
 
+## CP-2026-063 — A valid catalog not-found response was reported as a broken Agent frame
+
+| Field | Value |
+|---|---|
+| Date | 2026-08-29 |
+| Git state | `codex/curseforge-runtime-browser-parity`; implementation commit pending |
+| Provider identity | Live approved CurseForge API; project `1521865`, exact client file `7968569`; metadata only and no payload download |
+| Severity | Medium — unavailable or provider-hidden exact projects produced a misleading transport error instead of the existing truthful not-found path |
+| Area | App/Agent named-pipe catalog resolution and headless runtime certification |
+| Status | **Fixed locally; headless live reproduction and deterministic regression** |
+| Validation | `Exact_catalog_null_payload_remains_a_nullable_not_found_result` passes for both packaged-certification and App pipe clients; broader final rerun pending |
+
+### Reproduction and root cause
+
+The live packaged Agent authenticated, recovered the DPAPI-protected provider configuration, and then resolved the
+exact CurseForge selection to no project. `ResolveCatalogProject` deliberately serializes that nullable result as
+JSON `null`. `AgentResponse.Payload` is a nullable `JsonElement`, so deserialization cannot distinguish that JSON
+value from an omitted payload. Both clients treated it as a malformed successful response and surfaced `Agent
+returned no response payload` instead of letting their existing nullable catalog path report that the project or
+release was unavailable.
+
+### Resolution and boundary
+
+Both named-pipe clients now preserve JSON `null` only for the exact nullable operation/type contracts:
+`ResolveCatalogProject` with `CatalogItem` and `PluginRelease` with `PluginRelease`. Every other successful response
+still requires a payload, so a missing Dashboard, lifecycle, mutation, or operation-state payload remains a
+transport failure. The WebUI and certification callers then convert the nullable catalog result into their existing
+truthful provider-not-found messages.
+
+**VERIFIED:** 65 focused runtime-certification tests pass. The wire-level regression proves that both client
+implementations accept the two intentional nullable lookup results, reject a wrong response type, and continue to
+reject a missing non-catalog payload. The live reproduction downloaded no provider payload, both exact Agent Jobs
+exited with code `0`, and the fresh run moved to Recycle Bin.
+
+**PENDING:** the live project remains unresolved by the approved API and therefore is not a certified pack
+candidate. This fix corrects the error classification; it does not invent provider availability or retry a hidden
+release.
+
+---
+
 ## CP-2026-062 — Pre-start cancellation capacity could permanently strand App acceptance retry
 
 | Field | Value |

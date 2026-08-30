@@ -76,8 +76,25 @@ internal sealed class NamedPipeCertificationAgentTransport(string pipeName) : IC
             throw new IOException("The Agent response identity did not match the request.");
         if (!response.Success)
             throw new InvalidOperationException(response.Error);
+        return DeserializeResponsePayload<TResponse>(operation, response);
+    }
+
+    internal static TResponse DeserializeResponsePayload<TResponse>(
+        string operation,
+        AgentResponse response)
+    {
         if (response.Payload is not { } responsePayload)
+        {
+            // These exact lookup operations deliberately use JSON null for an unavailable item.
+            // JsonElement? cannot distinguish that value from an omitted payload after
+            // deserialization, so preserve only their explicit nullable operation/type contracts.
+            if ((operation.Equals("ResolveCatalogProject", StringComparison.Ordinal) &&
+                 typeof(TResponse) == typeof(CatalogItem)) ||
+                (operation.Equals("PluginRelease", StringComparison.Ordinal) &&
+                 typeof(TResponse) == typeof(PluginRelease)))
+                return default!;
             throw new IOException("The Agent returned no response payload.");
+        }
         return responsePayload.Deserialize<TResponse>(ProtocolJson.Options)
                ?? throw new IOException("The Agent returned an unexpected payload.");
     }

@@ -6,6 +6,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
+using ChunkPilot.App;
 using ChunkPilot.Certification;
 using ChunkPilot.Core;
 using ChunkPilot.Infrastructure;
@@ -14,6 +15,44 @@ namespace ChunkPilot.UnitTests;
 
 public sealed class CurseForgeRuntimeCertificationTests
 {
+    [Fact]
+    public void Exact_catalog_null_payload_remains_a_nullable_not_found_result()
+    {
+        var wire = JsonSerializer.Serialize(new AgentResponse
+        {
+            Success = true,
+            Payload = JsonSerializer.SerializeToElement<CatalogItem?>(null, ProtocolJson.Options)
+        }, ProtocolJson.Options);
+        var response = JsonSerializer.Deserialize<AgentResponse>(wire, ProtocolJson.Options)!;
+
+        Assert.Contains("\"payload\":null", wire, StringComparison.Ordinal);
+        Assert.Null(response.Payload);
+
+        Assert.Null(NamedPipeCertificationAgentTransport.DeserializeResponsePayload<CatalogItem?>(
+            "ResolveCatalogProject", response));
+        Assert.Null(AgentClient.DeserializeResponsePayload<CatalogItem?>(
+            "ResolveCatalogProject", response));
+        Assert.Null(NamedPipeCertificationAgentTransport.DeserializeResponsePayload<PluginRelease?>(
+            "PluginRelease", response));
+        Assert.Null(AgentClient.DeserializeResponsePayload<PluginRelease?>(
+            "PluginRelease", response));
+        Assert.Throws<IOException>(() =>
+            NamedPipeCertificationAgentTransport.DeserializeResponsePayload<string>(
+                "ResolveCatalogProject", response));
+        Assert.Throws<IOException>(() =>
+            AgentClient.DeserializeResponsePayload<string>("ResolveCatalogProject", response));
+        Assert.Throws<IOException>(() =>
+            NamedPipeCertificationAgentTransport.DeserializeResponsePayload<CatalogItem?>(
+                "Dashboard", response));
+        Assert.Throws<IOException>(() =>
+            AgentClient.DeserializeResponsePayload<CatalogItem?>("Dashboard", response));
+        Assert.Throws<IOException>(() =>
+            NamedPipeCertificationAgentTransport.DeserializeResponsePayload<DashboardSnapshot>(
+                "Dashboard", response));
+        Assert.Throws<IOException>(() =>
+            AgentClient.DeserializeResponsePayload<DashboardSnapshot>("Dashboard", response));
+    }
+
     [Fact]
     public void HeadlessAgentLaunchUsesNoWindowAndEnvironmentOnlyCredentialPath()
     {
