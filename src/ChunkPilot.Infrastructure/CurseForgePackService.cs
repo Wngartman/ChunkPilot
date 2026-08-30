@@ -253,8 +253,9 @@ public sealed class CurseForgePackService
         if (!api.HasCredential)
             throw new InvalidOperationException("CurseForge is unavailable because the approved local native credential is missing.");
         var destination = Path.TrimEndingDirectorySeparator(Path.GetFullPath(destinationRoot));
-        if (!Directory.Exists(destination) || Directory.EnumerateFileSystemEntries(destination).Any())
-            throw new IOException("The generated CurseForge candidate must start in an empty operation-owned staging directory.");
+        if (!Directory.Exists(destination))
+            throw new DirectoryNotFoundException(destination);
+        CreationStagingSafety.RequireEmptyOrValidOwnershipMarker(destination);
         var manifest = await reader.ReadAsync(archivePath, cancellationToken).ConfigureAwait(false);
         var exactPlan = reviewedPlan is null
             ? null

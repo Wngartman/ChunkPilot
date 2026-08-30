@@ -2093,6 +2093,9 @@ public sealed class LoaderMetadataService : HttpCatalogProvider
 
 public sealed class LoaderInstallationService
 {
+    private const int MaximumInstallerOutputCandidates = 128;
+    private const long MaximumInstallerOutputFileBytes = 512L * 1024 * 1024;
+    private const long MaximumInstallerOutputFingerprintBytes = 1024L * 1024 * 1024;
     private readonly LoaderMetadataService metadata;
     private readonly HttpClient http;
 
@@ -2206,6 +2209,8 @@ public sealed class LoaderInstallationService
                 ArtifactUrl = plan.DownloadUrl
             };
 
+        var outputsBeforeInstaller = await FingerprintInstallerOutputsAsync(
+            stagingPath, plan.Loader, plan.ExpectedLaunchFile, cancellationToken).ConfigureAwait(false);
         var start = new ProcessStartInfo
         {
             FileName = Path.GetFullPath(javaPath),
@@ -2242,7 +2247,12 @@ public sealed class LoaderInstallationService
             new UTF8Encoding(false), CancellationToken.None).ConfigureAwait(false);
         if (process.ExitCode != 0)
             throw new InvalidOperationException($"The {plan.Loader} installer exited with code {process.ExitCode}. See {logPath}.");
-        var launch = DetectLaunch(stagingPath, plan.Loader, plan.ExpectedLaunchFile);
+        var launch = await DetectInstallerLaunchAsync(
+            stagingPath,
+            plan.Loader,
+            plan.ExpectedLaunchFile,
+            outputsBeforeInstaller,
+            cancellationToken).ConfigureAwait(false);
         File.Delete(payload);
         return new LoaderInstallResult
         {
@@ -2274,25 +2284,146 @@ public sealed class LoaderInstallationService
             throw new InvalidDataException("NeoForge installation requires an official Maven checksum.");
     }
 
-    private static (string LaunchFile, string ArgumentsFile) DetectLaunch(
+    private static async Task<(string LaunchFile, string ArgumentsFile)> DetectInstallerLaunchAsync(
         string staging,
         InstallSourceType loader,
-        string expected)
+        string expected,
+        IReadOnlyDictionary<string, InstallerOutputFingerprint> outputsBeforeInstaller,
+        CancellationToken cancellationToken)
     {
-        var expectedPath = Path.Combine(staging, expected);
-        if (loader == InstallSourceType.Quilt && File.Exists(expectedPath))
-            return (expectedPath, "");
-        var arguments = Directory.EnumerateFiles(staging, "win_args.txt", SearchOption.AllDirectories)
-            .OrderByDescending(File.GetLastWriteTimeUtc)
-            .FirstOrDefault();
-        if (arguments is not null)
-            return (arguments, arguments);
-        var jar = Directory.EnumerateFiles(staging, "*server*.jar", SearchOption.TopDirectoryOnly)
-            .FirstOrDefault();
-        if (jar is not null)
-            return (jar, "");
-        throw new InvalidDataException($"{loader} installation completed but no non-detaching launch profile was found.");
+        var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(staging));
+        var outputsAfterInstaller = await FingerprintInstallerOutputsAsync(
+            root, loader, expected, cancellationToken).ConfigureAwait(false);
+        var changed = outputsAfterInstaller.Values
+            .Where(current =>
+                !outputsBeforeInstaller.TryGetValue(current.Path, out var previous) ||
+                current.Length != previous.Length ||
+                !current.Sha256.Equals(previous.Sha256, StringComparison.OrdinalIgnoreCase))
+            .OrderBy(current => current.Path, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        if (loader == InstallSourceType.Quilt)
+        {
+            var expectedPath = ResolveInstallerOutputPath(root, expected);
+            var exact = changed.FirstOrDefault(output =>
+                output.Path.Equals(expectedPath, StringComparison.OrdinalIgnoreCase));
+            if (exact is not null)
+                return (exact.Path, "");
+        }
+
+        var arguments = changed.Where(output =>
+                Path.GetFileName(output.Path).Equals("win_args.txt", StringComparison.OrdinalIgnoreCase) &&
+                HasInstallerOutputDirectorySegment(root, output.Path, "libraries"))
+            .ToArray();
+        if (arguments.Length > 1)
+            throw new InvalidDataException(
+                $"{loader} installation created or changed multiple ambiguous Java argument profiles.");
+        if (arguments.Length == 1)
+            return (arguments[0].Path, arguments[0].Path);
+
+        var jars = changed.Where(output =>
+                Path.GetDirectoryName(output.Path)!.Equals(root, StringComparison.OrdinalIgnoreCase) &&
+                Path.GetExtension(output.Path).Equals(".jar", StringComparison.OrdinalIgnoreCase) &&
+                Path.GetFileName(output.Path).Contains("server", StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        if (jars.Length > 1)
+            throw new InvalidDataException(
+                $"{loader} installation created or changed multiple ambiguous server JAR launchers.");
+        if (jars.Length == 1)
+            return (jars[0].Path, "");
+        throw new InvalidDataException(
+            $"{loader} installation completed but no launch profile was newly created or content-changed by this exact official installer invocation.");
     }
+
+    private static async Task<IReadOnlyDictionary<string, InstallerOutputFingerprint>>
+        FingerprintInstallerOutputsAsync(
+            string staging,
+            InstallSourceType loader,
+            string expected,
+            CancellationToken cancellationToken)
+    {
+        var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(staging));
+        var candidates = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var options = new EnumerationOptions
+        {
+            RecurseSubdirectories = true,
+            AttributesToSkip = FileAttributes.ReparsePoint,
+            MatchCasing = MatchCasing.CaseInsensitive,
+            IgnoreInaccessible = false
+        };
+        void AddCandidate(string path)
+        {
+            if (!candidates.Add(ResolveInstallerOutputPath(root, path)))
+                return;
+            if (candidates.Count > MaximumInstallerOutputCandidates)
+                throw new InvalidDataException(
+                    $"Loader installation output discovery exceeded the bounded {MaximumInstallerOutputCandidates}-candidate limit.");
+        }
+        foreach (var path in Directory.EnumerateFiles(root, "win_args.txt", options))
+            AddCandidate(path);
+        foreach (var path in Directory.EnumerateFiles(root, "*server*.jar", SearchOption.TopDirectoryOnly))
+            AddCandidate(path);
+        if (loader == InstallSourceType.Quilt)
+        {
+            var expectedPath = ResolveInstallerOutputPath(root, expected);
+            if (File.Exists(expectedPath))
+                AddCandidate(expectedPath);
+        }
+
+        long totalBytes = 0;
+        var result = new Dictionary<string, InstallerOutputFingerprint>(StringComparer.OrdinalIgnoreCase);
+        foreach (var path in candidates.Order(StringComparer.OrdinalIgnoreCase))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var attributes = File.GetAttributes(path);
+            if ((attributes & FileAttributes.ReparsePoint) != 0)
+                throw new InvalidDataException("A loader installation output candidate may not be a reparse point.");
+            var before = new FileInfo(path);
+            if (before.Length > MaximumInstallerOutputFileBytes)
+                throw new InvalidDataException(
+                    "A loader installation output candidate exceeded the bounded fingerprint size.");
+            totalBytes = checked(totalBytes + before.Length);
+            if (totalBytes > MaximumInstallerOutputFingerprintBytes)
+                throw new InvalidDataException(
+                    "Loader installation output fingerprinting exceeded its bounded byte budget.");
+            var length = before.Length;
+            var lastWrite = before.LastWriteTimeUtc;
+            await using var stream = new FileStream(
+                path,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.Read,
+                128 * 1024,
+                FileOptions.Asynchronous | FileOptions.SequentialScan);
+            var sha256 = Convert.ToHexString(
+                await SHA256.HashDataAsync(stream, cancellationToken).ConfigureAwait(false));
+            before.Refresh();
+            if (!before.Exists || before.Length != length || before.LastWriteTimeUtc != lastWrite)
+                throw new IOException("A loader installation output candidate changed while it was being fingerprinted.");
+            result.Add(path, new InstallerOutputFingerprint(path, length, sha256));
+        }
+        return result;
+    }
+
+    private static string ResolveInstallerOutputPath(string staging, string path)
+    {
+        var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(staging));
+        var fullPath = Path.GetFullPath(Path.IsPathFullyQualified(path) ? path : Path.Combine(root, path));
+        if (!fullPath.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("A loader installation output candidate escaped its isolated staging root.");
+        return fullPath;
+    }
+
+    private static bool HasInstallerOutputDirectorySegment(string root, string path, string expected)
+    {
+        var directory = Path.GetDirectoryName(Path.GetRelativePath(root, path)) ?? "";
+        return directory.Split(
+                [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
+                StringSplitOptions.RemoveEmptyEntries)
+            .Any(segment => segment.Equals(expected, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private sealed record InstallerOutputFingerprint(string Path, long Length, string Sha256);
 
     private static IReadOnlyList<string> SplitArguments(string arguments)
     {

@@ -89,8 +89,7 @@ public sealed class ModrinthPackServerService
         var destination = Path.TrimEndingDirectorySeparator(Path.GetFullPath(destinationRoot));
         if (!Directory.Exists(destination))
             throw new DirectoryNotFoundException(destination);
-        if (Directory.EnumerateFileSystemEntries(destination).Any())
-            throw new IOException("The Modrinth server-pack candidate must start in an empty staging directory.");
+        CreationStagingSafety.RequireEmptyOrValidOwnershipMarker(destination);
 
         var isolated = destination + $".mrpack-materialized-{Guid.NewGuid():N}";
         ModrinthPackMaterializationResult pack;

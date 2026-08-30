@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.IO.Compression;
 using System.Text;
 using ChunkPilot.App.WebUi;
@@ -77,6 +78,32 @@ public sealed class ServerImportInspectionTests : IDisposable
     }
 
     [Fact]
+    public async Task Extraction_refuses_a_preplanted_reparse_directory_and_preserves_its_target()
+    {
+        var zip = Path.Combine(root, "reparse-target.zip");
+        using (var archive = ZipFile.Open(zip, ZipArchiveMode.Create))
+            Write(archive, "linked/payload.txt", "must not escape");
+        var destination = Path.Combine(root, "reparse-extract");
+        var foreign = Path.Combine(root, "foreign");
+        Directory.CreateDirectory(destination);
+        Directory.CreateDirectory(foreign);
+        var link = Path.Combine(destination, "linked");
+        CreateJunction(link, foreign);
+        try
+        {
+            await Assert.ThrowsAnyAsync<IOException>(() =>
+                ServerImportInspectionService.ExtractAsync(zip, destination));
+
+            Assert.False(File.Exists(Path.Combine(foreign, "payload.txt")));
+            Assert.True(Directory.Exists(link));
+        }
+        finally
+        {
+            DeleteJunction(link);
+        }
+    }
+
+    [Fact]
     public void Provider_archive_forecast_uses_the_exact_bounded_central_directory_total()
     {
         var archive = Path.Combine(root, "expanded-provider.zip");
@@ -152,6 +179,28 @@ public sealed class ServerImportInspectionTests : IDisposable
         var entry = archive.CreateEntry(path, CompressionLevel.NoCompression);
         using var writer = new StreamWriter(entry.Open(), new UTF8Encoding(false));
         writer.Write(value);
+    }
+
+    private static void CreateJunction(string link, string target)
+    {
+        using var process = Process.Start(new ProcessStartInfo(
+            "cmd.exe", $"/c mklink /J \"{link}\" \"{target}\"")
+        {
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true
+        }) ?? throw new InvalidOperationException("cmd.exe could not create the test junction.");
+        process.WaitForExit(20_000);
+        if (process.ExitCode != 0 || !Directory.Exists(link) ||
+            !File.GetAttributes(link).HasFlag(FileAttributes.ReparsePoint))
+            throw new InvalidOperationException("The test junction could not be created on this filesystem.");
+    }
+
+    private static void DeleteJunction(string path)
+    {
+        if (Directory.Exists(path) && File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint))
+            Directory.Delete(path, recursive: false);
     }
 
     private static void CreateSyntheticArchive(

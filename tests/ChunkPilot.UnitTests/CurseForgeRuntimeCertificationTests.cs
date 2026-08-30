@@ -144,6 +144,102 @@ public sealed class CurseForgeRuntimeCertificationTests
     }
 
     [Fact]
+    public async Task PayloadBudgetReservesGeneratedPlanAsOneDurableBatch()
+    {
+        var root = NewRoot();
+        try
+        {
+            var path = Path.Combine(root, "ledger.json");
+            var budget = new CurseForgePayloadBudget(path);
+            var reservations = new[]
+            {
+                new CurseForgePayloadReservationRequest(
+                    Guid.NewGuid(), "generated-client", "1", "10", 25, new string('a', 40)),
+                new CurseForgePayloadReservationRequest(
+                    Guid.NewGuid(), "generated-file", "2", "20", 10, new string('b', 40)),
+                new CurseForgePayloadReservationRequest(
+                    Guid.NewGuid(), "generated-file", "3", "30", 20, new string('c', 40))
+            };
+
+            var snapshot = await budget.ReserveBatchAsync(reservations, CancellationToken.None);
+
+            Assert.Equal(55, snapshot.GuardedCumulativeBytes);
+            var ledger = JsonSerializer.Deserialize<CurseForgePayloadLedger>(
+                await File.ReadAllTextAsync(path), new JsonSerializerOptions(JsonSerializerDefaults.Web));
+            Assert.NotNull(ledger);
+            Assert.Equal(3, ledger.Entries.Count);
+            Assert.Single(ledger.Entries.Select(entry => entry.ReservedAtUtc).Distinct());
+        }
+        finally
+        {
+            DeleteTree(root);
+        }
+    }
+
+    [Fact]
+    public async Task PayloadBudgetRejectsWholeBatchBeforeWritingWhenAnyReservationIsInvalid()
+    {
+        var root = NewRoot();
+        try
+        {
+            var path = Path.Combine(root, "ledger.json");
+            var budget = new CurseForgePayloadBudget(path);
+            var duplicateId = Guid.NewGuid();
+            var reservations = new[]
+            {
+                new CurseForgePayloadReservationRequest(
+                    duplicateId, "generated-file", "1", "10", 25, new string('a', 40)),
+                new CurseForgePayloadReservationRequest(
+                    duplicateId, "generated-file", "2", "20", 10, new string('b', 40))
+            };
+
+            await Assert.ThrowsAsync<ArgumentException>(() =>
+                budget.ReserveBatchAsync(reservations, CancellationToken.None));
+
+            Assert.False(File.Exists(path));
+        }
+        finally
+        {
+            DeleteTree(root);
+        }
+    }
+
+    [Fact]
+    public async Task PayloadBudgetDoesNotPersistAnyPartOfAnOverBudgetBatch()
+    {
+        var root = NewRoot();
+        try
+        {
+            var path = Path.Combine(root, "ledger.json");
+            var budget = new CurseForgePayloadBudget(path);
+            await budget.ReserveAsync(
+                Guid.NewGuid(), "existing", "1", "10",
+                CurseForgePayloadBudget.MaximumBytes - 30, new string('a', 40),
+                CancellationToken.None);
+            var reservations = new[]
+            {
+                new CurseForgePayloadReservationRequest(
+                    Guid.NewGuid(), "generated-client", "2", "20", 20, new string('b', 40)),
+                new CurseForgePayloadReservationRequest(
+                    Guid.NewGuid(), "generated-file", "3", "30", 20, new string('c', 40))
+            };
+
+            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                budget.ReserveBatchAsync(reservations, CancellationToken.None));
+
+            var ledger = JsonSerializer.Deserialize<CurseForgePayloadLedger>(
+                await File.ReadAllTextAsync(path), new JsonSerializerOptions(JsonSerializerDefaults.Web));
+            Assert.NotNull(ledger);
+            Assert.Single(ledger.Entries);
+            Assert.Equal("existing", ledger.Entries[0].Kind);
+        }
+        finally
+        {
+            DeleteTree(root);
+        }
+    }
+
+    [Fact]
     public async Task PayloadBudgetRefusesSerialReplayOfExactTransferReservation()
     {
         var root = NewRoot();
@@ -622,6 +718,68 @@ public sealed class CurseForgeRuntimeCertificationTests
         Assert.Throws<InvalidOperationException>(() =>
             CurseForgeRuntimeCertificationSession.RequireKnownPayloadProjectionFits(
                 limitBytes: 500, guardedBytes: 101, projectedBytes: projection.TotalBytes));
+    }
+
+    [Fact]
+    public void GeneratedCreationPlanSizeIncludesArchiveAndEveryRequiredFileBeforeReservation()
+    {
+        var additional = CurseForgeRuntimeCertificationSession
+            .CalculateGeneratedCreationAdditionalBytes(
+                clientArchiveBytes: 25,
+                requiredFileBytes: [10, 20, 30]);
+
+        Assert.Equal(85, additional);
+        CurseForgeRuntimeCertificationSession.RequireKnownPayloadProjectionFits(
+            limitBytes: 200, guardedBytes: 115, projectedBytes: additional);
+        Assert.Throws<InvalidOperationException>(() =>
+            CurseForgeRuntimeCertificationSession.RequireKnownPayloadProjectionFits(
+                limitBytes: 200, guardedBytes: 116, projectedBytes: additional));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            CurseForgeRuntimeCertificationSession.CalculateGeneratedCreationAdditionalBytes(
+                clientArchiveBytes: 25,
+                requiredFileBytes: [10, 0]));
+    }
+
+    [Fact]
+    public void MetadataIdentityCanTruthfullyDescribeAnExactGeneratedCandidateWithoutAServerFile()
+    {
+        var report = new CurseForgeRuntimeCertificationReport();
+        var project = new CatalogItem
+        {
+            Provider = CatalogProvider.CurseForge,
+            ProjectId = "123"
+        };
+        var release = new CatalogVersion
+        {
+            VersionId = "456",
+            ClientFileId = "456",
+            MinecraftVersion = "1.20.1",
+            Loader = "Forge",
+            LoaderVersion = "47.3.0",
+            ClientSizeBytes = 1024,
+            CanGenerateServerCandidate = true,
+            DistributionAllowed = true,
+            RequiredJavaMajor = 17
+        };
+
+        CurseForgeRuntimeCertificationSession.BindResolvedIdentity(report, project, release);
+
+        Assert.Equal("123", report.ProjectId);
+        Assert.Equal("456", report.ClientFileId);
+        Assert.Equal("", report.ServerPackFileId);
+        Assert.False(report.ResolvedHasServerPackage);
+        Assert.True(report.ResolvedCanGenerateServerCandidate);
+        Assert.Equal("1.20.1", report.ResolvedMinecraftVersion);
+        Assert.Equal("Forge", report.ResolvedLoader);
+        Assert.Equal("47.3.0", report.ResolvedLoaderVersion);
+        Assert.Equal(1024, report.ResolvedClientSizeBytes);
+        Assert.Equal(17, report.ResolvedRequiredJavaMajor);
+
+        Assert.Throws<InvalidDataException>(() =>
+            CurseForgeRuntimeCertificationSession.BindResolvedIdentity(
+                new CurseForgeRuntimeCertificationReport(),
+                project,
+                release with { HasServerPackage = true }));
     }
 
     [Fact]

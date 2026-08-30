@@ -31,12 +31,97 @@ public sealed record CreationOwnershipMarker(
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(marker);
-        await File.WriteAllTextAsync(
-            PathIn(directory),
-            JsonSerializer.Serialize(marker, ProtocolJson.Options),
-            new UTF8Encoding(false),
-            cancellationToken).ConfigureAwait(false);
+        var bytes = new UTF8Encoding(false).GetBytes(JsonSerializer.Serialize(marker, ProtocolJson.Options));
+        var temporary = TemporaryPathIn(directory);
+        var temporaryCreated = false;
+        try
+        {
+            await using (var output = new FileStream(
+                             temporary,
+                             FileMode.CreateNew,
+                             FileAccess.Write,
+                             FileShare.None,
+                             16 * 1024,
+                             FileOptions.Asynchronous | FileOptions.WriteThrough))
+            {
+                temporaryCreated = true;
+                await output.WriteAsync(bytes, cancellationToken).ConfigureAwait(false);
+                await output.FlushAsync(cancellationToken).ConfigureAwait(false);
+                output.Flush(flushToDisk: true);
+            }
+            cancellationToken.ThrowIfCancellationRequested();
+            File.Move(temporary, PathIn(directory), overwrite: false);
+        }
+        catch (Exception writeFailure)
+        {
+            try
+            {
+                if (temporaryCreated && File.Exists(temporary))
+                    File.Delete(temporary);
+            }
+            catch (Exception cleanupFailure) when (
+                cleanupFailure is IOException or UnauthorizedAccessException)
+            {
+                throw new IOException(
+                    "The creation ownership marker failed and its private temporary file could not be removed.",
+                    new AggregateException(writeFailure, cleanupFailure));
+            }
+            throw;
+        }
     }
+
+    /// <summary>
+    /// Copies a previously verified marker through a private same-directory temporary file. The
+    /// destination marker name is published only after the complete bounded payload is durable, so
+    /// a failed copy cannot leave a partial marker that blocks conservative directory cleanup.
+    /// </summary>
+    public static void CopyAtomic(string sourceDirectory, string destinationDirectory)
+    {
+        var source = PathIn(sourceDirectory);
+        var target = PathIn(destinationDirectory);
+        var sourceInfo = new FileInfo(source);
+        if (!sourceInfo.Exists || sourceInfo.Length is <= 0 or > 64 * 1024 ||
+            sourceInfo.Attributes.HasFlag(FileAttributes.ReparsePoint))
+            throw new IOException("The source creation ownership marker is not one bounded regular file.");
+        var temporary = TemporaryPathIn(destinationDirectory);
+        var temporaryCreated = false;
+        try
+        {
+            using (var input = new FileStream(
+                       source, FileMode.Open, FileAccess.Read, FileShare.Read, 16 * 1024,
+                       FileOptions.SequentialScan))
+            using (var output = new FileStream(
+                       temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, 16 * 1024,
+                       FileOptions.WriteThrough))
+            {
+                temporaryCreated = true;
+                if (input.Length is <= 0 or > 64 * 1024)
+                    throw new InvalidDataException("The source creation ownership marker changed outside its bounded size.");
+                input.CopyTo(output);
+                output.Flush(flushToDisk: true);
+            }
+            File.Move(temporary, target, overwrite: false);
+        }
+        catch (Exception copyFailure)
+        {
+            try
+            {
+                if (temporaryCreated && File.Exists(temporary))
+                    File.Delete(temporary);
+            }
+            catch (Exception cleanupFailure) when (
+                cleanupFailure is IOException or UnauthorizedAccessException)
+            {
+                throw new IOException(
+                    "The creation ownership marker copy failed and its private temporary file could not be removed.",
+                    new AggregateException(copyFailure, cleanupFailure));
+            }
+            throw;
+        }
+    }
+
+    private static string TemporaryPathIn(string directory) =>
+        Path.Combine(directory, $".{FileName}.{Guid.NewGuid():N}.tmp");
 
     /// <summary>Reads a marker, returning null when it is missing or cannot be understood.</summary>
     public static CreationOwnershipMarker? TryRead(string directory)
@@ -46,8 +131,18 @@ public sealed record CreationOwnershipMarker(
             var path = PathIn(directory);
             if (!File.Exists(path))
                 return null;
-            return JsonSerializer.Deserialize<CreationOwnershipMarker>(
-                File.ReadAllText(path), ProtocolJson.Options);
+            var info = new FileInfo(path);
+            if (info.Attributes.HasFlag(FileAttributes.ReparsePoint) || info.Length is <= 0 or > 64 * 1024)
+                return null;
+            using var input = new FileStream(
+                path, FileMode.Open, FileAccess.Read, FileShare.Read, 16 * 1024, FileOptions.SequentialScan);
+            if (input.Length is <= 0 or > 64 * 1024)
+                return null;
+            var bytes = new byte[checked((int)input.Length)];
+            input.ReadExactly(bytes);
+            if (input.Position != input.Length)
+                return null;
+            return JsonSerializer.Deserialize<CreationOwnershipMarker>(bytes, ProtocolJson.Options);
         }
         catch (Exception exception) when (exception is JsonException or IOException or UnauthorizedAccessException)
         {
@@ -59,7 +154,31 @@ public sealed record CreationOwnershipMarker(
     public static bool Owns(string directory, Guid operationId, Guid serverId)
     {
         var marker = TryRead(directory);
-        return marker is not null && marker.OperationId == operationId && marker.ServerId == serverId;
+        return marker is not null &&
+               marker.SchemaVersion == CurrentSchemaVersion &&
+               marker.OperationId == operationId &&
+               marker.ServerId == serverId;
+    }
+
+    /// <summary>True when every durable identity field agrees with the journal entry.</summary>
+    public static bool Owns(
+        string directory,
+        Guid operationId,
+        Guid serverId,
+        string canonicalDestination)
+    {
+        var marker = TryRead(directory);
+        if (marker is null || marker.SchemaVersion != CurrentSchemaVersion ||
+            marker.OperationId != operationId || marker.ServerId != serverId)
+            return false;
+        try
+        {
+            return CreationPathSafety.IsSamePath(marker.CanonicalDestination, canonicalDestination);
+        }
+        catch (Exception exception) when (exception is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return false;
+        }
     }
 }
 
@@ -190,6 +309,7 @@ public sealed class ServerCreationTransaction
         ArgumentNullException.ThrowIfNull(verifyCandidate);
 
         var destination = CreationPathSafety.Canonical(request.Destination);
+        var staging = CreationPathSafety.Canonical(request.StagingPath);
         await using var destinationLock = await pathLocks.AcquireAsync(destination, cancellationToken)
             .ConfigureAwait(false);
 
@@ -200,7 +320,7 @@ public sealed class ServerCreationTransaction
             CreationKind = request.CreationKind,
             ServerName = request.ServerName,
             CanonicalDestination = destination,
-            CanonicalStaging = CreationPathSafety.Canonical(request.StagingPath),
+            CanonicalStaging = staging,
             InstanceRoot = CreationPathSafety.Canonical(request.InstanceRoot),
             StartedUtc = DateTimeOffset.UtcNow,
             UpdatedUtc = DateTimeOffset.UtcNow,
@@ -230,10 +350,26 @@ public sealed class ServerCreationTransaction
             cancellationToken.ThrowIfCancellationRequested();
             entry = await CommitAsync(entry with { Phase = CreationPhase.PreparingStaging },
                 CreationPhase.PreparingStaging, progress, request, cancellationToken).ConfigureAwait(false);
-            Directory.CreateDirectory(request.StagingPath);
+            await CreationStagingSafety.PrepareOwnedDirectoryAsync(
+                entry.InstanceRoot,
+                entry.CanonicalStaging,
+                new CreationOwnershipMarker(
+                    CreationOwnershipMarker.CurrentSchemaVersion,
+                    request.OperationId,
+                    request.ServerId,
+                    destination,
+                    DateTimeOffset.UtcNow),
+                cancellationToken).ConfigureAwait(false);
+            // This in-memory checkpoint lets cancellation in the tiny interval before the next
+            // journal write clean only the directory this invocation just proved it created.
+            entry = entry with { LastCompletedCheckpoint = CreationPhase.PreparingStaging };
 
             cancellationToken.ThrowIfCancellationRequested();
-            entry = await CommitAsync(entry with { Phase = CreationPhase.MaterializingCandidate },
+            entry = await CommitAsync(entry with
+                {
+                    Phase = CreationPhase.MaterializingCandidate,
+                    LastCompletedCheckpoint = CreationPhase.PreparingStaging
+                },
                 CreationPhase.MaterializingCandidate, progress, request, cancellationToken).ConfigureAwait(false);
             candidate = await materialize(
                 new CreationMaterializationContext(request.OperationId, request.StagingPath, destination, request.LogPath),
@@ -242,10 +378,13 @@ public sealed class ServerCreationTransaction
             cancellationToken.ThrowIfCancellationRequested();
             entry = await CommitAsync(entry with { Phase = CreationPhase.VerifyingCandidate },
                 CreationPhase.VerifyingCandidate, progress, request, cancellationToken).ConfigureAwait(false);
+            CreationStagingSafety.ValidateOwnedTree(
+                entry.CanonicalStaging,
+                entry.OperationId,
+                entry.ServerId,
+                entry.CanonicalDestination,
+                cancellationToken);
             verifyCandidate(request.StagingPath, candidate);
-            await CreationOwnershipMarker.WriteAsync(request.StagingPath, new CreationOwnershipMarker(
-                CreationOwnershipMarker.CurrentSchemaVersion, request.OperationId, request.ServerId,
-                destination, DateTimeOffset.UtcNow), cancellationToken).ConfigureAwait(false);
 
             cancellationToken.ThrowIfCancellationRequested();
             entry = await CommitAsync(
@@ -322,7 +461,20 @@ public sealed class ServerCreationTransaction
                                ? CreationActivationMode.DirectoryMove
                                : CreationActivationMode.StagedCopy);
                 entry = entry with { ActivationMode = mode };
-                Activate(entry.CanonicalStaging, destination, mode, recheck.DestinationExisted);
+                CreationStagingSafety.ValidateOwnedTree(
+                    entry.CanonicalStaging,
+                    entry.OperationId,
+                    entry.ServerId,
+                    entry.CanonicalDestination,
+                    cancellationToken);
+                Activate(
+                    entry.CanonicalStaging,
+                    destination,
+                    mode,
+                    recheck.DestinationExisted,
+                    entry.OperationId,
+                    entry.ServerId,
+                    entry.CanonicalDestination);
 
                 entry = await CommitAsync(
                     entry with
@@ -424,7 +576,8 @@ public sealed class ServerCreationTransaction
             failures.Add("The server folder does not resolve to the expected location.");
 
         if (Directory.Exists(destination) &&
-            !CreationOwnershipMarker.Owns(destination, entry.OperationId, entry.ServerId))
+            !CreationOwnershipMarker.Owns(
+                destination, entry.OperationId, entry.ServerId, entry.CanonicalDestination))
             failures.Add("The server folder does not carry this operation's ownership marker.");
 
         var servers = await store.GetServersAsync(cancellationToken).ConfigureAwait(false);
@@ -547,8 +700,19 @@ public sealed class ServerCreationTransaction
         var marker = CreationOwnershipMarker.PathIn(entry.CanonicalDestination);
         try
         {
-            if (File.Exists(marker))
-                File.Delete(marker);
+            // Before activation the destination is user-owned and must remain completely untouched,
+            // even if it happens to contain a file that resembles an operation marker.
+            if (entry.ActivationBegan && CreationStagingSafety.EntryExists(marker))
+            {
+                if (CreationOwnershipMarker.Owns(
+                        entry.CanonicalDestination,
+                        entry.OperationId,
+                        entry.ServerId,
+                        entry.CanonicalDestination))
+                    File.Delete(marker);
+                else
+                    problems.Add("The temporary marker file was preserved because its exact ownership could not be proved.");
+            }
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
@@ -557,10 +721,30 @@ public sealed class ServerCreationTransaction
 
         try
         {
-            if (Directory.Exists(entry.CanonicalStaging) && OwnsStaging(entry))
-                Directory.Delete(entry.CanonicalStaging, recursive: true);
+            if (CreationStagingSafety.EntryExists(entry.CanonicalStaging))
+            {
+                if (!HasPreparedStagingCheckpoint(entry) ||
+                    !Directory.Exists(entry.CanonicalStaging) ||
+                    !OwnsStaging(entry) ||
+                    !CreationOwnershipMarker.Owns(
+                        entry.CanonicalStaging,
+                        entry.OperationId,
+                        entry.ServerId,
+                        entry.CanonicalDestination))
+                {
+                    problems.Add("The temporary working folder was preserved because its exact ownership could not be proved.");
+                }
+                else
+                {
+                    CreationStagingSafety.DeleteOwnedTree(
+                        entry.CanonicalStaging,
+                        entry.OperationId,
+                        entry.ServerId,
+                        entry.CanonicalDestination);
+                }
+            }
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
         {
             problems.Add($"The temporary working folder could not be removed: {SecretRedactor.Redact(exception.Message)}");
         }
@@ -572,9 +756,8 @@ public sealed class ServerCreationTransaction
     /// True when the staging path is unmistakably this operation's own working directory.
     /// </summary>
     /// <remarks>
-    /// Two independent conditions, both required: the folder is named for this operation and it sits
-    /// under the instance root the operation recorded. Cleanup never deletes anything that fails
-    /// either test.
+    /// The folder must be the operation-named immediate child of the recorded instance root. Cleanup
+    /// separately requires the exact on-disk ownership marker before it may delete the directory.
     /// </remarks>
     public static bool OwnsStaging(CreationJournalEntry entry)
     {
@@ -582,11 +765,16 @@ public sealed class ServerCreationTransaction
             return false;
         var expectedName = StagingFolderName(entry.OperationId);
         return Path.GetFileName(entry.CanonicalStaging).Equals(expectedName, StringComparison.OrdinalIgnoreCase) &&
-               CreationPathSafety.IsUnder(entry.InstanceRoot, entry.CanonicalStaging);
+               Path.GetDirectoryName(entry.CanonicalStaging) is { } parent &&
+               CreationPathSafety.IsSamePath(entry.InstanceRoot, parent);
     }
 
     /// <summary>The one place the staging folder name is defined.</summary>
     public static string StagingFolderName(Guid operationId) => $".chunkpilot-staging-{operationId:N}";
+
+    private static bool HasPreparedStagingCheckpoint(CreationJournalEntry entry) =>
+        entry.LastCompletedCheckpoint is not CreationPhase.Requested and not CreationPhase.ValidatingDestination ||
+        entry.ActivationBegan || entry.ActivationCompleted;
 
     private static bool SafeIsSamePath(string left, string right)
     {
@@ -613,18 +801,21 @@ public sealed class ServerCreationTransaction
         string stagingPath,
         string destination,
         CreationActivationMode mode,
-        bool destinationExistedEmpty)
+        bool destinationExistedEmpty,
+        Guid operationId,
+        Guid serverId,
+        string canonicalDestination)
     {
+        var parent = Path.GetDirectoryName(destination);
+        if (!string.IsNullOrEmpty(parent))
+            CreationStagingSafety.EnsureNoReparseTraversal(parent);
+
         if (destinationExistedEmpty && Directory.Exists(destination))
         {
             // An accepted empty directory is removed first so the rename lands cleanly. It is proven
             // empty by the policy immediately before this runs, so nothing can be lost.
             Directory.Delete(destination, recursive: false);
         }
-
-        var parent = Path.GetDirectoryName(destination);
-        if (!string.IsNullOrEmpty(parent))
-            Directory.CreateDirectory(parent);
 
         if (mode == CreationActivationMode.DirectoryMove)
         {
@@ -633,25 +824,107 @@ public sealed class ServerCreationTransaction
         }
 
         var landing = destination + ".chunkpilot-incoming";
-        if (Directory.Exists(landing))
-            Directory.Delete(landing, recursive: true);
-        CopyTree(stagingPath, landing);
-        if (!File.Exists(CreationOwnershipMarker.PathIn(landing)))
-            throw new IOException("The copied candidate is missing its ownership marker, so it was not promoted.");
-        Directory.Move(landing, destination);
-        Directory.Delete(stagingPath, recursive: true);
+        if (CreationStagingSafety.EntryExists(landing))
+            throw new IOException("The cross-volume activation path already exists and was preserved.");
+        try
+        {
+            PrepareOwnedLanding(
+                stagingPath, landing, operationId, serverId, canonicalDestination);
+            CopyTreePayload(stagingPath, landing);
+            CreationStagingSafety.ValidateOwnedTree(
+                landing, operationId, serverId, canonicalDestination);
+            Directory.Move(landing, destination);
+        }
+        catch (Exception copyFailure)
+        {
+            try
+            {
+                if (Directory.Exists(landing) && CreationOwnershipMarker.Owns(
+                        landing, operationId, serverId, canonicalDestination))
+                    CreationStagingSafety.DeleteOwnedTree(
+                        landing, operationId, serverId, canonicalDestination);
+            }
+            catch (Exception cleanupFailure) when (
+                cleanupFailure is IOException or UnauthorizedAccessException or InvalidDataException)
+            {
+                throw new IOException(
+                    "Cross-volume activation failed and its exact-owned incoming directory could not be removed.",
+                    new AggregateException(copyFailure, cleanupFailure));
+            }
+            throw;
+        }
+        CreationStagingSafety.DeleteOwnedTree(
+            stagingPath,
+            operationId,
+            serverId,
+            canonicalDestination);
     }
 
-    private static void CopyTree(string source, string destination)
+    internal static void PrepareOwnedLanding(
+        string source,
+        string destination,
+        Guid operationId,
+        Guid serverId,
+        string canonicalDestination,
+        Action<string>? afterDirectoryCreated = null)
     {
-        Directory.CreateDirectory(destination);
-        foreach (var directory in Directory.EnumerateDirectories(source, "*", SearchOption.AllDirectories))
-            Directory.CreateDirectory(Path.Combine(destination, Path.GetRelativePath(source, directory)));
-        foreach (var file in Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories))
+        CreationStagingSafety.RequireExactOwnership(
+            source, operationId, serverId, canonicalDestination);
+        CreationStagingSafety.CreateDirectoryExclusive(destination);
+        var markerCopied = false;
+        try
         {
-            var target = Path.Combine(destination, Path.GetRelativePath(source, file));
-            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
-            File.Copy(file, target, overwrite: false);
+            CreationStagingSafety.EnsureNoReparseTraversal(destination);
+            afterDirectoryCreated?.Invoke(destination);
+            CreationOwnershipMarker.CopyAtomic(source, destination);
+            markerCopied = true;
+            CreationStagingSafety.RequireExactOwnership(
+                destination, operationId, serverId, canonicalDestination);
+        }
+        catch (Exception preparationFailure)
+        {
+            var cleanupFailure = CreationStagingSafety.CleanupAfterFailedMarkerInitialization(
+                destination, operationId, serverId, canonicalDestination, markerCopied);
+            if (cleanupFailure is not null)
+                throw new IOException(
+                    "Cross-volume landing initialization failed and its newly created directory could not be removed safely.",
+                    new AggregateException(preparationFailure, cleanupFailure));
+            throw;
+        }
+    }
+
+    private static void CopyTreePayload(string source, string destination)
+    {
+        var pending = new Queue<(string Source, string Destination)>();
+        pending.Enqueue((source, destination));
+        var entries = 0;
+        while (pending.Count > 0)
+        {
+            var current = pending.Dequeue();
+            foreach (var child in Directory.EnumerateFileSystemEntries(current.Source))
+            {
+                if (CreationPathSafety.IsSamePath(source, current.Source) &&
+                    Path.GetFileName(child).Equals(
+                        CreationOwnershipMarker.FileName, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                if (++entries > ServerImportInspectionService.MaximumEntries)
+                    throw new InvalidDataException(
+                        $"The creation candidate exceeds the {ServerImportInspectionService.MaximumEntries:N0}-entry safety limit while activating.");
+                var attributes = File.GetAttributes(child);
+                if (attributes.HasFlag(FileAttributes.ReparsePoint))
+                    throw new InvalidDataException(
+                        $"The creation candidate contains a link or reparse point: {Path.GetRelativePath(source, child)}");
+                var target = Path.Combine(current.Destination, Path.GetFileName(child));
+                if (attributes.HasFlag(FileAttributes.Directory))
+                {
+                    Directory.CreateDirectory(target);
+                    pending.Enqueue((child, target));
+                }
+                else
+                {
+                    File.Copy(child, target, overwrite: false);
+                }
+            }
         }
     }
 
@@ -831,7 +1104,11 @@ public sealed class ServerCreationTransaction
         {
             if (!Directory.Exists(entry.CanonicalDestination))
                 return true;
-            if (!CreationOwnershipMarker.Owns(entry.CanonicalDestination, entry.OperationId, entry.ServerId))
+            if (!CreationOwnershipMarker.Owns(
+                    entry.CanonicalDestination,
+                    entry.OperationId,
+                    entry.ServerId,
+                    entry.CanonicalDestination))
                 return false;
             if (Directory.Exists(entry.CanonicalStaging))
                 return false;

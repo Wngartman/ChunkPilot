@@ -193,6 +193,8 @@ public sealed class ServerDownloadCatalog
 public sealed class ManagedServerInstaller
 {
     public const string EulaUrl = "https://www.minecraft.net/eula";
+    private static readonly string[] DisallowedLaunchDirectories =
+        ["mods", "plugins", "libraries", "versions"];
     private readonly AppDataPaths paths;
     private readonly ChunkPilotStore store;
     private readonly ServerDownloadCatalog catalog;
@@ -648,11 +650,33 @@ public sealed class ManagedServerInstaller
                 await ExtractZipSafeAsync(archivePath, stagingPath, cancellationToken).ConfigureAwait(false);
                 NormalizeSinglePackageRoot(stagingPath);
                 var launch = FindKnownServerPackLaunch(stagingPath);
+                var installedLoaderVersion = request.InstallerVersion;
+                if (launch is null)
+                {
+                    var loader = ToManagedLoaderSourceType(request.PackLoader);
+                    var exactLoaderVersion = string.IsNullOrWhiteSpace(request.PackLoaderVersion)
+                        ? request.Build
+                        : request.PackLoaderVersion;
+                    Report(progress, request.OperationId, InstallState.Extracting,
+                        CreationStage.PreparingServerFiles,
+                        $"Materializing the exact managed {loader} loader without executing pack scripts",
+                        70, 0, null, 0, exactLoaderVersion, logPath);
+                    var service = loaderInstaller ??
+                                  new LoaderInstallationService(new LoaderMetadataService());
+                    var installed = await service.InstallAsync(
+                        loader, request.MinecraftVersion, exactLoaderVersion, javaPath,
+                        stagingPath, logPath, cancellationToken).ConfigureAwait(false);
+                    var target = string.IsNullOrWhiteSpace(installed.ArgumentsFile)
+                        ? installed.LaunchFile
+                        : installed.ArgumentsFile;
+                    launch = (target, !string.IsNullOrWhiteSpace(installed.ArgumentsFile));
+                    installedLoaderVersion = installed.InstallerVersion;
+                }
                 return new StagedPayload(
-                    Path.GetRelativePath(stagingPath, launch.Path), request.MinecraftVersion,
+                    Path.GetRelativePath(stagingPath, launch.Value.Path), request.MinecraftVersion,
                     string.IsNullOrWhiteSpace(request.PackLoaderVersion) ? request.Build : request.PackLoaderVersion,
-                    request.Source, Sha256(archivePath), launch.UsesArgumentFile,
-                    ToEcosystemFromLoader(request.PackLoader), request.InstallerVersion);
+                    request.Source, Sha256(archivePath), launch.Value.UsesArgumentFile,
+                    ToEcosystemFromLoader(request.PackLoader), installedLoaderVersion);
             }
             finally
             {
@@ -1018,16 +1042,28 @@ public sealed class ManagedServerInstaller
         {
             var preferred = Path.GetFullPath(Path.Combine(stagingPath, preferredRelativePath));
             EnsureChildPath(stagingPath, preferred);
-            if (File.Exists(preferred) && Path.GetExtension(preferred).Equals(".jar", StringComparison.OrdinalIgnoreCase))
-                return preferred;
+            if (!File.Exists(preferred) ||
+                !Path.GetExtension(preferred).Equals(".jar", StringComparison.OrdinalIgnoreCase) ||
+                HasDisallowedLaunchDirectory(stagingPath, preferred))
+                throw new InvalidDataException(
+                    "The exact reviewed server launcher is missing or is not an eligible server JAR.");
+            return preferred;
         }
         var candidates = Directory.EnumerateFiles(stagingPath, "*.jar", SearchOption.AllDirectories)
-            .Where(path => !Path.GetFileName(path).Contains("installer", StringComparison.OrdinalIgnoreCase))
-            .OrderBy(path => path.Count(character => character is '\\' or '/'))
-            .ThenBy(path => Path.GetFileName(path).Equals("server.jar", StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+            .Where(path => !HasDisallowedLaunchDirectory(stagingPath, path) && IsKnownServerLaunchJar(path))
+            .OrderBy(path => Path.GetRelativePath(stagingPath, path), StringComparer.OrdinalIgnoreCase)
             .ToArray();
-        return candidates.FirstOrDefault() ??
-               throw new InvalidDataException("No runnable server JAR was found in the staged package.");
+        var exactServer = candidates.Where(path =>
+                Path.GetFileName(path).Equals("server.jar", StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        if (exactServer.Length == 1)
+            return exactServer[0];
+        if (exactServer.Length > 1 || candidates.Length > 1)
+            throw new InvalidDataException(
+                "The staged package contains multiple ambiguous server launch JARs; select one exact reviewed launcher.");
+        return candidates.SingleOrDefault() ??
+               throw new InvalidDataException(
+                   "No eligible server launcher was found; content, dependency, client, and installer JARs are never executed as the server.");
     }
 
     private static async Task WriteValidationEvidenceAsync(
@@ -1090,23 +1126,80 @@ public sealed class ManagedServerInstaller
         await output.FlushAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    private static (string Path, bool UsesArgumentFile) FindKnownServerPackLaunch(string stagingPath)
+    internal static (string Path, bool UsesArgumentFile)? FindKnownServerPackLaunch(string stagingPath)
     {
-        var arguments = Directory.EnumerateFiles(stagingPath, "win_args.txt", SearchOption.AllDirectories)
-            .Where(path => path.Contains($"{Path.DirectorySeparatorChar}libraries{Path.DirectorySeparatorChar}",
-                StringComparison.OrdinalIgnoreCase))
-            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+        var candidates = Directory.EnumerateFiles(stagingPath, "*.jar", SearchOption.AllDirectories)
+            .Where(path => !HasDisallowedLaunchDirectory(stagingPath, path) && IsKnownServerLaunchJar(path))
+            .OrderBy(path => Path.GetRelativePath(stagingPath, path), StringComparer.OrdinalIgnoreCase)
             .ToArray();
-        if (arguments.Length == 1)
-            return (arguments[0], true);
-        if (arguments.Length > 1)
-            throw new InvalidDataException("The official server pack contains multiple ambiguous managed launch profiles.");
-        return (FindLaunchJar(stagingPath, ""), false);
+        var exactServer = candidates.Where(path =>
+                Path.GetFileName(path).Equals("server.jar", StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        if (exactServer.Length == 1)
+            return (exactServer[0], false);
+        if (exactServer.Length > 1 || candidates.Length > 1)
+            throw new InvalidDataException(
+                "The official server pack contains multiple ambiguous native server launchers.");
+        return candidates.Length == 1 ? (candidates[0], false) : null;
     }
+
+    private static bool IsKnownServerLaunchJar(string path)
+    {
+        var name = Path.GetFileName(path);
+        if (!name.EndsWith(".jar", StringComparison.OrdinalIgnoreCase) ||
+            name.Contains("installer", StringComparison.OrdinalIgnoreCase) ||
+            name.Contains("client", StringComparison.OrdinalIgnoreCase) ||
+            name.Contains("serverstarter", StringComparison.OrdinalIgnoreCase))
+            return false;
+        return name.Equals("server.jar", StringComparison.OrdinalIgnoreCase) ||
+               name.StartsWith("minecraft_server.", StringComparison.OrdinalIgnoreCase) ||
+               name.Equals("fabric-server-launch.jar", StringComparison.OrdinalIgnoreCase) ||
+               name.Equals("quilt-server-launch.jar", StringComparison.OrdinalIgnoreCase) ||
+               name.StartsWith("forge-", StringComparison.OrdinalIgnoreCase) ||
+               name.StartsWith("neoforge-", StringComparison.OrdinalIgnoreCase) ||
+               name.Contains("paper", StringComparison.OrdinalIgnoreCase) ||
+               name.Contains("purpur", StringComparison.OrdinalIgnoreCase) ||
+               name.Contains("spigot", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool HasDisallowedLaunchDirectory(string root, string path) =>
+        DisallowedLaunchDirectories
+            .Any(segment => HasRelativeDirectorySegment(root, path, segment));
+
+    private static bool HasRelativeDirectorySegment(string root, string path, string expected)
+    {
+        var fullRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
+        var fullPath = Path.GetFullPath(path);
+        EnsureChildPath(fullRoot, fullPath);
+        var directory = Path.GetDirectoryName(Path.GetRelativePath(fullRoot, fullPath)) ?? "";
+        return directory.Split(
+                [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
+                StringSplitOptions.RemoveEmptyEntries)
+            .Any(segment => segment.Equals(expected, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static InstallSourceType ToManagedLoaderSourceType(string loader) =>
+        loader.Trim().ToLowerInvariant() switch
+        {
+            "fabric" => InstallSourceType.Fabric,
+            "quilt" => InstallSourceType.Quilt,
+            "forge" => InstallSourceType.Forge,
+            "neoforge" => InstallSourceType.NeoForge,
+            _ => throw new InvalidDataException(
+                "The official server pack has no native launch profile and its exact loader cannot be materialized safely by ChunkPilot.")
+        };
 
     private static void NormalizeSinglePackageRoot(string stagingPath)
     {
-        var files = Directory.EnumerateFiles(stagingPath).ToArray();
+        var markerPath = CreationOwnershipMarker.PathIn(stagingPath);
+        if (CreationStagingSafety.EntryExists(markerPath) &&
+            (Directory.Exists(markerPath) || CreationPathSafety.IsReparsePoint(markerPath) ||
+             CreationOwnershipMarker.TryRead(stagingPath) is null))
+            throw new IOException("The creation staging ownership marker is invalid.");
+        var files = Directory.EnumerateFiles(stagingPath)
+            .Where(path => !Path.GetFileName(path).Equals(
+                CreationOwnershipMarker.FileName, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
         var directories = Directory.EnumerateDirectories(stagingPath).ToArray();
         if (files.Length > 0 || directories.Length != 1) return;
         var nested = directories[0];

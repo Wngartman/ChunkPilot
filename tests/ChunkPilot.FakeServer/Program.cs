@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using System.IO.Pipes;
@@ -44,6 +45,9 @@ if (args.Contains("-XshowSettings:properties", StringComparer.OrdinalIgnoreCase)
     return 0;
 }
 
+if (args.Contains("--fixture-no-installer-output", StringComparer.OrdinalIgnoreCase))
+    return 0;
+
 if (args.Contains("--installServer", StringComparer.OrdinalIgnoreCase))
 {
     Directory.CreateDirectory(Path.Combine("libraries", "fixture"));
@@ -56,6 +60,89 @@ if (args.Contains("install", StringComparer.OrdinalIgnoreCase) &&
     args.Contains("server", StringComparer.OrdinalIgnoreCase))
 {
     await File.WriteAllBytesAsync("quilt-server-launch.jar", [0x50, 0x4B, 0x05, 0x06, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    return 0;
+}
+
+if (args.FirstOrDefault()?.Equals("staged-validation-child", StringComparison.OrdinalIgnoreCase) == true)
+{
+    await Task.Delay(Timeout.InfiniteTimeSpan);
+    return 0;
+}
+
+if (args.Any(argument => Path.GetFileName(argument)
+        .Equals("staged-spawn-child-and-exit.jar", StringComparison.OrdinalIgnoreCase)))
+{
+    var childStart = new ProcessStartInfo
+    {
+        FileName = Environment.ProcessPath ?? throw new InvalidOperationException("The fixture executable path is unavailable."),
+        WorkingDirectory = Environment.CurrentDirectory,
+        UseShellExecute = false,
+        CreateNoWindow = true
+    };
+    childStart.ArgumentList.Add("staged-validation-child");
+    using var child = Process.Start(childStart) ??
+                      throw new InvalidOperationException("The staged validation fixture child did not start.");
+    await File.WriteAllTextAsync(
+        Path.Combine(Environment.CurrentDirectory, "staged-validation-child.pid"),
+        FormattableString.Invariant($"{child.Id}|{child.StartTime.ToUniversalTime().Ticks}"));
+    return 37;
+}
+
+if (args.Any(argument => Path.GetFileName(argument)
+        .Equals("staged-non-loopback-listener.jar", StringComparison.OrdinalIgnoreCase)))
+{
+    var portText = (await File.ReadAllLinesAsync(Path.Combine(Environment.CurrentDirectory, "server.properties")))
+        .Select(line => line.Split('=', 2, StringSplitOptions.TrimEntries))
+        .First(parts => parts.Length == 2 && parts[0].Equals("server-port", StringComparison.OrdinalIgnoreCase))[1];
+    using var listener = new TcpListener(IPAddress.Any,
+        int.Parse(portText, System.Globalization.CultureInfo.InvariantCulture));
+    listener.Start();
+    using (var current = Process.GetCurrentProcess())
+        await File.WriteAllTextAsync(
+            Path.Combine(Environment.CurrentDirectory, "staged-non-loopback-listener.pid"),
+            FormattableString.Invariant($"{current.Id}|{current.StartTime.ToUniversalTime().Ticks}"));
+    Console.WriteLine("[Server thread/INFO]: Done (0.123s)! For help, type \"help\"");
+    await Console.Out.FlushAsync();
+    await Task.Delay(Timeout.InfiniteTimeSpan);
+    return 0;
+}
+
+if (args.Any(argument => Path.GetFileName(argument)
+        .Equals("staged-non-loopback-udp.jar", StringComparison.OrdinalIgnoreCase)))
+{
+    var portText = (await File.ReadAllLinesAsync(Path.Combine(Environment.CurrentDirectory, "server.properties")))
+        .Select(line => line.Split('=', 2, StringSplitOptions.TrimEntries))
+        .First(parts => parts.Length == 2 && parts[0].Equals("server-port", StringComparison.OrdinalIgnoreCase))[1];
+    using var endpoint = new UdpClient(new IPEndPoint(
+        IPAddress.Any,
+        int.Parse(portText, System.Globalization.CultureInfo.InvariantCulture)));
+    using (var current = Process.GetCurrentProcess())
+        await File.WriteAllTextAsync(
+            Path.Combine(Environment.CurrentDirectory, "staged-non-loopback-udp.pid"),
+            FormattableString.Invariant($"{current.Id}|{current.StartTime.ToUniversalTime().Ticks}"));
+    Console.WriteLine("[Server thread/INFO]: Done (0.123s)! For help, type \"help\"");
+    await Console.Out.FlushAsync();
+    await Task.Delay(Timeout.InfiniteTimeSpan);
+    return 0;
+}
+
+if (args.Any(argument => Path.GetFileName(argument)
+        .Equals("staged-outbound-tcp.jar", StringComparison.OrdinalIgnoreCase)))
+{
+    var target = (await File.ReadAllTextAsync(
+        Path.Combine(Environment.CurrentDirectory, "staged-outbound-tcp-target.txt")))
+        .Split('|', StringSplitOptions.TrimEntries);
+    using var client = new TcpClient(AddressFamily.InterNetwork);
+    await client.ConnectAsync(
+        IPAddress.Parse(target[0]),
+        int.Parse(target[1], System.Globalization.CultureInfo.InvariantCulture));
+    using (var current = Process.GetCurrentProcess())
+        await File.WriteAllTextAsync(
+            Path.Combine(Environment.CurrentDirectory, "staged-outbound-tcp.pid"),
+            FormattableString.Invariant($"{current.Id}|{current.StartTime.ToUniversalTime().Ticks}"));
+    Console.WriteLine("[Server thread/INFO]: Done (0.123s)! For help, type \"help\"");
+    await Console.Out.FlushAsync();
+    await Task.Delay(Timeout.InfiniteTimeSpan);
     return 0;
 }
 

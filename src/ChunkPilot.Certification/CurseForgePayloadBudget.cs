@@ -37,6 +37,14 @@ internal sealed record CurseForgePayloadBudgetSnapshot(
     long UnknownOrInterruptedReservedBytes,
     long ObservedIncompleteBytes);
 
+internal sealed record CurseForgePayloadReservationRequest(
+    Guid OperationId,
+    string Kind,
+    string ProjectId,
+    string FileId,
+    long ExpectedBytes,
+    string ProviderSha1);
+
 /// <summary>
 /// Durable conservative accounting for live CurseForge payloads. A full expected size is reserved
 /// atomically before the provider download begins. Interrupted reservations continue to count toward
@@ -59,45 +67,81 @@ internal sealed class CurseForgePayloadBudget(string ledgerPath)
         long expectedBytes,
         string providerSha1,
         CancellationToken cancellationToken)
+        => await ReserveBatchAsync(
+            [new CurseForgePayloadReservationRequest(
+                operationId, kind, projectId, fileId, expectedBytes, providerSha1)],
+            cancellationToken).ConfigureAwait(false);
+
+    /// <summary>
+    /// Validates and persists a related set of payload reservations with one durable ledger write.
+    /// Either every reservation is present after this method succeeds, or none of this batch is
+    /// added. This prevents a generated-pack plan from consuming a partial series of reservations
+    /// when a later item or the ledger write fails.
+    /// </summary>
+    public async Task<CurseForgePayloadBudgetSnapshot> ReserveBatchAsync(
+        IReadOnlyList<CurseForgePayloadReservationRequest> reservations,
+        CancellationToken cancellationToken)
     {
-        ValidateIdentity(operationId, kind, projectId, fileId, expectedBytes, providerSha1);
+        ArgumentNullException.ThrowIfNull(reservations);
+        if (reservations.Count == 0)
+            throw new ArgumentException("At least one payload reservation is required.", nameof(reservations));
+        var requestedIdentities = new HashSet<string>(StringComparer.Ordinal);
+        long requestedBytes = 0;
+        foreach (var reservation in reservations)
+        {
+            ArgumentNullException.ThrowIfNull(reservation);
+            ValidateIdentity(
+                reservation.OperationId, reservation.Kind, reservation.ProjectId,
+                reservation.FileId, reservation.ExpectedBytes, reservation.ProviderSha1);
+            if (!requestedIdentities.Add($"{reservation.OperationId:N}:{reservation.Kind}"))
+                throw new ArgumentException(
+                    "A payload reservation batch contains a duplicate operation identity.",
+                    nameof(reservations));
+            requestedBytes = checked(requestedBytes + reservation.ExpectedBytes);
+        }
+
         await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             using var processLock = AcquireProcessLock();
             var ledger = await ReadAsync(cancellationToken).ConfigureAwait(false);
-            var existing = ledger.Entries.FirstOrDefault(entry =>
-                entry.OperationId == operationId && entry.Kind.Equals(kind, StringComparison.Ordinal));
-            if (existing is not null)
+            foreach (var reservation in reservations)
             {
-                if (!Matches(existing, projectId, fileId, expectedBytes, providerSha1))
+                var existing = ledger.Entries.FirstOrDefault(entry =>
+                    entry.OperationId == reservation.OperationId &&
+                    entry.Kind.Equals(reservation.Kind, StringComparison.Ordinal));
+                if (existing is null)
+                    continue;
+                if (!Matches(
+                        existing, reservation.ProjectId, reservation.FileId,
+                        reservation.ExpectedBytes, reservation.ProviderSha1))
                     throw new InvalidDataException(
                         "The payload-budget operation identity was already reserved for different provider evidence.");
                 throw new InvalidOperationException(
                     "The exact payload transfer reservation was already issued; replay is refused and must use a fresh operation identity.");
             }
-            if (ledger.Entries.Count >= MaximumLedgerEntries)
+            if (reservations.Count > MaximumLedgerEntries - ledger.Entries.Count)
                 throw new InvalidDataException(
                     $"The CurseForge payload ledger reached its {MaximumLedgerEntries}-entry safety limit.");
 
             var guarded = GuardedBytes(ledger);
-            if (expectedBytes > MaximumBytes - guarded)
+            if (requestedBytes > MaximumBytes - guarded)
                 throw new InvalidOperationException(
-                    $"The next CurseForge payload would exceed the hard {MaximumBytes} byte campaign limit before download.");
+                    $"The next CurseForge payload batch would exceed the hard {MaximumBytes} byte campaign limit before download.");
+            var reservedAtUtc = DateTimeOffset.UtcNow;
             ledger = ledger with
             {
-                Entries = ledger.Entries.Concat([
-                    new CurseForgePayloadLedgerEntry
+                Entries = ledger.Entries.Concat(
+                    reservations.Select(reservation => new CurseForgePayloadLedgerEntry
                     {
-                        OperationId = operationId,
-                        Kind = kind,
-                        ProjectId = projectId,
-                        FileId = fileId,
-                        ExpectedBytes = expectedBytes,
-                        ProviderIdentityFingerprint = ProviderFingerprint(providerSha1),
-                        ReservedAtUtc = DateTimeOffset.UtcNow
-                    }
-                ]).ToArray()
+                        OperationId = reservation.OperationId,
+                        Kind = reservation.Kind,
+                        ProjectId = reservation.ProjectId,
+                        FileId = reservation.FileId,
+                        ExpectedBytes = reservation.ExpectedBytes,
+                        ProviderIdentityFingerprint = ProviderFingerprint(reservation.ProviderSha1),
+                        ReservedAtUtc = reservedAtUtc
+                    })).ToArray()
             };
             await WriteAsync(ledger, cancellationToken).ConfigureAwait(false);
             return Snapshot(ledger);

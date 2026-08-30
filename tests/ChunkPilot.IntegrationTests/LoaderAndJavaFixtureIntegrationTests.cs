@@ -44,6 +44,50 @@ public sealed class LoaderAndJavaFixtureIntegrationTests : IDisposable
     }
 
     [Fact(Timeout = 30_000)]
+    public async Task Official_loader_ignores_preplanted_argument_profile_even_with_future_timestamp()
+    {
+        var staging = Path.Combine(root, "preplanted-arguments");
+        var malicious = Path.Combine(staging, "libraries", "attacker", "win_args.txt");
+        Directory.CreateDirectory(Path.GetDirectoryName(malicious)!);
+        await File.WriteAllTextAsync(malicious, "provider-controlled arguments");
+        File.SetLastWriteTimeUtc(malicious, DateTime.UtcNow.AddDays(2));
+        using var http = new HttpClient(new LoaderHandler());
+        var service = new LoaderInstallationService(new LoaderMetadataService(http), http);
+
+        var result = await service.InstallExactAsync(
+            ForgeInstallerPlan("--installServer"),
+            FakeJavaPath(),
+            staging,
+            Path.Combine(root, "preplanted-arguments.log"));
+
+        Assert.Equal(
+            Path.Combine(staging, "libraries", "fixture", "win_args.txt"),
+            result.ArgumentsFile);
+        Assert.Equal("provider-controlled arguments", await File.ReadAllTextAsync(malicious));
+    }
+
+    [Fact(Timeout = 30_000)]
+    public async Task Official_loader_rejects_preplanted_server_jar_when_installer_creates_no_output()
+    {
+        var staging = Path.Combine(root, "preplanted-server-jar");
+        Directory.CreateDirectory(staging);
+        var malicious = Path.Combine(staging, "minecraft_server.1.21.1.jar");
+        await File.WriteAllTextAsync(malicious, "provider-controlled server jar");
+        using var http = new HttpClient(new LoaderHandler());
+        var service = new LoaderInstallationService(new LoaderMetadataService(http), http);
+
+        var error = await Assert.ThrowsAsync<InvalidDataException>(() =>
+            service.InstallExactAsync(
+                ForgeInstallerPlan("--fixture-no-installer-output"),
+                FakeJavaPath(),
+                staging,
+                Path.Combine(root, "preplanted-server-jar.log")));
+
+        Assert.Contains("newly created or content-changed", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("provider-controlled server jar", await File.ReadAllTextAsync(malicious));
+    }
+
+    [Fact(Timeout = 30_000)]
     public async Task Quilt_creation_uses_separate_installer_Java_without_changing_server_runtime()
     {
         var paths = new AppDataPaths(Path.Combine(root, "quilt-split-java-data"));
@@ -188,6 +232,72 @@ public sealed class LoaderAndJavaFixtureIntegrationTests : IDisposable
     }
 
     [Fact(Timeout = 30_000)]
+    public async Task Official_CurseForge_pack_without_launcher_uses_exact_managed_loader_not_mod_jar()
+    {
+        var package = BuildContentOnlyServerPack();
+        var paths = new AppDataPaths(Path.Combine(root, "curseforge-loader-fallback-data"),
+            Path.Combine(root, "curseforge-loader-fallback-servers"));
+        await using var store = new ChunkPilotStore(paths);
+        await store.InitializeAsync();
+        using var loaderHttp = new HttpClient(new LoaderHandler());
+        using var packageHandler = new BytesHandler(package);
+        var secrets = new MemorySecrets();
+        secrets.SetSecret(CurseForgeUpdateProvider.ApiKeyName, "fixture-key");
+        using var api = new CurseForgeApiClient(secrets, packageHandler);
+        var validator = new CapturingStagedValidator();
+        var installer = new ManagedServerInstaller(
+            paths,
+            store,
+            new ServerDownloadCatalog(loaderHttp),
+            loaderHttp,
+            new LoaderInstallationService(new LoaderMetadataService(loaderHttp), loaderHttp),
+            curseForge: api,
+            stagedValidator: validator);
+
+#pragma warning disable CA5350 // CurseForge publishes SHA-1 as provider artifact identity.
+        var sha1 = Convert.ToHexString(SHA1.HashData(package));
+#pragma warning restore CA5350
+        var result = await installer.InstallAsync(new ServerInstallRequest
+        {
+            SourceType = InstallSourceType.CurseForgeServerPack,
+            Source = "https://mediafilez.forgecdn.net/files/222/fixture-server.zip",
+            MinecraftVersion = "1.20.1",
+            Build = "47.3.0",
+            ServerName = "CurseForge managed loader fallback",
+            InstanceRoot = paths.ManagedServers,
+            JavaPath = FakeJavaPath(),
+            MinimumRamMb = 2_048,
+            MaximumRamMb = 6_144,
+            Port = 25_587,
+            CreationNetworkingPreference = VanillaNetworkingPreference.ThisComputerOnly,
+            EulaAccepted = true,
+            EulaAcceptedAt = DateTimeOffset.UtcNow,
+            ExpectedSha1 = sha1,
+            ExpectedSizeBytes = package.LongLength,
+            PackProvider = UpdateProvider.CurseForge,
+            PackProjectId = "123",
+            PackVersionId = "111",
+            PackServerFileId = "222",
+            PackLoader = "Forge",
+            PackLoaderVersion = "47.3.0"
+        });
+
+        Assert.True(validator.Called);
+        Assert.True(validator.UsesArgumentFile);
+        Assert.EndsWith("win_args.txt", validator.LaunchRelativePath,
+            StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("mods", validator.LaunchRelativePath,
+            StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("@", result.Definition.Arguments, StringComparison.Ordinal);
+        Assert.True(File.Exists(Path.Combine(result.Definition.RootPath,
+            "mods", "additionallanterns-1.1.1a-forge-mc1.20.jar")));
+        var argumentsPath = Path.Combine(
+            result.Definition.RootPath, "libraries", "fixture", "win_args.txt");
+        Assert.Contains(argumentsPath, result.Definition.Arguments, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("-cp fixture server.Main\r\n", await File.ReadAllTextAsync(argumentsPath));
+    }
+
+    [Fact(Timeout = 30_000)]
     public async Task Crossplay_packages_are_hash_verified_backed_up_and_removed_by_ownership()
     {
         var payload = Encoding.UTF8.GetBytes("verified crossplay fixture");
@@ -325,6 +435,20 @@ public sealed class LoaderAndJavaFixtureIntegrationTests : IDisposable
         return output.ToArray();
     }
 
+    private static LoaderInstallPlan ForgeInstallerPlan(string installerArgument) => new()
+    {
+        Loader = InstallSourceType.Forge,
+        MinecraftVersion = "1.21.1",
+        LoaderVersion = "52.0.1",
+        InstallerVersion = "52.0.1",
+        DownloadUrl = "https://maven.minecraftforge.net/net/minecraftforge/forge/1.21.1-52.0.1/forge-1.21.1-52.0.1-installer.jar",
+        Sha256 = Convert.ToHexString(SHA256.HashData(InstallerBytes)),
+        InstallerArgument = installerArgument,
+        ExpectedLaunchFile = "run.bat",
+        RequiredJavaMajor = 21,
+        RunsInstaller = true
+    };
+
     private static byte[] BuildServerPackage()
     {
         using var output = new MemoryStream();
@@ -336,6 +460,28 @@ public sealed class LoaderAndJavaFixtureIntegrationTests : IDisposable
             var properties = archive.CreateEntry("server.properties");
             using var writer = new StreamWriter(properties.Open(), new UTF8Encoding(false));
             writer.Write("motd=fixture\r\nwhite-list=false\r\n");
+        }
+        return output.ToArray();
+    }
+
+    private static byte[] BuildContentOnlyServerPack()
+    {
+        using var output = new MemoryStream();
+        using (var archive = new ZipArchive(output, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            var entry = archive.CreateEntry(
+                "mods/additionallanterns-1.1.1a-forge-mc1.20.jar",
+                CompressionLevel.NoCompression);
+            using (var target = entry.Open())
+                target.Write(InstallerBytes);
+            var config = archive.CreateEntry("config/fixture.toml", CompressionLevel.NoCompression);
+            using (var configTarget = new StreamWriter(config.Open(), new UTF8Encoding(false)))
+                configTarget.Write("fixture=true\n");
+            var providerArguments = archive.CreateEntry(
+                "libraries/fixture/win_args.txt", CompressionLevel.NoCompression);
+            using var argumentTarget = new StreamWriter(
+                providerArguments.Open(), new UTF8Encoding(false));
+            argumentTarget.Write("provider-controlled argument sentinel");
         }
         return output.ToArray();
     }
@@ -420,7 +566,7 @@ public sealed class LoaderAndJavaFixtureIntegrationTests : IDisposable
                 if (url.Contains("minecraftforge", StringComparison.OrdinalIgnoreCase))
                     return Text("""
                         <metadata><versioning><release>1.21.1-52.0.1</release>
-                        <versions><version>1.21.1-52.0.1</version></versions></versioning></metadata>
+                        <versions><version>1.20.1-47.3.0</version><version>1.21.1-52.0.1</version></versions></versioning></metadata>
                         """);
                 return Text("""
                     <metadata><versioning><release>0.12.0</release>
@@ -456,6 +602,41 @@ public sealed class LoaderAndJavaFixtureIntegrationTests : IDisposable
             };
             return Task.FromResult(response);
         }
+    }
+
+    private sealed class CapturingStagedValidator : IStagedServerValidator
+    {
+        public bool Called { get; private set; }
+        public string LaunchRelativePath { get; private set; } = "";
+        public bool UsesArgumentFile { get; private set; }
+
+        public Task<StagedServerValidationResult> ValidateAsync(
+            string javaPath,
+            string stagingRoot,
+            string launchRelativePath,
+            bool usesArgumentFile,
+            int minimumRamMb,
+            int maximumRamMb,
+            TimeSpan timeout,
+            CancellationToken cancellationToken = default)
+        {
+            Called = true;
+            LaunchRelativePath = launchRelativePath;
+            UsesArgumentFile = usesArgumentFile;
+            return Task.FromResult(new StagedServerValidationResult(
+                true, true, true, true, true,
+                "Fixture validation passed.", []));
+        }
+    }
+
+    private sealed class MemorySecrets : ISecretStore
+    {
+        private readonly Dictionary<string, string> values = new(StringComparer.Ordinal);
+
+        public void SetSecret(string name, string value) => values[name] = value;
+        public string? GetSecret(string name) => values.GetValueOrDefault(name);
+        public bool Contains(string name) => values.ContainsKey(name);
+        public void Delete(string name) => values.Remove(name);
     }
 
     private sealed class BeginnerVanillaHandler(

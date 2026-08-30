@@ -81,6 +81,143 @@ public sealed class VersionUpdateIntegrationTests : IAsyncLifetime
     }
 
     [Fact(Timeout = 45_000)]
+    public async Task Provider_script_only_pack_materializes_exact_loader_and_persists_no_script_launch()
+    {
+        var definition = await CreateOldServerAsync();
+        var fakeJava = Path.Combine(root, "fixture-java", "bin", "java.exe");
+        var newerJava = Path.Combine(root, "fixture-java-22", "bin", "java.exe");
+        Directory.CreateDirectory(Path.GetDirectoryName(fakeJava)!);
+        Directory.CreateDirectory(Path.GetDirectoryName(newerJava)!);
+        await File.WriteAllTextAsync(fakeJava, "fixture Java identity");
+        await File.WriteAllTextAsync(newerJava, "incompatible newer fixture Java identity");
+        definition = definition with
+        {
+            Executable = newerJava,
+            Arguments = "-jar old-server.jar nogui"
+        };
+        await store.UpsertManagedJavaRuntimeAsync(new ManagedJavaRuntime
+        {
+            Vendor = "Fixture managed Java",
+            Version = "21.0.8-fixture",
+            MajorVersion = 21,
+            Architecture = "x64",
+            JavaPath = Path.GetFullPath(fakeJava),
+            InstallationRoot = Path.Combine(root, "fixture-java"),
+            IsManaged = true,
+            Health = RuntimeHealth.Healthy
+        });
+        await store.UpsertManagedJavaRuntimeAsync(new ManagedJavaRuntime
+        {
+            Vendor = "Fixture managed Java",
+            Version = "22.0.2-fixture",
+            MajorVersion = 22,
+            Architecture = "x64",
+            JavaPath = Path.GetFullPath(newerJava),
+            InstallationRoot = Path.Combine(root, "fixture-java-22"),
+            IsManaged = true,
+            Health = RuntimeHealth.Healthy
+        });
+        var source = Source(definition.Id) with { Provider = UpdateProvider.DirectManifest };
+        await store.UpsertServerAsync(definition);
+        await store.UpsertUpdateSourceAsync(source);
+        var package = CreateUpdatePackage(
+            "provider-script-only.zip", "never-executed", includeProviderArgumentFile: true);
+        var request = Request(definition.Id, package, "provider-v2") with
+        {
+            TargetVersion = Request(definition.Id, package, "provider-v2").TargetVersion with
+            {
+                Loader = "Fabric",
+                LoaderVersion = "0.16.14",
+                RequiredJavaMajor = 21
+            }
+        };
+        using var loaderHttp = new HttpClient(new FabricLoaderHandler());
+        var loader = new LoaderInstallationService(new LoaderMetadataService(loaderHttp), loaderHttp);
+        var service = CreateUpdateService(loaderInstaller: loader);
+
+        var prepared = await service.PrepareAndSwitchAsync(definition, source, request);
+        try
+        {
+            var updated = prepared.Result.UpdatedDefinition;
+            Assert.Equal(Path.GetFullPath(fakeJava), updated.Executable);
+            Assert.True(Path.IsPathFullyQualified(updated.Executable));
+            Assert.Equal("java.exe", Path.GetFileName(updated.Executable), ignoreCase: true);
+            Assert.Contains("fabric-server-launch.jar", updated.Arguments, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("run.bat", updated.Arguments, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("win_args.txt", updated.Arguments, StringComparison.OrdinalIgnoreCase);
+            Assert.True(File.Exists(Path.Combine(definition.RootPath, "run.bat")));
+            Assert.True(File.Exists(Path.Combine(definition.RootPath, "fabric-server-launch.jar")));
+            Assert.Equal("provider-controlled argument sentinel", await File.ReadAllTextAsync(
+                Path.Combine(definition.RootPath, "libraries", "provider", "win_args.txt")));
+            var active = Assert.Single(
+                await store.GetVersionSnapshotsAsync(definition.Id), version => version.IsActive);
+            Assert.Equal(updated.Executable, active.Definition.Executable);
+            Assert.Equal(updated.Arguments, active.Definition.Arguments);
+            Assert.Equal("21.0.8-fixture", active.JavaVersion);
+        }
+        finally
+        {
+            await service.FinalizeOperationAsync(prepared);
+        }
+    }
+
+    [Fact(Timeout = 30_000)]
+    public async Task Installer_java_rejects_unmanaged_identity_then_selects_exact_managed_installer_major()
+    {
+        var definition = await CreateOldServerAsync();
+        var unmanagedJava = Path.Combine(root, "unmanaged-java-21", "bin", "java.exe");
+        var managedJava17 = Path.Combine(root, "managed-java-17", "bin", "java.exe");
+        Directory.CreateDirectory(Path.GetDirectoryName(unmanagedJava)!);
+        Directory.CreateDirectory(Path.GetDirectoryName(managedJava17)!);
+        await File.WriteAllTextAsync(unmanagedJava, "unmanaged Java 21 fixture");
+        await File.WriteAllTextAsync(managedJava17, "managed Java 17 fixture");
+        definition = definition with { Executable = unmanagedJava };
+        await store.UpsertManagedJavaRuntimeAsync(new ManagedJavaRuntime
+        {
+            Vendor = "Unmanaged fixture",
+            Version = "21.0.8-unmanaged",
+            MajorVersion = 21,
+            Architecture = "x64",
+            JavaPath = unmanagedJava,
+            InstallationRoot = Path.Combine(root, "unmanaged-java-21"),
+            IsManaged = false,
+            Health = RuntimeHealth.Healthy
+        });
+        var service = CreateUpdateService();
+        var target = new PackVersionInfo
+        {
+            MinecraftVersion = "1.21.1",
+            Loader = "Forge",
+            LoaderVersion = "52.0.1",
+            InstallerVersion = "52.0.1",
+            RequiredJavaMajor = 21,
+            InstallerJavaMajor = 21
+        };
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.ResolveInstallerJavaAsync(definition, target, CancellationToken.None));
+        Assert.Contains("managed Java 21", error.Message, StringComparison.OrdinalIgnoreCase);
+
+        await store.UpsertManagedJavaRuntimeAsync(new ManagedJavaRuntime
+        {
+            Vendor = "Managed fixture",
+            Version = "17.0.14-managed",
+            MajorVersion = 17,
+            Architecture = "x64",
+            JavaPath = managedJava17,
+            InstallationRoot = Path.Combine(root, "managed-java-17"),
+            IsManaged = true,
+            Health = RuntimeHealth.Healthy
+        });
+        var resolved = await service.ResolveInstallerJavaAsync(
+            definition,
+            target with { InstallerJavaMajor = 17 },
+            CancellationToken.None);
+
+        Assert.Equal(Path.GetFullPath(managedJava17), resolved);
+    }
+
+    [Fact(Timeout = 45_000)]
     public async Task CurseForge_snapshot_and_rollback_restore_the_exact_installed_file_identity()
     {
         var definition = await CreateOldServerAsync();
@@ -1227,12 +1364,14 @@ public sealed class VersionUpdateIntegrationTests : IAsyncLifetime
     private ServerPackUpdateService CreateUpdateService(
         ICurseForgeModpackPreflightService? curseForgePreflight = null,
         CurseForgeApiClient? curseForge = null,
-        IStorageSpaceProbe? storageSpace = null)
+        IStorageSpaceProbe? storageSpace = null,
+        LoaderInstallationService? loaderInstaller = null)
     {
         var snapshots = new VersionSnapshotService(paths, store);
         return new ServerPackUpdateService(paths, store, snapshots, new PackMigrationPlanner(),
             new ServerDetectionService(new JavaDiscoveryService()),
             new WorldManager(paths, new SafeFileService(paths)),
+            loaderInstaller: loaderInstaller,
             curseForge: curseForge,
             curseForgePreflight: curseForgePreflight,
             storageSpace: storageSpace);
@@ -1299,7 +1438,10 @@ public sealed class VersionUpdateIntegrationTests : IAsyncLifetime
         });
     }
 
-    private string CreateUpdatePackage(string name, string mode)
+    private string CreateUpdatePackage(
+        string name,
+        string mode,
+        bool includeProviderArgumentFile = false)
     {
         var staging = Path.Combine(root, "package-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(Path.Combine(staging, "mods"));
@@ -1309,6 +1451,14 @@ public sealed class VersionUpdateIntegrationTests : IAsyncLifetime
         File.WriteAllText(Path.Combine(staging, "run.bat"),
             $"@echo off\r\n{CommandLineQuoter.QuoteWindowsArgument(DotnetPath())} " +
             $"{CommandLineQuoter.QuoteWindowsArgument(FakeServerDll())} {mode}\r\n");
+        if (includeProviderArgumentFile)
+        {
+            var argumentDirectory = Path.Combine(staging, "libraries", "provider");
+            Directory.CreateDirectory(argumentDirectory);
+            File.WriteAllText(
+                Path.Combine(argumentDirectory, "win_args.txt"),
+                "provider-controlled argument sentinel");
+        }
         var package = Path.Combine(root, name);
         ZipFile.CreateFromDirectory(staging, package);
         Directory.Delete(staging, recursive: true);
@@ -1487,6 +1637,30 @@ public sealed class VersionUpdateIntegrationTests : IAsyncLifetime
         {
             cancellationToken.ThrowIfCancellationRequested();
             return Task.FromResult(response(request));
+        }
+    }
+
+    private sealed class FabricLoaderHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var path = request.RequestUri?.AbsolutePath ?? "";
+            HttpContent content = path.EndsWith("/server/jar", StringComparison.Ordinal)
+                ? new ByteArrayContent("exact Fabric server launcher fixture"u8.ToArray())
+                : path.Equals("/v2/versions/installer", StringComparison.Ordinal)
+                    ? new StringContent("[{\"version\":\"1.0.3\",\"stable\":true}]", Encoding.UTF8,
+                        "application/json")
+                    : path.Equals("/v2/versions/loader/1.21.1", StringComparison.Ordinal)
+                        ? new StringContent("[{\"loader\":{\"version\":\"0.16.14\"}}]", Encoding.UTF8,
+                            "application/json")
+                        : throw new InvalidOperationException($"Unexpected Fabric fixture request: {request.RequestUri}");
+            return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = content
+            });
         }
     }
 

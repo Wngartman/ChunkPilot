@@ -917,6 +917,8 @@ public sealed record PreparedPackUpdate(
 
 public sealed class ServerPackUpdateService
 {
+    private static readonly string[] DisallowedProviderLaunchDirectories =
+        ["mods", "plugins", "libraries", "versions"];
     private readonly AppDataPaths paths;
     private readonly ChunkPilotStore store;
     private readonly VersionSnapshotService snapshots;
@@ -1074,6 +1076,8 @@ public sealed class ServerPackUpdateService
         var switched = false;
         VersionSnapshot? previousSnapshot = null;
         VersionSnapshot? activeSnapshot = null;
+        (string Path, bool UsesArgumentFile)? materializedLaunch = null;
+        ManagedJavaRuntime? providerJava = null;
         await Journal(UpdateOperationState.Planned, "Update planned.", candidate, cancellationToken).ConfigureAwait(false);
 
         try
@@ -1162,13 +1166,19 @@ public sealed class ServerPackUpdateService
             previousSnapshot = snapshot;
 
             Directory.CreateDirectory(candidate);
+            if (source.Provider != UpdateProvider.LocalPackageHistory)
+                providerJava = await ResolveProviderJavaRuntimeAsync(server, target, cancellationToken)
+                    .ConfigureAwait(false);
             Report(UpdateOperationState.Extracting, "Extracting target package into isolated candidate", 52, candidate);
             if (target.PackageType.Equals("mrpack", StringComparison.OrdinalIgnoreCase))
             {
                 if (source.Provider != UpdateProvider.Modrinth)
                     throw new InvalidDataException("Only an exact Modrinth release may use the .mrpack update path.");
                 var installedPack = await modrinthPacks.MaterializeAndInstallAsync(
-                    download, candidate, server.Executable, logPath, null, cancellationToken).ConfigureAwait(false);
+                    download, candidate, providerJava!.JavaPath, logPath, null, cancellationToken).ConfigureAwait(false);
+                materializedLaunch = (
+                    Path.Combine(candidate, installedPack.LaunchRelativePath),
+                    installedPack.UsesArgumentFile);
                 var minecraft = installedPack.Manifest.Dependencies["minecraft"];
                 target = target with
                 {
@@ -1188,8 +1198,11 @@ public sealed class ServerPackUpdateService
                                     ?? throw new InvalidDataException(
                                         "The generated CurseForge update lost its exact native preflight plan.");
                 var installedPack = await curseForgePacks.MaterializeAndInstallAsync(
-                    download, candidate, server.Executable, logPath, generatedPlan, cancellationToken)
+                    download, candidate, providerJava!.JavaPath, logPath, generatedPlan, cancellationToken)
                     .ConfigureAwait(false);
+                materializedLaunch = (
+                    Path.Combine(candidate, installedPack.LaunchRelativePath),
+                    installedPack.UsesArgumentFile);
                 target = target with
                 {
                     MinecraftVersion = installedPack.Manifest.MinecraftVersion,
@@ -1215,7 +1228,7 @@ public sealed class ServerPackUpdateService
                 };
                 var installerJava = await ResolveInstallerJavaAsync(
                     server, target, cancellationToken).ConfigureAwait(false);
-                _ = await loaderInstaller.InstallVerifiedArtifactAsync(new LoaderInstallPlan
+                var installedLoader = await loaderInstaller.InstallVerifiedArtifactAsync(new LoaderInstallPlan
                 {
                     Loader = loader,
                     MinecraftVersion = target.MinecraftVersion,
@@ -1239,13 +1252,43 @@ public sealed class ServerPackUpdateService
                     RequiredJavaMajor = target.RequiredJavaMajor,
                     RunsInstaller = loader is InstallSourceType.Quilt or InstallSourceType.Forge or InstallSourceType.NeoForge
                 }, installerJava, download, candidate, logPath, cancellationToken).ConfigureAwait(false);
+                materializedLaunch = string.IsNullOrWhiteSpace(installedLoader.ArgumentsFile)
+                    ? (installedLoader.LaunchFile, false)
+                    : (installedLoader.ArgumentsFile, true);
             }
             else if (target.PackageType.Equals("jar", StringComparison.OrdinalIgnoreCase) ||
                      target.FileName.EndsWith(".jar", StringComparison.OrdinalIgnoreCase))
-                File.Copy(download, Path.Combine(candidate, "server.jar"));
+            {
+                var launchJar = Path.Combine(candidate, "server.jar");
+                File.Copy(download, launchJar);
+                materializedLaunch = (launchJar, false);
+            }
             else
                 await ManagedServerInstaller.ExtractZipSafeAsync(download, candidate, cancellationToken).ConfigureAwait(false);
             NormalizeSinglePackageRoot(candidate);
+            if (source.Provider != UpdateProvider.LocalPackageHistory && materializedLaunch is null)
+            {
+                var extracted = await detection.DetectAsync(candidate, cancellationToken).ConfigureAwait(false);
+                var nativeProfile = TrySelectProviderNativeLaunch(candidate, extracted);
+                if (nativeProfile is null)
+                {
+                    var managedLoader = ResolveExactManagedProviderLoader(target);
+                    var installerJava = await ResolveInstallerJavaAsync(
+                        server, target, cancellationToken).ConfigureAwait(false);
+                    var installedLoader = await loaderInstaller.InstallAsync(
+                        managedLoader,
+                        target.MinecraftVersion,
+                        target.LoaderVersion,
+                        installerJava,
+                        candidate,
+                        logPath,
+                        cancellationToken).ConfigureAwait(false);
+                    materializedLaunch = string.IsNullOrWhiteSpace(installedLoader.ArgumentsFile)
+                        ? (installedLoader.LaunchFile, false)
+                        : (installedLoader.ArgumentsFile, true);
+                    target = target with { InstallerVersion = installedLoader.InstallerVersion };
+                }
+            }
             if (source.Provider == UpdateProvider.CurseForge)
                 await ProviderOwnershipManifest.WriteAsync(candidate, "CurseForge", cancellationToken)
                     .ConfigureAwait(false);
@@ -1267,11 +1310,27 @@ public sealed class ServerPackUpdateService
 
             Report(UpdateOperationState.BuildingCandidate, "Detecting and validating the candidate launch profile", 76, "");
             var detected = await detection.DetectAsync(candidate, cancellationToken).ConfigureAwait(false);
-            var launch = detected.Candidates.FirstOrDefault(item => !item.DetachesProcess)
-                         ?? throw new InvalidDataException("The target package does not contain a controllable launch candidate.");
-            var actualJavaVersion = ValidateJavaRequirement(detected, target);
+            var requiresNativeProviderLaunch = source.Provider != UpdateProvider.LocalPackageHistory;
+            var launch = requiresNativeProviderLaunch
+                ? materializedLaunch is { } verifiedMaterializedLaunch
+                    ? SelectVerifiedMaterializedLaunch(
+                        candidate,
+                        verifiedMaterializedLaunch.Path,
+                        verifiedMaterializedLaunch.UsesArgumentFile)
+                    : SelectProviderNativeLaunch(candidate, detected)
+                : detected.Candidates.FirstOrDefault(item => !item.DetachesProcess)
+                  ?? throw new InvalidDataException("The target package does not contain a controllable launch candidate.");
+            if (requiresNativeProviderLaunch)
+            {
+                // Materializers can refine Minecraft and its exact Java requirement from the
+                // verified manifest, so re-select after materialization before persistence.
+                providerJava = await ResolveProviderJavaRuntimeAsync(server, target, cancellationToken)
+                    .ConfigureAwait(false);
+                launch = launch with { Executable = providerJava!.JavaPath };
+            }
+            var actualJavaVersion = providerJava?.Version ?? ValidateJavaRequirement(detected, target);
             var updatedDefinition = BuildDefinition(server, candidate, launch, target);
-            ValidateCandidate(candidate, updatedDefinition);
+            ValidateCandidate(candidate, updatedDefinition, requiresNativeProviderLaunch ? launch : null);
 
             Report(UpdateOperationState.Switching, "Switching the active instance atomically", 86, server.RootPath);
             Directory.Move(server.RootPath, oldActive);
@@ -1447,7 +1506,7 @@ public sealed class ServerPackUpdateService
                 $"{state}: {CurseForgePersistencePolicy.DurableUpdateDetail(source.Provider, state, detail)}", token);
     }
 
-    private async Task<string> ResolveInstallerJavaAsync(
+    internal async Task<string> ResolveInstallerJavaAsync(
         ServerDefinition server,
         PackVersionInfo target,
         CancellationToken cancellationToken)
@@ -1455,27 +1514,78 @@ public sealed class ServerPackUpdateService
         var required = target.InstallerJavaMajor > 0
             ? target.InstallerJavaMajor
             : target.RequiredJavaMajor;
-        if (required <= 0 || required == target.RequiredJavaMajor)
-            return server.Executable;
+        if (required <= 0)
+            required = JavaRuntimePolicy.TryRequiredMajorForMinecraft(target.MinecraftVersion)
+                       ?? throw new InvalidDataException(
+                           "A loader installer needs an exact installer or Minecraft Java version before ChunkPilot can select its managed runtime.");
+        var selected = await ResolveExactManagedJavaRuntimeAsync(
+            server,
+            required,
+            $"Loader installer for {target.Loader} {target.InstallerVersion}",
+            cancellationToken).ConfigureAwait(false);
+        return selected.JavaPath;
+    }
 
-        var installed = await store.GetManagedJavaRuntimesAsync(cancellationToken).ConfigureAwait(false);
-        var reusable = JavaRuntimePolicy.Select(installed, new JavaRuntimeRequirement
+    private async Task<ManagedJavaRuntime> ResolveProviderJavaRuntimeAsync(
+        ServerDefinition server,
+        PackVersionInfo target,
+        CancellationToken cancellationToken)
+    {
+        var required = target.RequiredJavaMajor > 0
+            ? target.RequiredJavaMajor
+            : JavaRuntimePolicy.TryRequiredMajorForMinecraft(target.MinecraftVersion)
+              ?? throw new InvalidDataException(
+                  "A provider update needs an exact Minecraft or Java version before ChunkPilot can select its managed Java runtime.");
+        return await ResolveExactManagedJavaRuntimeAsync(
+            server,
+            required,
+            $"Provider-native launch for {target.MinecraftVersion} {target.Loader}",
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<ManagedJavaRuntime> ResolveExactManagedJavaRuntimeAsync(
+        ServerDefinition server,
+        int required,
+        string evidence,
+        CancellationToken cancellationToken)
+    {
+        var requirement = new JavaRuntimeRequirement
         {
             MinimumMajor = required,
             MaximumMajor = required,
             Require64Bit = true,
-            Evidence = $"Loader installer for {target.Loader} {target.InstallerVersion}"
-        });
-        if (reusable is not null)
-            return reusable.JavaPath;
-        if (managedJava is null)
-            throw new InvalidOperationException(
-                $"This loader installer needs Java {required}, separate from the server runtime. " +
-                "Prepare that private managed Java runtime before applying the update.");
+            Evidence = evidence
+        };
+        var installed = (await store.GetManagedJavaRuntimesAsync(cancellationToken).ConfigureAwait(false))
+            .Where(runtime => runtime.IsManaged && IsAbsoluteExistingJavaExecutable(runtime.JavaPath))
+            .ToArray();
+        var explicitPath = IsAbsoluteExistingJavaExecutable(server.Executable)
+            ? Path.GetFullPath(server.Executable)
+            : "";
+        var selected = explicitPath.Length > 0
+            ? JavaRuntimePolicy.Select(installed, requirement, explicitPath)
+            : null;
+        selected ??= JavaRuntimePolicy.Select(installed, requirement);
 
-        var acquired = await managedJava.InstallAsync(required, cancellationToken: cancellationToken)
-            .ConfigureAwait(false);
-        return acquired.JavaPath;
+        if (selected is null)
+        {
+            if (managedJava is null)
+                throw new InvalidOperationException(
+                    $"{evidence} needs a verified managed Java {required} runtime. " +
+                    "Prepare that private runtime before applying the update.");
+            selected = await managedJava.InstallAsync(required, cancellationToken: cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        if (!selected.IsManaged ||
+            selected.Health is not (RuntimeHealth.Healthy or RuntimeHealth.InUse) ||
+            selected.MajorVersion != required ||
+            !selected.Architecture.Contains("64", StringComparison.OrdinalIgnoreCase) ||
+            !IsAbsoluteExistingJavaExecutable(selected.JavaPath))
+            throw new InvalidDataException(
+                $"The runtime selected for {evidence} is not a healthy, managed, absolute x64 Java {required} executable.");
+
+        return selected with { JavaPath = Path.GetFullPath(selected.JavaPath) };
     }
 
     public async Task RollbackAsync(
@@ -1732,6 +1842,8 @@ public sealed class ServerPackUpdateService
         {
             if (string.IsNullOrWhiteSpace(path))
                 return path;
+            if (!Path.IsPathFullyQualified(path))
+                return path;
             var relative = Path.GetRelativePath(candidateRoot, path);
             return relative.StartsWith("..", StringComparison.Ordinal)
                 ? path : Path.Combine(current.RootPath, relative);
@@ -1946,11 +2058,210 @@ public sealed class ServerPackUpdateService
         string ClientFileId,
         string ExpectedServerPackFileId);
 
-    private static void ValidateCandidate(string candidate, ServerDefinition definition)
+    /// <summary>
+    /// Selects the only provider-controlled launch form ChunkPilot may infer: one known native Java
+    /// server JAR. Provider scripts and argument files remain inert pack data and are never inferred
+    /// as launch candidates here.
+    /// </summary>
+    internal static LaunchCandidate SelectProviderNativeLaunch(
+        string candidateRoot,
+        ServerDetectionResult detected) =>
+        TrySelectProviderNativeLaunch(candidateRoot, detected)
+        ?? throw new InvalidDataException(
+            "The provider server pack has no unambiguous native Java server JAR. " +
+            "Pack-provided BAT, CMD, PowerShell, and Java argument files are preserved as inert files and are never executed automatically.");
+
+    internal static LaunchCandidate? TrySelectProviderNativeLaunch(
+        string candidateRoot,
+        ServerDetectionResult detected)
     {
-        if (!Directory.EnumerateFiles(candidate, "*.jar", SearchOption.AllDirectories).Any() &&
-            !Directory.EnumerateFiles(candidate, "*.bat", SearchOption.TopDirectoryOnly).Any())
+        ArgumentException.ThrowIfNullOrWhiteSpace(candidateRoot);
+        ArgumentNullException.ThrowIfNull(detected);
+        var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(candidateRoot));
+        if (!Directory.Exists(root))
+            throw new DirectoryNotFoundException(root);
+
+        var jarFiles = detected.Candidates
+            .Where(candidate =>
+                IsJavaExecutable(candidate.Executable) &&
+                IsKnownProviderServerLaunchJar(candidate.SourcePath))
+            .Select(candidate => ResolveContainedLaunchFile(root, candidate.SourcePath))
+            .Where(path => !HasDisallowedProviderLaunchDirectory(root, path))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(2)
+            .ToArray();
+        if (jarFiles.Length > 1)
+            throw new InvalidDataException(
+                "The provider server pack contains multiple ambiguous native Java server launchers.");
+        if (jarFiles.Length == 1)
+        {
+            ValidateNativeLaunchFile(root, jarFiles[0], usesArgumentFile: false);
+            return CreateNativeLaunch(root, jarFiles[0], usesArgumentFile: false,
+                "The provider server pack contains one exact native Java server JAR launch profile.");
+        }
+        return null;
+    }
+
+    private static LaunchCandidate SelectVerifiedMaterializedLaunch(
+        string candidateRoot,
+        string exactLaunchPath,
+        bool usesArgumentFile)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(candidateRoot);
+        ArgumentException.ThrowIfNullOrWhiteSpace(exactLaunchPath);
+        var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(candidateRoot));
+        var exact = ResolveContainedLaunchFile(root, exactLaunchPath);
+        ValidateNativeLaunchFile(root, exact, usesArgumentFile);
+        return CreateNativeLaunch(root, exact, usesArgumentFile,
+            usesArgumentFile
+                ? "ChunkPilot's verified official loader installation established this exact Java argument-file profile."
+                : "ChunkPilot's verified materializer established this exact native Java server JAR profile.");
+    }
+
+    private static LaunchCandidate CreateNativeLaunch(
+        string root,
+        string sourcePath,
+        bool usesArgumentFile,
+        string reason)
+    {
+        var relative = Path.GetRelativePath(root, sourcePath);
+        return new LaunchCandidate
+        {
+            DisplayName = relative,
+            SourcePath = sourcePath,
+            // Selection proves only the launch payload. The update transaction replaces this
+            // non-runnable value with an absolute, exact-major managed java.exe before persistence.
+            Executable = "",
+            Arguments = usesArgumentFile
+                ? $"@{CommandLineQuoter.QuoteWindowsArgument(sourcePath)} nogui"
+                : $"-jar {CommandLineQuoter.QuoteWindowsArgument(sourcePath)} nogui",
+            WorkingDirectory = root,
+            Recommendation = RecommendationLevel.Recommended,
+            Reason = reason,
+            Problems = [],
+            DetachesProcess = false
+        };
+    }
+
+    private static string ResolveContainedLaunchFile(string root, string path)
+    {
+        var fullPath = Path.GetFullPath(Path.IsPathFullyQualified(path) ? path : Path.Combine(root, path));
+        var prefix = root + Path.DirectorySeparatorChar;
+        if (!fullPath.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("The provider launch profile escapes the isolated candidate root.");
+        if (!File.Exists(fullPath))
+            throw new InvalidDataException("The provider launch profile does not reference an existing file.");
+        if ((File.GetAttributes(fullPath) & FileAttributes.ReparsePoint) != 0)
+            throw new InvalidDataException("The provider launch profile may not reference a reparse point.");
+        return fullPath;
+    }
+
+    private static void ValidateNativeLaunchFile(string root, string path, bool usesArgumentFile)
+    {
+        if (usesArgumentFile)
+        {
+            if (!Path.GetFileName(path).Equals("win_args.txt", StringComparison.OrdinalIgnoreCase) ||
+                !HasRelativeDirectorySegment(root, path, "libraries"))
+                throw new InvalidDataException(
+                    "A provider argument-file launch must reference one exact libraries/**/win_args.txt file.");
+            return;
+        }
+
+        if (!Path.GetExtension(path).Equals(".jar", StringComparison.OrdinalIgnoreCase) ||
+            HasDisallowedProviderLaunchDirectory(root, path))
+            throw new InvalidDataException(
+                "A provider JAR launch must reference one exact server JAR outside mods, plugins, libraries, and versions.");
+    }
+
+    private static bool HasDisallowedProviderLaunchDirectory(string root, string path) =>
+        DisallowedProviderLaunchDirectories
+            .Any(segment => HasRelativeDirectorySegment(root, path, segment));
+
+    private static bool HasRelativeDirectorySegment(string root, string path, string expected)
+    {
+        var relative = Path.GetRelativePath(root, path);
+        if (relative.StartsWith("..", StringComparison.Ordinal) || Path.IsPathFullyQualified(relative))
+            throw new InvalidDataException("The provider launch profile escapes the isolated candidate root.");
+        var directory = Path.GetDirectoryName(relative) ?? "";
+        return directory.Split(
+                [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
+                StringSplitOptions.RemoveEmptyEntries)
+            .Any(segment => segment.Equals(expected, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool IsJavaExecutable(string executable)
+    {
+        var name = Path.GetFileName(executable);
+        return name.Equals("java", StringComparison.OrdinalIgnoreCase) ||
+               name.Equals("java.exe", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsAbsoluteExistingJavaExecutable(string executable) =>
+        !string.IsNullOrWhiteSpace(executable) &&
+        Path.IsPathFullyQualified(executable) &&
+        Path.GetFileName(executable).Equals("java.exe", StringComparison.OrdinalIgnoreCase) &&
+        File.Exists(executable);
+
+    private static bool IsKnownProviderServerLaunchJar(string path)
+    {
+        var name = Path.GetFileName(path);
+        if (!name.EndsWith(".jar", StringComparison.OrdinalIgnoreCase) ||
+            name.Contains("installer", StringComparison.OrdinalIgnoreCase) ||
+            name.Contains("client", StringComparison.OrdinalIgnoreCase) ||
+            name.Contains("serverstarter", StringComparison.OrdinalIgnoreCase))
+            return false;
+        return name.Equals("server.jar", StringComparison.OrdinalIgnoreCase) ||
+               name.StartsWith("minecraft_server.", StringComparison.OrdinalIgnoreCase) ||
+               name.Equals("fabric-server-launch.jar", StringComparison.OrdinalIgnoreCase) ||
+               name.Equals("quilt-server-launch.jar", StringComparison.OrdinalIgnoreCase) ||
+               name.StartsWith("forge-", StringComparison.OrdinalIgnoreCase) ||
+               name.StartsWith("neoforge-", StringComparison.OrdinalIgnoreCase) ||
+               name.Contains("paper", StringComparison.OrdinalIgnoreCase) ||
+               name.Contains("purpur", StringComparison.OrdinalIgnoreCase) ||
+               name.Contains("spigot", StringComparison.OrdinalIgnoreCase);
+    }
+
+    internal static InstallSourceType ResolveExactManagedProviderLoader(PackVersionInfo target)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+        if (string.IsNullOrWhiteSpace(target.MinecraftVersion) ||
+            target.MinecraftVersion.Equals("Unknown", StringComparison.OrdinalIgnoreCase) ||
+            string.IsNullOrWhiteSpace(target.LoaderVersion))
+            throw new InvalidDataException(
+                "A script-only provider server pack requires exact Minecraft and loader versions before ChunkPilot can materialize a native launch profile.");
+        return target.Loader.Trim().ToLowerInvariant() switch
+        {
+            "fabric" => InstallSourceType.Fabric,
+            "quilt" => InstallSourceType.Quilt,
+            "forge" => InstallSourceType.Forge,
+            "neoforge" => InstallSourceType.NeoForge,
+            _ => throw new InvalidDataException(
+                "The provider server pack has no native launch profile and its exact loader cannot be materialized safely by ChunkPilot.")
+        };
+    }
+
+    private static void ValidateCandidate(
+        string candidate,
+        ServerDefinition definition,
+        LaunchCandidate? providerNativeLaunch)
+    {
+        if (providerNativeLaunch is not null)
+        {
+            if (!IsAbsoluteExistingJavaExecutable(definition.Executable))
+                throw new InvalidDataException(
+                    "Provider updates must persist an existing absolute managed java.exe path.");
+            var launchPath = ResolveContainedLaunchFile(candidate, providerNativeLaunch.SourcePath);
+            var relative = Path.GetRelativePath(candidate, launchPath);
+            var activeLaunchPath = Path.Combine(definition.RootPath, relative);
+            if (!definition.Arguments.Contains(activeLaunchPath, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException(
+                    "The persisted provider launch arguments do not reference the exact validated native profile.");
+        }
+        else if (!Directory.EnumerateFiles(candidate, "*.jar", SearchOption.AllDirectories).Any() &&
+                 !Directory.EnumerateFiles(candidate, "*.bat", SearchOption.TopDirectoryOnly).Any())
+        {
             throw new InvalidDataException("The candidate package contains no server JAR or launch script.");
+        }
         if (ServerLaunchPolicy.IsDetachedLaunch(definition.Executable, definition.Arguments))
             throw new InvalidDataException("The candidate launch profile detaches or uses javaw and cannot be validated.");
     }

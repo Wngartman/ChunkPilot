@@ -659,6 +659,15 @@ internal sealed class CurseForgeRuntimeCertificationReport
     public string ProjectId { get; set; } = "";
     public string ClientFileId { get; set; } = "";
     public string ServerPackFileId { get; set; } = "";
+    public string ResolvedMinecraftVersion { get; set; } = "";
+    public string ResolvedLoader { get; set; } = "";
+    public string ResolvedLoaderVersion { get; set; } = "";
+    public bool ResolvedHasServerPackage { get; set; }
+    public bool ResolvedCanGenerateServerCandidate { get; set; }
+    public bool ResolvedDistributionAllowed { get; set; }
+    public int ResolvedRequiredJavaMajor { get; set; }
+    public long? ResolvedClientSizeBytes { get; set; }
+    public long? ResolvedServerPackSizeBytes { get; set; }
     public Guid? PreflightOperationId { get; set; }
     public Guid? CreationOperationId { get; set; }
     public Guid? ServerId { get; set; }
@@ -1918,19 +1927,35 @@ internal sealed partial class CurseForgeRuntimeCertificationSession(
             version.ClientFileId.Equals(clientFileId, StringComparison.Ordinal))
         ?? throw new InvalidDataException("The provider response did not contain the exact requested client file.");
 
-    private static void BindResolvedIdentity(
+    internal static void BindResolvedIdentity(
         CurseForgeRuntimeCertificationReport report,
         CatalogItem project,
         CatalogVersion release)
     {
         if (!long.TryParse(project.ProjectId, out var projectId) || projectId <= 0 ||
-            !long.TryParse(release.ClientFileId, out var clientFileId) || clientFileId <= 0 ||
-            !long.TryParse(release.ServerPackFileId, out var serverPackFileId) || serverPackFileId <= 0)
+            !long.TryParse(release.ClientFileId, out var clientFileId) || clientFileId <= 0)
             throw new InvalidDataException(
-                "CurseForge did not return exact positive numeric project, client-file, and server-pack IDs.");
+                "CurseForge did not return exact positive numeric project and client-file IDs.");
+        var hasServerFileId = long.TryParse(
+            release.ServerPackFileId,
+            System.Globalization.NumberStyles.None,
+            System.Globalization.CultureInfo.InvariantCulture,
+            out var serverPackFileId) && serverPackFileId > 0;
+        if (release.HasServerPackage != hasServerFileId)
+            throw new InvalidDataException(
+                "CurseForge returned contradictory server-package identity evidence.");
         report.ProjectId = project.ProjectId;
         report.ClientFileId = release.ClientFileId;
-        report.ServerPackFileId = release.ServerPackFileId;
+        report.ServerPackFileId = hasServerFileId ? release.ServerPackFileId : "";
+        report.ResolvedMinecraftVersion = release.MinecraftVersion;
+        report.ResolvedLoader = release.Loader;
+        report.ResolvedLoaderVersion = release.LoaderVersion;
+        report.ResolvedHasServerPackage = release.HasServerPackage;
+        report.ResolvedCanGenerateServerCandidate = release.CanGenerateServerCandidate;
+        report.ResolvedDistributionAllowed = release.DistributionAllowed;
+        report.ResolvedRequiredJavaMajor = release.RequiredJavaMajor;
+        report.ResolvedClientSizeBytes = release.ClientSizeBytes;
+        report.ResolvedServerPackSizeBytes = release.SizeBytes;
     }
 
     internal static void ValidatePreflight(

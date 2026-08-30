@@ -109,7 +109,8 @@ public sealed class ServerCreationRecoveryService
         // If the destination now holds this operation's marker, the flags are older than reality and
         // the evidence disagrees with itself. Stop rather than delete something that was promoted.
         if (Directory.Exists(entry.CanonicalDestination) &&
-            CreationOwnershipMarker.Owns(entry.CanonicalDestination, entry.OperationId, entry.ServerId))
+            CreationOwnershipMarker.Owns(
+                entry.CanonicalDestination, entry.OperationId, entry.ServerId, entry.CanonicalDestination))
             return await ResolveUncertainActivationAsync(entry, cancellationToken).ConfigureAwait(false);
 
         var problems = ServerCreationTransaction.CleanupOwnedTemporaries(entry);
@@ -146,9 +147,11 @@ public sealed class ServerCreationRecoveryService
         var destinationExists = Directory.Exists(entry.CanonicalDestination);
         var stagingExists = Directory.Exists(entry.CanonicalStaging);
         var destinationIsOurs = destinationExists &&
-            CreationOwnershipMarker.Owns(entry.CanonicalDestination, entry.OperationId, entry.ServerId);
+            CreationOwnershipMarker.Owns(
+                entry.CanonicalDestination, entry.OperationId, entry.ServerId, entry.CanonicalDestination);
         var stagingIsOurs = stagingExists &&
-            CreationOwnershipMarker.Owns(entry.CanonicalStaging, entry.OperationId, entry.ServerId);
+            CreationOwnershipMarker.Owns(
+                entry.CanonicalStaging, entry.OperationId, entry.ServerId, entry.CanonicalDestination);
 
         if (destinationExists && !destinationIsOurs)
         {
@@ -197,7 +200,8 @@ public sealed class ServerCreationRecoveryService
         CreationJournalEntry entry,
         CancellationToken cancellationToken)
     {
-        if (!CreationOwnershipMarker.Owns(entry.CanonicalDestination, entry.OperationId, entry.ServerId))
+        if (!CreationOwnershipMarker.Owns(
+                entry.CanonicalDestination, entry.OperationId, entry.ServerId, entry.CanonicalDestination))
         {
             await MarkAttentionAsync(entry,
                 "The destination no longer carries this operation's marker.", cancellationToken).ConfigureAwait(false);

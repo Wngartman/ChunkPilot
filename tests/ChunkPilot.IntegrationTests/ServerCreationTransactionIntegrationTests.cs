@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text;
 using ChunkPilot.Core;
 using ChunkPilot.Infrastructure;
@@ -166,6 +167,202 @@ public sealed class ServerCreationTransactionIntegrationTests : IDisposable
     }
 
     [Fact]
+    public async Task Atomic_directory_creation_allows_exactly_one_racing_winner()
+    {
+        var path = Path.Combine(root, "exclusive-create-race");
+        using var start = new ManualResetEventSlim(false);
+
+        Task<bool> AttemptAsync() => Task.Run(() =>
+        {
+            start.Wait();
+            try
+            {
+                CreationStagingSafety.CreateDirectoryExclusive(path);
+                return true;
+            }
+            catch (IOException)
+            {
+                return false;
+            }
+        });
+
+        var first = AttemptAsync();
+        var second = AttemptAsync();
+        start.Set();
+        var outcomes = await Task.WhenAll(first, second);
+
+        Assert.Equal(1, outcomes.Count(created => created));
+        Assert.True(Directory.Exists(path));
+        Assert.Empty(Directory.EnumerateFileSystemEntries(path));
+    }
+
+    [Fact]
+    public async Task Failed_staging_marker_initialization_removes_its_still_empty_new_leaf()
+    {
+        var instanceRoot = Path.Combine(root, "failed-staging-marker-root");
+        Directory.CreateDirectory(instanceRoot);
+        var operationId = Guid.NewGuid();
+        var serverId = Guid.NewGuid();
+        var staging = Path.Combine(instanceRoot, ServerCreationTransaction.StagingFolderName(operationId));
+        var destination = Path.Combine(instanceRoot, "Server");
+        var marker = new CreationOwnershipMarker(
+            CreationOwnershipMarker.CurrentSchemaVersion,
+            operationId,
+            serverId,
+            CreationPathSafety.Canonical(destination),
+            DateTimeOffset.UtcNow);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            CreationStagingSafety.PrepareOwnedDirectoryAsync(
+                instanceRoot,
+                staging,
+                marker,
+                CancellationToken.None,
+                _ => throw new InvalidOperationException("Injected failure before marker write.")));
+
+        Assert.False(Directory.Exists(staging));
+    }
+
+    [Fact]
+    public async Task Cancellation_during_marker_write_leaves_no_partial_marker_or_staging_leaf()
+    {
+        var instanceRoot = Path.Combine(root, "cancelled-staging-marker-root");
+        Directory.CreateDirectory(instanceRoot);
+        var operationId = Guid.NewGuid();
+        var serverId = Guid.NewGuid();
+        var staging = Path.Combine(instanceRoot, ServerCreationTransaction.StagingFolderName(operationId));
+        var destination = Path.Combine(instanceRoot, "Server");
+        var marker = new CreationOwnershipMarker(
+            CreationOwnershipMarker.CurrentSchemaVersion,
+            operationId,
+            serverId,
+            CreationPathSafety.Canonical(destination),
+            DateTimeOffset.UtcNow);
+        using var cancellation = new CancellationTokenSource();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            CreationStagingSafety.PrepareOwnedDirectoryAsync(
+                instanceRoot,
+                staging,
+                marker,
+                cancellation.Token,
+                _ => cancellation.Cancel()));
+
+        Assert.False(Directory.Exists(staging));
+    }
+
+    [Fact]
+    public async Task Failed_marker_initialization_preserves_content_that_appeared_after_atomic_creation()
+    {
+        var instanceRoot = Path.Combine(root, "raced-staging-marker-root");
+        Directory.CreateDirectory(instanceRoot);
+        var operationId = Guid.NewGuid();
+        var serverId = Guid.NewGuid();
+        var staging = Path.Combine(instanceRoot, ServerCreationTransaction.StagingFolderName(operationId));
+        var destination = Path.Combine(instanceRoot, "Server");
+        var marker = new CreationOwnershipMarker(
+            CreationOwnershipMarker.CurrentSchemaVersion,
+            operationId,
+            serverId,
+            CreationPathSafety.Canonical(destination),
+            DateTimeOffset.UtcNow);
+
+        await Assert.ThrowsAnyAsync<IOException>(() =>
+            CreationStagingSafety.PrepareOwnedDirectoryAsync(
+                instanceRoot,
+                staging,
+                marker,
+                CancellationToken.None,
+                created =>
+                {
+                    File.WriteAllText(
+                        CreationOwnershipMarker.PathIn(created),
+                        "unproven raced marker content");
+                }));
+
+        Assert.Equal(
+            "unproven raced marker content",
+            await File.ReadAllTextAsync(CreationOwnershipMarker.PathIn(staging)));
+    }
+
+    [Fact]
+    public async Task Failed_landing_marker_copy_removes_its_still_empty_new_leaf()
+    {
+        var operationId = Guid.NewGuid();
+        var serverId = Guid.NewGuid();
+        var source = Path.Combine(root, "failed-landing-marker-source");
+        var destination = Path.Combine(root, "Failed-Landing-Server");
+        var landing = destination + ".chunkpilot-incoming";
+        Directory.CreateDirectory(source);
+        await WriteMarkerAsync(source, operationId, serverId, destination);
+
+        Assert.ThrowsAny<IOException>(() =>
+            ServerCreationTransaction.PrepareOwnedLanding(
+                source,
+                landing,
+                operationId,
+                serverId,
+                CreationPathSafety.Canonical(destination),
+                _ => File.Delete(CreationOwnershipMarker.PathIn(source))));
+
+        Assert.False(Directory.Exists(landing));
+        Assert.False(File.Exists(CreationOwnershipMarker.PathIn(source)));
+    }
+
+    [Fact]
+    public async Task A_cross_volume_payload_copy_failure_removes_its_marker_first_owned_landing()
+    {
+        var fixture = await FixtureAsync(
+            "staged-copy-failure-cleanup", activationMode: CreationActivationMode.StagedCopy);
+        FileStream? locked = null;
+        fixture.Observer = new ObserverAt(CreationPhase.Activating, _ =>
+        {
+            locked = new FileStream(
+                Path.Combine(fixture.Staging, "server.jar"),
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.None);
+        });
+
+        CreationTransactionResult result;
+        try
+        {
+            result = await fixture.RunAsync();
+        }
+        finally
+        {
+            locked?.Dispose();
+        }
+
+        Assert.False(result.Succeeded);
+        Assert.IsAssignableFrom<IOException>(result.Failure);
+        Assert.False(Directory.Exists(fixture.Destination + ".chunkpilot-incoming"));
+        Assert.False(Directory.Exists(fixture.Destination));
+        Assert.NotNull(result.Journal);
+        Assert.Empty(ServerCreationTransaction.CleanupOwnedTemporaries(result.Journal!));
+        Assert.False(Directory.Exists(fixture.Staging));
+    }
+
+    [Fact]
+    public async Task A_preexisting_cross_volume_landing_is_preserved_and_never_claimed()
+    {
+        var fixture = await FixtureAsync(
+            "staged-copy-preexisting-landing", activationMode: CreationActivationMode.StagedCopy);
+        var landing = fixture.Destination + ".chunkpilot-incoming";
+        Directory.CreateDirectory(landing);
+        var planted = Path.Combine(landing, "keep.txt");
+        await File.WriteAllTextAsync(planted, "not this operation's directory");
+
+        var result = await fixture.RunAsync();
+
+        Assert.False(result.Succeeded);
+        Assert.IsType<IOException>(result.Failure);
+        Assert.Equal("not this operation's directory", await File.ReadAllTextAsync(planted));
+        Assert.False(File.Exists(CreationOwnershipMarker.PathIn(landing)));
+        Assert.False(Directory.Exists(fixture.Destination));
+    }
+
+    [Fact]
     public async Task An_accepted_empty_destination_is_used_without_merging_anything()
     {
         var fixture = await FixtureAsync("empty-destination");
@@ -177,7 +374,121 @@ public sealed class ServerCreationTransactionIntegrationTests : IDisposable
         Assert.True(File.Exists(Path.Combine(fixture.Destination, "server.jar")));
     }
 
+    [Fact]
+    public async Task The_exact_operation_marker_exists_before_any_payload_is_materialized()
+    {
+        var fixture = await FixtureAsync("marker-before-payload");
+        var markerObserved = false;
+        fixture.Observer = new ObserverAt(CreationPhase.MaterializingCandidate, entry =>
+        {
+            markerObserved = CreationOwnershipMarker.Owns(
+                entry.CanonicalStaging,
+                entry.OperationId,
+                entry.ServerId,
+                entry.CanonicalDestination);
+            Assert.Equal(
+                [CreationOwnershipMarker.PathIn(entry.CanonicalStaging)],
+                Directory.EnumerateFileSystemEntries(entry.CanonicalStaging).ToArray());
+        });
+
+        var result = await fixture.RunAsync();
+
+        Assert.True(result.Succeeded);
+        Assert.True(markerObserved);
+    }
+
     // ================================================================ destination refusal
+
+    [Fact]
+    public async Task A_preplanted_staging_folder_is_preserved_and_never_claimed()
+    {
+        var fixture = await FixtureAsync("preplanted-staging");
+        Directory.CreateDirectory(fixture.Staging);
+        var planted = Path.Combine(fixture.Staging, "keep.txt");
+        await File.WriteAllTextAsync(planted, "not ChunkPilot's file");
+
+        var result = await fixture.RunAsync();
+
+        Assert.False(result.Succeeded);
+        Assert.IsType<IOException>(result.Failure);
+        Assert.Equal("not ChunkPilot's file", await File.ReadAllTextAsync(planted));
+        Assert.False(File.Exists(CreationOwnershipMarker.PathIn(fixture.Staging)));
+        Assert.Contains("preserved", result.Journal!.CleanupState, StringComparison.OrdinalIgnoreCase);
+        Assert.False(Directory.Exists(fixture.Destination));
+        Assert.Empty(await fixture.Store.GetServersAsync());
+        Assert.Empty(await fixture.Store.GetCreationJournalsAsync());
+    }
+
+    [Fact]
+    public async Task A_preplanted_matching_marker_does_not_turn_existing_staging_into_owned_cleanup()
+    {
+        var fixture = await FixtureAsync("preplanted-matching-marker");
+        Directory.CreateDirectory(fixture.Staging);
+        await WriteMarkerAsync(
+            fixture.Staging, fixture.OperationId, fixture.ServerId, fixture.Destination);
+        var planted = Path.Combine(fixture.Staging, "keep.txt");
+        await File.WriteAllTextAsync(planted, "preexisting despite matching fields");
+
+        var result = await fixture.RunAsync();
+
+        Assert.False(result.Succeeded);
+        Assert.IsType<IOException>(result.Failure);
+        Assert.Equal("preexisting despite matching fields", await File.ReadAllTextAsync(planted));
+        Assert.True(File.Exists(CreationOwnershipMarker.PathIn(fixture.Staging)));
+        Assert.Contains("preserved", result.Journal!.CleanupState, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task A_reparse_point_in_the_staging_ancestry_is_refused_before_payload_writes()
+    {
+        var paths = Paths("reparse-staging");
+        await using var store = await OpenStoreAsync(paths);
+        var physicalRoot = Path.Combine(root, "reparse-physical-root");
+        var linkedRoot = Path.Combine(root, "reparse-linked-root");
+        Directory.CreateDirectory(physicalRoot);
+        CreateJunction(linkedRoot, physicalRoot);
+        try
+        {
+            var operationId = Guid.NewGuid();
+            var serverId = Guid.NewGuid();
+            var staging = Path.Combine(linkedRoot, ServerCreationTransaction.StagingFolderName(operationId));
+            var destination = Path.Combine(linkedRoot, "Server");
+            var materialized = false;
+            var transaction = new ServerCreationTransaction(store);
+
+            var result = await transaction.RunAsync(
+                new CreationTransactionRequest
+                {
+                    OperationId = operationId,
+                    ServerId = serverId,
+                    ServerName = "Reparse Fixture",
+                    CreationKind = "LocalZip",
+                    InstanceRoot = linkedRoot,
+                    Destination = destination,
+                    StagingPath = staging,
+                    LogPath = Path.Combine(root, "reparse.log"),
+                    EulaAcceptedAt = DateTimeOffset.UtcNow,
+                    EulaUrl = ManagedServerInstaller.EulaUrl
+                },
+                (_, _) =>
+                {
+                    materialized = true;
+                    throw new InvalidOperationException("Materialization must not be reached.");
+                },
+                (_, _) => { });
+
+            Assert.False(result.Succeeded);
+            Assert.IsType<InvalidDataException>(result.Failure);
+            Assert.False(materialized);
+            Assert.False(Directory.Exists(Path.Combine(
+                physicalRoot, ServerCreationTransaction.StagingFolderName(operationId))));
+            Assert.Empty(await store.GetServersAsync());
+        }
+        finally
+        {
+            DeleteJunction(linkedRoot);
+        }
+    }
 
     [Fact]
     public async Task A_destination_that_fills_up_between_validation_and_promotion_is_refused()
@@ -219,6 +530,24 @@ public sealed class ServerCreationTransactionIntegrationTests : IDisposable
         Assert.IsType<CreationDestinationBlockedException>(result.Failure);
         Assert.False(Directory.Exists(fixture.Destination));
         Assert.Empty(await fixture.Store.GetCreationJournalsAsync());
+    }
+
+    [Fact]
+    public async Task Refusal_before_activation_never_removes_a_marker_shaped_file_from_the_destination()
+    {
+        var fixture = await FixtureAsync("destination-marker-shaped-file");
+        Directory.CreateDirectory(fixture.Destination);
+        await WriteMarkerAsync(
+            fixture.Destination, fixture.OperationId, fixture.ServerId, fixture.Destination);
+        var markerPath = CreationOwnershipMarker.PathIn(fixture.Destination);
+        var original = await File.ReadAllTextAsync(markerPath);
+
+        var result = await fixture.RunAsync();
+
+        Assert.False(result.Succeeded);
+        Assert.IsType<CreationDestinationBlockedException>(result.Failure);
+        Assert.Equal(original, await File.ReadAllTextAsync(markerPath));
+        Assert.False(Directory.Exists(fixture.Staging));
     }
 
     // ================================================================ cancellation
@@ -425,6 +754,9 @@ public sealed class ServerCreationTransactionIntegrationTests : IDisposable
         fixture.Observer = new ObserverAt(CreationPhase.Registered, _ =>
         {
             Directory.CreateDirectory(fixture.Staging);
+            WriteMarkerAsync(
+                    fixture.Staging, fixture.OperationId, fixture.ServerId, fixture.Destination)
+                .GetAwaiter().GetResult();
             handle = new FileStream(Path.Combine(fixture.Staging, "locked.bin"),
                 FileMode.Create, FileAccess.Write, FileShare.None);
         });
@@ -714,6 +1046,9 @@ public sealed class ServerCreationTransactionIntegrationTests : IDisposable
         fixture.Observer = new ObserverAt(CreationPhase.Registering, _ =>
         {
             Directory.CreateDirectory(fixture.Staging);
+            WriteMarkerAsync(
+                    fixture.Staging, fixture.OperationId, fixture.ServerId, fixture.Destination)
+                .GetAwaiter().GetResult();
             throw new InvalidOperationException("Simulated interruption between promotion and persistence.");
         });
 
@@ -909,6 +1244,28 @@ public sealed class ServerCreationTransactionIntegrationTests : IDisposable
         using var stream = entry.Open();
         stream.Write(Encoding.UTF8.GetBytes("fixture server jar"));
         return path;
+    }
+
+    private static void CreateJunction(string link, string target)
+    {
+        using var process = Process.Start(new ProcessStartInfo(
+            "cmd.exe", $"/c mklink /J \"{link}\" \"{target}\"")
+        {
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true
+        }) ?? throw new InvalidOperationException("cmd.exe could not create the test junction.");
+        process.WaitForExit(20_000);
+        if (process.ExitCode != 0 || !Directory.Exists(link) ||
+            !File.GetAttributes(link).HasFlag(FileAttributes.ReparsePoint))
+            throw new InvalidOperationException("The test junction could not be created on this filesystem.");
+    }
+
+    private static void DeleteJunction(string path)
+    {
+        if (Directory.Exists(path) && File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint))
+            Directory.Delete(path, recursive: false);
     }
 
     private sealed class CreationFixture

@@ -130,6 +130,98 @@ public sealed class CurseForgeServerCreationTests
         Assert.Empty(Directory.EnumerateDirectories(fixture.Paths.ManagedServers));
     }
 
+    [Fact]
+    public void Official_launch_detection_never_treats_content_or_library_jars_as_the_server()
+    {
+        var root = TemporaryLaunchRoot();
+        try
+        {
+            WriteFixture(Path.Combine(root, "mods", "additionallanterns-server-helper.jar"));
+            WriteFixture(Path.Combine(root, "plugins", "paper-helper.jar"));
+            WriteFixture(Path.Combine(root, "libraries", "forge-server.jar"));
+
+            Assert.Null(ManagedServerInstaller.FindKnownServerPackLaunch(root));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Official_launch_detection_keeps_provider_Forge_argument_profile_inert()
+    {
+        var root = TemporaryLaunchRoot();
+        try
+        {
+            var arguments = Path.Combine(root, "libraries", "net", "minecraftforge", "forge",
+                "1.20.1-47.3.0", "win_args.txt");
+            WriteFixture(arguments);
+            WriteFixture(Path.Combine(root, "mods", "server-like-mod.jar"));
+
+            Assert.Null(ManagedServerInstaller.FindKnownServerPackLaunch(root));
+            Assert.True(File.Exists(arguments));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Official_launch_detection_selects_root_server_jar_and_rejects_ambiguity()
+    {
+        var root = TemporaryLaunchRoot();
+        try
+        {
+            var server = Path.Combine(root, "server.jar");
+            WriteFixture(server);
+            WriteFixture(Path.Combine(root, "mods", "paper-server-addon.jar"));
+            var launch = Assert.IsType<(string Path, bool UsesArgumentFile)>(
+                ManagedServerInstaller.FindKnownServerPackLaunch(root));
+            Assert.Equal(Path.GetFullPath(server), launch.Path);
+            Assert.False(launch.UsesArgumentFile);
+
+            WriteFixture(Path.Combine(root, "nested", "server.jar"));
+            Assert.Throws<InvalidDataException>(() =>
+                ManagedServerInstaller.FindKnownServerPackLaunch(root));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Official_launch_detection_does_not_trust_a_libraries_named_ancestor()
+    {
+        var parent = TemporaryLaunchRoot();
+        var root = Path.Combine(parent, "libraries", "staging");
+        Directory.CreateDirectory(root);
+        try
+        {
+            WriteFixture(Path.Combine(root, "win_args.txt"));
+            Assert.Null(ManagedServerInstaller.FindKnownServerPackLaunch(root));
+        }
+        finally
+        {
+            Directory.Delete(parent, recursive: true);
+        }
+    }
+
+    private static string TemporaryLaunchRoot()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "ChunkPilot-cf-launch-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        return root;
+    }
+
+    private static void WriteFixture(string path)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, "fixture");
+    }
+
     private sealed class Fixture : IAsyncDisposable
     {
         private readonly string root;

@@ -224,7 +224,8 @@ internal sealed partial class CurseForgeRuntimeCertificationSession
 
     private sealed class GeneratedCandidateUnsupportedException(
         FullCreationEvidence evidence,
-        string message) : InvalidOperationException(message)
+        string message,
+        Exception? innerException = null) : InvalidOperationException(message, innerException)
     {
         public FullCreationEvidence Evidence { get; } = evidence;
     }
@@ -250,6 +251,7 @@ internal sealed partial class CurseForgeRuntimeCertificationSession
             cancellationToken).ConfigureAwait(false);
         var olderRelease = ExactRelease(olderProject, olderSelection.ClientFileId);
         RequireOfficialRelease(olderRelease, "official older");
+        BindResolvedIdentity(report, olderProject, olderRelease);
         var newerProject = await ResolveFullSelectionAsync(
             options, report, fullOptions.OfficialNewer,
             "official newer exact project and file resolution", cancellationToken).ConfigureAwait(false);
@@ -588,6 +590,41 @@ internal sealed partial class CurseForgeRuntimeCertificationSession
         var generatedPlan = ValidateGeneratedPreflight(
             preflightOperationId, project, release, preflight);
 
+        var additionalGeneratedBytes = CalculateGeneratedCreationAdditionalBytes(
+            preflight.ClientSizeBytes,
+            generatedPlan.RequiredFiles.Select(file => file.SizeBytes).ToArray());
+        var budgetBeforeGeneratedCreation = await payloadBudget.GetSnapshotAsync(cancellationToken)
+            .ConfigureAwait(false);
+        try
+        {
+            RequireKnownPayloadProjectionFits(
+                budgetBeforeGeneratedCreation.LimitBytes,
+                budgetBeforeGeneratedCreation.GuardedCumulativeBytes,
+                additionalGeneratedBytes);
+        }
+        catch (InvalidOperationException exception)
+        {
+            watch.Stop();
+            throw new GeneratedCandidateUnsupportedException(
+                new FullCreationEvidence
+                {
+                    Name = label,
+                    SourceKind = ModpackCreationSource.CurseForgeGeneratedCandidate.ToString(),
+                    ProjectId = project.ProjectId,
+                    ClientFileId = release.ClientFileId,
+                    PreflightOperationId = preflight.OperationId,
+                    GeneratedRequiredFileCount = generatedPlan.RequiredFiles.Count,
+                    ExpectedCurseForgeBytes = checked(
+                        preflight.ClientSizeBytes + additionalGeneratedBytes),
+                    LocalSha256 = preflight.ClientSha256,
+                    ElapsedMilliseconds = watch.Elapsed.TotalMilliseconds,
+                    Status = "UNSUPPORTED"
+                },
+                "The exact generated candidate exceeds the remaining hard payload budget; " +
+                "no creation archive or required file was reserved or transferred.",
+                exception);
+        }
+
         var refreshedProject = await ResolveFullSelectionAsync(
             options, report, selection, "generated provider identity recheck", cancellationToken)
             .ConfigureAwait(false);
@@ -604,16 +641,18 @@ internal sealed partial class CurseForgeRuntimeCertificationSession
         var archiveReservation = new PayloadReservation(
             creationOperationId, "full-generated-client-creation", project.ProjectId,
             release.ClientFileId, preflight.ClientSizeBytes, preflight.ClientSha1);
-        await ReserveAsync(report, archiveReservation, cancellationToken).ConfigureAwait(false);
         var fileReservations = new List<(PayloadReservation Reservation, CurseForgeGeneratedFilePlan File)>();
         foreach (var file in generatedPlan.RequiredFiles)
         {
             var reservation = new PayloadReservation(
                 Guid.NewGuid(), "full-generated-required-file", file.ProjectId, file.FileId,
                 file.SizeBytes, file.ProviderSha1);
-            await ReserveAsync(report, reservation, cancellationToken).ConfigureAwait(false);
             fileReservations.Add((reservation, file));
         }
+        await ReserveBatchAsync(
+            report,
+            [archiveReservation, .. fileReservations.Select(item => item.Reservation)],
+            cancellationToken).ConfigureAwait(false);
 
         var plan = BuildGeneratedPlan(
             options with { ServerName = FullServerName(options.ServerName, label) },
@@ -1392,6 +1431,20 @@ internal sealed partial class CurseForgeRuntimeCertificationSession
                 "The known worst-case CurseForge campaign paths do not fit inside the remaining hard payload budget.");
     }
 
+    internal static long CalculateGeneratedCreationAdditionalBytes(
+        long clientArchiveBytes,
+        IReadOnlyList<long> requiredFileBytes)
+    {
+        ArgumentNullException.ThrowIfNull(requiredFileBytes);
+        if (clientArchiveBytes <= 0 || requiredFileBytes.Any(bytes => bytes <= 0))
+            throw new ArgumentOutOfRangeException(
+                nameof(clientArchiveBytes),
+                "The generated creation archive and every required file must have a positive declared size.");
+        return requiredFileBytes.Aggregate(
+            clientArchiveBytes,
+            static (total, bytes) => checked(total + bytes));
+    }
+
     private async Task ReserveAsync(
         CurseForgeRuntimeCertificationReport report,
         PayloadReservation reservation,
@@ -1400,6 +1453,19 @@ internal sealed partial class CurseForgeRuntimeCertificationSession
         var snapshot = await payloadBudget.ReserveAsync(
             reservation.OperationId, reservation.Kind, reservation.ProjectId,
             reservation.FileId, reservation.ExpectedBytes, reservation.ProviderSha1,
+            cancellationToken).ConfigureAwait(false);
+        ApplyBudget(report, snapshot);
+    }
+
+    private async Task ReserveBatchAsync(
+        CurseForgeRuntimeCertificationReport report,
+        IReadOnlyList<PayloadReservation> reservations,
+        CancellationToken cancellationToken)
+    {
+        var snapshot = await payloadBudget.ReserveBatchAsync(
+            reservations.Select(reservation => new CurseForgePayloadReservationRequest(
+                reservation.OperationId, reservation.Kind, reservation.ProjectId,
+                reservation.FileId, reservation.ExpectedBytes, reservation.ProviderSha1)).ToArray(),
             cancellationToken).ConfigureAwait(false);
         ApplyBudget(report, snapshot);
     }

@@ -81,7 +81,16 @@ public sealed partial class ServerImportInspectionService
         CancellationToken cancellationToken = default)
     {
         var destination = Path.GetFullPath(destinationPath);
-        Directory.CreateDirectory(destination);
+        if (CreationStagingSafety.EntryExists(destination) && !Directory.Exists(destination))
+            throw new IOException("The archive extraction destination is a file.");
+        if (!Directory.Exists(destination))
+        {
+            var parent = Path.GetDirectoryName(destination)
+                         ?? throw new InvalidDataException("The archive extraction destination has no parent directory.");
+            CreationStagingSafety.EnsureNoReparseTraversal(parent);
+            Directory.CreateDirectory(destination);
+        }
+        CreationStagingSafety.RequireEmptyOrValidOwnershipMarker(destination);
         await using var stream = new FileStream(archivePath, FileMode.Open, FileAccess.Read, FileShare.Read,
             128 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
         using var archive = new ZipArchive(stream, ZipArchiveMode.Read, leaveOpen: false);
@@ -94,16 +103,18 @@ public sealed partial class ServerImportInspectionService
             EnsureChildPath(destination, target);
             if (validated.IsDirectory)
             {
-                Directory.CreateDirectory(target);
+                CreationStagingSafety.CreateDirectoryPath(destination, target);
                 continue;
             }
-            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+            CreationStagingSafety.CreateDirectoryPath(destination, Path.GetDirectoryName(target)!);
             await using var input = validated.Entry.Open();
             await using var output = new FileStream(target, FileMode.CreateNew, FileAccess.Write, FileShare.None,
                 128 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
             await input.CopyToAsync(output, cancellationToken).ConfigureAwait(false);
             if (output.Length != validated.Entry.Length)
                 throw new InvalidDataException($"Archive entry changed while extracting: {validated.NormalizedPath}.");
+            if (new FileInfo(target).Attributes.HasFlag(FileAttributes.ReparsePoint))
+                throw new InvalidDataException($"Archive extraction encountered a reparse point: {validated.NormalizedPath}.");
         }
     }
 
