@@ -32,7 +32,9 @@ $findings = if ((Test-Path -LiteralPath $reportPath) -and (Get-Item -LiteralPath
 } else { @() }
 $knownFalsePositiveFingerprints = @(
     # An immutable historical test fixture: a generated 64-hex certification token, never a provider key.
-    'e6f0acb36ffb3e2ee6874d5debc87f0078187913:tests/ChunkPilot.UnitTests/CertificationUpdateFaultInjectorTests.cs:generic-api-key:8'
+    'e6f0acb36ffb3e2ee6874d5debc87f0078187913:tests/ChunkPilot.UnitTests/CertificationUpdateFaultInjectorTests.cs:generic-api-key:8',
+    # An immutable CURRENT-GATE line containing the prior live-API Git commit, not credential material.
+    'bb43bea6b0af3d96b1f5f82acc0dbdacc72e73e7:docs/CURRENT-GATE.md:generic-api-key:11'
 )
 $knownFalsePositives = @($findings | Where-Object Fingerprint -In $knownFalsePositiveFingerprints)
 $unexpectedFindings = @($findings | Where-Object Fingerprint -NotIn $knownFalsePositiveFingerprints)
