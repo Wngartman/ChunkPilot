@@ -11,12 +11,12 @@ become the durable record and the entry can leave this active register.
 | Field | Value |
 |---|---|
 | Date | 2026-08-29 |
-| Git state | `codex/curseforge-runtime-browser-parity`; implementation commit pending |
+| Git state | `codex/curseforge-runtime-browser-parity`; fixed in `da829fe` |
 | Provider identity | Live approved CurseForge API; project `1521865`, exact client file `7968569`; metadata only and no payload download |
 | Severity | Medium — unavailable or provider-hidden exact projects produced a misleading transport error instead of the existing truthful not-found path |
 | Area | App/Agent named-pipe catalog resolution and headless runtime certification |
-| Status | **Fixed locally; headless live reproduction and deterministic regression** |
-| Validation | `Exact_catalog_null_payload_remains_a_nullable_not_found_result` passes for both packaged-certification and App pipe clients; broader final rerun pending |
+| Status | **Fixed; packaged live not-found rerun and deterministic regression** |
+| Validation | Exact-HEAD packaged Agent now reports truthful provider not-found; 65/65 focused certification and 1,653/1,653 unit tests pass |
 
 ### Reproduction and root cause
 
@@ -35,10 +35,11 @@ still requires a payload, so a missing Dashboard, lifecycle, mutation, or operat
 transport failure. The WebUI and certification callers then convert the nullable catalog result into their existing
 truthful provider-not-found messages.
 
-**VERIFIED:** 65 focused runtime-certification tests pass. The wire-level regression proves that both client
+**VERIFIED:** 65 focused runtime-certification tests and all 1,653 unit tests pass. The wire-level regression proves that both client
 implementations accept the two intentional nullable lookup results, reject a wrong response type, and continue to
-reject a missing non-catalog payload. The live reproduction downloaded no provider payload, both exact Agent Jobs
-exited with code `0`, and the fresh run moved to Recycle Bin.
+reject a missing non-catalog payload. The exact-HEAD packaged rerun returned `The exact CurseForge project/file
+could not be resolved` instead of a missing-payload transport error. It downloaded no provider payload, both exact
+Agent Jobs exited with code `0`, zero Job processes remained, and the fresh run moved to Recycle Bin.
 
 **PENDING:** the live project remains unresolved by the approved API and therefore is not a certified pack
 candidate. This fix corrects the error classification; it does not invent provider availability or retry a hidden

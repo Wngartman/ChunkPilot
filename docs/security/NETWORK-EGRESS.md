@@ -227,7 +227,8 @@ observed-incomplete bytes does not convert unknown reservations into completed t
 One live unavailable-project lookup also proved that JSON `null` can be a valid `ResolveCatalogProject` result.
 Both named-pipe clients now recognize JSON null only for the exact nullable catalog and plug-in release contracts;
 all unrelated missing payloads still fail as malformed responses. This corrects error classification without
-inventing provider availability.
+inventing provider availability. The exact-HEAD packaged metadata rerun returned truthful project/file not-found,
+reserved no payload, exited both Agent Jobs cleanly, and recycled its fresh run.
 
 Because strict official-pack validation stopped the campaign, generated-candidate, mod/dependency, update,
 rollback, and controlled-recovery workflows remain unverified. Actual packaged WebUI and visual/keyboard checks

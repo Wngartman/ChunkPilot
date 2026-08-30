@@ -89,20 +89,23 @@ A live metadata lookup that truthfully returned JSON `null` exposed a transport-
 `JsonElement` cannot distinguish that value from an omitted payload, so both clients reported a broken Agent frame
 instead of provider not-found. Commit `da829fe` permits null only for the exact `ResolveCatalogProject`/`CatalogItem`
 and `PluginRelease`/`PluginRelease` contracts. Wrong types and all other missing payloads still fail closed. The
-wire-level regression and all 65 focused certification tests pass.
+wire-level regression, all 65 focused certification tests, and all 1,653 unit tests pass. An exact-HEAD packaged
+metadata rerun now reports truthful project/file not-found, authenticates after the DPAPI relaunch, exits both
+Agents with code `0`, leaves zero Job processes and no payload reservation, and recycles the exact fresh run.
 
 ## Checks at the runtime checkpoint
 
 - Release solution build: passed, zero warnings and zero errors.
-- .NET unit tests: 1,652 passed at `0be6c3f`; the focused certification suite now has 65 passing tests including
-  the new nullable-response regression.
+- .NET unit tests: 1,653 passed; the focused certification suite has 65 passing tests including the new
+  nullable-response regression.
 - Integration tests excluding the foreground packaged-normal-close fixture: 403 passed.
 - WebUI: 30 files and 189 tests passed; typecheck, lint, and Vite production build passed.
 - npm audit: zero vulnerabilities. NuGet audit: no vulnerable packages.
 - Public documentation: 51 tests passed. Publication audit: 65 reachable commits, 1,361 blobs, no unexpected
   Gitleaks findings and no prohibited paths; one documented synthetic fixture false positive remains.
-- Self-contained development package existed for `0be6c3f`; a new exact-HEAD headless package and final regression
-  rerun are required after this checkpoint update.
+- The final self-contained development package is rebuilt after this document commit. Its schema-3 manifest must
+  bind the current `git rev-parse HEAD`, a clean 430-file input inventory, matching HEAD/index/worktree hashes, and
+  every packaged file's size and SHA-256 before the final packaged metadata probe is accepted.
 
 ## Security and provider-policy boundary
 
