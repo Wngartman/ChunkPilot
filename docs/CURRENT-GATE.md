@@ -1,119 +1,136 @@
 # Current ChunkPilot Gate
 
-> Git and directly inspected runtime evidence override this checkpoint. Browser metadata and fixture tests cannot
-> substitute for a downloaded payload, a real server lifecycle, mod mutation, update, rollback, or recovery.
+> Git, package manifests, and directly inspected runtime evidence override this checkpoint. A server reaching its
+> readiness message is not a successful certification when the isolation policy subsequently rejects its network
+> behavior.
 
 ## Repository state
 
 - Worktree: isolated `temp\curseforge-runtime-browser-parity` checkout
 - Branch: `codex/curseforge-runtime-browser-parity`
-- Starting HEAD and prior live-API checkpoint: `a5ec5df9846122442589015c8a340023b1657e8e`
-- Provider-platform base: `35e8eb7ca059c3ae98cc917fd3260354c3a77b33`
-- Public-base ancestry: `origin/main` at `7cea6e2f2365d5e582d82ed8c9aa7d5bbae5a763`
+- Base and inherited live-API checkpoint: `a5ec5df9846122442589015c8a340023b1657e8e`
+- Runtime-safety/package checkpoint exercised by the live controller: `0be6c3f4cfaa212fc5f5e201a2f10467b1a6cc9f`
+- Nullable Agent lookup fix: `da829fe` (`git rev-parse HEAD` remains authoritative after later documentation commits)
 - Version: `1.3.0-alpha.5`; database schema: `6`
-- Browser/runtime-safety checkpoint: `8b408600d6b0d505045535593a8e7ceb6b20f87b`
-- The checkpoint was committed from a clean worktree after the full local browser, unit, integration, build,
-  documentation and fixture-render gates. It is not yet the final runtime-certified candidate.
-- The primary checkout and preservation stash remain untouched. Nothing in this phase may be pushed, tagged,
-  published, signed, installed, or released.
+- The primary checkout, its `.secrets` directory, unrelated Java processes, and preservation stashes remain
+  untouched. Nothing from this phase has been pushed, tagged, published, signed, installed, or released.
 
 ## Current gate
 
-The packaged modpack browser has reached its local parity checkpoint. The active gate is now the mandatory live
-CurseForge payload and runtime campaign, followed by final regression, package, security, cleanup, commit, and
-user-acceptance checks.
+The browser-parity implementation and deterministic safety gates are complete, but the full live CurseForge
+runtime milestone is **not ready for user acceptance**. Two different official Fabric server packs downloaded,
+materialized, and reached Minecraft `Done`, then correctly failed closed because their task-owned Java processes
+opened outbound HTTPS connections while staged validation was active. The written policy permits only the exact
+loopback Minecraft TCP port during that phase. No pack was registered or promoted.
+
+The current bounded unit is to determine whether that outbound traffic can be eliminated or explicitly modeled
+without weakening isolation, then rerun official-pack, generated-candidate, mod/dependency, update, rollback, and
+controlled-recovery workflows. Actual packaged UI and visual/keyboard acceptance require a later foreground
+acceptance session.
 
 ## Browser checkpoint
 
-- **VERIFIED — baseline root cause:** the old UI requested only 20 items and CurseForge serially enriched every
-  card with exact file/server relationships before returning discovery. Static path analysis established a
-  worst-case upper bound of about 1,201 provider reads for one 20-card page. Shared renderer state could show old
-  provider rows during a switch; Modrinth omitted its requested offset; filtering could underfill a CurseForge page
-  and make locally inferred pagination repeat or hide later provider rows.
-- **VERIFIED — local correction:** both providers use shallow 50-project pages and propagate the provider's true
-  cursor and total. Exact release/server-path work begins only when a card is selected. The renderer has separate
-  bounded provider sessions, cancellable/stale-fenced requests, deduplicated append, a 200-item cap, virtualized
-  cards, near-end auto-load and an accessible **Load more** action.
-- **VERIFIED — related corrections:** new searches reset a deep result scroll before the append threshold can fire,
-  and parent-owned CurseForge preflight output synchronizes into the selected exact-detail model.
-- **VERIFIED — packaged live result:** Modrinth showed 50 of 12,631 packs. CurseForge showed 49, then 97, then 144
-  accepted unique packs against the official bounded total of 10,000. The visible shortfall reflects live
-  cross-page duplicates or policy-invalid rows; the raw provider cursor still advanced by its real page position.
-- **VERIFIED — session/detail result:** returning to an already loaded provider restored its own rows in roughly
-  130-169 ms without relabelling another provider's content. Exact SkyFactory 5 detail resolved live and identified
-  an official server pack.
-- **VERIFIED — regression boundary:** shallow/no-N+1 discovery, three raw 50-result pages, Modrinth offset,
-  CurseForge raw-cursor advancement, provider isolation/restore, stale cancellation, query-scroll reset, lazy
-  detail, underfilled pages, optional-cache fallback, preflight detail synchronization, bounded rendering and a
-  four-slot cancellable/coalesced thumbnail pipeline have automated coverage.
-- **VERIFIED — runtime safety corrections:** long preflight/update/rollback timeouts are method-scoped; migration-
-  review downloads can be reused only once after exact Agent-side identity and hash revalidation; pending updates
-  can be deliberately marked healthy in the WebUI; rollback requires exact confirmation; and stale Mods/Plugins
-  metadata or install requests cannot reselect or target another server.
-- **VERIFIED — checkpoint finalization:** WebUI `180/180`, .NET unit `1,450/1,450`, integration `358/358`, Release
-  solution build with `0` warnings and `0` errors, npm audit with `0` vulnerabilities, public-document validation,
-  `git diff --check`, and an actual native fixture render all passed before commit.
-- **PENDING:** self-contained package rebuild and every mandatory live payload/runtime result below.
+- **VERIFIED root cause:** the old UI requested only 20 items and synchronously enriched every CurseForge card with
+  exact file/server relationships before returning discovery. Static path analysis established a worst-case upper
+  bound of about 1,201 provider reads for one 20-card page. Shared renderer state could briefly show another
+  provider's rows; Modrinth omitted its requested offset; early filtering could underfill, repeat, or hide later
+  CurseForge results.
+- **VERIFIED correction:** both providers now use shallow 50-project pages with true provider cursors/totals. Exact
+  release and server-path work is lazy. Provider sessions are separate, stale-fenced, cancellable, deduplicated,
+  capped at 200 items, virtualized, and support near-end append plus an accessible **Load more** fallback.
+- **VERIFIED packaged browser evidence from the earlier foreground checkpoint:** Modrinth rendered 50 of 12,631.
+  CurseForge rendered 49, then 97, then 144 accepted unique results while the raw cursor advanced across three
+  50-result pages. Returning to a loaded provider restored its rows in about 130-169 ms. Exact SkyFactory 5 detail
+  identified an official server pack.
+- **VERIFIED regression boundary:** no-N+1 discovery, three-page append, raw cursors, provider isolation, stale
+  cancellation, scroll reset, optional-enrichment failure, detail continuity, bounded results, virtualization,
+  and four-slot thumbnail work have deterministic coverage.
+- **NOT REPEATED in the headless continuation:** actual packaged WebUI rendering, visual comparison, keyboard
+  navigation, Windows scaling, High Contrast, Reduced Motion, and normal-close UI behavior.
 
-## Initial live-runtime failure
+## Headless live evidence
 
-The first SkyFactory 5 preflight began downloading its exact client archive but the renderer's old global
-15-second request timeout cancelled the native operation. The partial payload was deleted. This is a truthful
-failed attempt, not a certified preflight, and it established that payload-scale operations cannot use the short
-metadata timeout. The extended-operation/cancellation path must pass its own packaged and recovery checks before
-the campaign resumes.
+All continuation work used the exact packaged Agent/controller, named pipes, task-owned filesystem roots, Job
+objects, loopback probes, and saved evidence. It did not open ChunkPilot, a browser, or any foreground window.
 
-## Runtime evidence still missing
+### Metadata and payloads
 
-- No CurseForge archive or mod payload is yet certified as completely downloaded and verified in this phase.
-- No official server pack has been created, launched, queried and stopped through the packaged candidate.
-- No generated candidate has completed or reached a final, evidence-backed unsupported disposition.
-- Waystones and Balm have not completed real dependency-aware install and remove against the isolated server.
-- No adjacent provider-backed pack update, verified rollback, or controlled post-recovery-point failure has
-  completed.
-- Browser acceptance and metadata resolution do not satisfy any of these runtime requirements.
+- More FPS project `531644`: client/server pairs `8021436`/`8021438` and `8608924`/`8608928` resolved as
+  Minecraft 1.21.1 Fabric with Java 21. Client sizes were `7,225,930` and `7,238,878` bytes; server sizes were
+  `41,069,614` and `62,131,991` bytes.
+- Optimized Performance project `1172292`: client/server pairs `6110282`/`6110285` and `6120937`/`6120942`
+  resolved as Minecraft 1.21.1 Fabric with Java 21. Client sizes were `679,356` and `680,080` bytes; server sizes
+  were `13,983,967` and `14,183,771` bytes.
+- The official-pack campaigns downloaded real client and server payloads and reached server readiness. Because
+  validation then failed, seven payload reservations remain conservatively classified as unknown rather
+  than being claimed as completed.
+- Cumulative bounded ledger: `990,582,328` bytes guarded, `218,797,028` completed, seven unknown reservations
+  totaling `771,785,300`, zero observed-incomplete bytes, and `1,156,901,320` bytes remaining under the 2 GiB cap.
 
-## Current bounded unit
+### Runtime and cleanup
 
-1. Rebuild the self-contained development package from the exact committed checkpoint, run its Agent/default-
-   WebUI/normal-close/security smokes, and record its embedded Git identity.
-2. Reauthenticate through the approved native-only credential path and repeat
-   exact preflight under the `2 GiB` aggregate CurseForge payload budget.
-3. Complete official-pack create/start/status/stop, then generated-candidate disposition, real mod/dependency
-   install/remove, adjacent-release update/rollback, and controlled-failure recovery in task-owned roots.
-4. Inspect each actual packaged state, capture only sanitized evidence, run the full deterministic/build/package/
-   close/security/publication/documentation gates, and move disposable large payloads to Recycle Bin.
-5. Prove no task-owned process, listener, staging directory, secret-bearing artifact, or untracked residue remains;
-   commit coherent checkpoints and stop for user acceptance without publishing.
+- More FPS and three Optimized Performance full/classification runs reached `Done`, then ended
+  `FailedNothingChanged` after detecting an unexpected non-loopback endpoint.
+- The final diagnostic classified the unexpected endpoints as outbound HTTPS: private local addresses connected
+  to public IPv4 addresses on remote port 443. It was not a wildcard Minecraft listener.
+- The policy was not weakened. Nothing was registered, promoted, installed into a real server, or exposed through
+  firewall/router changes.
+- Every exact Agent exited `0`; root identity validation passed; each Job contained zero processes after cleanup;
+  exact run roots are absent. Reports do not claim recoverable Recycle Bin placement when Windows removed a root
+  without returning a recoverable item.
+- Final selected-port absence is deliberately uncertified in aborted campaigns because that postcondition was not
+  reached. No task-owned ChunkPilot/Agent/Java process remained in the ownership checks.
+- One initially selected port was already occupied by an unrelated process. It was left untouched and a clean
+  port was selected.
 
-## Download and safety bounds
+## Defect found during headless verification
 
-- Maximum newly downloaded CurseForge payload across this campaign: `2 GiB`; every attempted and completed byte
-  must be counted before another candidate is selected.
-- Downloads, extracted servers, Java runtimes, caches, backups, and recovery points remain beneath a validated
-  task-owned isolated root. Real servers, worlds, backups, production AppData and installed Alpha 5 are excluded.
-- EULA remains explicit. Query, RCON and public hosting remain disabled. Runtime listeners are loopback-only on
-  dynamically selected ports. No firewall, router, registry, service, route or adapter mutation is authorized.
-- Windows security dialogs are never automated. Establish exact process ownership, report the dialog verbatim,
-  and pause for the user if one blocks the campaign. Unrelated Prism Launcher state remains untouched.
+A live metadata lookup that truthfully returned JSON `null` exposed a transport-classification defect. Nullable
+`JsonElement` cannot distinguish that value from an omitted payload, so both clients reported a broken Agent frame
+instead of provider not-found. Commit `da829fe` permits null only for the exact `ResolveCatalogProject`/`CatalogItem`
+and `PluginRelease`/`PluginRelease` contracts. Wrong types and all other missing payloads still fail closed. The
+wire-level regression and all 65 focused certification tests pass.
 
-## Provider-policy boundary
+## Checks at the runtime checkpoint
 
-`PUBLIC CREDENTIAL DELIVERY STILL GATED`. The approved key may be imported only by the native prestarted Agent;
-its value, derivative and source contents are never printed, copied, persisted in reports, passed in arguments or
-exposed to React. Local authenticated use does not authorize embedding or redistributing a non-transferable key.
-Written CurseForge clarification is still required for public activation and the minimum installed-state
-persistence interpretation. No broker, proxy, user-facing key field, or persistent API-response cache is added.
-The absent root license and Authenticode signing remain separate gates.
+- Release solution build: passed, zero warnings and zero errors.
+- .NET unit tests: 1,652 passed at `0be6c3f`; the focused certification suite now has 65 passing tests including
+  the new nullable-response regression.
+- Integration tests excluding the foreground packaged-normal-close fixture: 403 passed.
+- WebUI: 30 files and 189 tests passed; typecheck, lint, and Vite production build passed.
+- npm audit: zero vulnerabilities. NuGet audit: no vulnerable packages.
+- Public documentation: 51 tests passed. Publication audit: 65 reachable commits, 1,361 blobs, no unexpected
+  Gitleaks findings and no prohibited paths; one documented synthetic fixture false positive remains.
+- Self-contained development package existed for `0be6c3f`; a new exact-HEAD headless package and final regression
+  rerun are required after this checkpoint update.
 
-## Manual evidence still required
+## Security and provider-policy boundary
 
-- Final user acceptance of browser density, organization, switching and the complete live workflow.
-- Fresh-PC, Windows-version, antivirus, signing and installed-upgrade acceptance remain outside this local
-  development checkpoint.
-- Any owned Windows prompt must be handled by the user after exact ownership and requested action are reported.
+- The approved key authenticated through the native path and DPAPI-backed isolated storage. Its value was never
+  printed, placed in arguments or React state, embedded in a package, or written to evidence.
+- Native host allowlists, hash/archive checks, no arbitrary script execution, exact process ownership, Job cleanup,
+  and the 2 GiB ledger remained enforced.
+- `PUBLIC CREDENTIAL DELIVERY STILL GATED`: local-use authorization does not permit embedding or redistributing a
+  shared credential. Written CurseForge clarification is still required for public credential delivery and the
+  minimum installed-state persistence interpretation.
+- The absent root license and Authenticode signing remain separate publication gates.
 
-## Next gate
+## Evidence still required
 
-After every live workflow and final verification gate passes: `CurseForge/modpack user acceptance, then daily
-Minecraft management completeness and the equal-High friction register`. Do not advance to another game first.
+- A successful official server-pack create/start/status/stop with all network postconditions.
+- A generated candidate success, or a complete evidence-backed unsupported result followed by another bounded
+  candidate when practical.
+- Real CurseForge mod plus required dependency install, runtime check, authoritative removal, and wrong-server
+  fencing.
+- Real adjacent pack update, recovery point, transactional rollback, sentinel preservation, and controlled failure.
+- Actual packaged UI inspection at the required sizes/scaling modes plus High Contrast, Reduced Motion,
+  keyboard-only navigation, and normal-close ownership smoke.
+- Fresh-PC, Windows-version, antivirus, installed-upgrade, signing, and final user acceptance.
+
+## Exact next gate
+
+Keep the current strict network rule until the source and necessity of the staged server's outbound HTTPS are
+understood. Then rebuild an exact committed package and resume the bounded live campaign in an isolated root. Do
+not proceed to another game. When all live workflows and manual UI checks pass, the next product gate is:
+
+`CurseForge/modpack user acceptance, then daily Minecraft management completeness and the equal-High friction register`.

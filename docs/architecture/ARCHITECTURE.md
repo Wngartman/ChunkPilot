@@ -231,8 +231,9 @@ Each certification invocation creates one fresh marked run containing exactly `d
 refuses unexpected entries and reparse points, inventories the bounded full run, and moves only the exact run root
 to the Windows Recycle Bin with no permanent-delete fallback.
 
-While a task server is running, the certifier takes two complete owner-PID inventories of TCP listeners and UDP
-endpoints in IPv4 and IPv6 across three stable Job snapshots taken before, between, and after them. Job accounting
+While a task server is running, the certifier takes two complete owner-PID inventories of TCP states/endpoints and
+UDP endpoints in IPv4 and IPv6 across three stable Job snapshots taken before, between, and after them. The Job
+accounting
 and the exact PID/creation set must remain unchanged at all three boundaries, and the exact owned endpoint multiset
 must match across both inventories. Every accepted owner is then revalidated live against its creation identity
 and the task-server process subtree. The task root, endpoint owner, and every intermediate ancestor must belong to

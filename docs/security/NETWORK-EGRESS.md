@@ -198,3 +198,37 @@ they cannot authenticate with the approved source by inheritance.
 Public key sharing and the minimum-installed-state permission described above remain unavailable without written
 CurseForge authorization. No key is committed, packaged, placed in React state, or accepted through an ordinary
 user field.
+
+## Headless CurseForge runtime continuation — 2026-08-30
+
+This continuation intentionally used no foreground UI, browser control, mouse, keyboard, or dialog automation.
+The exact development-package Agent and controller authenticated through the native credential path,
+recovered only isolated DPAPI state, resolved live metadata, downloaded real provider payloads beneath fresh
+task-owned roots, materialized official Fabric server packs with exact managed Java, and observed Minecraft
+readiness through the packaged named-pipe workflow.
+
+More FPS project `531644` and Optimized Performance project `1172292` each supplied exact Minecraft 1.21.1 Fabric
+client/server relationships with distribution allowed and Java 21. Full runs reached Minecraft `Done` but then
+failed closed as `FailedNothingChanged`: stable Job-owned endpoint inventories found outbound HTTPS connections
+from the staged Java process to public IPv4 addresses on remote port 443. They were not wildcard Minecraft
+listeners. The current certification contract permits only the exact selected loopback Minecraft TCP port while
+the server is running; outbound TCP, wildcard binding, UDP, secondary ports, unstable identity, and unreadable
+evidence remain prohibited. The contract was not relaxed to force a positive result.
+
+No failed run was registered or promoted. Every exact Agent exited with code `0`, exact root/process identity
+checks passed, and the final Jobs contained zero processes. Exact run roots are absent. Cleanup reports remain
+truthful when Windows removes a root without returning a recoverable Recycle Bin item, and aborted campaigns do
+not claim final selected-port absence because that postcondition was not reached.
+
+The bounded ledger records `990,582,328` bytes guarded, `218,797,028` completed, and seven conservative unknown
+reservations totaling `771,785,300` bytes, leaving `1,156,901,320` bytes under the 2 GiB cap. Zero
+observed-incomplete bytes does not convert unknown reservations into completed transfers.
+
+One live unavailable-project lookup also proved that JSON `null` can be a valid `ResolveCatalogProject` result.
+Both named-pipe clients now recognize JSON null only for the exact nullable catalog and plug-in release contracts;
+all unrelated missing payloads still fail as malformed responses. This corrects error classification without
+inventing provider availability.
+
+Because strict official-pack validation stopped the campaign, generated-candidate, mod/dependency, update,
+rollback, and controlled-recovery workflows remain unverified. Actual packaged WebUI and visual/keyboard checks
+were also not exercised during this headless continuation.
