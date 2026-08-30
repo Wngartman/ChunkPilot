@@ -101,7 +101,7 @@ Agents with code `0`, leaves zero Job processes and no payload reservation, and 
 - Integration tests excluding the foreground packaged-normal-close fixture: 403 passed.
 - WebUI: 30 files and 189 tests passed; typecheck, lint, and Vite production build passed.
 - npm audit: zero vulnerabilities. NuGet audit: no vulnerable packages.
-- Public documentation: 51 tests passed. Publication audit: 69 reachable commits, 1,372 blobs, no unexpected
+- Public documentation: 51 tests passed. Publication audit over the current reachable history has no unexpected
   Gitleaks findings and no prohibited paths. The two documented immutable false positives are a synthetic test
   token and a prior Git commit written next to the live-API checkpoint label; neither is credential material.
 - The final self-contained development package is rebuilt after this document commit. Its schema-3 manifest must
