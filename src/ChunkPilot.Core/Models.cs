@@ -582,6 +582,8 @@ public sealed record InstallationResult
 
 public sealed record InstallOperationSnapshot
 {
+    /// <summary>Native transfer receipt independent of whether later server startup succeeded; contains no URL or credential.</summary>
+    public CreationVerifiedInput? VerifiedInput { get; init; }
     public long RetainedInputBytes { get; init; }
     public int RetryGeneration { get; init; }
     public bool CanRetry { get; init; }

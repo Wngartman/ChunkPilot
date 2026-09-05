@@ -1282,6 +1282,7 @@ public sealed class InstallationCoordinator
         }) with
         {
             RetainedInputBytes = entry.VerifiedInput?.SizeBytes ?? 0, RetryGeneration = entry.RetryGeneration,
+            VerifiedInput = entry.VerifiedInput,
             CanRetry = safe && entry.RetryGeneration < 3 && entry.VerifiedInput?.ExpiresUtc > DateTimeOffset.UtcNow,
             CanDiscard = safe
         };
@@ -1356,7 +1357,7 @@ public sealed class InstallationCoordinator
             new VerifiedCreationArchiveStore(paths).Discard(entry);
             await store.DeleteCreationJournalAsync(entry.OperationId, cancellationToken).ConfigureAwait(false);
             if (operations.TryGetValue(entry.OperationId, out var state))
-                lock (state.Gate) state.Snapshot = state.Snapshot with { CanRetry = false, CanDiscard = false, RetainedInputBytes = 0,
+                lock (state.Gate) state.Snapshot = state.Snapshot with { CanRetry = false, CanDiscard = false, RetainedInputBytes = 0, VerifiedInput = null,
                     Outcome = CreationOutcome.NothingActivated, Error = "Retained input discarded. Your chosen server folder was not changed." };
         }
         finally

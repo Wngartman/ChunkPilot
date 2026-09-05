@@ -52,6 +52,30 @@ internal sealed record RetainedControlSelection(string RunId, Guid ServerId, Gui
 
 internal sealed partial class CurseForgeRuntimeCertificationSession
 {
+    internal static async Task<CreationVerifiedInput?> VerifyFailedCreationTransferAsync(
+        CurseForgeRuntimeCertificationOptions options, CatalogItem project, CatalogVersion release,
+        InstallOperationSnapshot operation, CancellationToken cancellationToken)
+    {
+        if (operation.VerifiedInput is not { } proof) return null;
+        if (!operation.IsTerminal || proof.OperationId != operation.OperationId || proof.ServerId == Guid.Empty ||
+            proof.ProjectId != project.ProjectId || proof.ClientFileId != release.ClientFileId ||
+            proof.ServerFileId != release.ServerPackFileId || proof.SizeBytes != release.SizeBytes)
+            throw new InvalidDataException("The retained transfer receipt does not match the failed exact creation.");
+        var paths = new AppDataPaths(options.DataRoot, options.ManagedServersRoot);
+        var destination = Path.Combine(options.ManagedServersRoot, ManagedServerInstaller.MakeSafeInstanceName(options.ServerName));
+        var archive = await new VerifiedCreationArchiveStore(paths).VerifyAsync(new CreationJournalEntry
+        {
+            OperationId = operation.OperationId, ServerId = proof.ServerId,
+            CanonicalDestination = destination, VerifiedInput = proof
+        }, cancellationToken).ConfigureAwait(false);
+        await using var input = File.OpenRead(archive);
+#pragma warning disable CA5350 // The independent fresh provider digest supplements the operation-owned local SHA-256 proof.
+        if (!Convert.ToHexString(await SHA1.HashDataAsync(input, cancellationToken)).Equals(release.Sha1, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("The failed creation input no longer matches official transfer integrity.");
+#pragma warning restore CA5350
+        return proof;
+    }
+
     private string? retainedControlInput;
     private RetainedControlSelection? retainedControl;
     private string? retainedControlDestination;

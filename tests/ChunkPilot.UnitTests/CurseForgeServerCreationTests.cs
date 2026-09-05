@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using ChunkPilot.Core;
+using ChunkPilot.Certification;
 using ChunkPilot.Infrastructure;
 using Microsoft.Data.Sqlite;
 
@@ -11,6 +12,36 @@ namespace ChunkPilot.UnitTests;
 
 public sealed class CurseForgeServerCreationTests
 {
+    [Fact]
+    public async Task Failed_creation_transfer_receipt_is_independent_of_startup_and_reverified_before_budget_completion()
+    {
+        await using var fixture = await Fixture.CreateAsync(validationSucceeds: false);
+        await Assert.ThrowsAsync<InvalidDataException>(() => fixture.Installer.InstallAsync(fixture.Request));
+        var entry = (await fixture.Store.GetCreationJournalAsync(fixture.Request.OperationId))!.Entry!;
+        var options = new CurseForgeRuntimeCertificationOptions
+        {
+            RepositoryRoot = fixture.Paths.Root, RuntimeRoot = fixture.Paths.Root, ExpectedGitSha = new string('a', 40),
+            AgentExecutablePath = fixture.Request.JavaPath, DataRoot = fixture.Paths.Root,
+            ManagedServersRoot = fixture.Paths.ManagedServers, ApprovedKeyFilePath = Path.Combine(fixture.Paths.Root, ".missing-credential"),
+            PayloadLedgerPath = Path.Combine(fixture.Paths.Root, "fixture-ledger.json"),
+            ProjectReference = "123", ClientFileId = "111", ServerName = fixture.Request.ServerName
+        };
+        var project = new CatalogItem { ProjectId = "123" };
+        var release = new CatalogVersion { ClientFileId = "111", ServerPackFileId = "222",
+            SizeBytes = fixture.Request.ExpectedSizeBytes, Sha1 = fixture.Request.ExpectedSha1 };
+        var failed = new InstallOperationSnapshot { OperationId = entry.OperationId, IsTerminal = true,
+            Success = false, VerifiedInput = entry.VerifiedInput };
+        var verified = await CurseForgeRuntimeCertificationSession.VerifyFailedCreationTransferAsync(options, project, release, failed, CancellationToken.None);
+        Assert.Equal(entry.VerifiedInput, verified);
+        Assert.Null(await CurseForgeRuntimeCertificationSession.VerifyFailedCreationTransferAsync(options, project, release,
+            failed with { VerifiedInput = null }, CancellationToken.None));
+        await Assert.ThrowsAsync<InvalidDataException>(() => CurseForgeRuntimeCertificationSession.VerifyFailedCreationTransferAsync(
+            options, project, release with { ServerPackFileId = "333" }, failed, CancellationToken.None));
+        await File.AppendAllTextAsync(new VerifiedCreationArchiveStore(fixture.Paths).ArchiveFor(entry.OperationId), "tampered");
+        await Assert.ThrowsAsync<InvalidDataException>(() => CurseForgeRuntimeCertificationSession.VerifyFailedCreationTransferAsync(
+            options, project, release, failed, CancellationToken.None));
+    }
+
     [Fact]
     public async Task Native_retry_rechecks_exact_metadata_without_repeating_either_archive()
     {

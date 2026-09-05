@@ -1399,14 +1399,22 @@ internal sealed partial class CurseForgeRuntimeCertificationSession(
         if (!creation.Success || creation.Result is null)
         {
             var expectedServerBytes = preflight.ServerPackSizeBytes.Value;
+            var verified = await VerifyFailedCreationTransferAsync(options, project, release, creation, cancellationToken)
+                .ConfigureAwait(false);
             var observed = Math.Min(expectedServerBytes,
                 report.OperationStates.Where(item => item.OperationId == creationOperationId)
                     .Select(item => item.BytesDownloaded).DefaultIfEmpty(0).Max());
             var failedBudget = await payloadBudget.CompleteAsync(
-                creationOperationId, "official-server-pack", observed, "", "Failed",
-                transferCompleted: false,
+                creationOperationId, "official-server-pack", verified?.SizeBytes ?? observed,
+                verified?.LocalSha256 ?? "", "Failed",
+                transferCompleted: verified is not null,
                 CancellationToken.None).ConfigureAwait(false);
             ApplyBudget(report, failedBudget);
+            if (verified is not null)
+                report.Payloads.Add(new CertificationPayloadEvidence { Kind = "official-server-pack",
+                    OperationId = creationOperationId, ProjectId = project.ProjectId, FileId = release.ServerPackFileId,
+                    ExpectedBytes = expectedServerBytes, DownloadedBytes = verified.SizeBytes,
+                    ProviderSha1Verified = true, LocalSha256 = verified.LocalSha256, State = "TransferCompletedCreationFailed" });
             throw new InvalidOperationException("Official server-pack creation reached a failed terminal state.");
         }
         var serverComplete = await payloadBudget.CompleteAsync(
@@ -1475,7 +1483,7 @@ internal sealed partial class CurseForgeRuntimeCertificationSession(
     }
 
     internal static CatalogVersion SelectLatestOfficial(CatalogItem project) => project.Versions
-        .Where(version => version.HasServerPackage && version.PublishedAt is not null &&
+        .Where(version => version.Available && version.DistributionAllowed && version.HasServerPackage && version.PublishedAt is not null &&
             long.TryParse(version.ClientFileId, out var id) && id > 0 && version.SizeBytes is > 0 &&
             version.Sha1.Length == 40 && version.ClientSha1.Length == 40)
         .OrderByDescending(version => version.PublishedAt)
@@ -1905,6 +1913,10 @@ internal sealed partial class CurseForgeRuntimeCertificationSession(
                 return false;
             var lastLine = File.ReadLines(terminalLog)
                 .LastOrDefault(line => !string.IsNullOrWhiteSpace(line));
+            if (lastLine is not null && lastLine.IndexOf(' ') is > 0 and var separator &&
+                DateTimeOffset.TryParse(lastLine[..separator], System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.None, out _))
+                lastLine = lastLine[(separator + 1)..].TrimStart();
             if (string.IsNullOrWhiteSpace(lastLine) ||
                 creationLog && !lastLine.StartsWith("Completed:", StringComparison.Ordinal))
                 return false;

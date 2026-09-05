@@ -38,15 +38,17 @@ public sealed class CreationStagingResidueTests
         finally { Directory.Delete(root, recursive: true); }
     }
 
-    [Fact]
-    public void Terminal_evidence_and_empty_input_store_are_not_mutable_residue()
+    [Theory]
+    [InlineData("Completed: fixture")]
+    [InlineData("2026-09-05T10:15:31.5846769-06:00 Completed: Completed")]
+    public void Terminal_evidence_and_empty_input_store_are_not_mutable_residue(string terminalLine)
     {
         var root = Path.Combine(Path.GetTempPath(), "ChunkPilot-residue-" + Guid.NewGuid().ToString("N"));
         var operation = Guid.NewGuid();
         Directory.CreateDirectory(Path.Combine(root, "creation-inputs"));
         try
         {
-            File.WriteAllText(Path.Combine(root, $"{operation:N}.log"), "Completed: fixture");
+            File.WriteAllText(Path.Combine(root, $"{operation:N}.log"), terminalLine);
             File.WriteAllText(Path.Combine(root, $"{operation:N}.log.validation-{Guid.NewGuid():N}.json"), "{}");
             File.WriteAllText(Path.Combine(root, ".creation-inputs.lock"), "");
             Assert.True(CurseForgeRuntimeCertificationSession.CanonicalStagingContainsOnlyTerminalLogs(root,

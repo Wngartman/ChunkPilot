@@ -47,7 +47,11 @@ input and bounded validation JSON as unsafe residue. Process/port cleanup did pa
 preserved unchanged at `artifacts/cf-startup-control/evidence/certification-control-7176309.json`.
 The stopped control and verified archive remain deliberately retained. The corrected controller
 can recheck that exact stopped instance and archive against original evidence and fresh metadata,
-then repeat promoted start/status/stop without another archive request. That recheck is pending.
+then repeat promoted start/status/stop without another archive request. At `4ab5bf7d1d88b2fa7e5b4bcc27e5da731bfd85e8`,
+that repeat passed start/status/stop (7.69 s / 137 ms / 0.87 s), exact input integrity and endpoint
+ownership with zero new payload. Its cleanup gate exposed another old harness assumption: real
+terminal logs have an ISO timestamp before `Completed:`. The checker now parses that prefix and
+has a regression using the actual log shape; the second failed report is preserved unchanged.
 
 ## ATM10 identity and consent
 
@@ -88,7 +92,14 @@ handle lifetime; missing loader-temp parent; missing fixture attempt ID; pre-can
 assumption; obsolete journal-deletion assertion; and a non-pack collision candidate cleanup
 regression (corrected while preserving its prior recovery behavior).
 
-Pending: full headless HighRisk development checks, final exact-input self-contained package,
+HighRisk at `4ab5bf7`: 1,686 unit, 408 headless integration, 192 WebUI tests passed. Typecheck,
+lint, production frontend build and self-contained App/Agent/controller publishing passed.
+The visible normal-close fixture was excluded, not passed. Public documentation: 51 documents
+validated. Git history audit: 75 commits, zero unexpected findings, two existing false positives,
+zero prohibited reachable paths. The audit also reports a pre-existing missing source-license file.
+All 87 files from the control archive match the stopped promoted server byte-for-byte; none missing.
+
+Pending: targeted reruns after terminal-log/transfer-accounting corrections, final self-contained package,
 corrected control recheck, current ATM10 lifecycle, content fidelity and packaged ownership smoke.
 Foreground/scaling/keyboard/High Contrast/Reduced Motion/normal-close checks are not certified.
 No client join, quest/recipe gameplay, public reachability, or public Beta readiness is claimed.
