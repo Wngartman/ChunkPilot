@@ -176,6 +176,12 @@ internal static class HeadlessAgentLaunch
         startInfo.Environment["TEMP"] = temporary;
         startInfo.Environment["TMP"] = temporary;
         startInfo.Environment["DOTNET_BUNDLE_EXTRACT_BASE_DIR"] = temporary;
+        foreach (var variable in new[] { "APPDATA", "LOCALAPPDATA" })
+        {
+            var scoped = Path.Combine(temporary, variable.ToLowerInvariant());
+            Directory.CreateDirectory(scoped);
+            startInfo.Environment[variable] = scoped;
+        }
         startInfo.Environment[CurseForgeCredentialProvisioner.KeyFileEnvironmentVariable] =
             Path.GetFullPath(options.CredentialSourcePath);
         startInfo.Environment.Remove(ExternalReachabilityProbeOptions.EnvironmentVariable);

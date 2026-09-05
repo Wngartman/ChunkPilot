@@ -142,6 +142,7 @@ internal static class CurseForgeRuntimeCertificationCommand
                 ServerName = Read(arguments, "--server-name") ?? "ChunkPilot CurseForge Certification",
                 Phase = phase,
                 ExplicitEulaAuthorization = Has(arguments, "--accept-minecraft-eula-for-certification"),
+                RetainStoppedRun = Has(arguments, "--retain-stopped-run"),
                 Port = ReadInt(arguments, "--port", 25_585, 1, 65_535),
                 MinimumRamMb = ReadInt(arguments, "--minimum-ram-mb", 2_048, 512, 24 * 1024),
                 MaximumRamMb = ReadInt(arguments, "--maximum-ram-mb", 6_144, 1_024, 24 * 1024),

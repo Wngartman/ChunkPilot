@@ -5,3 +5,4 @@ using System.Runtime.CompilerServices;
 // directly because a mistake in any of them is a mistake in what ChunkPilot asks a router to do.
 [assembly: InternalsVisibleTo("ChunkPilot.UnitTests")]
 [assembly: InternalsVisibleTo("ChunkPilot.IntegrationTests")]
+[assembly: InternalsVisibleTo("ChunkPilot.Certification")]

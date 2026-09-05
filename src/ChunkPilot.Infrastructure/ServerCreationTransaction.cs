@@ -191,7 +191,11 @@ public sealed record CreationMaterializationContext(
     Guid OperationId,
     string StagingPath,
     string DestinationPath,
-    string LogPath);
+    string LogPath)
+{
+    public CreationVerifiedInput? VerifiedInput { get; init; }
+    public Func<CreationVerifiedInput, CancellationToken, Task>? RecordVerifiedInputAsync { get; init; }
+}
 
 /// <summary>What materialisation produced, ready to be verified and promoted.</summary>
 /// <param name="Definition">The server as it will be registered.</param>
@@ -217,6 +221,8 @@ public sealed record CreationTransactionRequest
     public required string LogPath { get; init; }
     public DateTimeOffset EulaAcceptedAt { get; init; }
     public string EulaUrl { get; init; } = "";
+    public CreationVerifiedInput? VerifiedInput { get; init; }
+    public CreationRetrySettings? RetrySettings { get; init; }
 }
 
 /// <summary>The truthful conclusion of one creation transaction.</summary>
@@ -331,7 +337,9 @@ public sealed class ServerCreationTransaction
             // durable proof that the user accepted the EULA rather than only a folder that contains a
             // file somebody could have written.
             EulaAcceptedUtc = request.EulaAcceptedAt,
-            EulaSourceUrl = request.EulaUrl
+            EulaSourceUrl = request.EulaUrl,
+            VerifiedInput = request.VerifiedInput,
+            RetrySettings = request.RetrySettings
         };
         entry = await CommitAsync(entry, entry.Phase, progress, request, cancellationToken).ConfigureAwait(false);
 
@@ -372,7 +380,16 @@ public sealed class ServerCreationTransaction
                 },
                 CreationPhase.MaterializingCandidate, progress, request, cancellationToken).ConfigureAwait(false);
             candidate = await materialize(
-                new CreationMaterializationContext(request.OperationId, request.StagingPath, destination, request.LogPath),
+                new CreationMaterializationContext(request.OperationId, request.StagingPath, destination, request.LogPath)
+                {
+                    VerifiedInput = entry.VerifiedInput,
+                    RecordVerifiedInputAsync = async (input, token) =>
+                    {
+                        if (input.OperationId != entry.OperationId || input.ServerId != entry.ServerId)
+                            throw new InvalidDataException("Retained input does not belong to this creation.");
+                        entry = await CommitAsync(entry with { VerifiedInput = input }, entry.Phase, progress, request, token);
+                    }
+                },
                 cancellationToken).ConfigureAwait(false);
 
             cancellationToken.ThrowIfCancellationRequested();
@@ -973,27 +990,32 @@ public sealed class ServerCreationTransaction
         Exception failure)
     {
         var phase = entry.CancellationRequested ? CreationPhase.Cancelling : CreationPhase.Failed;
+        if (entry.VerifiedInput is not null && entry.RetrySettings is not null)
+            outcome = CreationOutcome.StagingResumable;
         var closed = entry with
         {
             Phase = phase,
             Outcome = outcome,
-            LastError = detail,
+            LastError = CurseForgePersistencePolicy.IsCurseForgeCreation(request.CreationKind)
+                ? CurseForgePersistencePolicy.LocalCreationFailureDetail : detail,
             UpdatedUtc = DateTimeOffset.UtcNow
         };
         Report(progress, request, closed);
 
-        if (outcome != CreationOutcome.StagingResumable)
-        {
-            var problems = CleanupOwnedTemporaries(closed);
-            if (problems.Count > 0)
-                closed = closed with { CleanupState = string.Join(" ", problems) };
-        }
-
-        await store.DeleteCreationJournalAsync(entry.OperationId, CancellationToken.None).ConfigureAwait(false);
+        // Mutable JVM state is never reused, even when immutable archive input is retained separately.
+        var problems = failure is StagedServerCleanupException
+            ? new List<string> { "Validation cleanup was not proved; mutable staging was retained and must not be retried yet." }
+            : CleanupOwnedTemporaries(closed);
+        if (problems.Count > 0)
+            closed = closed with { CleanupState = string.Join(" ", problems), Outcome = CreationOutcome.RecoveryRequired };
+        if (closed.Outcome == CreationOutcome.StagingResumable || problems.Count > 0)
+            await store.UpsertCreationJournalAsync(closed, CancellationToken.None).ConfigureAwait(false);
+        else
+            await store.DeleteCreationJournalAsync(entry.OperationId, CancellationToken.None).ConfigureAwait(false);
         return new CreationTransactionResult
         {
             Phase = phase,
-            Outcome = outcome,
+            Outcome = closed.Outcome,
             Warnings = [detail],
             Journal = closed,
             Failure = failure

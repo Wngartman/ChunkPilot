@@ -282,7 +282,22 @@ public sealed class ManagedServerInstaller
         CreationPathSafety.EnsureWithin(instanceRoot, stagingPath);
         CreationPathSafety.EnsureWithin(instanceRoot, finalPath);
 
-        var serverId = Guid.NewGuid();
+        CreationJournalEntry? retry = null;
+        if (request.RetryVerifiedInput)
+        {
+            retry = (await store.GetCreationJournalAsync(request.OperationId, cancellationToken))?.Entry;
+            if (retry is null || retry.Outcome != CreationOutcome.StagingResumable || retry.ActivationBegan ||
+                retry.RegistrationBegan || retry.CanonicalDestination != finalPath ||
+                request.SourceType != InstallSourceType.CurseForgeServerPack || retry.RetrySettings is not { } settings ||
+                settings.ProjectId != request.PackProjectId || settings.ClientFileId != request.PackVersionId ||
+                settings.ServerFileId != request.PackServerFileId || settings.MinecraftVersion != request.MinecraftVersion ||
+                settings.LoaderVersion != request.PackLoaderVersion)
+                throw new InvalidDataException("The retained operation does not match this exact reviewed creation.");
+            await new VerifiedCreationArchiveStore(paths).VerifyAsync(retry, cancellationToken);
+            var cleanup = ServerCreationTransaction.CleanupOwnedTemporaries(retry);
+            if (cleanup.Count != 0) throw new IOException("Temporary cleanup needs attention before retry. " + string.Join(" ", cleanup));
+        }
+        var serverId = retry?.ServerId ?? Guid.NewGuid();
         StagedPayload? staged = null;
         string launchPath = "";
 
@@ -298,7 +313,16 @@ public sealed class ManagedServerInstaller
                 StagingPath = stagingPath,
                 LogPath = logPath,
                 EulaAcceptedAt = request.EulaAcceptedAt ?? default,
-                EulaUrl = EulaUrl
+                EulaUrl = EulaUrl,
+                VerifiedInput = retry?.VerifiedInput,
+                RetrySettings = request.SourceType == InstallSourceType.CurseForgeServerPack ? new CreationRetrySettings
+                {
+                    ProjectId = request.PackProjectId, ClientFileId = request.PackVersionId, ServerFileId = request.PackServerFileId,
+                    MinecraftVersion = request.MinecraftVersion, Loader = request.PackLoader, LoaderVersion = request.PackLoaderVersion,
+                    RequiredJavaMajor = JavaRuntimePolicy.TryRequiredMajorForMinecraft(request.MinecraftVersion) ?? 0,
+                    MinimumRamMb = request.MinimumRamMb, MaximumRamMb = request.MaximumRamMb, MaxPlayers = request.MaxPlayers,
+                    Port = request.Port, NetworkingPreference = request.CreationNetworkingPreference, InitialWorld = request.InitialWorld
+                } : null
             },
             async (context, token) =>
             {
@@ -306,7 +330,7 @@ public sealed class ManagedServerInstaller
                 var installerJava = string.IsNullOrWhiteSpace(request.InstallerJavaPath)
                     ? runtimeJava
                     : ResolveJava(request.InstallerJavaPath);
-                var payload = await StagePayloadAsync(request, installerJava, context.StagingPath, progress, context.LogPath, token)
+                var payload = await StagePayloadAsync(request, installerJava, context, progress, context.LogPath, token)
                     .ConfigureAwait(false);
                 staged = payload;
                 if (request.SourceType is InstallSourceType.CurseForgeServerPack or
@@ -378,20 +402,26 @@ public sealed class ManagedServerInstaller
                 if (request.SourceType is InstallSourceType.CurseForgeServerPack or
                     InstallSourceType.CurseForgeGeneratedPack)
                 {
-                    Report(progress, request.OperationId, InstallState.Validating, CreationStage.FinalSafetyCheck,
-                        "Starting the staged server on loopback for a bounded safety check", 84, 0, null, 0,
-                        Path.GetFileName(relativeLaunchPath), context.LogPath);
+                    var validationProgress = new CallbackProgress<StagedValidationProgress>(update => progress?.Report(new InstallProgress
+                    {
+                        OperationId = request.OperationId, State = InstallState.Validating,
+                        Stage = CreationStage.FinalSafetyCheck, Phase = CreationPhase.MaterializingCandidate,
+                        CurrentStep = update.Stage, IsIndeterminate = true, StageElapsedSeconds = update.ElapsedSeconds,
+                        LastMeaningfulStatus = update.LastMilestone, SecondsSinceMeaningfulUpdate = update.SecondsSinceMilestone,
+                        RecentStatus = update.RecentStatus ?? "", NewLogOutputObserved = update.NewOutputObserved,
+                        StagingLogPath = context.LogPath
+                    }));
                     var validation = await stagedValidator.ValidateAsync(runtimeJava, context.StagingPath,
                         relativeLaunchPath, payload.UsesArgumentFile,
-                        request.MinimumRamMb, request.MaximumRamMb, TimeSpan.FromMinutes(10), token)
+                        request.MinimumRamMb, request.MaximumRamMb, TimeSpan.FromMinutes(10), validationProgress, token)
                         .ConfigureAwait(false);
                     await AppendLogAsync(context.LogPath,
                         "[staged-validation] Local candidate validation completed; server output was not retained.",
                         token).ConfigureAwait(false);
-                    await WriteValidationEvidenceAsync(context.StagingPath, validation, token).ConfigureAwait(false);
+                    await WriteValidationEvidenceAsync(context.StagingPath, context.LogPath, validation, token).ConfigureAwait(false);
                     if (!validation.Succeeded)
                         throw new InvalidDataException(
-                            "ChunkPilot could not build a working server from this release. " +
+                            "Startup check could not finish. Your chosen server folder was not changed. " +
                             DescribeStagedValidationFailure(validation));
                 }
                 return new CreationCandidate(definition, payload.SourceUrl, payload.Sha256,
@@ -451,11 +481,12 @@ public sealed class ManagedServerInstaller
     private async Task<StagedPayload> StagePayloadAsync(
         ServerInstallRequest request,
         string javaPath,
-        string stagingPath,
+        CreationMaterializationContext context,
         IProgress<InstallProgress>? progress,
         string logPath,
         CancellationToken cancellationToken)
     {
+        var stagingPath = context.StagingPath;
         if (request.SourceType is InstallSourceType.Fabric or InstallSourceType.Quilt or
             InstallSourceType.Forge or InstallSourceType.NeoForge)
         {
@@ -611,39 +642,32 @@ public sealed class ManagedServerInstaller
             if (!Uri.TryCreate(request.Source, UriKind.Absolute, out var sourceUri) ||
                 !CurseForgeApiClient.IsApprovedDownloadUri(sourceUri))
                 throw new InvalidDataException("The official server pack does not use an approved CurseForge CDN host.");
-            var archivePath = Path.Combine(paths.Staging, $"{request.OperationId:N}-curseforge-server.zip");
+            var inputs = new VerifiedCreationArchiveStore(paths);
+            var owner = CreationOwnershipMarker.TryRead(stagingPath) ??
+                throw new InvalidDataException("Creation staging has no ownership marker.");
+            var archivePath = inputs.ArchiveFor(request.OperationId);
+            var finalized = context.VerifiedInput is not null;
             try
             {
-                Directory.CreateDirectory(paths.Staging);
-                using var response = await curseForge.SendDownloadAsync(sourceUri, cancellationToken).ConfigureAwait(false);
-                if (request.ExpectedSizeBytes is not > 0 or > 4L * 1024 * 1024 * 1024)
-                    throw new InvalidDataException("The official server pack does not have a safe declared size.");
-                if (response.Content.Headers.ContentLength is { } contentLength &&
-                    contentLength != request.ExpectedSizeBytes.Value)
-                    throw new InvalidDataException("The official server-pack response size changed after review.");
-                await using (var input = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false))
-                await using (var output = new FileStream(archivePath, FileMode.CreateNew, FileAccess.Write, FileShare.None,
-                                 128 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan))
+                if (!finalized)
                 {
-                    var buffer = new byte[128 * 1024];
-                    long transferred = 0;
-                    while (true)
-                    {
-                        var read = await input.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
-                        if (read == 0) break;
-                        transferred = checked(transferred + read);
-                        if (transferred > request.ExpectedSizeBytes.Value)
-                            throw new InvalidDataException("The official server-pack download exceeded its declared size.");
-                        await output.WriteAsync(buffer.AsMemory(0, read), cancellationToken).ConfigureAwait(false);
-                        Report(progress, request.OperationId, InstallState.Downloading,
-                            CreationStage.DownloadingServer, "Downloading the exact official CurseForge server pack",
-                            12, transferred, request.ExpectedSizeBytes, 0, Path.GetFileName(archivePath), logPath);
-                    }
-                    if (transferred != request.ExpectedSizeBytes.Value)
-                        throw new InvalidDataException("The official server-pack download ended before its declared size.");
-                    await output.FlushAsync(cancellationToken).ConfigureAwait(false);
+                    var partial = await inputs.PrepareAsync(owner, request.ExpectedSizeBytes ?? 0, cancellationToken);
+                    await DownloadCurseForgeArchiveAsync(sourceUri, partial, request, progress, logPath,
+                        "Downloading the exact official server pack", cancellationToken);
+                    VerifyHash(partial, request.ExpectedSha1, request.ExpectedSha256, request.ExpectedSha512);
+                    var proof = await inputs.FinalizeAsync(owner, request, cancellationToken);
+                    finalized = true;
+                    if (context.RecordVerifiedInputAsync is null)
+                        throw new InvalidOperationException("The creation journal cannot record verified input.");
+                    await context.RecordVerifiedInputAsync(proof, cancellationToken);
                 }
-                VerifyHash(archivePath, request.ExpectedSha1, request.ExpectedSha256, request.ExpectedSha512);
+                else
+                {
+                    // InstallAsync rehashed the local ownership proof; compare fresh provider digests too.
+                    VerifyHash(archivePath, request.ExpectedSha1, request.ExpectedSha256, request.ExpectedSha512);
+                    Report(progress, request.OperationId, InstallState.Validating, CreationStage.VerifyingServerDownload,
+                        "Reusing the verified official server pack; no archive download", 50, 0, null, 0, "", logPath);
+                }
                 Report(progress, request.OperationId, InstallState.Extracting, CreationStage.PreparingServerFiles,
                     "Inspecting and extracting the verified official server pack", 55, 0, null, 0,
                     Path.GetFileName(archivePath), logPath);
@@ -680,7 +704,14 @@ public sealed class ManagedServerInstaller
             }
             finally
             {
-                if (File.Exists(archivePath)) File.Delete(archivePath);
+                // Successful immutable input survives a later loader/startup failure. Partial input
+                // has no reusable proof and is removed only through the exact operation marker.
+                if (!finalized && Directory.Exists(inputs.DirectoryFor(request.OperationId)))
+                    inputs.Discard(new CreationJournalEntry
+                    {
+                        OperationId = owner.OperationId, ServerId = owner.ServerId,
+                        CanonicalDestination = owner.CanonicalDestination
+                    });
             }
         }
 
@@ -944,6 +975,8 @@ public sealed class ManagedServerInstaller
             document.Set("level-name", initialWorld.WorldName);
         if (request.CreationNetworkingPreference == VanillaNetworkingPreference.ThisComputerOnly)
             document.Set("server-ip", "127.0.0.1");
+        else
+            document.Set("server-ip", "");
         if (IsModpackCreation(request.SourceType))
         {
             document.Set("enable-query", "false");
@@ -1068,6 +1101,7 @@ public sealed class ManagedServerInstaller
 
     private static async Task WriteValidationEvidenceAsync(
         string stagingPath,
+        string logPath,
         StagedServerValidationResult validation,
         CancellationToken cancellationToken)
     {
@@ -1075,15 +1109,34 @@ public sealed class ManagedServerInstaller
         Directory.CreateDirectory(metadataRoot);
         var evidence = new
         {
-            schemaVersion = 1,
+            schemaVersion = 2,
             validatedAtUtc = DateTimeOffset.UtcNow,
             validation.Succeeded,
             validation.ReadinessConfirmed,
             validation.LoopbackStatusConfirmed,
             validation.CleanStopConfirmed,
             validation.NoUnexpectedGuiConfirmed,
-            validation.Summary
+            validation.Summary,
+            validation.AttemptId,
+            validation.Network,
+            validation.EndpointHistory,
+            validation.JobEmptyConfirmed,
+            validation.SelectedPortListenerAbsent,
+            validation.ValidationPort,
+            validation.ConfigurationRestored,
+            validation.ValidationWorldRemoved,
+            validation.ElapsedSeconds
         };
+        // Independent of mutable staging, so a failed creation's cleanup cannot erase its decision.
+        CreationStagingSafety.EnsureNoReparseTraversal(Path.GetDirectoryName(logPath)!);
+        var durableEvidence = logPath + ".validation-" + validation.AttemptId.ToString("N") + ".json";
+        await using (var stream = new FileStream(durableEvidence, FileMode.CreateNew, FileAccess.Write,
+                         FileShare.None, 16 * 1024, FileOptions.WriteThrough))
+        {
+            await JsonSerializer.SerializeAsync(stream, evidence, ProtocolJson.Options, cancellationToken)
+                .ConfigureAwait(false);
+            stream.Flush(flushToDisk: true);
+        }
         await File.WriteAllTextAsync(Path.Combine(metadataRoot, "staged-validation.json"),
             JsonSerializer.Serialize(evidence, ProtocolJson.Options), new UTF8Encoding(false), cancellationToken)
             .ConfigureAwait(false);
@@ -1110,6 +1163,8 @@ public sealed class ManagedServerInstaller
             128 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
         var buffer = new byte[128 * 1024];
         long transferred = 0;
+        var transferWatch = System.Diagnostics.Stopwatch.StartNew();
+        var lastTransferReport = TimeSpan.Zero;
         while (true)
         {
             var read = await input.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
@@ -1118,12 +1173,18 @@ public sealed class ManagedServerInstaller
             if (transferred > request.ExpectedSizeBytes.Value)
                 throw new InvalidDataException("The CurseForge archive exceeded its declared size.");
             await output.WriteAsync(buffer.AsMemory(0, read), cancellationToken).ConfigureAwait(false);
-            Report(progress, request.OperationId, InstallState.Downloading, CreationStage.DownloadingServer,
-                message, 12, transferred, request.ExpectedSizeBytes, 0, Path.GetFileName(destination), logPath);
+            if (transferWatch.Elapsed - lastTransferReport >= TimeSpan.FromMilliseconds(200) || transferred == request.ExpectedSizeBytes)
+            {
+                Report(progress, request.OperationId, InstallState.Downloading, CreationStage.DownloadingServer,
+                    message, 10 + 40d * transferred / request.ExpectedSizeBytes.Value, transferred, request.ExpectedSizeBytes,
+                    transferred / Math.Max(transferWatch.Elapsed.TotalSeconds, 0.001), "", logPath);
+                lastTransferReport = transferWatch.Elapsed;
+            }
         }
         if (transferred != request.ExpectedSizeBytes.Value)
             throw new InvalidDataException("The CurseForge archive ended before its declared size.");
         await output.FlushAsync(cancellationToken).ConfigureAwait(false);
+        output.Flush(flushToDisk: true);
     }
 
     internal static (string Path, bool UsesArgumentFile)? FindKnownServerPackLaunch(string stagingPath)

@@ -146,7 +146,22 @@ if (args.Any(argument => Path.GetFileName(argument)
     return 0;
 }
 
-var mode = args.FirstOrDefault()?.ToLowerInvariant() ?? "normal";
+var stagedLocalFixture = args.Any(argument => Path.GetFileName(argument)
+    .StartsWith("staged-loopback", StringComparison.OrdinalIgnoreCase));
+var stagedProperties = stagedLocalFixture
+    ? (await File.ReadAllLinesAsync("server.properties")).Where(line => line.Contains('='))
+        .Select(line => line.Split('=', 2)).ToDictionary(parts => parts[0], parts => parts[1])
+    : new Dictionary<string, string>();
+if (stagedLocalFixture)
+{
+    var world = stagedProperties["level-name"];
+    if (!world.StartsWith(".chunkpilot-staging-", StringComparison.Ordinal) || world.Contains('/') || world.Contains('\\'))
+        return 66;
+    await File.WriteAllTextAsync(Path.Combine(world, "level.dat"), "disposable fixture world");
+    await File.WriteAllTextAsync("fixture-validation-properties.txt", await File.ReadAllTextAsync("server.properties"));
+}
+var mode = args.Any(argument => Path.GetFileName(argument).Equals("staged-loopback-no-readiness.jar", StringComparison.OrdinalIgnoreCase))
+    ? "no-readiness" : args.FirstOrDefault()?.ToLowerInvariant() ?? "normal";
 if (mode == "terraria")
 {
     Console.WriteLine("Terraria Server v1.4.5.6");
@@ -196,7 +211,8 @@ if (mode == "conflicting-startup-failures")
 }
 
 using var statusCancellation = new CancellationTokenSource();
-var statusTask = int.TryParse(Environment.GetEnvironmentVariable("CHUNKPILOT_FAKE_STATUS_PORT"), out var statusPort)
+var statusTask = int.TryParse(stagedLocalFixture ? stagedProperties["server-port"] :
+    Environment.GetEnvironmentVariable("CHUNKPILOT_FAKE_STATUS_PORT"), out var statusPort)
     ? RunStatusServerAsync(statusPort, statusCancellation.Token)
     : Task.CompletedTask;
 

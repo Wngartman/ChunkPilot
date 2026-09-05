@@ -229,19 +229,23 @@ a persistent `bin` or `obj` controller.
 Each certification invocation creates one fresh marked run containing exactly `data`, `servers`, and `temp`.
 `TEMP`, `TMP`, and .NET bundle extraction are scoped to that temp tree for the packaged controller. Final cleanup
 refuses unexpected entries and reparse points, inventories the bounded full run, and moves only the exact run root
-to the Windows Recycle Bin with no permanent-delete fallback.
+to the Windows Recycle Bin with no permanent-delete fallback, unless `--retain-stopped-run` explicitly retains
+the task-owned run for recovery/acceptance. Exact Job exit and selected-port absence are separate terminal facts.
 
 While a task server is running, the certifier takes two complete owner-PID inventories of TCP states/endpoints and
 UDP endpoints in IPv4 and IPv6 across three stable Job snapshots taken before, between, and after them. The Job
 accounting
-and the exact PID/creation set must remain unchanged at all three boundaries, and the exact owned endpoint multiset
-must match across both inventories. Every accepted owner is then revalidated live against its creation identity
-and the task-server process subtree. The task root, endpoint owner, and every intermediate ancestor must belong to
+and the exact PID/creation set must remain unchanged at all three boundaries, and the exact listener/UDP binding
+multiset must match across both inventories. Every accepted owner is revalidated live against its creation
+identity; inbound candidates also require the task-server subtree. The task root, inbound endpoint owner, and every intermediate ancestor belong to
 that stable Job PID/creation set, must still match its live raw creation identity, and each parent must have been
-created strictly before its child; missing, exited, cyclic, reordered, or PID-reused ancestry fails closed. Only
-exact loopback TCP on the selected Minecraft port is permitted.
-Wildcard, non-loopback, UDP, secondary-port, identity-raced, unreadable, or mutation-raced evidence fails
-certification, and the report retains only sanitized counts and policy results. Each complete inventory still
+created strictly before its child; missing, exited, cyclic, reordered, or PID-reused ancestry fails closed.
+`StartupNetworkPolicy` is shared with production: require the expected exact local game listener, block
+non-loopback TCP listeners, and return cannot-verify for unresolved non-loopback UDP or ownership. Non-listening
+TCP observations are separate; Established alone proves no direction or purpose. Additional loopback bindings
+are recorded, not mistaken for public exposure. This is an observable inbound-startup check, not an air gap or
+security certification. Validation uses an exact-owned disposable world, restores configuration only after
+Job-empty proof, and preserves failure evidence outside mutable staging. Each complete inventory still
 consists of four sequential Windows tables; repeated stable observation detects mutations that persist into an
 inventory, but cannot exclude a socket opened and closed entirely between observations or after the final one.
 

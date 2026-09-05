@@ -8,6 +8,24 @@ namespace ChunkPilot.UnitTests;
 public sealed class WindowsStagedNetworkEndpointTests
 {
     [Fact]
+    public void Historical_connection_shape_demonstrates_the_old_false_listener_rejection()
+    {
+        // The saved failed report retained Done and the rejection, not the original socket tuple.
+        // Documentation-only addresses reproduce the reported shape without inventing attribution.
+        var observed = new[]
+        {
+            new WindowsStagedNetworkEndpoint(WindowsStagedEndpointTransport.Tcp,
+                AddressFamily.InterNetwork, IPAddress.Loopback, 25585, 200, WindowsStagedTcpState.Listen),
+            new WindowsStagedNetworkEndpoint(WindowsStagedEndpointTransport.Tcp,
+                AddressFamily.InterNetwork, IPAddress.Parse("192.0.2.10"), 49000, 200,
+                WindowsStagedTcpState.Established)
+        };
+        var oldRejection = observed.Any(endpoint => !endpoint.IsLoopback);
+        Assert.True(oldRejection); // Production predicate at inspected base.
+        Assert.DoesNotContain(observed, endpoint => endpoint.IsTcpListener && !endpoint.IsLoopback);
+    }
+
+    [Fact]
     public void Tcp_parser_preserves_established_ipv4_endpoint_instead_of_treating_table_as_listeners_only()
     {
         var endpoint = Assert.Single(WindowsStagedNetworkEndpoints.ParseTcp(
@@ -57,6 +75,28 @@ public sealed class WindowsStagedNetworkEndpointTests
         Assert.Empty(endpoints);
     }
 
+    [Fact]
+    public void Tcp_ipv6_scopes_and_remote_ports_use_network_order()
+    {
+        var bytes = NativeTcpTable(IPAddress.Parse("fe80::10%7"), 49001, 201, WindowsStagedTcpState.Established);
+        var row = bytes.AsSpan(4);
+        IPAddress.Parse("fe80::20").GetAddressBytes().CopyTo(row.Slice(24, 16));
+        BinaryPrimitives.WriteUInt32BigEndian(row.Slice(40, 4), 9);
+        WriteNativeNetworkPort(row.Slice(44, 4), 443);
+        row[46] = 0xaa; row[47] = 0xbb; // Windows documents only the first two port bytes.
+        var parsed = Assert.Single(WindowsStagedNetworkEndpoints.ParseTcp(bytes, AddressFamily.InterNetworkV6));
+        Assert.Equal(7, parsed.LocalAddress.ScopeId);
+        Assert.Equal(IPAddress.Parse("fe80::20%9"), parsed.RemoteAddress);
+        Assert.Equal(443, parsed.RemotePort);
+    }
+
+    [Fact]
+    public void Invalid_tcp_state_does_not_become_an_empty_clean_inventory()
+    {
+        var bytes = NativeTcpTable(IPAddress.Loopback, 25585, 200, (WindowsStagedTcpState)999);
+        Assert.Throws<InvalidDataException>(() => WindowsStagedNetworkEndpoints.ParseTcp(bytes, AddressFamily.InterNetwork));
+    }
+
     private static byte[] NativeTcpTable(
         IPAddress address,
         int port,
@@ -78,7 +118,7 @@ public sealed class WindowsStagedNetworkEndpointTests
         else
         {
             address.GetAddressBytes().CopyTo(row.Slice(0, 16));
-            BinaryPrimitives.WriteUInt32LittleEndian(row.Slice(16, sizeof(uint)), checked((uint)address.ScopeId));
+            BinaryPrimitives.WriteUInt32BigEndian(row.Slice(16, sizeof(uint)), checked((uint)address.ScopeId));
             WriteNativeNetworkPort(row.Slice(20, sizeof(uint)), port);
             BinaryPrimitives.WriteUInt32LittleEndian(row.Slice(48, sizeof(uint)), (uint)state);
             BinaryPrimitives.WriteUInt32LittleEndian(row.Slice(52, sizeof(uint)), checked((uint)processId));

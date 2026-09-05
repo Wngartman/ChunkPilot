@@ -2211,6 +2211,8 @@ public sealed class LoaderInstallationService
 
         var outputsBeforeInstaller = await FingerprintInstallerOutputsAsync(
             stagingPath, plan.Loader, plan.ExpectedLaunchFile, cancellationToken).ConfigureAwait(false);
+        var installerTemp = Path.Combine(stagingPath, ".chunkpilot", "loader-temp");
+        CreationStagingSafety.CreateDirectoryPath(stagingPath, installerTemp);
         var start = new ProcessStartInfo
         {
             FileName = Path.GetFullPath(javaPath),
@@ -2220,12 +2222,15 @@ public sealed class LoaderInstallationService
             RedirectStandardOutput = true,
             RedirectStandardError = true
         };
+        start.ArgumentList.Add("-Djava.io.tmpdir=" + Path.GetFullPath(installerTemp));
         start.ArgumentList.Add("-jar");
         start.ArgumentList.Add(payload);
         foreach (var argument in SplitArguments(plan.InstallerArgument))
             start.ArgumentList.Add(argument);
         ChildProcessEnvironmentPolicy.Apply(start);
         CurseForgeCredentialEnvironment.RemoveFromChild(start);
+        start.Environment["TEMP"] = installerTemp;
+        start.Environment["TMP"] = installerTemp;
         using var process = Process.Start(start) ??
                             throw new InvalidOperationException("Windows did not start the loader installer.");
         var stdout = process.StandardOutput.ReadToEndAsync(cancellationToken);

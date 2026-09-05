@@ -2,291 +2,320 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
-using System.Runtime.ExceptionServices;
 using System.Text;
 using ChunkPilot.Core;
 
 namespace ChunkPilot.Infrastructure;
 
+public sealed record StagedValidationProgress(string Stage, double ElapsedSeconds, string LastMilestone,
+    double? SecondsSinceMilestone, string? RecentStatus, bool NewOutputObserved);
+
+public sealed class StagedServerCleanupException(string message, Exception innerException)
+    : IOException(message, innerException);
+
 public sealed record StagedServerValidationResult(
-    bool Succeeded,
-    bool ReadinessConfirmed,
-    bool LoopbackStatusConfirmed,
-    bool CleanStopConfirmed,
-    bool NoUnexpectedGuiConfirmed,
-    string Summary,
-    IReadOnlyList<string> Tail);
+    bool Succeeded, bool ReadinessConfirmed, bool LoopbackStatusConfirmed, bool CleanStopConfirmed,
+    bool NoUnexpectedGuiConfirmed, string Summary, IReadOnlyList<string> Tail)
+{
+    public Guid AttemptId { get; init; }
+    public StartupNetworkDecision? Network { get; init; }
+    public IReadOnlyList<StartupEndpointFinding> EndpointHistory { get; init; } = [];
+    public bool JobEmptyConfirmed { get; init; }
+    public bool? SelectedPortListenerAbsent { get; init; }
+    public int ValidationPort { get; init; }
+    public bool ConfigurationRestored { get; init; }
+    public bool ValidationWorldRemoved { get; init; }
+    public double ElapsedSeconds { get; init; }
+    public string? CleanupFailure { get; init; }
+}
 
 public interface IStagedServerValidator
 {
-    Task<StagedServerValidationResult> ValidateAsync(
-        string javaPath,
-        string stagingRoot,
-        string launchRelativePath,
-        bool usesArgumentFile,
-        int minimumRamMb,
-        int maximumRamMb,
-        TimeSpan timeout,
+    Task<StagedServerValidationResult> ValidateAsync(string javaPath, string stagingRoot,
+        string launchRelativePath, bool usesArgumentFile, int minimumRamMb, int maximumRamMb,
+        TimeSpan timeout, IProgress<StagedValidationProgress>? progress = null,
         CancellationToken cancellationToken = default);
 }
 
 /// <summary>
-/// Performs one bounded, loopback-only validation launch. The provider process is born inside a
-/// private kill-on-close Windows Job, so every non-breakaway descendant remains exactly owned even
-/// if the Java root exits. Reviewed server properties are restored only after that Job is empty.
+/// Observed inbound-startup check, not preventive isolation or an air gap. Root and descendants are
+/// born in an exact-owned Job. Original configuration is restored only after Job-empty proof.
 /// </summary>
 public sealed class StagedServerValidator : IStagedServerValidator
 {
-    private const int MaximumCapturedLines = 4_000;
+    private static readonly string[] ValidationPropertyKeys = ["server-ip", "server-port", "level-name", "enable-query", "enable-rcon"];
+    private readonly Func<WindowsStagedProcessJob, Guid, IReadOnlyList<StartupEndpointObservation>> collect;
+    public StagedServerValidator() : this((job, attempt) =>
+        job.CaptureStableOwnedNetworkEndpoints().Select(endpoint => endpoint.ToObservation(attempt)).ToArray()) { }
+    internal StagedServerValidator(
+        Func<WindowsStagedProcessJob, Guid, IReadOnlyList<StartupEndpointObservation>> collect) => this.collect = collect;
 
-    public async Task<StagedServerValidationResult> ValidateAsync(
-        string javaPath,
-        string stagingRoot,
-        string launchRelativePath,
-        bool usesArgumentFile,
-        int minimumRamMb,
-        int maximumRamMb,
-        TimeSpan timeout,
+    public async Task<StagedServerValidationResult> ValidateAsync(string javaPath, string stagingRoot,
+        string launchRelativePath, bool usesArgumentFile, int minimumRamMb, int maximumRamMb,
+        TimeSpan timeout, IProgress<StagedValidationProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
-        var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(stagingRoot));
+        var root = CreationPathSafety.Canonical(stagingRoot);
         var launch = Path.GetFullPath(Path.Combine(root, launchRelativePath));
-        EnsureChild(root, launch);
-        if (!File.Exists(launch)) throw new FileNotFoundException("The staged validation launcher was not found.", launch);
-        if (!File.Exists(javaPath)) throw new FileNotFoundException("The staged validation Java runtime was not found.", javaPath);
+        CreationPathSafety.EnsureWithin(root, launch);
+        EnsureRegularFilePath(launch);
+        if (!File.Exists(launch) || !File.Exists(javaPath))
+            throw new FileNotFoundException("The staged launcher or Java runtime was not found.");
         if (MemoryAllocationPolicy.ValidatePair(minimumRamMb, maximumRamMb) is { } memoryProblem)
             throw new ArgumentOutOfRangeException(nameof(maximumRamMb), memoryProblem);
+        if (timeout <= TimeSpan.Zero || timeout > TimeSpan.FromHours(1))
+            throw new ArgumentOutOfRangeException(nameof(timeout));
+        var attempt = Guid.NewGuid();
+        var watch = Stopwatch.StartNew();
         var propertiesPath = Path.Combine(root, "server.properties");
-        var originalProperties = File.Exists(propertiesPath)
-            ? await File.ReadAllBytesAsync(propertiesPath, cancellationToken).ConfigureAwait(false)
-            : null;
+        EnsureRegularFilePath(propertiesPath);
+        var original = File.Exists(propertiesPath) ? await File.ReadAllBytesAsync(propertiesPath, cancellationToken) : null;
         var port = AllocateLoopbackPort();
+        var worldName = ServerCreationTransaction.StagingFolderName(attempt);
+        var worldPath = Path.Combine(root, worldName);
+        var marker = new CreationOwnershipMarker(CreationOwnershipMarker.CurrentSchemaVersion,
+            attempt, attempt, worldPath, DateTimeOffset.UtcNow);
         var lines = new ConcurrentQueue<string>();
         var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        WindowsStagedProcessJob? processJob = null;
-        WindowsStagedProcess? ownedProcess = null;
-        Process? process = null;
-        Task outputPump = Task.CompletedTask;
-        Task errorPump = Task.CompletedTask;
+        var fatal = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var evidence = new Dictionary<string, StartupEndpointFinding>(StringComparer.Ordinal);
+        var evidenceLock = new object();
+        var lastMilestone = "Starting Java";
+        var lastMilestoneAt = 0d;
+        var outputCount = 0;
+        var reportedOutputCount = 0;
+        string? recent = null;
+        WindowsStagedProcessJob? job = null;
+        WindowsStagedProcess? owned = null;
+        Task output = Task.CompletedTask, error = Task.CompletedTask;
         var readiness = false;
         var status = false;
         var cleanStop = false;
         var noGui = true;
-        string summary;
-        async Task<StagedServerValidationResult> ExecuteValidationAsync()
-        {
-            try
-            {
-                var properties = originalProperties is null
-                    ? ServerPropertiesDocument.Parse("")
-                    : ServerPropertiesDocument.Parse(Encoding.UTF8.GetString(originalProperties));
-                properties.Set("server-ip", "127.0.0.1");
-                properties.Set("server-port", port.ToString(System.Globalization.CultureInfo.InvariantCulture));
-                properties.Set("online-mode", "false");
-                properties.Set("enable-query", "false");
-                properties.Set("enable-rcon", "false");
-                properties.Set("broadcast-rcon-to-ops", "false");
-                properties.Set("enforce-secure-profile", "false");
-                await File.WriteAllTextAsync(propertiesPath, properties.ToString(), new UTF8Encoding(false), cancellationToken)
-                    .ConfigureAwait(false);
-
-                var start = new ProcessStartInfo
-                {
-                    FileName = javaPath,
-                    WorkingDirectory = root,
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                    RedirectStandardInput = true,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true
-                };
-                start.ArgumentList.Add($"-Xms{minimumRamMb}M");
-                start.ArgumentList.Add($"-Xmx{maximumRamMb}M");
-                if (usesArgumentFile)
-                    start.ArgumentList.Add("@" + launch);
-                else
-                {
-                    start.ArgumentList.Add("-jar");
-                    start.ArgumentList.Add(launch);
-                }
-                start.ArgumentList.Add("nogui");
-                ChildProcessEnvironmentPolicy.Apply(start);
-                CurseForgeCredentialEnvironment.RemoveFromChild(start);
-                void Capture(string source, string? line)
-                {
-                    if (line is null) return;
-                    lines.Enqueue($"[{source}] {SecretRedactor.Redact(line)}");
-                    while (lines.Count > MaximumCapturedLines) lines.TryDequeue(out _);
-                    if (line.Contains("Done (", StringComparison.OrdinalIgnoreCase)) ready.TrySetResult();
-                }
-                processJob = WindowsStagedProcessJob.Create();
-                ownedProcess = processJob.Start(start);
-                process = ownedProcess.Process;
-                outputPump = PumpAsync(ownedProcess.StandardOutput, "stdout", Capture);
-                errorPump = PumpAsync(ownedProcess.StandardError, "stderr", Capture);
-                using var bounded = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                bounded.CancelAfter(timeout);
-                var exit = process.WaitForExitAsync(bounded.Token);
-                var winner = await Task.WhenAny(ready.Task, exit).WaitAsync(bounded.Token).ConfigureAwait(false);
-                if (winner == exit)
-                {
-                    summary = $"The generated server exited before readiness with code {process.ExitCode}.";
-                    return Finish(false);
-                }
-                readiness = true;
-                await Task.Delay(TimeSpan.FromSeconds(2), bounded.Token).ConfigureAwait(false);
-                if (process.HasExited)
-                {
-                    summary = $"The generated server exited during its stability window with code {process.ExitCode}.";
-                    return Finish(false);
-                }
-                noGui = !processJob.HasStableOwnedVisibleTopLevelWindow();
-                if (!noGui)
-                {
-                    summary = "The generated server opened an unexpected visible top-level window during isolated validation.";
-                    return Finish(false);
-                }
-                var ownedEndpoints = processJob.CaptureStableOwnedNetworkEndpoints();
-                if (ownedEndpoints.Any(endpoint => !endpoint.IsLoopback))
-                {
-                    summary = "The generated server opened an unexpected non-loopback network endpoint during isolated validation.";
-                    return Finish(false);
-                }
-                var exactLoopbackListener = ownedEndpoints.Any(endpoint =>
-                    endpoint.IsTcpListener &&
-                    endpoint.IsLoopback &&
-                    endpoint.Port == port);
-                status = exactLoopbackListener &&
-                         await new MinecraftStatusClient().QueryAsync("127.0.0.1", port, bounded.Token)
-                             .ConfigureAwait(false) is not null;
-                await ownedProcess.StandardInput.WriteLineAsync("stop").ConfigureAwait(false);
-                await ownedProcess.StandardInput.FlushAsync(bounded.Token).ConfigureAwait(false);
-                await process.WaitForExitAsync(bounded.Token).WaitAsync(TimeSpan.FromSeconds(30), bounded.Token)
-                    .ConfigureAwait(false);
-                cleanStop = process.ExitCode == 0 &&
-                            await processJob.WaitForEmptyAsync(TimeSpan.FromSeconds(2), bounded.Token)
-                                .ConfigureAwait(false);
-                var succeeded = readiness && status && cleanStop && noGui;
-                summary = succeeded
-                    ? "Bounded loopback readiness, status, clean stop, and no-GUI validation passed."
-                    : "One or more bounded generated-server validation checks failed.";
-                return Finish(succeeded);
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-            {
-                throw;
-            }
-            catch (OperationCanceledException)
-            {
-                summary = readiness
-                    ? "The generated server did not stop within the bounded validation window."
-                    : "The generated server did not reach readiness within the bounded validation window.";
-                return Finish(false);
-            }
-            catch (TimeoutException)
-            {
-                summary = "The generated server did not stop cleanly within 30 seconds.";
-                return Finish(false);
-            }
-        }
-
-        StagedServerValidationResult? outcome = null;
-        ExceptionDispatchInfo? operationFailure = null;
+        var empty = false;
+        var restored = false;
+        var worldRemoved = false;
+        var worldPrepared = false;
+        bool? portAbsent = null;
+        StartupNetworkDecision? network = null;
+        var summary = "Startup check could not be completed.";
+        Exception? operationFailure = null;
+        var cleanupFailures = new List<Exception>();
         try
         {
-            outcome = await ExecuteValidationAsync().ConfigureAwait(false);
+            await CreationStagingSafety.PrepareOwnedDirectoryAsync(root, worldPath, marker, cancellationToken);
+            worldPrepared = true;
+            var properties = ServerPropertiesDocument.Parse(original is null ? "" : Encoding.UTF8.GetString(original));
+            properties.Set("server-ip", "127.0.0.1");
+            properties.Set("server-port", port.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            properties.Set("level-name", worldName);
+            properties.Set("online-mode", "false");
+            properties.Set("enable-query", "false");
+            properties.Set("enable-rcon", "false");
+            properties.Set("broadcast-rcon-to-ops", "false");
+            properties.Set("enforce-secure-profile", "false");
+            var validationBytes = new UTF8Encoding(false).GetBytes(properties.ToString());
+            await File.WriteAllBytesAsync(propertiesPath, validationBytes, cancellationToken);
+            var temp = Path.Combine(worldPath, ".runtime-temp");
+            CreationStagingSafety.CreateDirectoryPath(worldPath, temp);
+            var start = new ProcessStartInfo
+            {
+                FileName = javaPath, WorkingDirectory = root, UseShellExecute = false, CreateNoWindow = true,
+                RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true
+            };
+            start.ArgumentList.Add($"-Xms{minimumRamMb}M");
+            start.ArgumentList.Add($"-Xmx{maximumRamMb}M");
+            start.ArgumentList.Add("-Djava.io.tmpdir=" + temp);
+            if (usesArgumentFile) start.ArgumentList.Add("@" + launch);
+            else { start.ArgumentList.Add("-jar"); start.ArgumentList.Add(launch); }
+            start.ArgumentList.Add("nogui");
+            ChildProcessEnvironmentPolicy.Apply(start);
+            CurseForgeCredentialEnvironment.RemoveFromChild(start);
+            start.Environment["TEMP"] = temp;
+            start.Environment["TMP"] = temp;
+            if (!(await File.ReadAllBytesAsync(propertiesPath, cancellationToken)).SequenceEqual(validationBytes))
+                throw new IOException("Validation configuration changed before launch.");
+            job = WindowsStagedProcessJob.Create();
+            owned = job.Start(start);
+            output = PumpAsync(owned.StandardOutput, "stdout");
+            error = PumpAsync(owned.StandardError, "stderr");
+            using var startup = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            startup.CancelAfter(timeout); // Absolute deadline: warning spam cannot extend it.
+            while (true)
+            {
+                startup.Token.ThrowIfCancellationRequested();
+                if (owned.Process.HasExited)
+                {
+                    summary = $"The server exited before readiness with code {owned.Process.ExitCode}.";
+                    break;
+                }
+                if (fatal.Task.IsCompletedSuccessfully) { summary = "Server could not start: " + fatal.Task.Result; break; }
+                if (!Observe()) break;
+                Publish("Starting for the first time");
+                if (ready.Task.IsCompletedSuccessfully)
+                {
+                    readiness = true;
+                    var stableUntil = watch.Elapsed + TimeSpan.FromSeconds(2);
+                    while (watch.Elapsed < stableUntil && !owned.Process.HasExited)
+                    {
+                        await Task.Delay(500, startup.Token);
+                        if (!Observe()) break;
+                    }
+                    if (network is null || !network.Passed || owned.Process.HasExited)
+                    { summary = network?.Summary ?? "Startup listener could not be verified."; break; }
+                    noGui = !job.HasStableOwnedVisibleTopLevelWindow();
+                    if (!noGui) { summary = "The staged server opened an unexpected visible window."; break; }
+                    // Inspect only after readiness, when the server has finished normal initial properties writes.
+                    var actual = ServerPropertiesDocument.Parse(await File.ReadAllTextAsync(propertiesPath, startup.Token));
+                    if (ValidationPropertyKeys
+                        .Any(key => actual.Get(key) != properties.Get(key)))
+                    { summary = "Startup check configuration was rewritten by the server; intended files were not promoted."; break; }
+                    Publish("Checking startup");
+                    status = await new MinecraftStatusClient().QueryAsync("127.0.0.1", port, startup.Token) is not null;
+                    if (!Observe() || !network!.Passed) { status = false; break; }
+                    summary = status ? "Local readiness and status checks passed." : "The local Minecraft status check did not respond.";
+                    break;
+                }
+                await Task.Delay(500, startup.Token);
+            }
+        }
+        catch (OperationCanceledException exception)
+        {
+            operationFailure = cancellationToken.IsCancellationRequested ? exception : null;
+            summary = cancellationToken.IsCancellationRequested
+                ? "Startup check cancelled; cleaning up exact-owned work."
+                : "The server did not complete the bounded startup check before its deadline.";
         }
         catch (Exception exception)
         {
-            operationFailure = ExceptionDispatchInfo.Capture(exception);
+            operationFailure = exception;
+            summary = "Startup check could not be completed: " + SecretRedactor.Redact(exception.Message);
         }
-
-        var cleanupFailure = await CleanupAsync().ConfigureAwait(false);
-        if (cleanupFailure is not null)
+        finally
         {
-            if (operationFailure is not null)
-                throw new AggregateException(
-                    "Staged validation failed and exact process-tree cleanup could not be proven.",
-                    operationFailure.SourceException,
-                    cleanupFailure);
-            throw new InvalidOperationException(
-                "Exact staged validation process-tree cleanup could not be proven.", cleanupFailure);
-        }
-        operationFailure?.Throw();
-        return outcome ?? throw new InvalidOperationException("Staged validation produced no result.");
-
-        StagedServerValidationResult Finish(bool succeeded) => new(succeeded, readiness, status, cleanStop,
-            noGui, summary, lines.TakeLast(200).ToArray());
-
-        async Task<Exception?> CleanupAsync()
-        {
-            var failures = new List<Exception>();
-            if (processJob is not null)
+            // Failure and cancellation take the same terminal cleanup path, independent of startup deadline.
+            if (owned is not null && job is not null)
             {
                 try
                 {
-                    await processJob.TerminateRemainingAndProveEmptyAsync(TimeSpan.FromSeconds(30))
-                        .ConfigureAwait(false);
+                    if (network?.UnexpectedInboundListener == true) job.Terminate();
+                    Publish("Stopping validation server");
+                    if (!owned.Process.HasExited)
+                    {
+                        using var shutdown = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+                        await owned.StandardInput.WriteLineAsync("stop".AsMemory(), shutdown.Token);
+                        await owned.StandardInput.FlushAsync(shutdown.Token);
+                        await owned.Process.WaitForExitAsync(shutdown.Token);
+                    }
+                    cleanStop = owned.Process.ExitCode == 0 &&
+                        await job.WaitForEmptyAsync(TimeSpan.FromSeconds(2), CancellationToken.None);
                 }
-                catch (Exception exception)
-                {
-                    failures.Add(exception);
-                }
-            }
-            if (ownedProcess is not null)
-            {
-                try { ownedProcess.StandardInput.Dispose(); }
-                catch (Exception exception) { failures.Add(exception); }
-                try
-                {
-                    await Task.WhenAll(outputPump, errorPump)
-                        .WaitAsync(TimeSpan.FromSeconds(5), CancellationToken.None)
-                        .ConfigureAwait(false);
-                }
-                catch (Exception exception)
-                {
-                    failures.Add(exception);
-                }
-                try { ownedProcess.Dispose(); }
-                catch (Exception exception) { failures.Add(exception); }
-            }
-            if (processJob is not null)
-            {
-                try { processJob.Dispose(); }
-                catch (Exception exception) { failures.Add(exception); }
+                catch (Exception exception) when (exception is IOException or OperationCanceledException or InvalidOperationException)
+                { /* Exact Job termination below remains mandatory; cleanStop stays false. */ }
             }
             try
             {
-                if (originalProperties is null)
+                if (job is not null) await job.TerminateRemainingAndProveEmptyAsync(TimeSpan.FromSeconds(30));
+                empty = true;
+            }
+            catch (Exception exception) { cleanupFailures.Add(exception); }
+            try { await Task.WhenAll(output, error).WaitAsync(TimeSpan.FromSeconds(5), CancellationToken.None); }
+            catch (Exception exception) { cleanupFailures.Add(exception); }
+            if (empty)
+            {
+                try
                 {
-                    if (File.Exists(propertiesPath))
-                        File.Delete(propertiesPath);
+                    // This is independent of Job emptiness. A new/unrelated owner is not killed.
+                    portAbsent = !WindowsStagedNetworkEndpoints.Capture().Any(e => e.IsTcpListener && e.Port == port);
                 }
-                else
+                catch (Exception exception) { cleanupFailures.Add(exception); }
+                try
                 {
-                    await File.WriteAllBytesAsync(propertiesPath, originalProperties, CancellationToken.None)
-                        .ConfigureAwait(false);
+                    EnsureRegularFilePath(propertiesPath);
+                    if (original is null) { if (File.Exists(propertiesPath)) File.Delete(propertiesPath); }
+                    else await File.WriteAllBytesAsync(propertiesPath, original, CancellationToken.None);
+                    restored = true;
+                    if (worldPrepared)
+                        CreationStagingSafety.DeleteOwnedTree(worldPath, attempt, attempt, worldPath);
+                    worldRemoved = !Directory.Exists(worldPath);
                 }
+                catch (Exception exception) { cleanupFailures.Add(exception); }
+            }
+            owned?.Dispose();
+            job?.Dispose();
+        }
+        if (cleanupFailures.Count > 0)
+            throw new StagedServerCleanupException("Cleanup needs attention. " + summary,
+                new AggregateException(operationFailure is null ? cleanupFailures : new[] { operationFailure }.Concat(cleanupFailures)));
+        if (operationFailure is OperationCanceledException) throw operationFailure;
+        var success = readiness && status && network?.Passed == true && cleanStop && noGui && empty && restored && worldRemoved;
+        return new(success, readiness, status, cleanStop, noGui, summary, lines.TakeLast(200).ToArray())
+        {
+            AttemptId = attempt, Network = network, EndpointHistory = evidence.Values.ToArray(),
+            JobEmptyConfirmed = empty, SelectedPortListenerAbsent = portAbsent, ValidationPort = port,
+            ConfigurationRestored = restored, ValidationWorldRemoved = worldRemoved, ElapsedSeconds = watch.Elapsed.TotalSeconds
+        };
+
+        bool Observe()
+        {
+            try
+            {
+                network = StartupNetworkPolicy.Evaluate(attempt, collect(job!, attempt), IPAddress.Loopback, port);
+                foreach (var finding in network.Findings)
+                {
+                    var e = finding.Observation;
+                    var key = $"{e.Transport}|{e.LocalAddress}|{e.LocalPort}|{e.RemoteAddress}|{e.RemotePort}|{e.State}|{e.ProcessId}|{e.ProcessCreationTicks}";
+                    if (evidence.Count >= 256 && !evidence.ContainsKey(key))
+                        throw new InvalidDataException("The bounded endpoint evidence limit was reached.");
+                    evidence[key] = finding;
+                }
+                if (network.UnexpectedInboundListener || network.Unresolved)
+                { summary = network.Summary; return false; }
+                return true; // A main listener is not expected until readiness; required before status/promotion.
             }
             catch (Exception exception)
             {
-                failures.Add(exception);
+                network = StartupNetworkPolicy.Evaluate(attempt, [], IPAddress.Loopback, port, false, false);
+                summary = "Startup check could not verify the endpoint inventory: " + SecretRedactor.Redact(exception.Message);
+                return false;
             }
-            return failures.Count switch
-            {
-                0 => null,
-                1 => failures[0],
-                _ => new AggregateException(failures)
-            };
         }
 
-        static async Task PumpAsync(
-            StreamReader reader,
-            string source,
-            Action<string, string?> capture)
+        void Publish(string stage)
         {
-            while (await reader.ReadLineAsync(CancellationToken.None).ConfigureAwait(false) is { } line)
-                capture(source, line);
+            lock (evidenceLock)
+            {
+                progress?.Report(new(stage, watch.Elapsed.TotalSeconds, lastMilestone,
+                    watch.Elapsed.TotalSeconds - lastMilestoneAt, recent, outputCount != reportedOutputCount));
+                reportedOutputCount = outputCount;
+            }
+        }
+
+        async Task PumpAsync(StreamReader reader, string source)
+        {
+            while (await reader.ReadLineAsync(CancellationToken.None) is { } line)
+            {
+                var safe = SecretRedactor.Redact(line);
+                safe = safe[..Math.Min(safe.Length, 1024)];
+                lines.Enqueue($"[{source}] {safe}");
+                while (lines.Count > 200) lines.TryDequeue(out _);
+                lock (evidenceLock)
+                {
+                    outputCount++;
+                    recent = safe;
+                    var milestone = line.Contains("Done (", StringComparison.OrdinalIgnoreCase) ? "Server reported ready"
+                        : line.Contains("Preparing start region", StringComparison.OrdinalIgnoreCase) ? "Preparing validation spawn"
+                        : line.Contains("Preparing level", StringComparison.OrdinalIgnoreCase) ? "Preparing disposable validation world"
+                        : line.Contains("Starting minecraft server version", StringComparison.OrdinalIgnoreCase) ? "Minecraft startup began"
+                        : null;
+                    if (milestone is not null && milestone != lastMilestone)
+                    { lastMilestone = milestone; lastMilestoneAt = watch.Elapsed.TotalSeconds; }
+                }
+                if (line.Contains("Done (", StringComparison.OrdinalIgnoreCase)) ready.TrySetResult();
+                if (line.Contains("Failed to start the minecraft server", StringComparison.OrdinalIgnoreCase) ||
+                    line.Contains("Could not reserve enough space", StringComparison.OrdinalIgnoreCase))
+                    fatal.TrySetResult(safe);
+            }
         }
     }
 
@@ -298,10 +327,10 @@ public sealed class StagedServerValidator : IStagedServerValidator
         finally { listener.Stop(); }
     }
 
-    private static void EnsureChild(string root, string candidate)
+    private static void EnsureRegularFilePath(string path)
     {
-        var prefix = Path.TrimEndingDirectorySeparator(root) + Path.DirectorySeparatorChar;
-        if (!candidate.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
-            throw new InvalidDataException("The validation launcher escaped operation-owned staging.");
+        CreationStagingSafety.EnsureNoReparseTraversal(Path.GetDirectoryName(path)!);
+        if (File.Exists(path) && File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint))
+            throw new IOException("A validation file is redirected.");
     }
 }

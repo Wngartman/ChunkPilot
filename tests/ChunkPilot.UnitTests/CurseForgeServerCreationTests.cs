@@ -12,6 +12,41 @@ namespace ChunkPilot.UnitTests;
 public sealed class CurseForgeServerCreationTests
 {
     [Fact]
+    public async Task Late_failure_retains_verified_input_restart_does_not_discard_and_retry_needs_no_archive_request()
+    {
+        await using var fixture = await Fixture.CreateAsync(validationSucceeds: false);
+        await Assert.ThrowsAsync<InvalidDataException>(() => fixture.Installer.InstallAsync(fixture.Request));
+        var entry = (await fixture.Store.GetCreationJournalAsync(fixture.Request.OperationId))!.Entry!;
+        Assert.Equal(CreationOutcome.StagingResumable, entry.Outcome);
+        var inputs = new VerifiedCreationArchiveStore(fixture.Paths);
+        var archive = await inputs.VerifyAsync(entry, CancellationToken.None);
+        Assert.Equal(fixture.Request.ExpectedSizeBytes, new FileInfo(archive).Length);
+        Assert.False(Directory.Exists(entry.CanonicalStaging));
+        var report = Assert.Single(await new ServerCreationRecoveryService(fixture.Store).RecoverAsync());
+        Assert.Equal(CreationOutcome.StagingResumable, report.Outcome);
+        Assert.Equal(0, (await fixture.Store.GetCreationJournalAsync(entry.OperationId))!.Entry!.RecoveryAttempts);
+        fixture.Validator.Succeeds = true;
+        fixture.RefuseDownloads = true;
+        var result = await fixture.Installer.InstallAsync(fixture.Request with { RetryVerifiedInput = true });
+        Assert.Equal(entry.ServerId, result.Definition.Id);
+        Assert.Single(await fixture.Store.GetServersAsync());
+        Assert.Equal(2, fixture.Validator.Calls);
+    }
+
+    [Fact]
+    public async Task Altered_retained_archive_is_rejected_without_download_or_promotion()
+    {
+        await using var fixture = await Fixture.CreateAsync(validationSucceeds: false);
+        await Assert.ThrowsAsync<InvalidDataException>(() => fixture.Installer.InstallAsync(fixture.Request));
+        var archive = new VerifiedCreationArchiveStore(fixture.Paths).ArchiveFor(fixture.Request.OperationId);
+        await File.AppendAllTextAsync(archive, "tamper");
+        fixture.RefuseDownloads = true;
+        await Assert.ThrowsAsync<InvalidDataException>(() => fixture.Installer.InstallAsync(fixture.Request with { RetryVerifiedInput = true }));
+        Assert.Empty(await fixture.Store.GetServersAsync());
+        Assert.True(File.Exists(archive));
+    }
+
+    [Fact]
     public async Task Official_server_pack_is_verified_validated_and_promoted_transactionally()
     {
         var fixture = await Fixture.CreateAsync(validationSucceeds: true);
@@ -83,7 +118,7 @@ public sealed class CurseForgeServerCreationTests
         var error = await Assert.ThrowsAsync<InvalidDataException>(() =>
             fixture.Installer.InstallAsync(fixture.Request));
 
-        Assert.Contains("could not build a working server", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Startup check could not finish", error.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("provider-validation-tail-sentinel", error.Message, StringComparison.Ordinal);
         Assert.Empty(await fixture.Store.GetServersAsync());
         Assert.False(Directory.Exists(Path.Combine(fixture.Paths.ManagedServers,
@@ -229,7 +264,7 @@ public sealed class CurseForgeServerCreationTests
         private readonly HttpClient http;
 
         private Fixture(string root, AppDataPaths paths, ChunkPilotStore store, ManagedServerInstaller installer,
-            ServerInstallRequest request, FakeValidator validator, CurseForgeApiClient api, HttpClient http)
+            ServerInstallRequest request, FakeValidator validator, CurseForgeApiClient api, HttpClient http, Handler handler)
         {
             this.root = root;
             Paths = paths;
@@ -239,6 +274,7 @@ public sealed class CurseForgeServerCreationTests
             Validator = validator;
             this.api = api;
             this.http = http;
+            Handler = handler;
         }
 
         public AppDataPaths Paths { get; }
@@ -246,6 +282,8 @@ public sealed class CurseForgeServerCreationTests
         public ManagedServerInstaller Installer { get; }
         public ServerInstallRequest Request { get; }
         public FakeValidator Validator { get; }
+        private Handler Handler { get; }
+        public bool RefuseDownloads { set => Handler.RefuseRequests = value; }
 
         public static async Task<Fixture> CreateAsync(bool validationSucceeds, bool cancelValidation = false)
         {
@@ -296,7 +334,7 @@ public sealed class CurseForgeServerCreationTests
                 PackLoader = "Forge",
                 PackLoaderVersion = "47.3.0"
             };
-            return new Fixture(root, paths, store, installer, request, validator, api, http);
+            return new Fixture(root, paths, store, installer, request, validator, api, http, handler);
         }
 
         public async ValueTask DisposeAsync()
@@ -329,6 +367,7 @@ public sealed class CurseForgeServerCreationTests
 
     private sealed class FakeValidator(bool succeeds, bool cancel) : IStagedServerValidator
     {
+        public bool Succeeds { get; set; } = succeeds;
         public int Calls { get; private set; }
         public int MinimumRamMb { get; private set; }
         public int MaximumRamMb { get; private set; }
@@ -337,24 +376,27 @@ public sealed class CurseForgeServerCreationTests
         public Task<StagedServerValidationResult> ValidateAsync(string javaPath, string stagingRoot,
             string launchRelativePath, bool usesArgumentFile, int minimumRamMb, int maximumRamMb,
             TimeSpan timeout,
-            CancellationToken cancellationToken = default)
+            IProgress<StagedValidationProgress>? progress = null, CancellationToken cancellationToken = default)
         {
             Calls++;
             MinimumRamMb = minimumRamMb;
             MaximumRamMb = maximumRamMb;
             Timeout = timeout;
             if (cancel) throw new OperationCanceledException(cancellationToken);
-            return Task.FromResult(new StagedServerValidationResult(succeeds, succeeds, succeeds, succeeds,
-                succeeds, succeeds ? "Fixture validation passed." : "Fixture validation failed.",
-                ["provider-validation-tail-sentinel fixture-server.zip"]));
+            return Task.FromResult(new StagedServerValidationResult(Succeeds, Succeeds, Succeeds, Succeeds,
+                Succeeds, Succeeds ? "Fixture validation passed." : "Fixture validation failed.",
+                ["provider-validation-tail-sentinel fixture-server.zip"]) { AttemptId = Guid.NewGuid() });
         }
     }
 
     private sealed class Handler(Func<HttpRequestMessage, HttpResponseMessage> response) : HttpMessageHandler
     {
+        public bool RefuseRequests { get; set; }
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,
             CancellationToken cancellationToken)
         {
+            if (RefuseRequests)
+                throw new InvalidOperationException("Retry must not request an archive payload.");
             var result = response(request);
             result.RequestMessage ??= request;
             return Task.FromResult(result);

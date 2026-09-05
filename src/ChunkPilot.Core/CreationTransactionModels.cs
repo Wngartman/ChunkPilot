@@ -628,6 +628,8 @@ public sealed record CreationJournalEntry
     /// resumable checkpoint.
     /// </remarks>
     public ServerDefinition? PlannedDefinition { get; init; }
+    public CreationVerifiedInput? VerifiedInput { get; init; }
+    public CreationRetrySettings? RetrySettings { get; init; }
 }
 
 /// <summary>

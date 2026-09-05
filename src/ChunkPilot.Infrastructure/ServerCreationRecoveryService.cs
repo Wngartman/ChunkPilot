@@ -67,6 +67,10 @@ public sealed class ServerCreationRecoveryService
                 $"A creation record could not be read and was left untouched. {record.UnreadableReason}");
 
         var entry = record.Entry!;
+        if (!entry.ActivationBegan && entry.VerifiedInput is not null && entry.RetrySettings is not null)
+            return new CreationRecoveryReport(entry.OperationId, CreationRecoveryDisposition.AttentionRequired,
+                entry.Outcome == CreationOutcome.RecoveryRequired ? CreationOutcome.RecoveryRequired : CreationOutcome.StagingResumable,
+                "Verified creation input was retained for explicit retry or discard. No server was started or download repeated.");
         if (entry.RecoveryAttempts >= MaximumRecoveryAttempts)
             return new CreationRecoveryReport(entry.OperationId, CreationRecoveryDisposition.AttentionRequired,
                 CreationOutcome.RecoveryRequired,

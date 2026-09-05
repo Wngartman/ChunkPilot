@@ -47,123 +47,82 @@ public sealed class StagedServerValidatorIntegrationTests
         }
     }
 
-    [Fact]
-    public async Task Exact_owned_non_loopback_listener_is_rejected_and_cleaned()
+    [Theory]
+    [InlineData("tcp", false)]
+    [InlineData("udp", false)]
+    [InlineData("connection", true)]
+    [InlineData("stale", false)]
+    [InlineData("collector", false)]
+    public async Task Synthetic_endpoint_decision_uses_real_loopback_process_and_exact_cleanup(string kind, bool expectedSuccess)
     {
-        if (!OperatingSystem.IsWindows())
-            return;
-
+        if (!OperatingSystem.IsWindows()) return;
         var root = CreateRoot();
-        var identityPath = Path.Combine(root, "staged-non-loopback-listener.pid");
-        await File.WriteAllBytesAsync(Path.Combine(root, "staged-non-loopback-listener.jar"), [0x01]);
+        const string original = "level-name=intended-world\r\nserver-ip=\r\nserver-port=25565\r\nmotd=preserve\r\n";
+        await File.WriteAllTextAsync(Path.Combine(root, "server.properties"), original);
+        Directory.CreateDirectory(Path.Combine(root, "intended-world"));
+        await File.WriteAllTextAsync(Path.Combine(root, "intended-world", "level.dat"), "irreplaceable sentinel");
+        await File.WriteAllBytesAsync(Path.Combine(root, "staged-loopback.jar"), [1]);
+        var validator = new StagedServerValidator((job, attempt) =>
+        {
+            var endpoints = job.CaptureStableOwnedNetworkEndpoints().Select(e => e.ToObservation(attempt)).ToList();
+            if (endpoints.FirstOrDefault(e => e.State == System.Net.NetworkInformation.TcpState.Listen) is not { } listener)
+                return endpoints;
+            if (kind == "collector") throw new IOException("Synthetic table read failure");
+            endpoints.Add(listener with
+            {
+                LocalAddress = "192.0.2.10", LocalPort = 49000,
+                Transport = kind == "udp" ? ChunkPilot.Core.StartupEndpointTransport.Udp : ChunkPilot.Core.StartupEndpointTransport.Tcp,
+                State = kind == "udp" ? null : kind == "connection" ? System.Net.NetworkInformation.TcpState.Established :
+                    System.Net.NetworkInformation.TcpState.Listen,
+                AttemptId = kind == "stale" ? Guid.NewGuid() : attempt
+            });
+            return endpoints;
+        });
         try
         {
-            var result = await new StagedServerValidator().ValidateAsync(
-                FakeJavaPath(),
-                root,
-                "staged-non-loopback-listener.jar",
-                usesArgumentFile: false,
-                minimumRamMb: 512,
-                maximumRamMb: 512,
-                timeout: TimeSpan.FromSeconds(15));
-
-            Assert.False(result.Succeeded);
-            Assert.True(result.ReadinessConfirmed);
-            Assert.Contains("unexpected non-loopback network endpoint", result.Summary,
-                StringComparison.OrdinalIgnoreCase);
-            Assert.True(File.Exists(identityPath), "The listener fixture never reached its owned listener state.");
-            Assert.False(await IsExactProcessAliveAsync(ReadIdentity(identityPath), TimeSpan.FromSeconds(5)));
-            Assert.False(File.Exists(Path.Combine(root, "server.properties")),
-                "Validation did not remove its temporary server.properties file.");
+            var result = await validator.ValidateAsync(FakeJavaPath(), root, "staged-loopback.jar", false,
+                512, 512, TimeSpan.FromSeconds(15));
+            Assert.Equal(expectedSuccess, result.Succeeded);
+            Assert.True(result.JobEmptyConfirmed);
+            Assert.True(result.SelectedPortListenerAbsent);
+            Assert.True(result.ConfigurationRestored);
+            Assert.True(result.ValidationWorldRemoved);
+            Assert.Equal(original, await File.ReadAllTextAsync(Path.Combine(root, "server.properties")));
+            Assert.Equal("irreplaceable sentinel", await File.ReadAllTextAsync(Path.Combine(root, "intended-world", "level.dat")));
+            Assert.Empty(Directory.EnumerateDirectories(root, ".chunkpilot-staging-*"));
+            if (kind == "tcp") Assert.True(result.Network!.UnexpectedInboundListener);
+            if (kind == "udp") { Assert.True(result.Network!.Unresolved); Assert.False(result.Network.UnexpectedInboundListener); }
+            if (expectedSuccess) Assert.True(result.CleanStopConfirmed);
         }
-        finally
-        {
-            await KillExactFixtureProcessIfPresentAsync(identityPath);
-            Directory.Delete(root, recursive: true);
-        }
+        finally { Directory.Delete(root, recursive: true); }
     }
 
-    [Fact]
-    public async Task Exact_owned_wildcard_udp_endpoint_is_rejected_and_cleaned()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Timeout_and_cancellation_stop_the_owned_process_and_remove_only_disposable_world(bool cancel)
     {
-        if (!OperatingSystem.IsWindows())
-            return;
-
         var root = CreateRoot();
-        var identityPath = Path.Combine(root, "staged-non-loopback-udp.pid");
-        await File.WriteAllBytesAsync(Path.Combine(root, "staged-non-loopback-udp.jar"), [0x01]);
+        await File.WriteAllBytesAsync(Path.Combine(root, "staged-loopback-no-readiness.jar"), [1]);
+        using var cancellation = new CancellationTokenSource();
+        if (cancel) cancellation.CancelAfter(TimeSpan.FromSeconds(1));
         try
         {
-            var result = await new StagedServerValidator().ValidateAsync(
-                FakeJavaPath(),
-                root,
-                "staged-non-loopback-udp.jar",
-                usesArgumentFile: false,
-                minimumRamMb: 512,
-                maximumRamMb: 512,
-                timeout: TimeSpan.FromSeconds(15));
-
-            Assert.False(result.Succeeded);
-            Assert.True(result.ReadinessConfirmed);
-            Assert.Contains("unexpected non-loopback network endpoint", result.Summary,
-                StringComparison.OrdinalIgnoreCase);
-            Assert.True(File.Exists(identityPath), "The UDP fixture never reached its owned endpoint state.");
-            Assert.False(await IsExactProcessAliveAsync(ReadIdentity(identityPath), TimeSpan.FromSeconds(5)));
-            Assert.False(File.Exists(Path.Combine(root, "server.properties")),
-                "Validation did not remove its temporary server.properties file.");
+            var run = new StagedServerValidator().ValidateAsync(FakeJavaPath(), root, "staged-loopback-no-readiness.jar",
+                false, 512, 512, TimeSpan.FromSeconds(2), cancellationToken: cancellation.Token);
+            if (cancel) await Assert.ThrowsAnyAsync<OperationCanceledException>(() => run);
+            else
+            {
+                var result = await run;
+                Assert.False(result.Succeeded);
+                Assert.True(result.JobEmptyConfirmed);
+                Assert.True(result.SelectedPortListenerAbsent);
+                Assert.True(result.CleanStopConfirmed);
+            }
+            Assert.False(File.Exists(Path.Combine(root, "server.properties")));
+            Assert.Empty(Directory.EnumerateDirectories(root, ".chunkpilot-staging-*"));
         }
-        finally
-        {
-            await KillExactFixtureProcessIfPresentAsync(identityPath);
-            Directory.Delete(root, recursive: true);
-        }
-    }
-
-    [Fact]
-    public async Task Exact_owned_outbound_non_loopback_tcp_connection_is_rejected_and_cleaned()
-    {
-        if (!OperatingSystem.IsWindows())
-            return;
-        var address = FindNonLoopbackIpv4Address();
-        if (address is null)
-            return;
-
-        var root = CreateRoot();
-        var identityPath = Path.Combine(root, "staged-outbound-tcp.pid");
-        var listener = new TcpListener(address, 0);
-        listener.Start();
-        await File.WriteAllTextAsync(
-            Path.Combine(root, "staged-outbound-tcp-target.txt"),
-            FormattableString.Invariant($"{address}|{((IPEndPoint)listener.LocalEndpoint).Port}"));
-        await File.WriteAllBytesAsync(Path.Combine(root, "staged-outbound-tcp.jar"), [0x01]);
-        try
-        {
-            var validation = new StagedServerValidator().ValidateAsync(
-                FakeJavaPath(),
-                root,
-                "staged-outbound-tcp.jar",
-                usesArgumentFile: false,
-                minimumRamMb: 512,
-                maximumRamMb: 512,
-                timeout: TimeSpan.FromSeconds(15));
-            using var accepted = await listener.AcceptTcpClientAsync().WaitAsync(TimeSpan.FromSeconds(5));
-            var result = await validation;
-
-            Assert.False(result.Succeeded);
-            Assert.True(result.ReadinessConfirmed);
-            Assert.Contains("unexpected non-loopback network endpoint", result.Summary,
-                StringComparison.OrdinalIgnoreCase);
-            Assert.True(File.Exists(identityPath), "The outbound fixture never established its TCP connection.");
-            Assert.False(await IsExactProcessAliveAsync(ReadIdentity(identityPath), TimeSpan.FromSeconds(5)));
-            Assert.False(File.Exists(Path.Combine(root, "server.properties")),
-                "Validation did not remove its temporary server.properties file.");
-        }
-        finally
-        {
-            listener.Stop();
-            await KillExactFixtureProcessIfPresentAsync(identityPath);
-            Directory.Delete(root, recursive: true);
-        }
+        finally { Directory.Delete(root, recursive: true); }
     }
 
     private static string CreateRoot()

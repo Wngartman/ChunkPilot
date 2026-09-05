@@ -19,6 +19,7 @@ param(
     [string]$ModProjectId,
     [string]$ModFileId,
     [switch]$AcceptMinecraftEulaForCertification,
+    [switch]$RetainStoppedRun,
     [string]$ServerName = 'ChunkPilot CurseForge Certification',
     [ValidateRange(1, 65535)]
     [int]$Port = 25585,
@@ -343,6 +344,9 @@ if ($null -ne $reportFull) {
 }
 if ($AcceptMinecraftEulaForCertification) {
     $controllerArguments += '--accept-minecraft-eula-for-certification'
+}
+if ($RetainStoppedRun) {
+    $controllerArguments += '--retain-stopped-run'
 }
 if ($Phase -eq 'Full') {
     $controllerArguments += @(

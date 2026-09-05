@@ -480,6 +480,7 @@ public sealed record WhitelistEntry
 
 public sealed record ServerInstallRequest
 {
+    public bool RetryVerifiedInput { get; init; }
     public Guid OperationId { get; init; } = Guid.NewGuid();
     public InstallSourceType SourceType { get; init; }
     public string Source { get; init; } = "";
@@ -530,6 +531,12 @@ public sealed record ServerInstallRequest
 
 public sealed record InstallProgress
 {
+    public bool IsIndeterminate { get; init; }
+    public double? StageElapsedSeconds { get; init; }
+    public string LastMeaningfulStatus { get; init; } = "";
+    public double? SecondsSinceMeaningfulUpdate { get; init; }
+    public string RecentStatus { get; init; } = "";
+    public bool NewLogOutputObserved { get; init; }
     public Guid OperationId { get; init; }
     public InstallState State { get; init; }
 
@@ -574,6 +581,9 @@ public sealed record InstallationResult
 
 public sealed record InstallOperationSnapshot
 {
+    public long RetainedInputBytes { get; init; }
+    public bool CanRetry { get; init; }
+    public bool CanDiscard { get; init; }
     public Guid OperationId { get; init; }
     public long Revision { get; init; }
     public DateTimeOffset StartedAtUtc { get; init; }

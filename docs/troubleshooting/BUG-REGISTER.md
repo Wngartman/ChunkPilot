@@ -6,6 +6,27 @@ become the durable record and the entry can leave this active register.
 
 ---
 
+## CP-2026-064 — Startup validation mistook non-listening TCP connections for inbound listeners
+
+**High; fixed locally, packaged/live acceptance pending.** At base `12bb1f8`, production rejected
+`ownedEndpoints.Any(endpoint => !endpoint.IsLoopback)` without testing TCP state. The controller's
+separate listener-only collector hid this production mismatch. A documentation-address reproduction
+demonstrates the old false rejection; the original saved report did not preserve its raw socket tuple.
+
+`StartupNetworkPolicy` now serves both paths. Non-loopback TCP listeners block; non-listening connections
+retain direction/purpose uncertainty; non-loopback UDP purpose, unreadable tables and uncertain ownership
+return cannot-verify. Exact Job generation fencing, IPv6 scope parsing and failure-path cleanup are covered.
+Focused boundary/controller/nullable/creation slice: 102 passed. This does not establish pack security.
+
+## CP-2026-065 — Staged validation could boot the intended world and erase late-failure input
+
+**High; core correction tested, recovery UX pending.** Validation previously changed bind settings but
+kept `level-name`; official archives were deleted before startup completed. It now uses an exact-owned
+disposable world, preserves intended-world sentinels/configuration, and restores only after Job-empty proof.
+Verified official archive input can survive a late failure in a bounded operation-owned journal/store.
+Fixtures cover timeout, cancellation, stale/failed collectors, tampered archives, restart retention, and
+retry with archive requests disabled. Authoritative retry/discard UI and real-pack acceptance remain open.
+
 ## CP-2026-063 — A valid catalog not-found response was reported as a broken Agent frame
 
 | Field | Value |

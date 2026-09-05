@@ -40,6 +40,22 @@ internal sealed record WindowsStagedNetworkEndpoint(
     int ProcessId,
     WindowsStagedTcpState? TcpState)
 {
+    public IPAddress? RemoteAddress { get; init; }
+    public int? RemotePort { get; init; }
+    public long ProcessCreationTicks { get; init; }
+    public string Executable { get; init; } = "";
+    public DateTimeOffset ObservedAtUtc { get; init; }
+    public StartupEndpointObservation ToObservation(Guid attemptId) => new()
+    {
+        AttemptId = attemptId,
+        Transport = (StartupEndpointTransport)Transport,
+        AddressFamily = AddressFamily.ToString(), LocalAddress = LocalAddress.ToString(), LocalPort = Port,
+        RemoteAddress = RemoteAddress?.ToString(), RemotePort = RemotePort,
+        State = TcpState is null ? null : (System.Net.NetworkInformation.TcpState)TcpState,
+        ProcessId = ProcessId, ProcessCreationTicks = ProcessCreationTicks, Executable = Executable,
+        ExactJobOwnershipVerified = ProcessCreationTicks != 0 && Executable.Length > 0,
+        ObservedAtUtc = ObservedAtUtc
+    };
     public bool IsLoopback => IPAddress.IsLoopback(LocalAddress) &&
                               !LocalAddress.Equals(IPAddress.Any) &&
                               !LocalAddress.Equals(IPAddress.IPv6Any);
@@ -192,6 +208,10 @@ internal sealed class WindowsStagedProcessJob : IDisposable
                     "The suspended staged process was not atomically assigned to its exact-owned Job.");
 
             process = Process.GetProcessById(checked((int)processInformation.ProcessId));
+            // Open and retain the Process handle while the root is still suspended. ExitCode must
+            // remain readable if a fast-failing root exits before validation first waits on it.
+            if (ProcessCreationIdentity.Of(process.SafeHandle) == ProcessCreationIdentity.Unknown)
+                throw new InvalidOperationException("The suspended staged root creation identity was unavailable.");
             var inputStream = new FileStream(parentInput, FileAccess.Write, 4_096, isAsync: false);
             parentInput = null;
             var outputStream = new FileStream(parentOutput, FileAccess.Read, 4_096, isAsync: false);
@@ -294,20 +314,49 @@ internal sealed class WindowsStagedProcessJob : IDisposable
         ObjectDisposedException.ThrowIf(disposed, this);
         for (var attempt = 0; attempt < 8; attempt++)
         {
+            var accountingBefore = ReadAccounting();
             var before = GetActiveProcessIds().Order().ToArray();
             if (before.Length == 0)
                 return [];
-            var first = WindowsStagedNetworkEndpoints.Capture();
-            var between = GetActiveProcessIds().Order().ToArray();
-            var second = WindowsStagedNetworkEndpoints.Capture();
-            var after = GetActiveProcessIds().Order().ToArray();
-            if (!before.SequenceEqual(between) || !between.SequenceEqual(after))
-                continue;
-            var owned = before.ToHashSet();
-            return first.Concat(second)
-                .Where(listener => owned.Contains(listener.ProcessId))
-                .Distinct()
-                .ToArray();
+            var owners = new Dictionary<int, (SafeProcessHandle Handle, long Creation, string Executable)>();
+            try
+            {
+                foreach (var pid in before)
+                {
+                    var owner = OpenProcess(0x00101000, false, pid); // Query limited information + synchronize.
+                    if (owner.IsInvalid) { owner.Dispose(); break; }
+                    var creation = ProcessCreationIdentity.Of(owner);
+                    var executable = new char[32768];
+                    var length = executable.Length;
+                    if (creation == 0 || !IsProcessInJob(owner.DangerousGetHandle(), handle, out var inJob) ||
+                        !inJob || !QueryFullProcessImageName(owner, 0, executable, ref length))
+                    { owner.Dispose(); break; }
+                    owners.Add(pid, (owner, creation, new string(executable, 0, length)));
+                }
+                if (owners.Count != before.Length) continue;
+                var first = WindowsStagedNetworkEndpoints.Capture();
+                var between = GetActiveProcessIds().Order().ToArray();
+                var second = WindowsStagedNetworkEndpoints.Capture();
+                var after = GetActiveProcessIds().Order().ToArray();
+                var accountingAfter = ReadAccounting();
+                if (!before.SequenceEqual(between) || !between.SequenceEqual(after) ||
+                    accountingBefore.TotalProcesses != accountingAfter.TotalProcesses ||
+                    accountingBefore.TotalTerminatedProcesses != accountingAfter.TotalTerminatedProcesses ||
+                    accountingAfter.ActiveProcesses != before.Length ||
+                    owners.Values.Any(owner => WaitForSingleObject(owner.Handle, 0) != 0x102 ||
+                        !ProcessCreationIdentity.Matches(owner.Creation, ProcessCreationIdentity.Of(owner.Handle)) ||
+                        !IsProcessInJob(owner.Handle.DangerousGetHandle(), handle, out var inJob) || !inJob))
+                    continue;
+                // Held exact handles prevent PID recycling through the complete observation interval.
+                return first.Concat(second).Where(endpoint => owners.ContainsKey(endpoint.ProcessId))
+                    .Distinct().Select(endpoint => endpoint with
+                    {
+                        ProcessCreationTicks = owners[endpoint.ProcessId].Creation,
+                        Executable = owners[endpoint.ProcessId].Executable,
+                        ObservedAtUtc = DateTimeOffset.UtcNow
+                    }).ToArray();
+            }
+            finally { foreach (var owner in owners.Values) owner.Handle.Dispose(); }
         }
         throw new InvalidDataException(
             "The staged validation Job did not produce a stable process/endpoint ownership snapshot.");
@@ -610,6 +659,17 @@ internal sealed class WindowsStagedProcessJob : IDisposable
         [MarshalAs(UnmanagedType.Bool)] out bool result);
 
     [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern SafeProcessHandle OpenProcess(uint access, bool inherit, int processId);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool QueryFullProcessImageName(SafeProcessHandle process, uint flags,
+        [Out] char[] name, ref int size);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern uint WaitForSingleObject(SafeProcessHandle process, uint milliseconds);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool CreatePipe(
         out SafeFileHandle readPipe,
@@ -814,13 +874,15 @@ internal static class WindowsStagedNetworkEndpoints
                 ? (WindowsStagedTcpState?)BinaryPrimitives.ReadUInt32LittleEndian(
                     row.Slice(addressFamily == AddressFamily.InterNetwork ? 0 : 48, sizeof(uint)))
                 : null;
+            if (tcpState is not null && !Enum.IsDefined(tcpState.Value))
+                throw new InvalidDataException("Windows returned an unknown TCP state.");
             var addressOffset = transport == WindowsStagedEndpointTransport.Tcp &&
                                 addressFamily == AddressFamily.InterNetwork
                 ? 4
                 : 0;
             var addressLength = addressFamily == AddressFamily.InterNetwork ? 4 : 16;
             var scopeId = addressFamily == AddressFamily.InterNetworkV6
-                ? BinaryPrimitives.ReadUInt32LittleEndian(row.Slice(16, sizeof(uint)))
+                ? BinaryPrimitives.ReadUInt32BigEndian(row.Slice(16, sizeof(uint)))
                 : 0;
             var address = addressFamily == AddressFamily.InterNetwork
                 ? new IPAddress(row.Slice(addressOffset, addressLength))
@@ -854,7 +916,16 @@ internal static class WindowsStagedNetworkEndpoints
                 address,
                 checked(row[portOffset] * 256 + row[portOffset + 1]),
                 checked((int)processId),
-                tcpState));
+                tcpState)
+            {
+                RemoteAddress = tcpState is not null and not WindowsStagedTcpState.Listen
+                    ? addressFamily == AddressFamily.InterNetwork ? new IPAddress(row.Slice(12, 4))
+                        : new IPAddress(row.Slice(24, 16), BinaryPrimitives.ReadUInt32BigEndian(row.Slice(40, 4)))
+                    : null,
+                RemotePort = tcpState is not null and not WindowsStagedTcpState.Listen
+                    ? BinaryPrimitives.ReadUInt16BigEndian(row.Slice(addressFamily == AddressFamily.InterNetwork ? 16 : 44, 2))
+                    : null
+            });
         }
         return endpoints;
     }
@@ -873,6 +944,8 @@ internal static class WindowsStagedNetworkEndpoints
 
     private static byte[] Read(string kind, NativeTableReader reader)
     {
+        for (var attempt = 0; attempt < 4; attempt++)
+        {
         uint size = 0;
         var first = reader(IntPtr.Zero, ref size);
         if (first != ErrorInsufficientBuffer || size < sizeof(uint) || size > MaximumTableBytes)
@@ -883,6 +956,7 @@ internal static class WindowsStagedNetworkEndpoints
         try
         {
             var result = reader(buffer, ref size);
+            if (result == ErrorInsufficientBuffer) continue;
             if (result != NoError)
                 throw new Win32Exception(checked((int)result),
                     $"Windows did not return the staged {kind} table.");
@@ -896,6 +970,8 @@ internal static class WindowsStagedNetworkEndpoints
         {
             Marshal.FreeHGlobal(buffer);
         }
+        }
+        throw new InvalidDataException($"Windows {kind} table did not stabilize within four bounded size retries.");
     }
 
     private delegate uint NativeTableReader(IntPtr buffer, ref uint size);

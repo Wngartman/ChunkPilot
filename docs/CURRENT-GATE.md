@@ -30,7 +30,42 @@ Source inspection established shared defects:
 - Validation changes bind properties but not `level-name`, potentially booting the intended world.
 - Generated CurseForge overrides silently omit gameplay roots such as KubeJS.
 
+The latest task narrows execution to one small official-pack control, then ATM10. Generated-pack,
+mod-dependency, and update/rollback campaigns are deferred. The existing official path extracts
+runtime-consumed scripting/content roots; no content-removal workaround is authorized.
+
 These are source findings, not proof that the upstream pack is broken. No new live pack has run.
+
+## Current implementation checkpoint (local core correction, live evidence pending)
+
+- Shared typed inbound-startup decision and native parser now serve production and controller.
+  Non-listening TCP connections retain direction/purpose uncertainty; non-loopback TCP listeners
+  block; unresolved non-loopback UDP and missing ownership return cannot-verify.
+- Native observation holds exact Job-member process handles and creation identities across capture.
+  Startup is bounded and observed during loading, not only after Done.
+- Validation uses an exact-owned disposable world and child temp directory. It restores properties
+  only after Job-empty proof; failure, timeout and cancellation also check selected-port absence.
+- Focused boundary/nullable/controller/creation tests: 102 passed. Expanded isolated loader/process/world
+  integration: 21 passed. No skips or build warnings/errors in these final focused runs.
+  Initial regressions exposed two obsolete controller expectations, a directory-vs-file safety helper
+  misuse and a fast-root-exit handle lifetime; final focused reruns passed after correction.
+- The expanded run initially found a missing parent directory in loader-temp setup (7 failures);
+  the existing safe directory-creation helper corrected it. A fixture missing its new attempt identity
+  also collided with retained validation evidence; the fixture now supplies a fresh ID on each call.
+- Latest Agent Release build: zero warnings/errors. Verified-input journal retention and progress
+  plumbing are in progress; authoritative retry/discard and packaged/live evidence remain pending.
+- The user explicitly accepted the Minecraft EULA for these disposable control/ATM10 tests only.
+- The controller now offers explicit stopped-run retention; failure and success both record selected-port
+  absence independently of Job exit. Durable validation decisions survive mutable staging cleanup.
+- Verified server-archive fixtures demonstrate a controlled late failure, retained journal, explicit reuse
+  with HTTP archive requests disabled, and tamper rejection. Authoritative Agent/UI retry is not yet exposed.
+- Next live run is the prior exact Optimized Performance control: project `1172292`, client `6110282`,
+  server file `6110285`, subject to fresh native official metadata. It is not an ATM10 substitution.
+
+Budget reconciliation: the previous 2 GiB campaign ledger is historical and unchanged
+(990,582,328 bytes guarded, including conservative unknown reservations). The immediately preceding
+ATM10 task explicitly authorized up to 3 GiB of newly downloaded CurseForge payload. No new campaign
+payload has yet been downloaded, and no historical counter has been reset or silently increased.
 
 ## Implementation and evidence gates
 
@@ -52,7 +87,7 @@ packaged progress/recovery UX, scaling, keyboard, High Contrast, and Reduced Mot
 
 ## Next blocked gate
 
-`ATM10 INSTALLATION STILL BLOCKED`
+`VALIDATION FIX STILL BLOCKED`
 
 Implementation and live evidence are pending. Startup/status alone will not prove client joins, quests,
 recipes, all gameplay, public reachability, provider lifecycle completion, or public Beta readiness.

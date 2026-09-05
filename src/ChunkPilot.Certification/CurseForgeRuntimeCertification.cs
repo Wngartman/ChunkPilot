@@ -34,6 +34,7 @@ internal sealed record CurseForgeRuntimeCertificationOptions
     public string ServerName { get; init; } = "ChunkPilot CurseForge Certification";
     public CurseForgeRuntimeCertificationPhase Phase { get; init; }
     public bool ExplicitEulaAuthorization { get; init; }
+    public bool RetainStoppedRun { get; init; }
     public int Port { get; init; } = 25_585;
     public int MinimumRamMb { get; init; } = 2_048;
     public int MaximumRamMb { get; init; } = 6_144;
@@ -281,11 +282,11 @@ internal sealed record CertificationOwnedEndpointPolicyEvaluation
         TaskRootProcessIdentityVerified &&
         OwnedEndpointIdentitySnapshotsStable &&
         OwnedEndpointProcessIdentitiesVerified &&
-        OwnedEndpointsWithinTaskServerSubtree &&
-        ExpectedMinecraftListenerCount > 0;
+        OwnedEndpointsWithinTaskServerSubtree;
 
     public bool Passed =>
         OwnershipVerified &&
+        ExpectedMinecraftListenerCount > 0 &&
         UnexpectedOwnedEndpointCount == 0;
 }
 
@@ -455,7 +456,8 @@ internal static class CertificationOwnedEndpointPolicy
         var ownedEndpoints = endpointsSecond.Where(endpoint =>
             stableOwnedIdentities.ContainsKey(endpoint.ProcessId)).ToArray();
         var endpointInventoryDifferenceCount = EndpointMultisetDifferenceCount(
-            ownedEndpointsFirst, ownedEndpoints);
+            ownedEndpointsFirst.Where(RequiresInboundAttribution).ToArray(),
+            ownedEndpoints.Where(RequiresInboundAttribution).ToArray());
         var ownedEndpointsAcrossInventories = ownedEndpointsFirst.Concat(ownedEndpoints).ToArray();
         var endpointIdentitiesVerified =
             identitiesBeforeCapture is not null &&
@@ -468,7 +470,7 @@ internal static class CertificationOwnedEndpointPolicy
         var endpointsWithinTaskSubtree =
             processParents is not null &&
             exactOwnedProcessIdentityStillMatches is not null &&
-            ownedEndpointsAcrossInventories.All(endpoint =>
+            ownedEndpointsAcrossInventories.Where(RequiresInboundAttribution).All(endpoint =>
                 WindowsProcessParents.IsLiveStableRootOrDescendant(
                     endpoint.ProcessId,
                     taskServerProcessId,
@@ -477,14 +479,20 @@ internal static class CertificationOwnedEndpointPolicy
                     exactOwnedProcessIdentityStillMatches));
         var expectedListeners = ownedEndpoints.Where(endpoint =>
             endpoint.Transport == WindowsOwnedEndpointTransport.Tcp &&
+            endpoint.State == System.Net.NetworkInformation.TcpState.Listen &&
             endpoint.Port == expectedPort &&
-            endpoint.IsExactLoopback).ToArray();
-        var unexpectedEndpoints = ownedEndpoints.Where(endpoint =>
-            endpoint.Transport != WindowsOwnedEndpointTransport.Tcp ||
-            endpoint.Port != expectedPort ||
-            !endpoint.IsExactLoopback).ToArray();
+            endpoint.LocalAddress.Equals(IPAddress.Loopback)).ToArray();
+        var attempt = Guid.NewGuid(); // One synchronous capture/evaluation, never reused across attempts.
+        var network = StartupNetworkPolicy.Evaluate(attempt, ownedEndpointsAcrossInventories.Distinct().Select(endpoint =>
+            endpoint.ToObservation(attempt, stableOwnedIdentities[endpoint.ProcessId],
+                endpointIdentitiesVerified && endpointsWithinTaskSubtree)).ToArray(), IPAddress.Loopback, expectedPort,
+            inventorySucceeded: true, ownershipVerified: taskRootIdentityVerified && endpointIdentitiesVerified);
+        var unexpectedEndpoints = network.Findings.Where(finding => finding.Classification is
+            StartupEndpointClassification.UnexpectedInboundListener or StartupEndpointClassification.UdpPurposeUnknown or
+            StartupEndpointClassification.ObservationUnresolved).ToArray();
         var tcpListeners = ownedEndpoints.Where(endpoint =>
-            endpoint.Transport == WindowsOwnedEndpointTransport.Tcp).ToArray();
+            endpoint.Transport == WindowsOwnedEndpointTransport.Tcp &&
+            endpoint.State == System.Net.NetworkInformation.TcpState.Listen).ToArray();
 
         var detail = !jobAccountingGenerationStable
             ? "The exact Agent Job process accounting changed while endpoint tables were captured."
@@ -493,7 +501,7 @@ internal static class CertificationOwnedEndpointPolicy
                 : captureRaceEndpoints.Length > 0
                     ? "One or more endpoint PIDs did not retain the same Job process creation across the bracketing snapshots."
                     : endpointInventoryDifferenceCount > 0
-                        ? "The exact Job-owned endpoint multiset changed between the two full inventory observations."
+                        ? "The exact Job-owned listener/UDP binding multiset changed between observations. Non-listening TCP state changes are recorded separately."
                         : !taskRootIdentityVerified
                             ? "The exact task-server process identity was not verified in the Agent Job."
                             : expectedListeners.Length == 0
@@ -503,8 +511,8 @@ internal static class CertificationOwnedEndpointPolicy
                                     : !endpointsWithinTaskSubtree
                                         ? "One or more Job-owned endpoints lacked a live, generation-stable, creation-ordered ancestry chain to the exact task-server process."
                                         : unexpectedEndpoints.Length > 0
-                                            ? "One or more additional Job-owned TCP or UDP endpoints were not approved for certification."
-                                            : "Two full Job-owned endpoint inventories matched and contained only approved loopback Minecraft TCP listeners on the selected port.";
+                                            ? network.Summary
+                                            : "Stable exact ownership and expected local listener verified. Non-listening connection observations do not certify egress purpose or safety.";
 
         return new CertificationOwnedEndpointPolicyEvaluation
         {
@@ -547,6 +555,14 @@ internal static class CertificationOwnedEndpointPolicy
         right.All(entry =>
             left.TryGetValue(entry.Key, out var identityLeft) &&
             ProcessCreationIdentity.Matches(identityLeft, entry.Value));
+
+    // The controller Job also owns the Agent's provider connections. Every observed PID still
+    // requires exact Job generation proof; only inbound candidates must descend from the server.
+    // A non-listening connection changing state cannot disprove stable listener ownership.
+    private static bool RequiresInboundAttribution(WindowsOwnedNetworkEndpoint endpoint) =>
+        endpoint.Transport == WindowsOwnedEndpointTransport.Udp ||
+        endpoint.State is null or System.Net.NetworkInformation.TcpState.Listen or
+            System.Net.NetworkInformation.TcpState.Unknown;
 
     private static int EndpointMultisetDifferenceCount(
         IReadOnlyList<WindowsOwnedNetworkEndpoint> first,
@@ -656,6 +672,8 @@ internal sealed class CurseForgeRuntimeCertificationReport
     public bool CertifiedTaskServerCleanupApplicable { get; set; }
     public bool CertifiedTaskServerCleanupSucceeded { get; set; }
     public bool CleanupSucceeded { get; set; }
+    public bool FreshRunIntentionallyRetained { get; set; }
+    public bool? TerminalSelectedPortAbsent { get; set; }
     public string ProjectId { get; set; } = "";
     public string ClientFileId { get; set; } = "";
     public string ServerPackFileId { get; set; } = "";
@@ -804,10 +822,11 @@ internal sealed class CurseForgeRuntimeCertificationController
                 ElapsedMilliseconds = finalFreshness.Elapsed.TotalMilliseconds
             });
             await journal.WritePendingAsync(report, CancellationToken.None).ConfigureAwait(false);
-            report.FreshRunRecycle = await OwnedCertificationRunCleanup.MoveToRecycleBinAsync(
-                    options, recycleBin, CancellationToken.None)
-                .ConfigureAwait(false);
-            if (!report.FreshRunRecycle.Success)
+            if (!options.RetainStoppedRun)
+                report.FreshRunRecycle = await OwnedCertificationRunCleanup.MoveToRecycleBinAsync(
+                        options, recycleBin, CancellationToken.None)
+                    .ConfigureAwait(false);
+            if (!options.RetainStoppedRun && !report.FreshRunRecycle.Success)
                 throw new InvalidOperationException(report.FreshRunRecycle.Outcome);
         }
         catch (OperationCanceledException)
@@ -824,7 +843,16 @@ internal sealed class CurseForgeRuntimeCertificationController
         {
             try
             {
-                if (!report.FreshRunRecycle.Attempted &&
+                report.TerminalSelectedPortAbsent = WindowsTcpListenerOwners.ForPort(options.Port).Count == 0;
+                if (options.RetainStoppedRun)
+                {
+                    report.FreshRunIntentionallyRetained = true;
+                    report.FreshRunRecycle = new CertificationRunRecycleEvidence
+                    {
+                        Outcome = "Task-owned run intentionally retained for archive recovery and acceptance. Process and port postconditions are reported separately."
+                    };
+                }
+                if (!options.RetainStoppedRun && !report.FreshRunRecycle.Attempted &&
                     Directory.Exists(Path.GetFullPath(options.DataRoot)) &&
                     Directory.Exists(Path.GetFullPath(options.ManagedServersRoot)))
                 {
@@ -861,7 +889,8 @@ internal sealed class CurseForgeRuntimeCertificationController
                 report.CompletedAtUtc = DateTimeOffset.UtcNow;
                 report.CleanupSucceeded = report.BootstrapCleanupSucceeded &&
                                           report.CertifiedCleanupSucceeded &&
-                                          report.FreshRunRecycle.Success;
+                                          report.TerminalSelectedPortAbsent == true &&
+                                          (report.FreshRunRecycle.Success || report.FreshRunIntentionallyRetained);
                 report.Success = workflowCompletedThroughFinalFreshness &&
                                  string.IsNullOrWhiteSpace(report.Error) &&
                                  report.Success &&
@@ -1266,7 +1295,7 @@ internal sealed partial class CurseForgeRuntimeCertificationSession(
         {
             Name = "pre-payload TCP port ownership",
             Status = "PASSED",
-            Detail = "The selected IPv4 loopback and wildcard TCP port was bind-available before payload work.",
+            Detail = "The selected TCP port had no observed listener and was exclusively bind-available on IPv4 loopback before payload work.",
             ElapsedMilliseconds = portWatch.Elapsed.TotalMilliseconds
         });
 
@@ -2049,7 +2078,6 @@ internal sealed partial class CurseForgeRuntimeCertificationSession(
                 "The selected certification port is already owned by a listening process; payload work was refused.");
 
         BindProbe(IPAddress.Loopback, port);
-        BindProbe(IPAddress.Any, port);
 
         static void BindProbe(IPAddress address, int value)
         {

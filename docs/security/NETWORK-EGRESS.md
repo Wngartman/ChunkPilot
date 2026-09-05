@@ -134,18 +134,23 @@ This does not freeze unrelated external filesystem writers or free space after o
 Certification executes only the controller included in the exact-HEAD development package and covered by its
 complete SHA-256 manifest. It creates a fresh owned `data`/`servers`/`temp` run root, scopes temporary and .NET
 bundle extraction there, and permits no router, firewall, public probe, query, or RCON mutation. Cleanup first
-proves every task Job and endpoint is gone, then moves only that exact bounded run root to the Windows Recycle Bin;
-unexpected entries, reparse points, or Recycle Bin failure retain the run and fail the cleanup claim.
+proves exact task Job exit and separately records selected-port absence. The explicit `--retain-stopped-run`
+option keeps task-owned inputs and stopped servers for recovery/acceptance without claiming removal. Otherwise
+only that exact bounded run root is moved to the Windows Recycle Bin; uncertain ownership retains the run.
 
 The running-server check takes two complete TCP4/TCP6/UDP4/UDP6 owner-PID inventories across three stable Job
 snapshots before, between, and after them. Job process accounting and the exact PID/creation set must match at all
-three boundaries; the exact owned endpoint multiset must also match across the inventories. Each accepted owner is
-then revalidated live against its creation identity and the task-server process subtree. The root, owner, and every
+three boundaries; the exact listener/UDP binding multiset must also match across the inventories. Each accepted
+owner is revalidated live against its creation identity; inbound candidates require the task-server subtree. The root, owner, and every
 intermediate parent must be the same live generation represented by the stable Job PID/creation set, and each
 parent must have been created strictly before its child; missing, exited, cyclic, reordered, or PID-reused ancestry
-fails closed. Only loopback TCP on the selected Minecraft port is approved; wildcard, non-loopback, UDP,
-secondary-port, identity-raced, unreadable, or mutation-raced evidence fails closed. The report records only
-sanitized counts and policy results. Each inventory still reads four Windows tables sequentially, so repeated
+fails closed. Production and controller use `StartupNetworkPolicy`: the expected exact loopback Minecraft
+listener is required, non-loopback TCP listeners block, and non-loopback UDP purpose remains unresolved.
+Additional loopback bindings are observed separately. Non-listening TCP rows are not listener violations:
+`SynSent` establishes an outgoing connection attempt, while `Established` alone does not establish direction.
+Exact Job-owned Agent provider connections are not attributed to the server subtree. Missing ownership,
+unreadable tables and stale attempts fail closed. This startup check is not an air gap, egress allowlist,
+or security certification. Port 443 proves neither hostname nor purpose. Each inventory reads four tables sequentially, so repeated
 stable observation cannot exclude a socket opened and closed entirely between observations or a mutation after
 the second inventory.
 
@@ -209,11 +214,11 @@ readiness through the packaged named-pipe workflow.
 
 More FPS project `531644` and Optimized Performance project `1172292` each supplied exact Minecraft 1.21.1 Fabric
 client/server relationships with distribution allowed and Java 21. Full runs reached Minecraft `Done` but then
-failed closed as `FailedNothingChanged`: stable Job-owned endpoint inventories found outbound HTTPS connections
-from the staged Java process to public IPv4 addresses on remote port 443. They were not wildcard Minecraft
-listeners. The current certification contract permits only the exact selected loopback Minecraft TCP port while
-the server is running; outbound TCP, wildcard binding, UDP, secondary ports, unstable identity, and unreadable
-evidence remain prohibited. The contract was not relaxed to force a positive result.
+failed closed as `FailedNothingChanged`. Prior summaries described Java connections to public IPv4 remote port
+443 as outbound HTTPS; the saved report inspected for the September correction lacks the raw tuple/history,
+so exact destination, direction, component and purpose cannot be reconstructed. The historical rule rejected
+every non-loopback local endpoint, including non-listening TCP connections. The September task explicitly
+replaces that rule with the shared inbound startup check above, retaining independent privacy observations.
 
 No failed run was registered or promoted. Every exact Agent exited with code `0`, exact root/process identity
 checks passed, and the final Jobs contained zero processes. Exact run roots are absent. Cleanup reports remain

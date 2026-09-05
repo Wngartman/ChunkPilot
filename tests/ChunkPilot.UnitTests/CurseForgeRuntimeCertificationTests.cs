@@ -1931,7 +1931,7 @@ public sealed class CurseForgeRuntimeCertificationTests
     }
 
     [Fact]
-    public void OwnedEndpointPolicyAcceptsOnlySelectedPortTcpOnIpv4OrIpv6Loopback()
+    public void OwnedEndpointPolicyRequiresTheExactIpv4AddressUsedByTheStatusProbe()
     {
         foreach (var address in new[] { IPAddress.Loopback, IPAddress.IPv6Loopback })
         {
@@ -1943,9 +1943,9 @@ public sealed class CurseForgeRuntimeCertificationTests
                     25_585,
                     200));
 
-            Assert.True(result.Passed);
+            Assert.Equal(address.Equals(IPAddress.Loopback), result.Passed);
             Assert.True(result.OwnershipVerified);
-            Assert.Equal(1, result.ExpectedMinecraftListenerCount);
+            Assert.Equal(address.Equals(IPAddress.Loopback) ? 1 : 0, result.ExpectedMinecraftListenerCount);
             Assert.Equal(1, result.ObservedOwnedEndpointCount);
             Assert.Equal(0, result.UnexpectedOwnedEndpointCount);
         }
@@ -1974,7 +1974,7 @@ public sealed class CurseForgeRuntimeCertificationTests
     }
 
     [Fact]
-    public void OwnedEndpointPolicyRejectsUdpAndSecondaryLoopbackPorts()
+    public void OwnedEndpointPolicyRecordsAdditionalLoopbackBindingsWithoutClaimingNonloopbackExposure()
     {
         var result = EvaluateOwnedEndpoints(
             ApprovedMinecraftEndpoint(),
@@ -1991,11 +1991,11 @@ public sealed class CurseForgeRuntimeCertificationTests
                 25_586,
                 200));
 
-        Assert.False(result.Passed);
+        Assert.True(result.Passed);
         Assert.True(result.OwnershipVerified);
         Assert.Equal(2, result.ObservedOwnedTcpListenerCount);
         Assert.Equal(1, result.ObservedOwnedUdpEndpointCount);
-        Assert.Equal(2, result.UnexpectedOwnedEndpointCount);
+        Assert.Equal(0, result.UnexpectedOwnedEndpointCount);
         Assert.Equal(0, result.ObservedOwnedNonLoopbackEndpointCount);
     }
 
@@ -2442,14 +2442,31 @@ public sealed class CurseForgeRuntimeCertificationTests
     {
         var identities = new Dictionary<int, long> { [200] = 500 };
         return CertificationOwnedEndpointPolicy.CaptureAndEvaluate(
-            new FixedEndpointSource(endpoints),
-            25_585,
-            200,
-            500,
-            identities,
+            new FixedEndpointSource(endpoints), 25_585, 200, 500, identities,
             new Dictionary<int, int>(),
-            (processId, identity) =>
-                identities.TryGetValue(processId, out var expected) && expected == identity);
+            (processId, identity) => identities.TryGetValue(processId, out var expected) && expected == identity);
+    }
+
+    [Fact]
+    public void Owned_non_listening_connections_may_change_state_without_becoming_listener_mutations()
+    {
+        var captures = 0;
+        var identities = new Dictionary<int, long> { [200] = 500, [100] = 400 };
+        var result = CertificationOwnedEndpointPolicy.CaptureAndEvaluate(
+            new DelegateEndpointSource(() =>
+            [
+                ApprovedMinecraftEndpoint(),
+                new WindowsOwnedNetworkEndpoint(WindowsOwnedEndpointTransport.Tcp, AddressFamily.InterNetwork,
+                    IPAddress.Parse("192.0.2.10"), 49000, 100)
+                {
+                    State = ++captures == 1 ? System.Net.NetworkInformation.TcpState.SynSent : System.Net.NetworkInformation.TcpState.Established,
+                    RemoteAddress = IPAddress.Parse("192.0.2.20"), RemotePort = 443
+                }
+            ]), 25_585, 200, 500, () => JobSnapshot(identities), () => new Dictionary<int, int>(),
+            (pid, creation) => identities.TryGetValue(pid, out var exact) && exact == creation);
+        Assert.True(result.Passed);
+        Assert.Equal(2, result.ObservedOwnedEndpointCount);
+        Assert.Equal(0, result.EndpointInventoryDifferenceCount);
     }
 
     private static WindowsOwnedNetworkEndpoint ApprovedMinecraftEndpoint() =>

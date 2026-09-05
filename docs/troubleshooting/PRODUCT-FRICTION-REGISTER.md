@@ -228,6 +228,10 @@ Modpacks are first-class. The creation experience needs official-API discovery f
 licensed CurseForge access, exact release history, compatibility evidence, official server packs, and
 transactional pack construction. Partial or invented provider functionality remains hidden.
 
+September startup correction: shared inbound validation, disposable worlds, and verified-input retention
+are under focused regression ([CP-2026-064](BUG-REGISTER.md#cp-2026-064--startup-validation-mistook-non-listening-tcp-connections-for-inbound-listeners)).
+This does not close the live official-pack, authoritative retry, or owner acceptance gate.
+
 **Acceptance outcome.** A beginner can discover an exact compatible pack version and create a working,
 recoverable server through licensed official provider paths.
 
