@@ -146,6 +146,8 @@ public sealed class LoaderAndJavaFixtureIntegrationTests : IDisposable
         Assert.Equal(originalPath, Environment.GetEnvironmentVariable("PATH"));
         Assert.Equal(originalJavaHome, Environment.GetEnvironmentVariable("JAVA_HOME"));
         Assert.Single(await store.GetManagedJavaRuntimesAsync());
+        Assert.Empty(Directory.EnumerateDirectories(paths.ManagedJava, ".staging-*"));
+        Assert.Empty(Directory.EnumerateFiles(paths.Staging));
     }
 
     [Fact(Timeout = 30_000)]

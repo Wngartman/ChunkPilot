@@ -24,6 +24,10 @@ param(
     [string]$ServerName = 'ChunkPilot CurseForge Certification',
     [ValidateRange(1, 65535)]
     [int]$Port = 25585,
+    [ValidateRange(512, 24576)]
+    [int]$MinimumRamMb = 2048,
+    [ValidateRange(1024, 24576)]
+    [int]$MaximumRamMb = 6144,
     [string]$RuntimeRoot,
     [string]$Report
 )
@@ -350,7 +354,9 @@ $controllerArguments = @(
     '--client-file-id', $ClientFileId,
     '--phase', $Phase,
     '--server-name', $ServerName,
-    '--port', $Port.ToString([Globalization.CultureInfo]::InvariantCulture)
+    '--port', $Port.ToString([Globalization.CultureInfo]::InvariantCulture),
+    '--minimum-ram-mb', $MinimumRamMb.ToString([Globalization.CultureInfo]::InvariantCulture),
+    '--maximum-ram-mb', $MaximumRamMb.ToString([Globalization.CultureInfo]::InvariantCulture)
 )
 if ($null -ne $reportFull) {
     $controllerArguments += @('--report', $reportFull)

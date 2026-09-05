@@ -1707,7 +1707,10 @@ public sealed class ManagedJavaRuntimeService
                 .ConfigureAwait(false);
             var wrapper = SingleWrapperDirectory(staging);
             if (wrapper is not null)
+            {
                 Directory.Move(wrapper, finalRoot);
+                Directory.Delete(staging, recursive: false);
+            }
             else
                 Directory.Move(staging, finalRoot);
             var finalJava = FindJava(finalRoot);

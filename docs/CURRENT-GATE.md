@@ -52,6 +52,10 @@ that repeat passed start/status/stop (7.69 s / 137 ms / 0.87 s), exact input int
 ownership with zero new payload. Its cleanup gate exposed another old harness assumption: real
 terminal logs have an ISO timestamp before `Completed:`. The checker now parses that prefix and
 has a regression using the actual log shape; the second failed report is preserved unchanged.
+The subsequent `2a3948f` recheck still found residue: a genuinely empty managed-Java extraction
+wrapper left after moving its single nested runtime into place. The runtime installer now removes
+that empty wrapper non-recursively. The exact empty wrapper from the owned disposable control run
+was checked for redirection/content and removed; no files were deleted. All failed reports remain.
 
 ## ATM10 identity and consent
 
