@@ -12,6 +12,63 @@ namespace ChunkPilot.UnitTests;
 public sealed class CurseForgeServerCreationTests
 {
     [Fact]
+    public async Task Native_retry_rechecks_exact_metadata_without_repeating_either_archive()
+    {
+        await using var fixture = await Fixture.CreateAsync(validationSucceeds: false);
+        await Assert.ThrowsAsync<InvalidDataException>(() => fixture.Installer.InstallAsync(fixture.Request));
+        var entry = (await fixture.Store.GetCreationJournalAsync(fixture.Request.OperationId))!.Entry!;
+        fixture.RefuseDownloads = true;
+        var request = await fixture.Preflight.RevalidateRetainedOfficialAsync(entry);
+        fixture.Validator.Succeeds = true;
+        var result = await fixture.Installer.InstallAsync(request with { JavaPath = fixture.Request.JavaPath });
+        Assert.Equal(entry.ServerId, result.Definition.Id);
+        Assert.Equal(1, fixture.ArchiveRequests);
+        Assert.Equal(3, fixture.MetadataRequests);
+        Assert.False(Directory.Exists(new VerifiedCreationArchiveStore(fixture.Paths).DirectoryFor(entry.OperationId)));
+        Assert.Null(await fixture.Store.GetCreationJournalAsync(entry.OperationId));
+    }
+
+    [Fact]
+    public async Task Reusing_failed_operation_as_new_creation_preserves_recovery_record()
+    {
+        await using var fixture = await Fixture.CreateAsync(validationSucceeds: false);
+        await Assert.ThrowsAsync<InvalidDataException>(() => fixture.Installer.InstallAsync(fixture.Request));
+        var entry = (await fixture.Store.GetCreationJournalAsync(fixture.Request.OperationId))!.Entry!;
+        await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Installer.InstallAsync(fixture.Request));
+        Assert.Equal(entry, (await fixture.Store.GetCreationJournalAsync(entry.OperationId))!.Entry!);
+        Assert.Equal(1, fixture.ArchiveRequests);
+    }
+
+    [Fact]
+    public async Task Expired_input_is_rejected_before_metadata_and_discard_preserves_unrelated_data()
+    {
+        await using var fixture = await Fixture.CreateAsync(validationSucceeds: false);
+        await Assert.ThrowsAsync<InvalidDataException>(() => fixture.Installer.InstallAsync(fixture.Request));
+        var entry = (await fixture.Store.GetCreationJournalAsync(fixture.Request.OperationId))!.Entry!;
+        var expired = entry with { VerifiedInput = entry.VerifiedInput! with { ExpiresUtc = DateTimeOffset.UtcNow.AddMinutes(-1) } };
+        await Assert.ThrowsAsync<InvalidDataException>(() => fixture.Preflight.RevalidateRetainedOfficialAsync(expired));
+        Assert.Equal(0, fixture.MetadataRequests);
+        var sentinel = Path.Combine(fixture.Paths.ManagedServers, "unrelated-world.dat");
+        await File.WriteAllTextAsync(sentinel, "preserved");
+        new VerifiedCreationArchiveStore(fixture.Paths).Discard(entry);
+        Assert.Equal("preserved", await File.ReadAllTextAsync(sentinel));
+        Assert.False(Directory.Exists(new VerifiedCreationArchiveStore(fixture.Paths).DirectoryFor(entry.OperationId)));
+    }
+
+    [Fact]
+    public async Task Changed_official_relationship_fails_without_new_archive_or_promotion()
+    {
+        await using var fixture = await Fixture.CreateAsync(validationSucceeds: false);
+        await Assert.ThrowsAsync<InvalidDataException>(() => fixture.Installer.InstallAsync(fixture.Request));
+        var entry = (await fixture.Store.GetCreationJournalAsync(fixture.Request.OperationId))!.Entry!;
+        fixture.ChangeRelationship = true;
+        fixture.RefuseDownloads = true;
+        await Assert.ThrowsAsync<InvalidDataException>(() => fixture.Preflight.RevalidateRetainedOfficialAsync(entry));
+        Assert.Equal(1, fixture.ArchiveRequests);
+        Assert.Empty(await fixture.Store.GetServersAsync());
+    }
+
+    [Fact]
     public async Task Late_failure_retains_verified_input_restart_does_not_discard_and_retry_needs_no_archive_request()
     {
         await using var fixture = await Fixture.CreateAsync(validationSucceeds: false);
@@ -162,7 +219,8 @@ public sealed class CurseForgeServerCreationTests
             fixture.Installer.InstallAsync(fixture.Request, cancellationToken: cancellation.Token));
 
         Assert.Empty(await fixture.Store.GetServersAsync());
-        Assert.Empty(Directory.EnumerateDirectories(fixture.Paths.ManagedServers));
+        Assert.False(Directory.Exists(fixture.Paths.ManagedServers) &&
+            Directory.EnumerateFileSystemEntries(fixture.Paths.ManagedServers).Any());
     }
 
     [Fact]
@@ -282,6 +340,10 @@ public sealed class CurseForgeServerCreationTests
         public ManagedServerInstaller Installer { get; }
         public ServerInstallRequest Request { get; }
         public FakeValidator Validator { get; }
+        public CurseForgeModpackPreflightService Preflight => new(Paths, api);
+        public int ArchiveRequests => Handler.ArchiveRequests;
+        public int MetadataRequests => Handler.MetadataRequests;
+        public bool ChangeRelationship { set => Handler.ChangeRelationship = value; }
         private Handler Handler { get; }
         public bool RefuseDownloads { set => Handler.RefuseRequests = value; }
 
@@ -296,7 +358,7 @@ public sealed class CurseForgeServerCreationTests
             var sha1 = Sha1(serverPack);
             var secrets = new MemorySecrets();
             secrets.SetSecret(CurseForgeUpdateProvider.ApiKeyName, "fixture-key");
-            var handler = new Handler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+            var handler = new Handler(serverPack.LongLength, sha1, _ => new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = new ByteArrayContent(serverPack)
             });
@@ -389,12 +451,33 @@ public sealed class CurseForgeServerCreationTests
         }
     }
 
-    private sealed class Handler(Func<HttpRequestMessage, HttpResponseMessage> response) : HttpMessageHandler
+    private sealed class Handler(long archiveBytes, string archiveSha1, Func<HttpRequestMessage, HttpResponseMessage> response) : HttpMessageHandler
     {
         public bool RefuseRequests { get; set; }
+        public bool ChangeRelationship { get; set; }
+        public int ArchiveRequests { get; private set; }
+        public int MetadataRequests { get; private set; }
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,
             CancellationToken cancellationToken)
         {
+            if (request.RequestUri!.Host == "api.curseforge.com")
+            {
+                MetadataRequests++;
+                object data = request.RequestUri.AbsolutePath switch
+                {
+                    "/v1/mods/123" => new { id = 123, gameId = 432, classId = 4471, isAvailable = true, allowModDistribution = true },
+                    "/v1/mods/123/files/111" => new { id = 111, modId = 123, isAvailable = true,
+                        serverPackFileId = ChangeRelationship ? 333 : 222, fileName = "client.zip", fileLength = 100,
+                        downloadUrl = "https://mediafilez.forgecdn.net/files/111/client.zip", hashes = new[] { new { algo = 1, value = new string('a', 40) } } },
+                    "/v1/mods/123/files/222" => new { id = 222, modId = 123, isAvailable = true,
+                        isServerPack = true, parentProjectFileId = 111, fileName = "server.zip", fileLength = archiveBytes,
+                        downloadUrl = "https://mediafilez.forgecdn.net/files/222/server.zip", hashes = new[] { new { algo = 1, value = archiveSha1 } } },
+                    _ => throw new InvalidOperationException("Unexpected fixture metadata route.")
+                };
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                { RequestMessage = request, Content = new StringContent(JsonSerializer.Serialize(new { data }), Encoding.UTF8, "application/json") });
+            }
+            ArchiveRequests++;
             if (RefuseRequests)
                 throw new InvalidOperationException("Retry must not request an archive payload.");
             var result = response(request);

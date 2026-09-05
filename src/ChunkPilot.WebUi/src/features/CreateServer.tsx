@@ -14,7 +14,15 @@ import { isFixtureMode } from '../fixtures/mode';
 import styles from './CreateServer.module.css';
 
 interface Destination { available: boolean; path: string; message: string; }
-interface CreationProgress { operationId?: string; revision?: number; startedAtUtc?: string; updatedAtUtc?: string; stage?: string; phase?: string; percent?: number; bytesDownloaded?: number; totalBytes?: number | null; bytesPerSecond?: number; currentArtifact?: string; message?: string; outcome?: string; isTerminal?: boolean; success?: boolean; error?: string; }
+interface CreationProgress {
+  operationId?: string; revision?: number; startedAtUtc?: string; updatedAtUtc?: string;
+  stage?: string; phase?: string; percent?: number; bytesDownloaded?: number; totalBytes?: number | null;
+  bytesPerSecond?: number; currentArtifact?: string; message?: string; outcome?: string; isTerminal?: boolean;
+  success?: boolean; error?: string; isIndeterminate?: boolean; stageElapsedSeconds?: number;
+  lastMeaningfulStatus?: string; secondsSinceMeaningfulUpdate?: number; recentStatus?: string;
+  newLogOutputObserved?: boolean; canRetry?: boolean; canDiscard?: boolean; retryGeneration?: number;
+  retainedInputBytes?: number; statusUnavailable?: boolean;
+}
 type LoaderPlatform = 'Fabric' | 'Quilt' | 'Forge' | 'NeoForge' | 'LegacyFabric' | 'Ornithe';
 type CreationPlatform = 'Vanilla' | 'Paper' | 'Modpack' | LoaderPlatform;
 type PrimaryChoice = 'Vanilla' | 'Plugins' | 'Modpacks';
@@ -68,9 +76,11 @@ const stages = [
   ['Game', 'Choose what to host'], ['Version', 'Choose Minecraft'], ['Performance', 'Set memory'], ['Server details', 'Name and identity'], ['Storage', 'Choose location'], ['Connectivity', 'Choose next step'], ['Review', 'Confirm and create']
 ] as const;
 
-export function CreateServerPage({ onDone, onOpenProviderSettings }: { onDone: () => void; onOpenProviderSettings?: () => void }) {
+export function CreateServerPage({ onDone, onOpenProviderSettings, onActivity }: { onDone: () => void; onOpenProviderSettings?: () => void; onActivity?: () => void }) {
   const command = useAppStore(state => state.command);
   const bridge = useAppStore(state => state.bridge);
+  const [recoveryRevision, setRecoveryRevision] = useState(0);
+  const [recoveryBusy, setRecoveryBusy] = useState(false);
   const hostTotalBytes = useAppStore(state => state.snapshot?.host.totalMemoryBytes);
   const fixtureMode = isFixtureMode();
   const requestedMode = new URLSearchParams(window.location.search).get('mode')?.toLowerCase();
@@ -233,8 +243,9 @@ export function CreateServerPage({ onDone, onOpenProviderSettings }: { onDone: (
     const remembered = window.sessionStorage.getItem('chunkpilot.creation.operation');
     void bridge.request<CreationProgress[]>('creation.operations').then(operations => {
       if (!active) return;
-      const current = operations.find(operation => operation.operationId === remembered && !operation.isTerminal)
-        ?? operations.find(operation => !operation.isTerminal);
+      const recoverable = (operation: CreationProgress) => !operation.isTerminal || operation.canDiscard;
+      const current = operations.find(operation => operation.operationId === remembered && recoverable(operation))
+        ?? operations.find(recoverable);
       if (!current?.operationId) {
         if (remembered) window.sessionStorage.removeItem('chunkpilot.creation.operation');
         return;
@@ -340,19 +351,23 @@ export function CreateServerPage({ onDone, onOpenProviderSettings }: { onDone: (
         failures = 0;
         setProgress(next);
         if (next.isTerminal) {
-          window.sessionStorage.removeItem('chunkpilot.creation.operation');
+          if (!next.canDiscard) window.sessionStorage.removeItem('chunkpilot.creation.operation');
           submittedOperationId.current = '';
         } else timer = window.setTimeout(poll, 750);
       } catch {
         if (!active) return;
         failures += 1;
+        if (failures >= 6) {
+          setProgress(current => ({ ...current, statusUnavailable: true, message: 'Progress is unavailable. The Agent may still be working; retry the status check or open Activity.' }));
+          return;
+        }
         setProgress(current => ({ ...current, operationId, message: `Reconnecting to the accepted operation${failures > 1 ? ` (attempt ${failures})` : ''}…`, isTerminal: false }));
         timer = window.setTimeout(poll, Math.min(5_000, 500 * 2 ** Math.min(failures, 3)));
       }
     };
     void poll();
     return () => { active = false; window.clearTimeout(timer); };
-  }, [bridge, operationId]);
+  }, [bridge, operationId, recoveryRevision]);
   const selectedVersion = catalog?.versions.find(version => version.id === versionId);
   const selectedPaperBuild = paperBuildCatalog?.builds.find(build => build.id === paperBuildId) ?? null;
   const selectedLoaderBuild = loaderBuildCatalog?.builds.find(build => build.id === loaderVersion) ?? null;
@@ -395,6 +410,25 @@ export function CreateServerPage({ onDone, onOpenProviderSettings }: { onDone: (
       .catch(() => { /* Progress polling owns the authoritative terminal result even if the acceptance response was lost. */ });
   };
   const cancelCreation = () => void command('creation.cancel', { operationId });
+  const recoverCreation = async (action: 'creation.retry' | 'creation.discard') => {
+    if (recoveryBusy || !operationId) return;
+    setRecoveryBusy(true);
+    try {
+      await command(action, { operationId, retryGeneration: progress?.retryGeneration ?? 0 });
+      if (action === 'creation.retry') {
+        window.sessionStorage.setItem('chunkpilot.creation.operation', operationId);
+        setProgress(current => ({ ...current, isTerminal: false, canRetry: false, canDiscard: false,
+          error: undefined, isIndeterminate: true, message: 'Rechecking the exact release and retained archive' }));
+        setRecoveryRevision(value => value + 1);
+      } else {
+        window.sessionStorage.removeItem('chunkpilot.creation.operation');
+        setProgress(current => ({ ...current, canRetry: false, canDiscard: false, retainedInputBytes: 0,
+          error: undefined, message: 'Retained download discarded. Your chosen server folder was not changed.' }));
+      }
+    } catch (error) {
+      setProgress(current => ({ ...current, error: error instanceof Error ? error.message : 'Recovery could not be completed.' }));
+    } finally { setRecoveryBusy(false); }
+  };
   useEffect(() => {
     if (!focusDisclosure.current) return;
     focusDisclosure.current = false;
@@ -484,11 +518,20 @@ export function CreateServerPage({ onDone, onOpenProviderSettings }: { onDone: (
     ['FriendsOverInternet', 'Internet', 'Host for friends outside your home after deliberate Windows and router setup. Nothing is exposed now; an optional point-in-time diagnostic remains available later.', Globe2]
   ].map(([id, title, detail, Icon]) => <button key={id as string} className={styles.choice} data-selected={networking === id} onClick={() => setNetworking(id as string)}><span className={styles.choiceIcon}><Icon size={18} /></span><span><strong>{title as string}</strong><p>{detail as string}</p></span><span className={styles.radio} /></button>)}</div>
   : operationId ? <div className={styles.operationProgress} aria-live="polite">
-      <div className={styles.operationHeading}><span><strong>{formatCreationStage(progress?.stage)}</strong><small>{progress?.message ?? 'ChunkPilot is continuing this operation. You may leave this view without stopping it.'}</small></span><strong>{typeof progress?.percent === 'number' ? `${Math.round(progress.percent)}%` : 'Working'}</strong></div>
-      <div className={styles.operationTrack} role="progressbar" aria-label="Server creation progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={typeof progress?.percent === 'number' ? Math.max(0, Math.min(100, progress.percent)) : undefined} data-indeterminate={typeof progress?.percent !== 'number'}><span style={{ width: `${Math.max(2, Math.min(100, progress?.percent ?? 18))}%` }} /></div>
-      <div className={styles.operationMeta}><span>{progress?.currentArtifact || (progress?.phase ? formatCreationStage(progress.phase) : 'Preparing the exact server files')}</span><span>{formatTransfer(progress)}</span></div>
-      {isProgressStalled(progress) && <p className={styles.stalled}>ChunkPilot has not reported new progress within the expected time for this stage. The accepted operation is still authoritative; you can keep waiting or cancel it safely.</p>}
+      <div className={styles.operationHeading}><span><strong>{progress?.isTerminal ? (progress.success ? 'Created' : 'Creation needs attention') : formatCreationStage(progress?.stage)}</strong><small>{progress?.message ?? 'ChunkPilot is continuing this operation. You may leave this view without stopping it.'}</small></span><strong>{!progress?.isIndeterminate && typeof progress?.percent === 'number' ? `${Math.round(progress.percent)}%` : progress?.isTerminal ? 'Stopped' : 'Working'}</strong></div>
+      {!progress?.isTerminal && <div className={styles.operationTrack} role="progressbar" aria-label="Server creation progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={!progress?.isIndeterminate && typeof progress?.percent === 'number' ? Math.max(0, Math.min(100, progress.percent)) : undefined} data-indeterminate={progress?.isIndeterminate || typeof progress?.percent !== 'number'}><span style={{ width: `${progress?.isIndeterminate ? 18 : Math.max(2, Math.min(100, progress?.percent ?? 18))}%` }} /></div>}
+      <div className={styles.operationMeta}><span>{progress?.lastMeaningfulStatus || (progress?.phase ? formatCreationStage(progress.phase) : 'Preparing the exact server files')}</span><span>{typeof progress?.stageElapsedSeconds === 'number' ? `Startup elapsed ${Math.floor(progress.stageElapsedSeconds / 60)}m ${Math.floor(progress.stageElapsedSeconds % 60)}s` : formatTransfer(progress)}</span></div>
+      {typeof progress?.secondsSinceMeaningfulUpdate === 'number' && !progress.isTerminal && <p>Last startup milestone {Math.floor(progress.secondsSinceMeaningfulUpdate)}s ago. {progress.newLogOutputObserved ? 'New log output received; this does not necessarily mean startup advanced.' : 'Waiting for new server output.'}</p>}
+      {isProgressStalled(progress) && <p className={styles.stalled}>No new startup milestone has been confirmed recently. Repeated log output does not extend the startup deadline. You can keep waiting or cancel safely.</p>}
       {progress?.error && <p className={styles.error}>{progress.error}</p>}
+      {(progress?.recentStatus || progress?.currentArtifact) && <details className={styles.advanced}><summary>Technical details</summary><p>{progress.recentStatus || progress.currentArtifact}</p></details>}
+      {(progress?.retainedInputBytes ?? 0) > 0 && <p>{formatBytes(progress!.retainedInputBytes!)} of verified input retained. Retry rechecks it; Discard removes only this temporary download.</p>}
+      <div className={styles.recoveryActions}>
+        {progress?.canRetry && <Button disabled={recoveryBusy} onClick={() => void recoverCreation('creation.retry')}>Retry from verified input</Button>}
+        {progress?.canDiscard && <Button variant="danger" disabled={recoveryBusy} onClick={() => void recoverCreation('creation.discard')}>Discard retained download</Button>}
+        {progress?.statusUnavailable && <Button onClick={() => setRecoveryRevision(value => value + 1)}>Retry status check</Button>}
+        {onActivity && <Button variant="subtle" onClick={onActivity}>View Activity</Button>}
+      </div>
     </div>
   : <><div className={styles.review}>{[
     ['Game', platform === 'Vanilla' ? 'Vanilla Minecraft' : isLoaderPlatform(platform) ? loaderTitle(platform) : platform], ['Version', platform === 'Modpack' && modpack ? modpack.kind === 'remote' ? `${modpack.project.name} · ${modpack.release.versionName} · Minecraft ${modpack.release.minecraftVersion} · ${modpack.release.loader}${modpack.release.loaderVersion ? ` ${modpack.release.loaderVersion}` : ''}` : `${modpack.local.inspection?.name} · ${modpack.local.inspection?.sourceKind} · Minecraft ${modpack.local.inspection?.minecraftVersion}` : selectedVersion ? platform === 'Paper' ? `Minecraft ${selectedVersion.id} · ${selectedPaperBuild ? `Paper build ${selectedPaperBuild.id}` : 'build not selected'}` : isLoaderPlatform(platform) ? `Minecraft ${selectedVersion.id} · ${selectedLoaderBuild ? `${loaderTitle(platform)} ${selectedLoaderBuild.loaderVersion}` : 'loader not selected'}` : `${selectedVersion.label} · ${selectedVersion.support}` : 'Not selected'], ['Memory', `${formatMemory(ramMb)} maximum · ${formatMemory(initialRamMb)} initial`], ['Server name', name || 'Not entered'], ['Destination', destination?.path ?? 'Not established'], ['World', worldMode === 'Upload' && existingWorld ? `${existingWorld.worldName} · copied from ${existingWorld.kind === 'Folder' ? 'folder' : 'ZIP'} · source preserved` : 'Create new world on first start'], ['Port', String(port)], ['Connectivity', networking === 'ThisComputerOnly' ? 'This computer only · bound to 127.0.0.1' : networking === 'FriendsOverInternet' ? 'Internet hosting guidance after creation' : 'LAN'], ['Java', platform === 'Modpack' && modpack ? `Java ${modpack.kind === 'remote' ? modpack.release.requiredJavaMajor : modpack.local.inspection?.requiredJavaMajor} · exact pack requirement` : selectedVersion?.javaMajor ? `Java ${selectedVersion.javaMajor} · compatibility policy` : 'Not established'], ['Launch', platform === 'Modpack' ? modpack?.kind === 'local' ? `${modpack.local.managementMode === 'ByReference' ? 'By reference' : 'Managed copy'} · ${modpack.local.launchRelativePath || 'reviewed launcher'}` : 'Verified pack files · exact declared loader · runtime validation on first start' : platform === 'Paper' ? 'Managed Paper dedicated server · plugins available after creation' : isLoaderPlatform(platform) ? `Managed ${loaderTitle(platform)} dedicated server · mods available after creation` : selectedVersion?.launchProfile.kind === 'ModernEulaNogui' ? 'Managed dedicated server' : selectedVersion?.launchProfile.kind ?? 'Not established']
@@ -525,6 +568,8 @@ function formatBytes(bytes: number): string {
 }
 
 function isProgressStalled(progress: CreationProgress | null): boolean {
+  if (!progress?.isTerminal && typeof progress?.secondsSinceMeaningfulUpdate === 'number')
+    return progress.secondsSinceMeaningfulUpdate >= 90;
   if (!progress?.updatedAtUtc || progress.isTerminal) return false;
   const updated = Date.parse(progress.updatedAtUtc);
   if (!Number.isFinite(updated)) return false;

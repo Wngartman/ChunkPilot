@@ -510,7 +510,18 @@ public sealed class AgentPipeServer
             case "ModpackCreations":
             {
                 return JsonSerializer.SerializeToElement(
-                    new ModpackCreationsResult(installations.ModpackOperations()), ProtocolJson.Options);
+                    new ModpackCreationsResult(await installations.ModpackOperationsWithRecoveryAsync(cancellationToken).ConfigureAwait(false)), ProtocolJson.Options);
+            }
+            case "RetryModpackCreation":
+            {
+                var input = Deserialize<CreationRecoveryRequest>(request);
+                return JsonSerializer.SerializeToElement(new InstallOperationRequest(await installations.RetryModpackCreationAsync(
+                    input, curseForgeModpackPreflight, cancellationToken).ConfigureAwait(false)), ProtocolJson.Options);
+            }
+            case "DiscardModpackCreation":
+            {
+                await installations.DiscardModpackCreationAsync(Deserialize<CreationRecoveryRequest>(request), cancellationToken).ConfigureAwait(false);
+                return JsonSerializer.SerializeToElement(OperationResult.Ok("Retained input discarded; the chosen server folder was not changed."), ProtocolJson.Options);
             }
             case "CancelOrFenceModpackCreation":
             {
@@ -1000,7 +1011,7 @@ public sealed class AgentPipeServer
             case "InstallProgress":
             {
                 var input = Deserialize<InstallOperationRequest>(request);
-                return JsonSerializer.SerializeToElement(installations.Get(input.OperationId), ProtocolJson.Options);
+                return JsonSerializer.SerializeToElement(await installations.GetWithRecoveryAsync(input.OperationId, cancellationToken).ConfigureAwait(false), ProtocolJson.Options);
             }
             case "CancelInstall":
             {

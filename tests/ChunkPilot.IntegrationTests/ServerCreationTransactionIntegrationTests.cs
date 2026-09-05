@@ -416,7 +416,8 @@ public sealed class ServerCreationTransactionIntegrationTests : IDisposable
         Assert.Contains("preserved", result.Journal!.CleanupState, StringComparison.OrdinalIgnoreCase);
         Assert.False(Directory.Exists(fixture.Destination));
         Assert.Empty(await fixture.Store.GetServersAsync());
-        Assert.Empty(await fixture.Store.GetCreationJournalsAsync());
+        var retained = Assert.Single(await fixture.Store.GetCreationJournalsAsync());
+        Assert.Equal(CreationOutcome.RecoveryRequired, retained.Entry!.Outcome);
     }
 
     [Fact]

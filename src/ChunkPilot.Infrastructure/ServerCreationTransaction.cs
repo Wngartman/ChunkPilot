@@ -211,6 +211,7 @@ public sealed record CreationCandidate(
 /// <summary>Everything the transaction needs to run one creation.</summary>
 public sealed record CreationTransactionRequest
 {
+    public int RetryGeneration { get; init; }
     public required Guid OperationId { get; init; }
     public required Guid ServerId { get; init; }
     public required string ServerName { get; init; }
@@ -339,6 +340,7 @@ public sealed class ServerCreationTransaction
             EulaAcceptedUtc = request.EulaAcceptedAt,
             EulaSourceUrl = request.EulaUrl,
             VerifiedInput = request.VerifiedInput,
+            RetryGeneration = request.RetryGeneration,
             RetrySettings = request.RetrySettings
         };
         entry = await CommitAsync(entry, entry.Phase, progress, request, cancellationToken).ConfigureAwait(false);
@@ -666,6 +668,12 @@ public sealed class ServerCreationTransaction
             }
         }
         var cleanupProblems = CleanupOwnedTemporaries(entry);
+        if (entry.VerifiedInput is not null)
+        {
+            try { new VerifiedCreationArchiveStore(store.DataPaths).ReleaseCompleted(entry); }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException)
+            { cleanupProblems.Add("Verified input cleanup needs attention: " + SecretRedactor.Redact(exception.Message)); }
+        }
         if (cleanupProblems.Count == 0)
         {
             var completed = entry with
@@ -1005,7 +1013,9 @@ public sealed class ServerCreationTransaction
         // Mutable JVM state is never reused, even when immutable archive input is retained separately.
         var problems = failure is StagedServerCleanupException
             ? new List<string> { "Validation cleanup was not proved; mutable staging was retained and must not be retried yet." }
-            : CleanupOwnedTemporaries(closed);
+            : closed.Outcome == CreationOutcome.StagingResumable && closed.VerifiedInput is null
+                ? [] // Preserve the existing non-pack collision recovery candidate; it has no archive retry path.
+                : CleanupOwnedTemporaries(closed);
         if (problems.Count > 0)
             closed = closed with { CleanupState = string.Join(" ", problems), Outcome = CreationOutcome.RecoveryRequired };
         if (closed.Outcome == CreationOutcome.StagingResumable || problems.Count > 0)
@@ -1053,8 +1063,15 @@ public sealed class ServerCreationTransaction
                     UpdatedUtc = DateTimeOffset.UtcNow
                 };
                 Report(progress, request, done);
-                CleanupOwnedTemporaries(done);
-                await store.DeleteCreationJournalAsync(entry.OperationId, CancellationToken.None).ConfigureAwait(false);
+                var cleanupProblems = CleanupOwnedTemporaries(done);
+                if (cleanupProblems.Count != 0 || done.VerifiedInput is not null)
+                {
+                    done = done with { CleanupState = string.Join(" ", cleanupProblems),
+                        RecoveryDisposition = CreationRecoveryDisposition.AttentionRequired };
+                    await store.UpsertCreationJournalAsync(done, CancellationToken.None).ConfigureAwait(false);
+                }
+                else
+                    await store.DeleteCreationJournalAsync(entry.OperationId, CancellationToken.None).ConfigureAwait(false);
                 return new CreationTransactionResult
                 {
                     Phase = CreationPhase.RolledBack,
@@ -1092,12 +1109,19 @@ public sealed class ServerCreationTransaction
                 UpdatedUtc = DateTimeOffset.UtcNow
             };
             Report(progress, request, failed);
-            CleanupOwnedTemporaries(failed);
-            await store.DeleteCreationJournalAsync(entry.OperationId, CancellationToken.None).ConfigureAwait(false);
+            var cleanupProblems = CleanupOwnedTemporaries(failed);
+            if (cleanupProblems.Count != 0 || failed.VerifiedInput is not null)
+            {
+                failed = failed with { Outcome = CreationOutcome.RecoveryRequired,
+                    Phase = CreationPhase.RecoveryRequired, CleanupState = string.Join(" ", cleanupProblems) };
+                await store.UpsertCreationJournalAsync(failed, CancellationToken.None).ConfigureAwait(false);
+            }
+            else
+                await store.DeleteCreationJournalAsync(entry.OperationId, CancellationToken.None).ConfigureAwait(false);
             return new CreationTransactionResult
             {
-                Phase = CreationPhase.Failed,
-                Outcome = CreationOutcome.NothingActivated,
+                Phase = failed.Phase,
+                Outcome = failed.Outcome,
                 Warnings = [.. warnings, message],
                 Journal = failed,
                 Failure = exception

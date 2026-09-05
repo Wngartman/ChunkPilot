@@ -110,7 +110,14 @@ public sealed class StagedServerValidatorIntegrationTests
         {
             var run = new StagedServerValidator().ValidateAsync(FakeJavaPath(), root, "staged-loopback-no-readiness.jar",
                 false, 512, 512, TimeSpan.FromSeconds(2), cancellationToken: cancellation.Token);
-            if (cancel) await Assert.ThrowsAnyAsync<OperationCanceledException>(() => run);
+            if (cancel)
+            {
+                var failure = await Assert.ThrowsAsync<StagedServerCancelledException>(() => run);
+                Assert.False(failure.Validation.Succeeded);
+                Assert.True(failure.Validation.JobEmptyConfirmed);
+                Assert.True(failure.Validation.SelectedPortListenerAbsent);
+                Assert.True(failure.Validation.ValidationWorldRemoved);
+            }
             else
             {
                 var result = await run;

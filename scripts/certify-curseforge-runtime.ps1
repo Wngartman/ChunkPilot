@@ -20,6 +20,7 @@ param(
     [string]$ModFileId,
     [switch]$AcceptMinecraftEulaForCertification,
     [switch]$RetainStoppedRun,
+    [string]$ResumeReport,
     [string]$ServerName = 'ChunkPilot CurseForge Certification',
     [ValidateRange(1, 65535)]
     [int]$Port = 25585,
@@ -314,10 +315,22 @@ if (-not [string]::IsNullOrWhiteSpace($Report)) {
 $runsRoot = [IO.Path]::GetFullPath((Join-Path $runtimeFull 'runs'))
 [IO.Directory]::CreateDirectory($runsRoot) | Out-Null
 Assert-NoReparsePoint $runtimeFull $runsRoot
-$runId = 'run-' + [DateTimeOffset]::UtcNow.ToString('yyyyMMdd-HHmmss') + '-' +
-    [Guid]::NewGuid().ToString('N')
+$runId = 'run-' + [DateTimeOffset]::UtcNow.ToString('yyyyMMdd-HHmmss') + '-' + [Guid]::NewGuid().ToString('N')
+if ($ResumeReport) {
+    $priorPath = [IO.Path]::GetFullPath($ResumeReport)
+    if ($Phase -ne 'Official' -or -not $RetainStoppedRun -or [IO.Path]::GetDirectoryName($priorPath) -ine $evidenceRoot) {
+        throw 'Resume requires an Official retained run and its report inside this exact runtime evidence root.'
+    }
+    Assert-NoReparsePoint $evidenceRoot $priorPath
+    $priorFile = Get-Item -LiteralPath $priorPath
+    if ($priorFile.PSIsContainer -or $priorFile.Length -gt 8MB) { throw 'The prior report is not a bounded file.' }
+    $prior = Get-Content -LiteralPath $priorPath -Raw | ConvertFrom-Json
+    if (-not $prior.freshRunIntentionallyRetained -or -not $prior.cleanupSucceeded -or
+        $prior.runId -notmatch '^run-\d{8}-\d{6}-[0-9a-f]{32}$') { throw 'The prior stopped run identity was not established.' }
+    $runId = [string]$prior.runId
+}
 $runRoot = [IO.Path]::GetFullPath((Join-Path $runsRoot $runId))
-if (Test-Path -LiteralPath $runRoot) {
+if (-not $ResumeReport -and (Test-Path -LiteralPath $runRoot)) {
     throw 'The fresh certification run identity unexpectedly already exists.'
 }
 [IO.Directory]::CreateDirectory($runRoot) | Out-Null
@@ -325,7 +338,7 @@ Assert-NoReparsePoint $runsRoot $runRoot
 $taskTemp = [IO.Path]::GetFullPath((Join-Path $runRoot 'temp'))
 [IO.Directory]::CreateDirectory($taskTemp) | Out-Null
 Assert-NoReparsePoint $runRoot $taskTemp
-if (@(Get-ChildItem -LiteralPath $runRoot -Force).Count -ne 1) {
+if (-not $ResumeReport -and @(Get-ChildItem -LiteralPath $runRoot -Force).Count -ne 1) {
     throw 'The fresh certification run root contains an unexpected entry.'
 }
 
@@ -347,6 +360,9 @@ if ($AcceptMinecraftEulaForCertification) {
 }
 if ($RetainStoppedRun) {
     $controllerArguments += '--retain-stopped-run'
+}
+if ($ResumeReport) {
+    $controllerArguments += @('--resume-report', $priorPath)
 }
 if ($Phase -eq 'Full') {
     $controllerArguments += @(

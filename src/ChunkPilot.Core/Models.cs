@@ -481,6 +481,7 @@ public sealed record WhitelistEntry
 public sealed record ServerInstallRequest
 {
     public bool RetryVerifiedInput { get; init; }
+    public int RetryGeneration { get; init; }
     public Guid OperationId { get; init; } = Guid.NewGuid();
     public InstallSourceType SourceType { get; init; }
     public string Source { get; init; } = "";
@@ -582,6 +583,7 @@ public sealed record InstallationResult
 public sealed record InstallOperationSnapshot
 {
     public long RetainedInputBytes { get; init; }
+    public int RetryGeneration { get; init; }
     public bool CanRetry { get; init; }
     public bool CanDiscard { get; init; }
     public Guid OperationId { get; init; }

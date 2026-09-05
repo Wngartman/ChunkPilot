@@ -9,6 +9,7 @@ public sealed class ChunkPilotStore : IAsyncDisposable
     private readonly AppDataPaths paths;
     private readonly SemaphoreSlim gate = new(1, 1);
     private readonly string connectionString;
+    internal AppDataPaths DataPaths => paths;
 
     public ChunkPilotStore(AppDataPaths paths)
     {

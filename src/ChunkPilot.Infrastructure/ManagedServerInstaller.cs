@@ -272,6 +272,9 @@ public sealed class ManagedServerInstaller
         CancellationToken cancellationToken = default)
     {
         ValidateRequest(request);
+        var existingJournal = (await store.GetCreationJournalAsync(request.OperationId, cancellationToken))?.Entry;
+        if (existingJournal is not null && !request.RetryVerifiedInput)
+            throw new InvalidOperationException("This creation already has recovery evidence. Use its retry or discard action.");
         var instanceRoot = CreationPathSafety.Canonical(
             string.IsNullOrWhiteSpace(request.InstanceRoot) ? paths.ManagedServers : request.InstanceRoot);
         Directory.CreateDirectory(instanceRoot);
@@ -285,9 +288,9 @@ public sealed class ManagedServerInstaller
         CreationJournalEntry? retry = null;
         if (request.RetryVerifiedInput)
         {
-            retry = (await store.GetCreationJournalAsync(request.OperationId, cancellationToken))?.Entry;
+            retry = existingJournal;
             if (retry is null || retry.Outcome != CreationOutcome.StagingResumable || retry.ActivationBegan ||
-                retry.RegistrationBegan || retry.CanonicalDestination != finalPath ||
+                retry.RegistrationBegan || retry.RetryGeneration != request.RetryGeneration || retry.CanonicalDestination != finalPath ||
                 request.SourceType != InstallSourceType.CurseForgeServerPack || retry.RetrySettings is not { } settings ||
                 settings.ProjectId != request.PackProjectId || settings.ClientFileId != request.PackVersionId ||
                 settings.ServerFileId != request.PackServerFileId || settings.MinecraftVersion != request.MinecraftVersion ||
@@ -315,6 +318,7 @@ public sealed class ManagedServerInstaller
                 EulaAcceptedAt = request.EulaAcceptedAt ?? default,
                 EulaUrl = EulaUrl,
                 VerifiedInput = retry?.VerifiedInput,
+                RetryGeneration = request.RetryGeneration,
                 RetrySettings = request.SourceType == InstallSourceType.CurseForgeServerPack ? new CreationRetrySettings
                 {
                     ProjectId = request.PackProjectId, ClientFileId = request.PackVersionId, ServerFileId = request.PackServerFileId,
@@ -411,10 +415,30 @@ public sealed class ManagedServerInstaller
                         RecentStatus = update.RecentStatus ?? "", NewLogOutputObserved = update.NewOutputObserved,
                         StagingLogPath = context.LogPath
                     }));
-                    var validation = await stagedValidator.ValidateAsync(runtimeJava, context.StagingPath,
-                        relativeLaunchPath, payload.UsesArgumentFile,
-                        request.MinimumRamMb, request.MaximumRamMb, TimeSpan.FromMinutes(10), validationProgress, token)
-                        .ConfigureAwait(false);
+                    StagedServerValidationResult validation;
+                    try
+                    {
+                        validation = await stagedValidator.ValidateAsync(runtimeJava, context.StagingPath,
+                            relativeLaunchPath, payload.UsesArgumentFile,
+                            request.MinimumRamMb, request.MaximumRamMb, TimeSpan.FromMinutes(10), validationProgress, token)
+                            .ConfigureAwait(false);
+                    }
+                    catch (Exception failure) when (failure is StagedServerCleanupException or StagedServerCancelledException)
+                    {
+                        var evidence = failure is StagedServerCleanupException cleanup ? cleanup.Validation :
+                            ((StagedServerCancelledException)failure).Validation;
+                        if (evidence is not null)
+                        {
+                            try { await WriteValidationEvidenceAsync(context.StagingPath, context.LogPath, evidence,
+                                CancellationToken.None).ConfigureAwait(false); }
+                            catch (Exception evidenceFailure) when (evidenceFailure is IOException or UnauthorizedAccessException)
+                            {
+                                throw new StagedServerCleanupException("Validation evidence could not be saved; recovery is required.",
+                                    new AggregateException(failure, evidenceFailure)) { Validation = evidence };
+                            }
+                        }
+                        throw;
+                    }
                     await AppendLogAsync(context.LogPath,
                         "[staged-validation] Local candidate validation completed; server output was not retained.",
                         token).ConfigureAwait(false);

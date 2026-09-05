@@ -1,5 +1,7 @@
 namespace ChunkPilot.Core;
 
+public sealed record CreationRecoveryRequest(Guid OperationId, int ExpectedRetryGeneration);
+
 /// <summary>Local operation ownership evidence, not a persisted provider response or general cache key.</summary>
 public sealed record CreationVerifiedInput
 {

@@ -1,95 +1,103 @@
 # Current ChunkPilot Gate
 
-## Repository and scope
+## Repository
 
-- Bounded task: faithful large-modpack creation, with ATM10 as the live acceptance case.
-- Worktree: `temp/atm10-creation-hardening`; branch: `codex/atm10-creation-hardening`.
-- Inspected base: `12bb1f8cf308d94a3ad871c3d7a657abf74ad0c9`, the clean packaged
-  `codex/curseforge-runtime-browser-parity` candidate. Its ancestry includes the existing
-  server-switch and shallow provider-browser improvements. Version `1.3.0-alpha.5`, schema `6`.
-- Primary checkout, unrelated worktrees, preservation stash, installed release, and real
-  servers remain untouched. No push, tag, publication, installer, signing, or installation authorized.
+Worktree `temp/atm10-creation-hardening`, branch `codex/atm10-creation-hardening`.
+Starting SHA `12bb1f8cf308d94a3ad871c3d7a657abf74ad0c9`; rollback note `ea1855e`;
+first code checkpoint `71763092402039fa0fe867d2887a0e76bec2d05a`.
+Version remains `1.3.0-alpha.5`, database schema `6`. Creation journal shape is now `2`;
+shape-1 journals remain readable; older builds fail closed on newer journals.
+Primary checkout, unrelated worktrees/stash, installed release, and real servers are untouched.
+No push, tag, installer, signing, publication, or installation is authorized.
 
-## Current outcome: investigation checkpoint, not verified
+## Actual root cause and correction
 
-The candidate-owned failed operation `e0ca54b5f22f4dfbb9ecaf0ed63def6f` retained its
-loader log but not its exact CurseForge file identity or socket evidence. Minecraft `1.21.1`
-and NeoForge `21.1.249` are established; the loader reported installation success before
-staged validation failed. The user recalls selecting the latest ATM10 release. Exact original
-client/server file IDs remain unknown. Any current-release substitution must be disclosed.
+Production formerly rejected every owned non-loopback endpoint, without checking TCP state.
+The controller used a different listener-only collector, so its passing predicates did not cover
+the production decision. Established plus remote port 443 cannot establish direction or purpose.
+The shared typed policy distinguishes LISTEN, non-listening TCP, and UDP. Non-loopback TCP
+listeners block. Unknown ownership, unavailable tables and non-loopback UDP purpose fail closed.
+SynSent establishes an outgoing attempt only. Other connection states retain direction uncertainty.
+This is bounded observed startup validation, not an air gap or a security certification of mods.
 
-Source inspection established shared defects:
+The native collector holds exact Job-member handles and raw process creation identities across
+capture, including IPv4/IPv6 parsing. Validation boots an exact-owned disposable world, restores
+configuration only after Job-empty proof, and independently proves its port is released. Forbidden
+listeners are synthetic test records only; no real wildcard listener fixture is opened.
 
-- Official and generated packs share validator wording that incorrectly says “generated”.
-- Every non-loopback local endpoint is rejected without distinguishing TCP listeners,
-  connections, or UDP bindings. Prior reports calling Established/remote-443 rows “outbound”
-  went beyond that evidence: connection direction is not established by those fields alone.
-- Endpoint attribution compares Job PID sets without creation-identity fencing.
-- Verified remote archives are deleted before runtime validation, forcing repeat downloads.
-- Failed preactivation attempts lose their journal even when staging cleanup fails.
-- Validation changes bind properties but not `level-name`, potentially booting the intended world.
-- Generated CurseForge overrides silently omit gameplay roots such as KubeJS.
+## Live control evidence
 
-The latest task narrows execution to one small official-pack control, then ATM10. Generated-pack,
-mod-dependency, and update/rollback campaigns are deferred. The existing official path extracts
-runtime-consumed scripting/content roots; no content-removal workaround is authorized.
+Exact Optimized Performance project `1172292`, client `6110282`, server file `6110285` ran through
+the packaged Agent/named-pipe workflow at `7176309`. Package manifest schema 3 lists 434 inputs;
+source kind `isolated-head-archive`, inputs match HEAD. Input-set SHA-256:
+`39f48ae70080d4303acb6869fe322528c790444e9cf35baf97cc6bed4d3af5c5`.
 
-These are source findings, not proof that the upstream pack is broken. No new live pack has run.
+Creation operation `73d80f8a-34c2-4d70-b514-68e191ed80be` completed in 45.44 seconds. Disposable
+validation took 37.97 seconds and proved readiness/status, clean stop, Job empty, port absence,
+configuration restoration and disposable-world removal. Promoted start passed in 26.43 seconds,
+Minecraft status in 121 ms, and clean stop in 2.27 seconds. Owned Agent/bootstrap Jobs exited 0.
 
-## Current implementation checkpoint (local core correction, live evidence pending)
+Validation evidence recorded 1 expected game listener and 71 non-listening connection observations
+from exact-owned Java PID 20920, creation identity 134330984935300860. Established and FinWait1
+were observed; SynSent was not. Destination hostname, initiating direction and component purpose
+remain unknown. No IP-to-hostname inference is claimed.
 
-- Shared typed inbound-startup decision and native parser now serve production and controller.
-  Non-listening TCP connections retain direction/purpose uncertainty; non-loopback TCP listeners
-  block; unresolved non-loopback UDP and missing ownership return cannot-verify.
-- Native observation holds exact Job-member process handles and creation identities across capture.
-  Startup is bounded and observed during loading, not only after Done.
-- Validation uses an exact-owned disposable world and child temp directory. It restores properties
-  only after Job-empty proof; failure, timeout and cancellation also check selected-port absence.
-- Focused boundary/nullable/controller/creation tests: 102 passed. Expanded isolated loader/process/world
-  integration: 21 passed. No skips or build warnings/errors in these final focused runs.
-  Initial regressions exposed two obsolete controller expectations, a directory-vs-file safety helper
-  misuse and a fast-root-exit handle lifetime; final focused reruns passed after correction.
-- The expanded run initially found a missing parent directory in loader-temp setup (7 failures);
-  the existing safe directory-creation helper corrected it. A fixture missing its new attempt identity
-  also collided with retained validation evidence; the fixture now supplies a fresh ID on each call.
-- Latest Agent Release build: zero warnings/errors. Verified-input journal retention and progress
-  plumbing are in progress; authoritative retry/discard and packaged/live evidence remain pending.
-- The user explicitly accepted the Minecraft EULA for these disposable control/ATM10 tests only.
-- The controller now offers explicit stopped-run retention; failure and success both record selected-port
-  absence independently of Job exit. Durable validation decisions survive mutable staging cleanup.
-- Verified server-archive fixtures demonstrate a controlled late failure, retained journal, explicit reuse
-  with HTTP archive requests disabled, and tamper rejection. Authoritative Agent/UI retry is not yet exposed.
-- Next live run is the prior exact Optimized Performance control: project `1172292`, client `6110282`,
-  server file `6110285`, subject to fresh native official metadata. It is not an ATM10 substitution.
+**The original overall control report failed**: its cleanup gate misclassified the newly retained
+input and bounded validation JSON as unsafe residue. Process/port cleanup did pass. The report is
+preserved unchanged at `artifacts/cf-startup-control/evidence/certification-control-7176309.json`.
+The stopped control and verified archive remain deliberately retained. The corrected controller
+can recheck that exact stopped instance and archive against original evidence and fresh metadata,
+then repeat promoted start/status/stop without another archive request. That recheck is pending.
 
-Budget reconciliation: the previous 2 GiB campaign ledger is historical and unchanged
-(990,582,328 bytes guarded, including conservative unknown reservations). The immediately preceding
-ATM10 task explicitly authorized up to 3 GiB of newly downloaded CurseForge payload. No new campaign
-payload has yet been downloaded, and no historical counter has been reset or silently increased.
+## ATM10 identity and consent
 
-## Implementation and evidence gates
+Original operation `e0ca54b5f22f4dfbb9ecaf0ed63def6f` establishes Minecraft `1.21.1`, NeoForge
+`21.1.249`, and completed loader installation. Cleanup erased the client/server file IDs. The
+original release cannot be reproduced from the authorized task-owned records.
+Explicit approval now permits the current latest official ATM10 release as a **new acceptance
+case**, not a reproduction of that missing historical identity. Native discovery pins exact IDs
+before preflight/download; subsequent checks use those exact IDs, never a moving latest pointer.
+Deliberate Minecraft EULA acceptance is limited to these disposable control/ATM10 tests.
 
-Preserve exact official-release priority, pack content, transactional promotion, native credentials,
-existing App/Agent lifetime policy, and exact-owned cleanup. Implement typed bounded endpoint evidence,
-disposable validation worlds, truthful stage progress, and operation-owned verified-input retry.
-Unknown UDP purpose or unavailable ownership must remain an explicit cannot-verify result, not
-verified safety or confirmed exposure. Runtime monitoring is not preventive sandboxing.
+## Progress and retry
 
-Use synthetic records for forbidden-listener tests; do not open wildcard listeners on this PC.
-All new runtime data, server files, child temporary paths, and recovery inputs must be task-owned.
-New CurseForge payload budget is 3 GiB; record Java/loader downloads separately. One large JVM and
-one heavyweight build at a time. EULA acceptance must come through the existing deliberate mechanism.
+Native Agent commands expose retained failures across restart, retry generation fencing,
+fresh exact provider relationship/digest checks, and explicit input discard. Generic creation
+cannot smuggle a retry flag or overwrite an existing operation journal. Uncertain process cleanup
+does not offer retry/discard or claim that nothing changed. Post-promotion bookkeeping errors
+remain completed-with-warning rather than false failed-nothing-changed results.
 
-Pending: boundary regressions; HighRisk development checks; self-contained package and ownership/close
-smoke; exact official metadata; packaged ATM10 creation/status/clean stop/promotion; promoted launch/stop;
-file fidelity; deterministic late failure and retry with zero repeated archive bytes; smaller control;
-packaged progress/recovery UX, scaling, keyboard, High Contrast, and Reduced Motion inspection.
+Verified server inputs are operation-owned, SHA-256 bound, expire after 48 hours, and are capped
+at eight operations / 8 GiB total / 4 GiB per input. Pending downloads reserve declared bytes.
+Successful promotion releases its input; failures retain immutable input and reconstruct mutable
+validation state on retry. No general provider cache, persisted CDN URL or credential is added.
+Cancellation and cleanup exceptions carry durable structured validation evidence.
 
-## Next blocked gate
+The WebUI shows actual transfer measurements, indeterminate startup elapsed time, last meaningful
+milestone versus fresh log output, cancel/Activity, and native-authorized retry/discard. Repeated
+warnings cannot reset startup deadlines or suppress the no-new-milestone warning. Status reconnect
+is bounded and does not invent a terminal result.
 
-`VALIDATION FIX STILL BLOCKED`
+## Checks and current gate
 
-Implementation and live evidence are pending. Startup/status alone will not prove client joins, quests,
-recipes, all gameplay, public reachability, provider lifecycle completion, or public Beta readiness.
-After the required evidence, the next gate is user acceptance of this fix, followed by the remaining
-unproven live CurseForge lifecycle checks. Existing equal-High friction and publication gates remain open.
+Final focused recovery/provider/controller unit run: 82 passed. Targeted transaction/retry/staged
+runtime integration rerun: 60 passed. New WebUI recovery tests: 3 passed; typecheck passed.
+Earlier core boundary slice: 102 passed; isolated loader/process/world integration: 21 passed.
+Initial failures are retained: obsolete endpoint expectations; path helper misuse; fast-root-exit
+handle lifetime; missing loader-temp parent; missing fixture attempt ID; pre-cancel directory
+assumption; obsolete journal-deletion assertion; and a non-pack collision candidate cleanup
+regression (corrected while preserving its prior recovery behavior).
+
+Pending: full headless HighRisk development checks, final exact-input self-contained package,
+corrected control recheck, current ATM10 lifecycle, content fidelity and packaged ownership smoke.
+Foreground/scaling/keyboard/High Contrast/Reduced Motion/normal-close checks are not certified.
+No client join, quest/recipe gameplay, public reachability, or public Beta readiness is claimed.
+
+New payload ledger: client 679,356 + server 13,983,967 = 14,663,323 completed bytes. Historical
+2 GiB ledger remains unchanged, including conservative unknown reservations. The prior task
+authorized 3 GiB of new payload; the current ledger cap remains a conservative 2 GiB. Java/loader
+transfers are separate. One large JVM and one heavyweight build at a time.
+
+`VALIDATION FIX STILL BLOCKED` until the complete cleanup gate passes. Small staged validation and
+promoted lifecycle have passed, but this is not an overall campaign success. Next: package the
+reviewed correction, recheck the retained control, then run the separately authorized ATM10 case.

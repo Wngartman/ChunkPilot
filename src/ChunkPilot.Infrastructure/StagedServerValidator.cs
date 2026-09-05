@@ -11,7 +11,16 @@ public sealed record StagedValidationProgress(string Stage, double ElapsedSecond
     double? SecondsSinceMilestone, string? RecentStatus, bool NewOutputObserved);
 
 public sealed class StagedServerCleanupException(string message, Exception innerException)
-    : IOException(message, innerException);
+    : IOException(message, innerException)
+{
+    public StagedServerValidationResult? Validation { get; init; }
+}
+
+public sealed class StagedServerCancelledException(OperationCanceledException cause, StagedServerValidationResult validation)
+    : OperationCanceledException(cause.Message, cause, cause.CancellationToken)
+{
+    public StagedServerValidationResult Validation { get; } = validation;
+}
 
 public sealed record StagedServerValidationResult(
     bool Succeeded, bool ReadinessConfirmed, bool LoopbackStatusConfirmed, bool CleanStopConfirmed,
@@ -26,7 +35,6 @@ public sealed record StagedServerValidationResult(
     public bool ConfigurationRestored { get; init; }
     public bool ValidationWorldRemoved { get; init; }
     public double ElapsedSeconds { get; init; }
-    public string? CleanupFailure { get; init; }
 }
 
 public interface IStagedServerValidator
@@ -241,20 +249,24 @@ public sealed class StagedServerValidator : IStagedServerValidator
                 }
                 catch (Exception exception) { cleanupFailures.Add(exception); }
             }
-            owned?.Dispose();
-            job?.Dispose();
+            try { owned?.Dispose(); } catch (Exception exception) { cleanupFailures.Add(exception); }
+            try { job?.Dispose(); } catch (Exception exception) { cleanupFailures.Add(exception); }
         }
-        if (cleanupFailures.Count > 0)
-            throw new StagedServerCleanupException("Cleanup needs attention. " + summary,
-                new AggregateException(operationFailure is null ? cleanupFailures : new[] { operationFailure }.Concat(cleanupFailures)));
-        if (operationFailure is OperationCanceledException) throw operationFailure;
-        var success = readiness && status && network?.Passed == true && cleanStop && noGui && empty && restored && worldRemoved;
-        return new(success, readiness, status, cleanStop, noGui, summary, lines.TakeLast(200).ToArray())
+        var success = operationFailure is null && cleanupFailures.Count == 0 && readiness && status &&
+            network?.Passed == true && cleanStop && noGui && empty && portAbsent == true && restored && worldRemoved;
+        var result = new StagedServerValidationResult(success, readiness, status, cleanStop, noGui, summary, lines.TakeLast(200).ToArray())
         {
             AttemptId = attempt, Network = network, EndpointHistory = evidence.Values.ToArray(),
             JobEmptyConfirmed = empty, SelectedPortListenerAbsent = portAbsent, ValidationPort = port,
             ConfigurationRestored = restored, ValidationWorldRemoved = worldRemoved, ElapsedSeconds = watch.Elapsed.TotalSeconds
         };
+        if (cleanupFailures.Count > 0)
+            throw new StagedServerCleanupException("Cleanup needs attention. " + summary,
+                new AggregateException(operationFailure is null ? cleanupFailures : new[] { operationFailure }.Concat(cleanupFailures)))
+                { Validation = result };
+        if (operationFailure is OperationCanceledException cancelled)
+            throw new StagedServerCancelledException(cancelled, result);
+        return result;
 
         bool Observe()
         {

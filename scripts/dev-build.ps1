@@ -286,7 +286,12 @@ if ($Tier -eq 'Feature' -and $DotNetFilter) {
 } elseif ($Tier -eq 'HighRisk') {
     dotnet restore (Join-Path $buildRoot 'ChunkPilot.sln')
     if ($LASTEXITCODE -ne 0) { throw 'High-risk test restore failed.' }
-    dotnet test (Join-Path $buildRoot 'ChunkPilot.sln') -c Release --no-restore -m:1
+    $testArguments = @('test', (Join-Path $buildRoot 'ChunkPilot.sln'), '-c', 'Release', '--no-restore', '-m:1')
+    if ($DotNetFilter) {
+        Write-Host "High-risk test selection (excluded tests are not certified): $DotNetFilter"
+        $testArguments += @('--filter', $DotNetFilter)
+    }
+    dotnet @testArguments
     if ($LASTEXITCODE -ne 0) { throw 'High-risk test suite failed.' }
 }
 

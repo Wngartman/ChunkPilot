@@ -6,6 +6,9 @@ namespace ChunkPilot.Infrastructure;
 
 public interface ICurseForgeModpackPreflightService
 {
+    Task<ServerInstallRequest> RevalidateRetainedOfficialAsync(CreationJournalEntry entry,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException("This provider cannot revalidate retained creation input.");
     Task<CurseForgeModpackPreflightResult> InspectAsync(
         CurseForgeModpackPreflightRequest request,
         CancellationToken cancellationToken = default);
@@ -127,6 +130,50 @@ public sealed class CurseForgeModpackPreflightService : ICurseForgeModpackPrefli
         {
             DeleteOwnedStaging(stagingRoot, stagingParent, request.OperationId);
         }
+    }
+
+    public async Task<ServerInstallRequest> RevalidateRetainedOfficialAsync(CreationJournalEntry entry,
+        CancellationToken cancellationToken = default)
+    {
+        var settings = entry.RetrySettings ?? throw new InvalidDataException("The original creation choices are unavailable.");
+        var proof = entry.VerifiedInput ?? throw new InvalidDataException("The verified input is unavailable.");
+        if (entry.CreationKind != nameof(InstallSourceType.CurseForgeServerPack) ||
+            entry.ActivationBegan || entry.RegistrationBegan || entry.Outcome != CreationOutcome.StagingResumable ||
+            settings.ProjectId != proof.ProjectId || settings.ClientFileId != proof.ClientFileId ||
+            settings.ServerFileId != proof.ServerFileId || entry.EulaAcceptedUtc == default ||
+            entry.EulaSourceUrl != VanillaEulaAcceptance.OfficialSourceUrl ||
+            JavaRuntimePolicy.TryRequiredMajorForMinecraft(settings.MinecraftVersion) != settings.RequiredJavaMajor ||
+            !Enum.TryParse<InstallSourceType>(settings.Loader, true, out var loader) ||
+            loader is not (InstallSourceType.Fabric or InstallSourceType.Quilt or InstallSourceType.Forge or InstallSourceType.NeoForge))
+            throw new InvalidDataException("The original exact release, EULA, or runtime evidence cannot authorize retry.");
+        var archive = await new VerifiedCreationArchiveStore(paths).VerifyAsync(entry, cancellationToken).ConfigureAwait(false);
+        // The journal binds the runtime requirements established by the original verified client
+        // manifest. Retry does not repeat that archive download or trust new renderer loader hints.
+        _ = await ResolveExactClientFileAsync(new(entry.OperationId, settings.ProjectId,
+            settings.ClientFileId, settings.ServerFileId), cancellationToken).ConfigureAwait(false);
+        var server = await ResolveExactServerPackAsync(settings.ProjectId, settings.ServerFileId, cancellationToken)
+            .ConfigureAwait(false);
+        await using var input = new FileStream(archive, FileMode.Open, FileAccess.Read, FileShare.Read);
+#pragma warning disable CA5350 // Provider SHA-1 is required in addition to the already reverified local SHA-256.
+        if (input.Length != server.SizeBytes || !Convert.ToHexString(await SHA1.HashDataAsync(input, cancellationToken))
+                .Equals(server.Sha1, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("Fresh official release integrity no longer matches the retained archive.");
+#pragma warning restore CA5350
+        return new ServerInstallRequest
+        {
+            OperationId = entry.OperationId, RetryVerifiedInput = true, RetryGeneration = entry.RetryGeneration,
+            SourceType = InstallSourceType.CurseForgeServerPack, Source = server.DownloadUri.AbsoluteUri,
+            ServerName = entry.ServerName, InstanceRoot = entry.InstanceRoot,
+            MinecraftVersion = settings.MinecraftVersion, Build = settings.LoaderVersion,
+            PackLoader = settings.Loader, PackLoaderVersion = settings.LoaderVersion,
+            PackProvider = UpdateProvider.CurseForge, PackProjectId = settings.ProjectId,
+            PackVersionId = settings.ClientFileId, PackServerFileId = settings.ServerFileId,
+            ExpectedSha1 = server.Sha1, ExpectedSizeBytes = server.SizeBytes,
+            EulaAccepted = true, EulaAcceptedAt = entry.EulaAcceptedUtc,
+            MinimumRamMb = settings.MinimumRamMb, MaximumRamMb = settings.MaximumRamMb,
+            Port = settings.Port, MaxPlayers = settings.MaxPlayers,
+            CreationNetworkingPreference = settings.NetworkingPreference, InitialWorld = settings.InitialWorld
+        };
     }
 
     private async Task<ExactClientFile> ResolveExactClientFileAsync(

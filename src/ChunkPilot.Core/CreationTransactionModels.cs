@@ -557,7 +557,7 @@ public sealed record CreationDestinationDecision(
 public sealed record CreationJournalEntry
 {
     /// <summary>The shape this record was written with. A newer shape is never guessed at.</summary>
-    public const int CurrentSchemaVersion = 1;
+    public const int CurrentSchemaVersion = 2;
 
     public int SchemaVersion { get; init; } = CurrentSchemaVersion;
     public Guid OperationId { get; init; }
@@ -629,6 +629,7 @@ public sealed record CreationJournalEntry
     /// </remarks>
     public ServerDefinition? PlannedDefinition { get; init; }
     public CreationVerifiedInput? VerifiedInput { get; init; }
+    public int RetryGeneration { get; init; }
     public CreationRetrySettings? RetrySettings { get; init; }
 }
 

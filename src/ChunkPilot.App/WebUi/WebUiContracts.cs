@@ -56,7 +56,7 @@ internal static class WebUiMethodPolicy
         "connectivity.firewall.cancelConsent", "connectivity.firewall.remove", "connectivity.firewall.cancel",
         "versions.check", "versions.install", "versions.markHealthy", "versions.rollback", "versions.verify", "versions.cancel",
         "creation.catalog", "creation.paperBuilds", "creation.loaderBuilds", "creation.previewDestination", "creation.chooseFolder", "creation.chooseWorld", "creation.chooseLegacyArtifact",
-        "creation.begin", "creation.operations", "creation.progress", "creation.cancel"
+        "creation.begin", "creation.operations", "creation.progress", "creation.cancel", "creation.retry", "creation.discard"
     };
 
     public static bool IsAllowed(string method) => Allowed.Contains(method);

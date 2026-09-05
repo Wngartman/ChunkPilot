@@ -229,8 +229,10 @@ licensed CurseForge access, exact release history, compatibility evidence, offic
 transactional pack construction. Partial or invented provider functionality remains hidden.
 
 September startup correction: shared inbound validation, disposable worlds, and verified-input retention
-are under focused regression ([CP-2026-064](BUG-REGISTER.md#cp-2026-064--startup-validation-mistook-non-listening-tcp-connections-for-inbound-listeners)).
-This does not close the live official-pack, authoritative retry, or owner acceptance gate.
+passed focused regression ([CP-2026-064](BUG-REGISTER.md#cp-2026-064--startup-validation-mistook-non-listening-tcp-connections-for-inbound-listeners)).
+Native retry/discard and elapsed/milestone UI checks pass. The small control completed staged and
+promoted lifecycle checks, but its cleanup bookkeeping recheck and current ATM10 run remain pending.
+This does not close the live official-pack or owner acceptance gate.
 
 **Acceptance outcome.** A beginner can discover an exact compatible pack version and create a working,
 recoverable server through licensed official provider paths.

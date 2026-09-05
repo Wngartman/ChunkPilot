@@ -28,6 +28,8 @@ public sealed class InstallationCoordinator
     private readonly ConcurrentQueue<Guid> modpackOperations = new();
     private readonly ConcurrentQueue<Guid> importOperations = new();
     private readonly object modpackBeginGate = new();
+    private readonly SemaphoreSlim creationRecoveryGate = new(1, 1);
+    private readonly HashSet<Guid> discardingCreations = [];
     private readonly Dictionary<Guid, ModpackCreationPlan> modpackRequests = [];
     internal const int DefaultMaximumPreCancelledModpackOperations = 4_096;
     private readonly int maximumPreCancelledModpackOperations;
@@ -67,12 +69,17 @@ public sealed class InstallationCoordinator
 
     public Guid Begin(ServerInstallRequest request)
     {
+        if (request.RetryVerifiedInput || request.RetryGeneration != 0)
+            throw new InvalidOperationException("Retained input must use the reviewed creation recovery command.");
         var operationId = request.OperationId == Guid.Empty ? Guid.NewGuid() : request.OperationId;
         var normalized = request with { OperationId = operationId };
         var state = new OperationState(operationId);
-        if (!operations.TryAdd(operationId, state))
-            throw new InvalidOperationException($"Install operation {operationId} already exists.");
-        state.Task = RunAsync(normalized, state);
+        lock (modpackBeginGate)
+        {
+            if (discardingCreations.Contains(operationId) || !operations.TryAdd(operationId, state))
+                throw new InvalidOperationException($"Install operation {operationId} already exists or is being discarded.");
+            state.Task = RunAsync(normalized, state);
+        }
         return operationId;
     }
 
@@ -181,6 +188,8 @@ public sealed class InstallationCoordinator
 
         lock (modpackBeginGate)
         {
+            if (discardingCreations.Contains(operationId))
+                throw new InvalidOperationException("This creation is discarding its retained input.");
             if (modpackRequests.TryGetValue(operationId, out var existingRequest))
             {
                 if (existingRequest != replayIdentity)
@@ -1239,6 +1248,124 @@ public sealed class InstallationCoordinator
             };
     }
 
+    public async Task<InstallOperationSnapshot> GetWithRecoveryAsync(Guid operationId, CancellationToken cancellationToken = default)
+    {
+        var snapshot = TryGet(operationId, out var current) ? current : null;
+        if (snapshot is { IsTerminal: false }) return snapshot;
+        var entry = (await store.GetCreationJournalAsync(operationId, cancellationToken).ConfigureAwait(false))?.Entry;
+        if (entry?.VerifiedInput is null) return snapshot ?? throw new KeyNotFoundException("The creation operation is unavailable.");
+        return RecoverySnapshot(entry, snapshot);
+    }
+
+    public async Task<IReadOnlyList<InstallOperationSnapshot>> ModpackOperationsWithRecoveryAsync(CancellationToken cancellationToken)
+    {
+        var rows = ModpackOperations().ToDictionary(row => row.OperationId);
+        foreach (var record in await store.GetCreationJournalsAsync(cancellationToken).ConfigureAwait(false))
+            if (record.Entry is { VerifiedInput: not null } entry &&
+                (!rows.TryGetValue(entry.OperationId, out var row) || row.IsTerminal))
+                rows[entry.OperationId] = RecoverySnapshot(entry, row);
+        return rows.Values.OrderByDescending(row => row.UpdatedAtUtc).Take(32).ToArray();
+    }
+
+    private static InstallOperationSnapshot RecoverySnapshot(CreationJournalEntry entry, InstallOperationSnapshot? previous = null)
+    {
+        var safe = entry.Outcome == CreationOutcome.StagingResumable && !entry.ActivationBegan && !entry.RegistrationBegan;
+        return (previous ?? new InstallOperationSnapshot
+        {
+            OperationId = entry.OperationId, StartedAtUtc = entry.StartedUtc, UpdatedAtUtc = entry.UpdatedUtc,
+            IsTerminal = true, Success = false, Outcome = entry.Outcome, Error = entry.LastError,
+            Progress = new InstallProgress { OperationId = entry.OperationId, State = InstallState.Failed,
+                Phase = entry.Phase, Stage = safe ? CreationStage.FailedNothingChanged : CreationStage.RecoveryRequired,
+                CurrentStep = safe
+                    ? "Your chosen server folder was not changed. Retained input needs your decision."
+                    : "Cleanup or activation needs verification before this operation can be retried or discarded." }
+        }) with
+        {
+            RetainedInputBytes = entry.VerifiedInput?.SizeBytes ?? 0, RetryGeneration = entry.RetryGeneration,
+            CanRetry = safe && entry.RetryGeneration < 3 && entry.VerifiedInput?.ExpiresUtc > DateTimeOffset.UtcNow,
+            CanDiscard = safe
+        };
+    }
+
+    public async Task<Guid> RetryModpackCreationAsync(CreationRecoveryRequest request,
+        ICurseForgeModpackPreflightService provider, CancellationToken cancellationToken)
+    {
+        await creationRecoveryGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var entry = (await store.GetCreationJournalAsync(request.OperationId, cancellationToken).ConfigureAwait(false))?.Entry
+                ?? throw new InvalidOperationException("No retained creation input is available.");
+            if (entry.RetryGeneration != request.ExpectedRetryGeneration)
+                throw new InvalidOperationException("This attempt has already changed. Refresh its progress before retrying.");
+            if (!RecoverySnapshot(entry).CanRetry)
+                throw new InvalidOperationException("This creation cannot safely retry; review its recovery state.");
+            var state = new OperationState(entry.OperationId);
+            lock (modpackBeginGate)
+            {
+                if (operations.TryGetValue(entry.OperationId, out var existing) &&
+                    (!Read(existing).IsTerminal || existing.Task is { IsCompleted: false }))
+                    return entry.OperationId;
+                operations[entry.OperationId] = state;
+                if (!modpackOperations.Contains(entry.OperationId)) modpackOperations.Enqueue(entry.OperationId);
+            }
+            entry = entry with { RetryGeneration = entry.RetryGeneration + 1, UpdatedUtc = DateTimeOffset.UtcNow };
+            state.Task = RetryCoreAsync(entry, state, provider);
+            return entry.OperationId;
+        }
+        finally { creationRecoveryGate.Release(); }
+    }
+
+    private async Task RetryCoreAsync(CreationJournalEntry entry, OperationState state, ICurseForgeModpackPreflightService provider)
+    {
+        try
+        {
+            await store.UpsertCreationJournalAsync(entry, state.Cancellation.Token).ConfigureAwait(false);
+            Report(state, InstallState.Validating, CreationPhase.MaterializingCandidate, CreationStage.FinalSafetyCheck,
+                "Rechecking retained archive and exact official release; no archive download", 0);
+            var request = await provider.RevalidateRetainedOfficialAsync(entry, state.Cancellation.Token).ConfigureAwait(false);
+            var java = await PrepareRuntimeAsync(entry.RetrySettings!.RequiredJavaMajor, "Retrying verified modpack input", state)
+                .ConfigureAwait(false);
+            await RunAsync(request with { JavaPath = java.JavaPath }, state).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            lock (state.Gate)
+                state.Snapshot = RecoverySnapshot(entry) with { Error = SecretRedactor.Redact(exception.Message) };
+        }
+    }
+
+    public async Task DiscardModpackCreationAsync(CreationRecoveryRequest request, CancellationToken cancellationToken)
+    {
+        if (paths is null) throw new InvalidOperationException("The retained input root is unavailable.");
+        await creationRecoveryGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var entry = (await store.GetCreationJournalAsync(request.OperationId, cancellationToken).ConfigureAwait(false))?.Entry
+                ?? throw new InvalidOperationException("No retained creation input is available.");
+            if (entry.RetryGeneration != request.ExpectedRetryGeneration || !RecoverySnapshot(entry).CanDiscard)
+                throw new InvalidOperationException("This creation cannot safely discard retained input.");
+            lock (modpackBeginGate)
+            {
+                if (operations.TryGetValue(entry.OperationId, out var active) &&
+                    (!Read(active).IsTerminal || active.Task is { IsCompleted: false }))
+                    throw new InvalidOperationException("Wait for this creation to become terminal before discarding input.");
+                discardingCreations.Add(entry.OperationId);
+            }
+            var problems = ServerCreationTransaction.CleanupOwnedTemporaries(entry);
+            if (problems.Count > 0) throw new IOException("Temporary cleanup needs attention. " + string.Join(" ", problems));
+            new VerifiedCreationArchiveStore(paths).Discard(entry);
+            await store.DeleteCreationJournalAsync(entry.OperationId, cancellationToken).ConfigureAwait(false);
+            if (operations.TryGetValue(entry.OperationId, out var state))
+                lock (state.Gate) state.Snapshot = state.Snapshot with { CanRetry = false, CanDiscard = false, RetainedInputBytes = 0,
+                    Outcome = CreationOutcome.NothingActivated, Error = "Retained input discarded. Your chosen server folder was not changed." };
+        }
+        finally
+        {
+            lock (modpackBeginGate) discardingCreations.Remove(request.OperationId);
+            creationRecoveryGate.Release();
+        }
+    }
+
     public InstallOperationSnapshot Get(Guid operationId)
     {
         if (!operations.TryGetValue(operationId, out var state))
@@ -1274,6 +1401,7 @@ public sealed class InstallationCoordinator
 
     private async Task RunAsync(ServerInstallRequest request, OperationState state)
     {
+        InstallationResult? activated = null;
         try
         {
             var progress = new CallbackProgress<InstallProgress>(update =>
@@ -1282,6 +1410,7 @@ public sealed class InstallationCoordinator
                     state.Snapshot = state.Snapshot with { Progress = update };
             });
             var result = await installer.InstallAsync(request, progress, state.Cancellation.Token).ConfigureAwait(false);
+            activated = result;
 
             // The installer already registered and verified the server inside its transaction. This
             // attaches the now-durable definition to the running supervisor; the upsert it performs
@@ -1380,20 +1509,35 @@ public sealed class InstallationCoordinator
                 };
             }
         }
+        catch (Exception exception) when (activated is not null && exception is not OutOfMemoryException)
+        {
+            lock (state.Gate) state.Snapshot = state.Snapshot with
+            {
+                IsTerminal = true, Success = true, Result = activated, Outcome = CreationOutcome.CompletedWithCleanupWarning,
+                Warnings = [.. activated.Warnings, "The server was created; secondary bookkeeping needs attention. " + SecretRedactor.Redact(exception.Message)],
+                Progress = state.Snapshot.Progress with { State = InstallState.Completed, Stage = CreationStage.CompletedWithCleanupWarning,
+                    Phase = CreationPhase.CleanupPending, CurrentStep = "Created; secondary bookkeeping needs attention", OverallPercent = 100, IsIndeterminate = false }
+            };
+        }
         catch (OperationCanceledException)
         {
+            var outcome = await ReadOutcomeAsync(state.Id).ConfigureAwait(false);
             lock (state.Gate)
                 state.Snapshot = state.Snapshot with
                 {
                     IsTerminal = true,
                     Success = false,
                     Error = "Installation cancelled.",
-                    Outcome = CreationOutcome.NothingActivated,
+                    Outcome = outcome,
                     Progress = state.Snapshot.Progress with
                     {
                         State = InstallState.Cancelled,
                         Phase = CreationPhase.Cancelling,
-                        CurrentStep = "Cancelled; nothing was put in place"
+                        Stage = outcome is CreationOutcome.NothingActivated or CreationOutcome.StagingResumable
+                            ? CreationStage.Cancelled : CreationStage.RecoveryRequired,
+                        IsIndeterminate = false,
+                        CurrentStep = outcome is CreationOutcome.NothingActivated or CreationOutcome.StagingResumable
+                            ? "Cancelled. Your chosen server folder was not changed." : "Cancelled; cleanup needs attention."
                     }
                 };
         }
@@ -1434,7 +1578,12 @@ public sealed class InstallationCoordinator
                         Phase = outcome == CreationOutcome.NothingActivated
                             ? CreationPhase.Failed
                             : CreationPhase.RecoveryRequired,
-                        CurrentStep = CreationPhasePolicy.Describe(outcome)
+                        CurrentStep = outcome == CreationOutcome.StagingResumable
+                            ? "Your chosen server folder was not changed. Verified input was retained for retry."
+                            : CreationPhasePolicy.Describe(outcome),
+                        Stage = outcome is CreationOutcome.NothingActivated or CreationOutcome.StagingResumable
+                            ? CreationStage.FailedNothingChanged : CreationStage.RecoveryRequired,
+                        IsIndeterminate = false
                     }
                 };
         }

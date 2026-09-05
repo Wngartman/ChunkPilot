@@ -77,7 +77,8 @@
 .worldResult strong { font-size: 12px; }
 .worldResult small { overflow: hidden; color: var(--cp-text-muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 .notice { display: flex; align-items: flex-start; gap: 10px; margin-top: 14px; padding: 11px 12px; border: 1px solid var(--cp-notice-border); border-radius: var(--cp-radius-md); background: var(--cp-notice-surface); color: var(--cp-text-secondary); font-size: 11px; line-height: 1.5; }
-.operationProgress { display: grid; gap: 12px; padding: 16px; border: 1px solid var(--cp-border-strong); border-top-color: var(--cp-accent); background: var(--cp-input); }
+.operationProgress { display: grid; min-width: 0; overflow-wrap: anywhere; gap: 12px; padding: 16px; border: 1px solid var(--cp-border-strong); border-top-color: var(--cp-accent); background: var(--cp-input); }
+.recoveryActions { display: flex; flex-wrap: wrap; gap: var(--cp-space-2); }
 .operationHeading { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
 .operationHeading > span { min-width: 0; display: grid; gap: 4px; }
 .operationHeading strong { color: var(--cp-text); font-size: 13px; }
@@ -86,7 +87,7 @@
 .operationTrack > span { display: block; height: 100%; border-radius: inherit; background: var(--cp-accent); transition: width var(--cp-medium) ease-out; }
 .operationTrack[data-indeterminate="true"] > span { animation: operationIndeterminate 1.4s ease-in-out infinite alternate; }
 .operationMeta { display: flex; align-items: center; justify-content: space-between; gap: 16px; color: var(--cp-text-muted); font-size: 9px; }
-.operationMeta span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.operationMeta span { min-width: 0; overflow-wrap: anywhere; }
 .stalled { margin: 0; padding: 9px 10px; border-left: 2px solid var(--cp-warning); background: var(--cp-notice-surface); color: var(--cp-text-secondary); font-size: 10px; line-height: 1.45; }
 @keyframes operationIndeterminate { from { transform: translateX(-25%); } to { transform: translateX(460%); } }
 .review { display: grid; gap: 1px; border: 1px solid var(--cp-border); border-radius: var(--cp-radius-md); overflow: hidden; background: var(--cp-border); }

@@ -21,15 +21,35 @@ public sealed class VerifiedCreationArchiveStore(AppDataPaths paths)
     public async Task<string> PrepareAsync(CreationOwnershipMarker owner, long expectedBytes,
         CancellationToken cancellationToken)
     {
-        Directory.CreateDirectory(parent);
-        CreationStagingSafety.EnsureNoReparseTraversal(parent);
-        var inventory = BoundedServerFileInventory.Capture(parent, 256, cancellationToken);
-        if (Directory.EnumerateDirectories(parent).Take(MaximumRetainedOperations).Count() >= MaximumRetainedOperations ||
+        CreationStagingSafety.CreateDirectoryPath(paths.Staging, parent);
+        var leasePath = Path.Combine(paths.Staging, ".creation-inputs.lock");
+        if (File.Exists(leasePath) && File.GetAttributes(leasePath).HasFlag(FileAttributes.ReparsePoint))
+            throw new InvalidDataException("The creation input lease was redirected.");
+        using var lease = new FileStream(leasePath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+        var directories = Directory.EnumerateDirectories(parent).Take(MaximumRetainedOperations + 1).ToArray();
+        long reserved = 0;
+        foreach (var directory in directories)
+        {
+            var inventory = BoundedServerFileInventory.Capture(directory, 32, cancellationToken);
+            var reservation = Path.Combine(directory, "reservation.bytes");
+            long declared = 0;
+            if (File.Exists(reservation))
+            {
+                EnsureRegularFile(reservation);
+                if (new FileInfo(reservation).Length > 32 ||
+                    !long.TryParse(await File.ReadAllTextAsync(reservation, cancellationToken), out declared) || declared <= 0)
+                    throw new InvalidDataException("A retained input reservation is unreadable.");
+            }
+            reserved = checked(reserved + Math.Max(inventory.TotalBytes, declared));
+        }
+        if (directories.Length >= MaximumRetainedOperations ||
             expectedBytes <= 0 || expectedBytes > 4L * 1024 * 1024 * 1024 ||
-            inventory.TotalBytes > MaximumRetainedBytes - expectedBytes)
+            reserved > MaximumRetainedBytes - expectedBytes)
             throw new IOException("Temporary creation input storage is full. Discard a completed failed attempt before downloading again.");
         var root = DirectoryFor(owner.OperationId);
         await CreationStagingSafety.PrepareOwnedDirectoryAsync(parent, root, owner, cancellationToken);
+        await File.WriteAllTextAsync(Path.Combine(root, "reservation.bytes"),
+            expectedBytes.ToString(System.Globalization.CultureInfo.InvariantCulture), cancellationToken);
         return Path.Combine(root, "input.partial");
     }
 
@@ -78,6 +98,15 @@ public sealed class VerifiedCreationArchiveStore(AppDataPaths paths)
     {
         if (entry.ActivationBegan || entry.RegistrationBegan)
             throw new InvalidOperationException("An activated or active creation cannot discard retained input through failure recovery.");
+        var root = DirectoryFor(entry.OperationId);
+        if (Directory.Exists(root))
+            CreationStagingSafety.DeleteOwnedTree(root, entry.OperationId, entry.ServerId, entry.CanonicalDestination);
+    }
+
+    public void ReleaseCompleted(CreationJournalEntry entry)
+    {
+        if (!entry.VerificationPassed || !entry.RegistrationCompleted || !entry.ActivationCompleted)
+            throw new InvalidOperationException("Completed input cleanup requires verified promotion and registration.");
         var root = DirectoryFor(entry.OperationId);
         if (Directory.Exists(root))
             CreationStagingSafety.DeleteOwnedTree(root, entry.OperationId, entry.ServerId, entry.CanonicalDestination);

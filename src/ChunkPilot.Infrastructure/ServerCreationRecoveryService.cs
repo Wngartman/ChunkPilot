@@ -68,9 +68,17 @@ public sealed class ServerCreationRecoveryService
 
         var entry = record.Entry!;
         if (!entry.ActivationBegan && entry.VerifiedInput is not null && entry.RetrySettings is not null)
+        {
+            if (entry.Outcome == CreationOutcome.InProgress)
+            {
+                entry = entry with { Outcome = CreationOutcome.RecoveryRequired, Phase = CreationPhase.RecoveryRequired,
+                    LastError = "Interrupted validation requires exact process cleanup proof before retry.", UpdatedUtc = DateTimeOffset.UtcNow };
+                await store.UpsertCreationJournalAsync(entry, cancellationToken).ConfigureAwait(false);
+            }
             return new CreationRecoveryReport(entry.OperationId, CreationRecoveryDisposition.AttentionRequired,
                 entry.Outcome == CreationOutcome.RecoveryRequired ? CreationOutcome.RecoveryRequired : CreationOutcome.StagingResumable,
                 "Verified creation input was retained for explicit retry or discard. No server was started or download repeated.");
+        }
         if (entry.RecoveryAttempts >= MaximumRecoveryAttempts)
             return new CreationRecoveryReport(entry.OperationId, CreationRecoveryDisposition.AttentionRequired,
                 CreationOutcome.RecoveryRequired,
@@ -311,6 +319,12 @@ public sealed class ServerCreationRecoveryService
         CancellationToken cancellationToken)
     {
         var problems = ServerCreationTransaction.CleanupOwnedTemporaries(entry);
+        if (entry.VerifiedInput is not null)
+        {
+            try { new VerifiedCreationArchiveStore(store.DataPaths).ReleaseCompleted(entry); }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException)
+            { problems.Add("Verified input cleanup needs attention: " + SecretRedactor.Redact(exception.Message)); }
+        }
         if (problems.Count == 0)
         {
             await store.DeleteCreationJournalAsync(entry.OperationId, cancellationToken).ConfigureAwait(false);

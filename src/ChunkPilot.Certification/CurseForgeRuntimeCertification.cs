@@ -19,6 +19,7 @@ internal enum CurseForgeRuntimeCertificationPhase
 
 internal sealed record CurseForgeRuntimeCertificationOptions
 {
+    public const string LatestOfficialSelection = "latest-official";
     public required string RepositoryRoot { get; init; }
     public required string RuntimeRoot { get; init; }
     public required string ExpectedGitSha { get; init; }
@@ -35,6 +36,7 @@ internal sealed record CurseForgeRuntimeCertificationOptions
     public CurseForgeRuntimeCertificationPhase Phase { get; init; }
     public bool ExplicitEulaAuthorization { get; init; }
     public bool RetainStoppedRun { get; init; }
+    public string ResumeReportPath { get; init; } = "";
     public int Port { get; init; } = 25_585;
     public int MinimumRamMb { get; init; } = 2_048;
     public int MaximumRamMb { get; init; } = 6_144;
@@ -65,6 +67,10 @@ internal sealed record CurseForgeRuntimeCertificationOptions
         var dataParent = Path.GetDirectoryName(data);
         var serversParent = Path.GetDirectoryName(servers);
         var temporaryParent = Path.GetDirectoryName(temporary);
+        var resuming = !string.IsNullOrWhiteSpace(ResumeReportPath);
+        if (resuming && (Phase != CurseForgeRuntimeCertificationPhase.Official || !RetainStoppedRun ||
+            RetainedControlSelection.Read(runtime, ResumeReportPath).RunId != Path.GetFileName(dataParent)))
+            throw new InvalidOperationException("Resume requires the exact previously stopped Official run and explicit retention.");
         if (string.IsNullOrWhiteSpace(dataParent) || string.IsNullOrWhiteSpace(serversParent) ||
             string.IsNullOrWhiteSpace(temporaryParent) ||
             !dataParent.Equals(serversParent, StringComparison.OrdinalIgnoreCase) ||
@@ -74,12 +80,15 @@ internal sealed record CurseForgeRuntimeCertificationOptions
             !Path.GetFileName(temporary).Equals("temp", StringComparison.OrdinalIgnoreCase) ||
             !Directory.Exists(temporary) || File.Exists(temporary) ||
             (File.GetAttributes(temporary) & FileAttributes.ReparsePoint) != 0 ||
-            Directory.Exists(data) || Directory.Exists(servers) || File.Exists(data) || File.Exists(servers))
+            (!resuming && (Directory.Exists(data) || Directory.Exists(servers))) ||
+            (resuming && (!Directory.Exists(data) || !Directory.Exists(servers))) || File.Exists(data) || File.Exists(servers))
             throw new InvalidOperationException(
                 "Certification data, server, and temporary roots must be exact fresh task-owned siblings.");
         var initialRunEntries = Directory.EnumerateFileSystemEntries(dataParent).ToArray();
-        if (initialRunEntries.Length != 1 ||
-            !initialRunEntries[0].Equals(temporary, StringComparison.OrdinalIgnoreCase))
+        if ((!resuming && (initialRunEntries.Length != 1 ||
+            !initialRunEntries[0].Equals(temporary, StringComparison.OrdinalIgnoreCase))) ||
+            (resuming && (initialRunEntries.Length != 3 || initialRunEntries.Any(path =>
+                !new[] { data, servers, temporary }.Contains(path, StringComparer.OrdinalIgnoreCase)))))
             throw new InvalidOperationException(
                 "The fresh certification run root must initially contain only its task-owned temporary directory.");
         foreach (var variable in new[] { "TEMP", "TMP", "DOTNET_BUNDLE_EXTRACT_BASE_DIR" })
@@ -117,8 +126,10 @@ internal sealed record CurseForgeRuntimeCertificationOptions
             data.StartsWith(servers + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) ||
             servers.StartsWith(data + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("Certification data and managed-server roots must be distinct scoped directories.");
+        var latest = ClientFileId == LatestOfficialSelection && Phase != CurseForgeRuntimeCertificationPhase.Full &&
+                     string.IsNullOrWhiteSpace(ResumeReportPath);
         if (string.IsNullOrWhiteSpace(ProjectReference) || ProjectReference.Length > 80 ||
-            !long.TryParse(ClientFileId, out var fileId) || fileId <= 0)
+            !latest && (!long.TryParse(ClientFileId, out var fileId) || fileId <= 0))
             throw new ArgumentException("An exact CurseForge project reference and positive client file ID are required.");
         if (string.IsNullOrWhiteSpace(ServerName) || ServerName.Length > 80)
             throw new ArgumentException("Use a bounded certification server name.");
@@ -1272,8 +1283,22 @@ internal sealed partial class CurseForgeRuntimeCertificationSession(
         }
         var project = await ResolveExactAsync(options, report, cancellationToken).ConfigureAwait(false);
         report.DpapiRelaunchAuthenticatedCatalogResolve = true;
+        if (options.ClientFileId == CurseForgeRuntimeCertificationOptions.LatestOfficialSelection)
+        {
+            var selected = SelectLatestOfficial(project);
+            options = options with { ProjectReference = project.ProjectId, ClientFileId = selected.ClientFileId };
+            report.Steps.Add(new CertificationStepEvidence { Name = "explicit new latest-official acceptance case", Status = "PASSED",
+                Detail = "Pinned the newest available official server-pack relationship in the fresh native file inventory. This is not a reproduction of a missing historical file identity." });
+            project = await ResolveExactAsync(options, report, cancellationToken, "pin discovered exact release").ConfigureAwait(false);
+        }
         var release = ExactRelease(project, options.ClientFileId);
         BindResolvedIdentity(report, project, release);
+
+        if (!string.IsNullOrWhiteSpace(options.ResumeReportPath))
+        {
+            await ResumeStoppedControlAsync(options, report, project, release, cancellationToken).ConfigureAwait(false);
+            return;
+        }
 
         if (options.Phase == CurseForgeRuntimeCertificationPhase.Metadata)
         {
@@ -1441,12 +1466,21 @@ internal sealed partial class CurseForgeRuntimeCertificationSession(
             () => transport.SendAsync<CatalogItem?>(
                 "ResolveCatalogProject",
                 new CatalogProjectRequest(
-                    CatalogProvider.CurseForge, options.ProjectReference, options.ClientFileId),
+                    CatalogProvider.CurseForge, options.ProjectReference,
+                    options.ClientFileId == CurseForgeRuntimeCertificationOptions.LatestOfficialSelection ? null : options.ClientFileId),
                 cancellationToken)).ConfigureAwait(false);
         return project is { Provider: CatalogProvider.CurseForge }
             ? project
             : throw new InvalidOperationException("The exact CurseForge project/file could not be resolved.");
     }
+
+    internal static CatalogVersion SelectLatestOfficial(CatalogItem project) => project.Versions
+        .Where(version => version.HasServerPackage && version.PublishedAt is not null &&
+            long.TryParse(version.ClientFileId, out var id) && id > 0 && version.SizeBytes is > 0 &&
+            version.Sha1.Length == 40 && version.ClientSha1.Length == 40)
+        .OrderByDescending(version => version.PublishedAt)
+        .ThenByDescending(version => long.Parse(version.ClientFileId, System.Globalization.CultureInfo.InvariantCulture))
+        .FirstOrDefault() ?? throw new InvalidDataException("The fresh native file inventory has no dated integrity-verifiable official server pack.");
 
     private async Task<InstallOperationSnapshot> PollCreationAsync(
         CurseForgeRuntimeCertificationOptions options,
@@ -1768,10 +1802,11 @@ internal sealed partial class CurseForgeRuntimeCertificationSession(
                    name.Contains(".mrpack-staging-", StringComparison.OrdinalIgnoreCase);
         }).ToArray();
         var canonicalStaging = Path.Combine(options.DataRoot, "Staging");
-        var noUnsafeStagingResidue = transactionStaging.Length == 0 &&
+        var noUnsafeStagingResidue = transactionStaging.All(entry =>
+                                         entry.Path.Equals(retainedControlInput, StringComparison.OrdinalIgnoreCase)) &&
                                      CanonicalStagingContainsOnlyTerminalLogs(
                                          canonicalStaging, terminalCreationOperationIds,
-                                         terminalUpdateOperationIds);
+                                         terminalUpdateOperationIds, retainedControlInput);
 
         var postconditions = new CertificationCleanupPostconditionsEvidence
         {
@@ -1783,7 +1818,7 @@ internal sealed partial class CurseForgeRuntimeCertificationSession(
             NoUnsafeStagingResidue = noUnsafeStagingResidue,
             ListenerPidOwnershipVerified = listenerPidOwnershipVerified,
             ListenerPidOwnershipDetail = listenerPidOwnershipVerified
-                ? "Every observed Job-owned TCP or UDP endpoint PID matched a live captured process identity in the exact task-server subtree."
+                ? "Every observed Job-owned endpoint PID matched its exact live generation; inbound candidates also had exact server ancestry."
                 : "Complete owned TCP and UDP endpoint process identity was not proven."
         };
         report.CleanupPostconditions = postconditions;
@@ -1821,10 +1856,11 @@ internal sealed partial class CurseForgeRuntimeCertificationSession(
         ExactOwnedAgentExitCodeZero: true
     };
 
-    private static bool CanonicalStagingContainsOnlyTerminalLogs(
+    internal static bool CanonicalStagingContainsOnlyTerminalLogs(
         string canonicalStaging,
         IReadOnlySet<Guid> creationOperationIds,
-        IReadOnlySet<Guid> updateOperationIds)
+        IReadOnlySet<Guid> updateOperationIds,
+        string? retainedInput = null)
     {
         if (!Directory.Exists(canonicalStaging))
             return true;
@@ -1832,7 +1868,7 @@ internal sealed partial class CurseForgeRuntimeCertificationSession(
         if (entries.Length == 0)
             return true;
         if (creationOperationIds.Count + updateOperationIds.Count == 0 ||
-            entries.Length > creationOperationIds.Count + updateOperationIds.Count)
+            entries.Length > (creationOperationIds.Count + updateOperationIds.Count) * 8 + 1)
             return false;
         var expectedCreations = creationOperationIds.Select(operationId => $"{operationId:N}.log")
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -1841,6 +1877,25 @@ internal sealed partial class CurseForgeRuntimeCertificationSession(
         foreach (var terminalLog in entries)
         {
             var name = Path.GetFileName(terminalLog);
+            if (name == ".creation-inputs.lock" && File.Exists(terminalLog) &&
+                new FileInfo(terminalLog).Length == 0 && !File.GetAttributes(terminalLog).HasFlag(FileAttributes.ReparsePoint))
+                continue;
+            if (name == "creation-inputs" && Directory.Exists(terminalLog) &&
+                !File.GetAttributes(terminalLog).HasFlag(FileAttributes.ReparsePoint))
+            {
+                if (Directory.EnumerateFileSystemEntries(terminalLog).Any(path =>
+                        !path.Equals(retainedInput, StringComparison.OrdinalIgnoreCase))) return false;
+                continue;
+            }
+            var validationParts = name.Split(".log.validation-", StringSplitOptions.None);
+            if (validationParts.Length == 2 && Guid.TryParseExact(validationParts[0], "N", out var validationOperation) &&
+                creationOperationIds.Contains(validationOperation) && validationParts[1].EndsWith(".json", StringComparison.Ordinal) &&
+                Guid.TryParseExact(validationParts[1][..^5], "N", out _) && File.Exists(terminalLog))
+            {
+                var validationInfo = new FileInfo(terminalLog);
+                if (validationInfo.Length is <= 0 or > 1024 * 1024 || validationInfo.Attributes.HasFlag(FileAttributes.ReparsePoint)) return false;
+                continue; // Bounded terminal evidence, not a runnable candidate or disposable world.
+            }
             var creationLog = expectedCreations.Contains(name);
             if (!creationLog && !expectedUpdates.Contains(name) || !File.Exists(terminalLog))
                 return false;

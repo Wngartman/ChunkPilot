@@ -115,6 +115,6 @@ function AppContent() {
     : route === 'automation' ? <AutomationPage />
     : route === 'settings' ? <SettingsPage initialCategory={settingsCategory} initialHelpArticleId={helpArticleId} onHelpDeepLink={followHelpDeepLink} />
     : route === 'gallery' ? <DesignGalleryPage />
-    : <CreateServerPage onDone={() => { setServerRouteId(undefined); setRoute('servers'); }} />;
+    : <CreateServerPage onDone={() => { setServerRouteId(undefined); setRoute('servers'); }} onActivity={() => navigate(() => setRoute('activity'))} />;
   return <Shell route={route} activeServerId={activeServerId} onRoute={next => navigate(() => runMeasuredNavigation(next, () => setRoute(next)))} onOpenServer={openServer} onOpenLibrary={openLibrary}><Suspense fallback={<div className={styles.routeLoading}>Loading view…</div>}>{content}</Suspense></Shell>;
 }

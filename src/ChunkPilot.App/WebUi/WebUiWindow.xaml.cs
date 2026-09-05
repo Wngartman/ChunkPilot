@@ -1126,6 +1126,10 @@ public partial class WebUiWindow : Window
                 return await CreationProgressAsync(parameters).ConfigureAwait(true);
             case "creation.cancel":
                 return await CancelCreationAsync(parameters).ConfigureAwait(true);
+            case "creation.retry":
+                return await RecoverCreationAsync(parameters, retry: true).ConfigureAwait(true);
+            case "creation.discard":
+                return await RecoverCreationAsync(parameters, retry: false).ConfigureAwait(true);
             default:
                 throw new ArgumentException($"The bridge method '{method}' is not allowed.");
         }
@@ -3032,6 +3036,13 @@ public partial class WebUiWindow : Window
             totalBytes = progress.Progress.TotalBytes,
             bytesPerSecond = progress.Progress.BytesPerSecond,
             currentArtifact = progress.Progress.Detail,
+            progress.Progress.IsIndeterminate,
+            progress.Progress.StageElapsedSeconds,
+            progress.Progress.LastMeaningfulStatus,
+            progress.Progress.SecondsSinceMeaningfulUpdate,
+            progress.Progress.RecentStatus,
+            progress.Progress.NewLogOutputObserved,
+            progress.CanRetry, progress.CanDiscard, progress.RetryGeneration, progress.RetainedInputBytes,
             message = string.IsNullOrWhiteSpace(progress.Progress.CurrentStep)
                 ? CreationStagePolicy.Describe(progress.Progress.Stage)
                 : progress.Progress.CurrentStep,
@@ -3069,6 +3080,13 @@ public partial class WebUiWindow : Window
                 totalBytes = progress.Progress.TotalBytes,
                 bytesPerSecond = progress.Progress.BytesPerSecond,
                 currentArtifact = progress.Progress.Detail,
+                progress.Progress.IsIndeterminate,
+                progress.Progress.StageElapsedSeconds,
+                progress.Progress.LastMeaningfulStatus,
+                progress.Progress.SecondsSinceMeaningfulUpdate,
+                progress.Progress.RecentStatus,
+                progress.Progress.NewLogOutputObserved,
+                progress.CanRetry, progress.CanDiscard, progress.RetryGeneration, progress.RetainedInputBytes,
                 message = string.IsNullOrWhiteSpace(progress.Progress.CurrentStep)
                     ? CreationStagePolicy.Describe(progress.Progress.Stage)
                     : progress.Progress.CurrentStep,
@@ -3079,6 +3097,20 @@ public partial class WebUiWindow : Window
                 progress.Warnings
             }).ToArray();
         return JsonSerializer.SerializeToNode(operations, WebUiProtocol.Json);
+    }
+
+    private async Task<JsonNode?> RecoverCreationAsync(JsonObject parameters, bool retry)
+    {
+        if (!Guid.TryParse(RequiredString(parameters, "operationId", 64), out var operationId))
+            throw new ArgumentException("A valid creation operation ID is required.");
+        var generation = parameters["retryGeneration"]?.GetValue<int>()
+            ?? throw new ArgumentException("The current recovery generation is required.");
+        var request = new CreationRecoveryRequest(operationId, generation);
+        if (retry)
+            await client.SendAsync<InstallOperationRequest>("RetryModpackCreation", request).ConfigureAwait(true);
+        else
+            await client.SendAsync<OperationResult>("DiscardModpackCreation", request).ConfigureAwait(true);
+        return JsonSerializer.SerializeToNode(new { accepted = true, operationId }, WebUiProtocol.Json);
     }
 
     private async Task<JsonNode?> CancelCreationAsync(JsonObject parameters)
