@@ -61,12 +61,18 @@ public sealed class StagedServerValidatorIntegrationTests
         await File.WriteAllTextAsync(Path.Combine(root, "server.properties"), original);
         Directory.CreateDirectory(Path.Combine(root, "intended-world"));
         await File.WriteAllTextAsync(Path.Combine(root, "intended-world", "level.dat"), "irreplaceable sentinel");
+        Directory.CreateDirectory(Path.Combine(root, "config"));
+        const string neoForgeOriginal = "permissionHandler = \"custom:keep\"\nadvertiseDedicatedServerToLan = true\r\n";
+        await File.WriteAllTextAsync(Path.Combine(root, "config", "neoforge-server.toml"), neoForgeOriginal);
         await File.WriteAllBytesAsync(Path.Combine(root, "staged-loopback.jar"), [1]);
         var validator = new StagedServerValidator((job, attempt) =>
         {
             var endpoints = job.CaptureStableOwnedNetworkEndpoints().Select(e => e.ToObservation(attempt)).ToList();
             if (endpoints.FirstOrDefault(e => e.State == System.Net.NetworkInformation.TcpState.Listen) is not { } listener)
                 return endpoints;
+            var world = ServerPropertiesDocument.Parse(File.ReadAllText(Path.Combine(root, "server.properties"))).Get("level-name")!;
+            Assert.Contains("advertiseDedicatedServerToLan = false", File.ReadAllText(
+                Path.Combine(root, world, "serverconfig", "neoforge-server.toml")));
             if (kind == "collector") throw new IOException("Synthetic table read failure");
             endpoints.Add(listener with
             {
@@ -81,13 +87,14 @@ public sealed class StagedServerValidatorIntegrationTests
         try
         {
             var result = await validator.ValidateAsync(FakeJavaPath(), root, "staged-loopback.jar", false,
-                512, 512, TimeSpan.FromSeconds(15));
+                512, 512, TimeSpan.FromSeconds(15), ecosystem: ChunkPilot.Core.ServerEcosystem.NeoForge);
             Assert.Equal(expectedSuccess, result.Succeeded);
             Assert.True(result.JobEmptyConfirmed);
             Assert.True(result.SelectedPortListenerAbsent);
             Assert.True(result.ConfigurationRestored);
             Assert.True(result.ValidationWorldRemoved);
             Assert.Equal(original, await File.ReadAllTextAsync(Path.Combine(root, "server.properties")));
+            Assert.Equal(neoForgeOriginal, await File.ReadAllTextAsync(Path.Combine(root, "config", "neoforge-server.toml")));
             Assert.Equal("irreplaceable sentinel", await File.ReadAllTextAsync(Path.Combine(root, "intended-world", "level.dat")));
             Assert.Empty(Directory.EnumerateDirectories(root, ".chunkpilot-staging-*"));
             if (kind == "tcp") Assert.True(result.Network!.UnexpectedInboundListener);

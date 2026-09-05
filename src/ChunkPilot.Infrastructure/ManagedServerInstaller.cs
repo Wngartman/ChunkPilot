@@ -367,6 +367,17 @@ public sealed class ManagedServerInstaller
                         .ConfigureAwait(false);
                 }
                 await WriteInitialPropertiesAsync(context.StagingPath, request, token).ConfigureAwait(false);
+                if (payload.Ecosystem == ServerEcosystem.NeoForge &&
+                    request.CreationNetworkingPreference == VanillaNetworkingPreference.ThisComputerOnly)
+                {
+                    var initial = ServerPropertiesDocument.Parse(await File.ReadAllTextAsync(
+                        Path.Combine(context.StagingPath, "server.properties"), token).ConfigureAwait(false));
+                    await NeoForgeLanAdvertisement.DisableForNewCreationAsync(context.StagingPath,
+                        initial.Get("level-name") ?? "world", token).ConfigureAwait(false);
+                    await AppendLogAsync(context.LogPath,
+                        "This computer only: disabled NeoForge dedicated-server LAN advertisement; gameplay settings preserved.", token)
+                        .ConfigureAwait(false);
+                }
                 if (!request.EulaAccepted || request.EulaAcceptedAt is null)
                     throw new InvalidOperationException(
                         "Minecraft EULA acceptance requires the unchecked wizard checkbox to be selected deliberately.");
@@ -420,7 +431,8 @@ public sealed class ManagedServerInstaller
                     {
                         validation = await stagedValidator.ValidateAsync(runtimeJava, context.StagingPath,
                             relativeLaunchPath, payload.UsesArgumentFile,
-                            request.MinimumRamMb, request.MaximumRamMb, TimeSpan.FromMinutes(10), validationProgress, token)
+                            request.MinimumRamMb, request.MaximumRamMb, TimeSpan.FromMinutes(10), validationProgress,
+                            payload.Ecosystem, token)
                             .ConfigureAwait(false);
                     }
                     catch (Exception failure) when (failure is StagedServerCleanupException or StagedServerCancelledException)

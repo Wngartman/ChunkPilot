@@ -469,7 +469,8 @@ public sealed class CurseForgeServerCreationTests
         public Task<StagedServerValidationResult> ValidateAsync(string javaPath, string stagingRoot,
             string launchRelativePath, bool usesArgumentFile, int minimumRamMb, int maximumRamMb,
             TimeSpan timeout,
-            IProgress<StagedValidationProgress>? progress = null, CancellationToken cancellationToken = default)
+            IProgress<StagedValidationProgress>? progress = null, ServerEcosystem ecosystem = ServerEcosystem.Custom,
+            CancellationToken cancellationToken = default)
         {
             Calls++;
             MinimumRamMb = minimumRamMb;

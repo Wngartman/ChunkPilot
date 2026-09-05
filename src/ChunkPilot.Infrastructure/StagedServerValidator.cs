@@ -42,7 +42,7 @@ public interface IStagedServerValidator
     Task<StagedServerValidationResult> ValidateAsync(string javaPath, string stagingRoot,
         string launchRelativePath, bool usesArgumentFile, int minimumRamMb, int maximumRamMb,
         TimeSpan timeout, IProgress<StagedValidationProgress>? progress = null,
-        CancellationToken cancellationToken = default);
+        ServerEcosystem ecosystem = ServerEcosystem.Custom, CancellationToken cancellationToken = default);
 }
 
 /// <summary>
@@ -61,7 +61,7 @@ public sealed class StagedServerValidator : IStagedServerValidator
     public async Task<StagedServerValidationResult> ValidateAsync(string javaPath, string stagingRoot,
         string launchRelativePath, bool usesArgumentFile, int minimumRamMb, int maximumRamMb,
         TimeSpan timeout, IProgress<StagedValidationProgress>? progress = null,
-        CancellationToken cancellationToken = default)
+        ServerEcosystem ecosystem = ServerEcosystem.Custom, CancellationToken cancellationToken = default)
     {
         var root = CreationPathSafety.Canonical(stagingRoot);
         var launch = Path.GetFullPath(Path.Combine(root, launchRelativePath));
@@ -114,6 +114,9 @@ public sealed class StagedServerValidator : IStagedServerValidator
             await CreationStagingSafety.PrepareOwnedDirectoryAsync(root, worldPath, marker, cancellationToken);
             worldPrepared = true;
             var properties = ServerPropertiesDocument.Parse(original is null ? "" : Encoding.UTF8.GetString(original));
+            if (ecosystem == ServerEcosystem.NeoForge)
+                await NeoForgeLanAdvertisement.PrepareValidationWorldAsync(root,
+                    properties.Get("level-name") ?? "world", worldName, cancellationToken);
             properties.Set("server-ip", "127.0.0.1");
             properties.Set("server-port", port.ToString(System.Globalization.CultureInfo.InvariantCulture));
             properties.Set("level-name", worldName);

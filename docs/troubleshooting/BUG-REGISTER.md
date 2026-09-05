@@ -6,6 +6,20 @@ become the durable record and the entry can leave this active register.
 
 ---
 
+## CP-2026-066 — NeoForge advertised loopback-only creations on the LAN
+
+**High; focused correction tested, live retry pending.** ATM10 project 925200, client 8764211,
+server 8764245 reached its expected loopback listener but also bound wildcard IPv4/IPv6 UDP.
+The exact-owned JVM thread dump caught Minecraft's LAN pinger; NeoForge's documented default
+enables that advertisement independently of `server-ip`. Attribution to the observed socket remains
+probable, not proven by a thread name alone. The unknown-UDP fail-closed rule was correct.
+
+New NeoForge **This computer only** creations now disable only the documented networking Boolean.
+Validation uses a disposable world-local override, preserving intended configuration and pack defaults.
+The bounded editor rejects ambiguous files and preserves unrelated values/comments/BOM/line endings.
+Focused reruns: 45 unit and 21 integration passed, including synthetic UDP still blocking and
+configuration restoration after failures. Existing servers are not rewritten; no UDP bypass is added.
+
 ## CP-2026-064 — Startup validation mistook non-listening TCP connections for inbound listeners
 
 **High; fixed locally, packaged/live acceptance pending.** At base `12bb1f8`, production rejected

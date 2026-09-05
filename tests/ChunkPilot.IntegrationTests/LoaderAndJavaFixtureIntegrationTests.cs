@@ -620,7 +620,8 @@ public sealed class LoaderAndJavaFixtureIntegrationTests : IDisposable
             int minimumRamMb,
             int maximumRamMb,
             TimeSpan timeout,
-            IProgress<StagedValidationProgress>? progress = null, CancellationToken cancellationToken = default)
+            IProgress<StagedValidationProgress>? progress = null, ServerEcosystem ecosystem = ServerEcosystem.Custom,
+            CancellationToken cancellationToken = default)
         {
             Called = true;
             LaunchRelativePath = launchRelativePath;

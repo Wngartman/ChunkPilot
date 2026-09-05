@@ -178,6 +178,23 @@ fail closed instead of borrowing the currently installed identity.
 This installed-state exception is a safety interpretation, not written provider approval. Public activation
 remains gated until CurseForge confirms that retaining this minimum local rollback/ownership evidence is permitted.
 
+## NeoForge loopback creation and disposable validation
+
+NeoForge's dedicated-server LAN advertisement is independent of `server-ip`. Its
+[1.21.1 configuration](https://github.com/neoforged/NeoForge/blob/1.21.1/src/main/java/net/neoforged/neoforge/common/NeoForgeConfig.java)
+defaults `advertiseDedicatedServerToLan` to true; the
+[dedicated-server patch](https://github.com/neoforged/NeoForge/blob/1.21.1/patches/net/minecraft/server/dedicated/DedicatedServer.java.patch)
+starts Minecraft's LAN pinger when enabled. An exact-owned ATM10 thread dump observed that pinger
+alongside the unresolved UDP binding. That supports probable attribution, not socket-level proof.
+
+New NeoForge creations explicitly selecting **This computer only** disable this one networking
+Boolean in the effective new server configuration. Existing world overrides take precedence;
+otherwise a regular config is created from pack defaults without modifying those defaults.
+Disposable startup validation uses a separate world-local override, leaving intended configuration
+bytes unchanged. The bounded flat-scalar editor preserves unrelated values, comments, BOM and line
+endings, and rejects ambiguous configurations. No existing registered server is rewritten.
+The shared UDP policy is unchanged: an unknown non-loopback binding still prevents verification.
+
 ## Live CurseForge verification checkpoint — 2026-08-29
 
 **VERIFIED:** the authorized candidate was accepted by official Minecraft game identity `432` and imported into
