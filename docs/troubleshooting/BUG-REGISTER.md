@@ -8,7 +8,7 @@ become the durable record and the entry can leave this active register.
 
 ## CP-2026-067 — Connection summaries promoted a host LAN address to live server availability
 
-**High; fixed locally with focused regressions; packaged/visual acceptance pending.** A loopback-only
+**High; fixed locally, packaged headless gate passed; visual acceptance pending.** A loopback-only
 ATM10 instance was displayed as home-network available, and its stopped header retained that claim.
 The certification request deliberately used ThisComputerOnly. `MapServer`/`MapConnectivity` collapsed
 private/unknown modes to HomeNetwork, while React inferred availability from the PC's LAN address
@@ -21,6 +21,8 @@ no binding, firewall, router, or user server is changed. Wrapper descendants rem
 Focused evidence: 36 native unit cases, one real isolated fake-server start/restart/stop integration,
 and six new WebUI boundary regressions passed. Guided binding apply/restart remains a product gate,
 not part of this read-only presentation fix. Prior networking defects and open friction remain separate.
+Final code `e4bd955`: HighRisk passed 1,737 unit / 409 integration / 198 WebUI tests, including synthetic
+IPv6-only, malformed observation and unapplied-intent corrections. No real LAN/Internet claim is certified.
 
 ## CP-2026-066 — NeoForge advertised loopback-only creations on the LAN
 

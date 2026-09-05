@@ -15,7 +15,7 @@ No version/schema change, push, tag, installer, portable ZIP, signing, installat
 
 | Requirement | Current status / next evidence |
 |---|---|
-| Truthful effective connection state | Implemented locally: shared native summary, bounded saved bind/port, exact root-owned listeners, stopped/starting/unknown wording, copy fencing, pending changes. Focused tests passed. Full package gate pending below. |
+| Truthful effective connection state | IMPLEMENTED and HEADLESS VERIFIED: shared native summary, bounded saved bind/port, exact root-owned listeners, stopped/starting/unknown wording, copy fencing, pending changes. HighRisk/package gate passed; visual acceptance remains pending. |
 | Deliberate broader binding apply/restart | NOT IMPLEMENTED. Audience selection still saves intent only, now explicitly labelled when not applied. Continue here before broader networking presentation. |
 | StaTech rc5 exact official relationship | REPRODUCED at native metadata boundary: project 1605376/client 8699911 resolves to no server ID and generated route in the baseline. Actual additional server-file ID is still UNRESOLVED. |
 | One exact-release installation decision | NOT IMPLEMENTED. Trace row/detail/request generation and optional relationship fields, then replace contradictory route booleans. |
@@ -68,10 +68,23 @@ First HighRisk run at `8899501d9757ad5122cd0810e67718c1304feff8`: PASSED 1,736 u
 198 WebUI tests, restore, frontend build and self-contained publish. The final boundary correction adds
 one unit row and requires a new final gate; earlier counts do not certify that later code.
 
-Final HighRisk package gate, package integrity/secret checks, dependency/documentation audit, and packaged
-Agent self-check: **PENDING at the source checkpoint**. The visible
-`Minimize_keeps_hosting_then_WM_CLOSE` fixture must stay explicitly excluded while avoiding desktop control;
-it is not certified by a headless run.
+Final code `e4bd9558739eb9801ff99145e35090681839c05f`: **PASSED HighRisk** with 1,737 unit, 409 headless
+integration, and 198 WebUI tests; zero failed/skipped among selected tests. Migration fixtures are included;
+no normal database was migrated. Restore, typecheck/lint/frontend build and self-contained App/Agent/
+controller/helper publish passed. Explicit Release solution build: zero warnings/errors. The visible
+`Minimize_keeps_hosting_then_WM_CLOSE` fixture is **EXCLUDED**, not certified by headless execution.
+Logs: `logs/modpack-controls-highrisk.log` and `logs/modpack-controls-highrisk-final.log`.
+
+**PASSED** package integrity: all 236 manifest files hashed, no unexpected package data/credentials;
+schema-3 isolated-HEAD proof covers 441 source inputs, digest
+`26b6ce76153179b4c7a6acb15f57e998b76cc5b4a7a00a4770ad1cb164f8edb4`.
+The final documentation-only handoff is repackaged with the same code-input digest and its own exact SHA.
+**PASSED** packaged Agent self-check: 15 checks, zero errors, disposable database only, exit 0.
+**PASSED** 51 public Markdown documents/local links and `git diff --check`. History audit found zero
+unexpected secrets/prohibited reachable paths (two documented false positives). NuGet's nine projects
+and production npm audit reported zero known vulnerabilities. Pre-existing missing source-license file
+remains a publication gate; no license was selected. Signing, installer/ZIP, actual remote-network tests,
+new official/generated live pack runs and foreground/visual acceptance are **NOT RUN**, not certified.
 
 ## Preserved ATM10 acceptance
 
@@ -93,8 +106,8 @@ successful retry report and prior 1,421,571,597-byte ledger remain unchanged. No
 
 ## Exact continuation
 
-Finish the package gate for this checkpoint. Then implement/review a deliberate serialized binding
-apply/restart path without changing live networking on this PC. Next resolve the exact authenticated
+Implement/review a deliberate serialized binding apply/restart path without changing live networking
+on this PC. Next resolve the exact authenticated
 StaTech relationship (never choose a nearby/latest file), establish AE2's authoritative content class and
 pack use, and deliver the shared exact-release decision and faithful generated preparation. Only then
 continue Browse/identity, icons, stopped players, ordinary startup progress, bounded official/generated
