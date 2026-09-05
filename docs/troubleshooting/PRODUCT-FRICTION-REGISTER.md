@@ -230,9 +230,12 @@ transactional pack construction. Partial or invented provider functionality rema
 
 September startup correction: shared inbound validation, disposable worlds, and verified-input retention
 passed focused regression ([CP-2026-064](BUG-REGISTER.md#cp-2026-064--startup-validation-mistook-non-listening-tcp-connections-for-inbound-listeners)).
-Native retry/discard and elapsed/milestone UI checks pass. The small control completed staged and
-promoted lifecycle checks, but its cleanup bookkeeping recheck and current ATM10 run remain pending.
-This does not close the live official-pack or owner acceptance gate.
+Native retry/discard and elapsed/milestone UI checks pass. The exact small control completed its cleanup
+recheck. The separately authorized current ATM10 selection (925200 / 8764211 / 8764245) passed staged
+validation, promotion, second start/status/stop and cleanup. Two native retained-input retries consumed
+zero repeated archive bytes; the second passed after honoring loopback-only NeoForge LAN advertisement.
+Owner foreground/gameplay acceptance, generated packs, live updates/rollback and broader provider
+coverage remain pending; this entry retains its equal High priority and In progress status.
 
 **Acceptance outcome.** A beginner can discover an exact compatible pack version and create a working,
 recoverable server through licensed official provider paths.

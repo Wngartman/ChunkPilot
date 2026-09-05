@@ -8,7 +8,7 @@ become the durable record and the entry can leave this active register.
 
 ## CP-2026-066 — NeoForge advertised loopback-only creations on the LAN
 
-**High; focused correction tested, live retry pending.** ATM10 project 925200, client 8764211,
+**High; corrected and packaged live lifecycle verified, owner acceptance pending.** ATM10 project 925200, client 8764211,
 server 8764245 reached its expected loopback listener but also bound wildcard IPv4/IPv6 UDP.
 The exact-owned JVM thread dump caught Minecraft's LAN pinger; NeoForge's documented default
 enables that advertisement independently of `server-ip`. Attribution to the observed socket remains
@@ -19,10 +19,12 @@ Validation uses a disposable world-local override, preserving intended configura
 The bounded editor rejects ambiguous files and preserves unrelated values/comments/BOM/line endings.
 Focused reruns: 45 unit and 21 integration passed, including synthetic UDP still blocking and
 configuration restoration after failures. Existing servers are not rewritten; no UDP bypass is added.
+The exact retained-input retry at `5a82ac8` passed staged validation, promotion, second start/status/stop,
+Job emptiness and port absence with zero repeated archive bytes and no unresolved UDP.
 
 ## CP-2026-064 — Startup validation mistook non-listening TCP connections for inbound listeners
 
-**High; fixed locally, packaged/live acceptance pending.** At base `12bb1f8`, production rejected
+**High; fixed and packaged live control verified, owner acceptance pending.** At base `12bb1f8`, production rejected
 `ownedEndpoints.Any(endpoint => !endpoint.IsLoopback)` without testing TCP state. The controller's
 separate listener-only collector hid this production mismatch. A documentation-address reproduction
 demonstrates the old false rejection; the original saved report did not preserve its raw socket tuple.
@@ -32,11 +34,11 @@ retain direction/purpose uncertainty; non-loopback UDP purpose, unreadable table
 return cannot-verify. Exact Job generation fencing, IPv6 scope parsing and failure-path cleanup are covered.
 Focused boundary/controller/nullable/creation slice: 102 passed. The packaged Optimized Performance
 control passed staged validation and promoted start/status/stop, with 71 non-listening observations;
-its overall cleanup gate needs the retained-input bookkeeping recheck. This does not establish pack security.
+its complete cleanup recheck passed at `9d3899e` with no new archive download. This does not establish pack security.
 
 ## CP-2026-065 — Staged validation could boot the intended world and erase late-failure input
 
-**High; core and recovery correction tested, packaged acceptance pending.** Validation previously changed bind settings but
+**High; core and native retry verified live, owner acceptance pending.** Validation previously changed bind settings but
 kept `level-name`; official archives were deleted before startup completed. It now uses an exact-owned
 disposable world, preserves intended-world sentinels/configuration, and restores only after Job-empty proof.
 Verified official archive input can survive a late failure in a bounded operation-owned journal/store.
@@ -44,7 +46,9 @@ Fixtures cover timeout, cancellation, stale/failed collectors, tampered archives
 retry with archive requests disabled. Agent retry/discard, generation fencing, restart restoration and
 WebUI elapsed/milestone/recovery tests are implemented. Current focused recovery/provider/controller
 unit run: 82 passed; transaction/retry/staged integration: 60 passed; new UI recovery tests: 3 passed.
-See CURRENT-GATE for the preserved overall control failure and pending real ATM10 acceptance.
+ATM10 proved two real late-failure/native retry paths with zero repeated archive bytes; the second
+completed promotion and second start/status/stop at `5a82ac8`. See CURRENT-GATE for preserved failures,
+successful lifecycle evidence, content checks and remaining owner acceptance.
 
 ## CP-2026-063 — A valid catalog not-found response was reported as a broken Agent frame
 
