@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BridgeAdapter } from '../bridge/client';
 import type { BridgeMethod } from '../bridge/types';
-import { fixtures } from '../fixtures/catalog';
+import { fixtures, refreshFixtureConnections } from '../fixtures/catalog';
 import { useAppStore } from '../state/store';
 import { ServersPage } from './Pages';
 
@@ -41,6 +41,7 @@ describe('Servers library joining addresses', () => {
     current.connectivity!.router.enabled = true;
     current.connectivity!.firewall.configured = true;
     current.servers[0].publicReachability = 'not-confirmed';
+    refreshFixtureConnections(current);
     useAppStore.setState({ snapshot: current });
     render(<ServersPage onOpenServer={() => undefined} onCreate={() => undefined} />);
     expect(screen.getByText('203.0.113.24:25565')).toBeTruthy();
@@ -61,6 +62,7 @@ describe('Servers library joining addresses', () => {
       publicAddressObservedAt: '2026-08-14T16:42:00-06:00',
       publicReachability: 'not-confirmed'
     };
+    refreshFixtureConnections(current);
     useAppStore.setState({ snapshot: current });
     render(<ServersPage onOpenServer={() => undefined} onCreate={() => undefined} />);
     expect(screen.getByText('203.0.113.24:25565')).toBeTruthy();

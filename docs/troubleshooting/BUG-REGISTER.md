@@ -6,6 +6,22 @@ become the durable record and the entry can leave this active register.
 
 ---
 
+## CP-2026-067 — Connection summaries promoted a host LAN address to live server availability
+
+**High; fixed locally with focused regressions; packaged/visual acceptance pending.** A loopback-only
+ATM10 instance was displayed as home-network available, and its stopped header retained that claim.
+The certification request deliberately used ThisComputerOnly. `MapServer`/`MapConnectivity` collapsed
+private/unknown modes to HomeNetwork, while React inferred availability from the PC's LAN address
+without checking effective binding or lifecycle.
+
+A shared native summary separates requested audience, bounded saved configuration, launch baseline,
+and fresh TCP LISTEN evidence from the exact held root process/raw creation identity. All joining surfaces
+and local/LAN copy actions use that result. Stopped/starting/unknown states outrank retained public setup;
+no binding, firewall, router, or user server is changed. Wrapper descendants remain explicitly unknown.
+Focused evidence: 35 native unit cases, one real isolated fake-server start/restart/stop integration,
+and six new WebUI boundary regressions passed. Guided binding apply/restart remains a product gate,
+not part of this read-only presentation fix. Prior networking defects and open friction remain separate.
+
 ## CP-2026-066 — NeoForge advertised loopback-only creations on the LAN
 
 **High; corrected and packaged live lifecycle verified, owner acceptance pending.** ATM10 project 925200, client 8764211,

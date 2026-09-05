@@ -76,6 +76,51 @@ public sealed class ManagedServerIntegrationTests : IAsyncLifetime
     }
 
     [Fact(Timeout = 30_000)]
+    public async Task Connection_evidence_tracks_exact_loopback_process_without_changing_saved_intent_or_files()
+    {
+        var port = GetFreePort();
+        var definition = Definition("normal") with
+        {
+            Ecosystem = ServerEcosystem.NeoForge, MinecraftVersion = "1.21.1", Port = port,
+            CreationNetworkingPreference = VanillaNetworkingPreference.HomeNetwork,
+            Environment = new Dictionary<string, string> { ["CHUNKPILOT_FAKE_STATUS_PORT"] = port.ToString() }
+        };
+        var properties = Path.Combine(definition.RootPath, "server.properties");
+        var original = $"# owned connection fixture\r\nserver-ip=127.0.0.1\r\nserver-port={port}\r\nonline-mode=true\r\n";
+        await File.WriteAllTextAsync(properties, original);
+        await using var server = new ManagedServer(definition, new ProcessStatisticsProvider(), new MinecraftStatusClient(),
+            store, paths, loggerFactory.CreateLogger<ManagedServer>());
+        Assert.True((await server.StartAsync()).Success);
+        try
+        {
+            await server.RefreshConnectionEvidenceAsync();
+            var snapshot = server.Snapshot(0);
+            var summary = ServerConnectionSummaryPolicy.Build(snapshot, NetworkMode.HomeNetwork, "10.0.0.141", DateTimeOffset.UtcNow);
+            Assert.Equal("Only on this computer", summary.Badge);
+            Assert.Equal($"127.0.0.1:{port}", summary.Address);
+            Assert.True(summary.RequestedAudienceNotApplied);
+            Assert.Null(summary.LanAddress);
+            Assert.Equal(snapshot.RootProcessCreationTicks, snapshot.ConnectionEvidence.Listener.ProcessCreationTicks);
+            using var testHost = Process.GetCurrentProcess();
+            Assert.Empty(ServerConnectionObserver.Observe(testHost, port).BindAddresses); // Never adopt the other process's port.
+            Assert.Equal(original, await File.ReadAllTextAsync(properties));
+            Assert.Equal(VanillaNetworkingPreference.HomeNetwork, server.Definition.CreationNetworkingPreference);
+            var oldIdentity = snapshot.RootProcessCreationTicks;
+            Assert.True((await server.RestartAsync()).Success);
+            Assert.NotEqual(oldIdentity, server.Snapshot(0).RootProcessCreationTicks);
+            // A refresh may still be throttled; a previous attempt's observation never survives Start.
+            var restarted = server.Snapshot(0);
+            Assert.False(restarted.ConnectionEvidence.Listener.ExactOwnerVerified);
+            Assert.Equal(original, await File.ReadAllTextAsync(properties));
+        }
+        finally { Assert.True((await server.StopAsync()).Success); }
+        var stoppedSummary = ServerConnectionSummaryPolicy.Build(server.Snapshot(0), NetworkMode.HomeNetwork, "10.0.0.141", DateTimeOffset.UtcNow);
+        Assert.Equal("Server stopped", stoppedSummary.Badge);
+        Assert.False(stoppedSummary.ListenerVerified);
+        Assert.False(IsPortListening(port));
+    }
+
+    [Fact(Timeout = 30_000)]
     public async Task Stop_closes_a_batch_wrapper_left_at_pause_after_java_releases_the_port()
     {
         var port = GetFreePort();

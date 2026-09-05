@@ -365,19 +365,6 @@ internal sealed class WebUiSnapshotMapper
         }
             ? viewModel.CurrentUpdateSource
             : null;
-        var publicVerified = isSelected && selectedDetailsReady && viewModel.PublicAccessVerified &&
-            viewModel.ExternalReachability.ServerId == server.Definition.Id;
-        var routerAddress = router is { RouterReportedExternalAddress.Length: > 0, ExternalPort: > 0 }
-            ? $"{router.RouterReportedExternalAddress}:{router.ExternalPort}"
-            : null;
-        var publicAddress = publicVerified ? viewModel.PublicAccessVerifiedEndpoint : routerAddress;
-        var publicAddressKind = publicVerified
-            ? "verified"
-            : routerAddress is null
-                ? null
-                : router?.HasActiveMapping == true
-                    ? "router"
-                    : "last";
         var content = packSource is not null ? "modpack" : server.Definition.Ecosystem switch
         {
             ServerEcosystem.Vanilla => "datapacks",
@@ -386,6 +373,7 @@ internal sealed class WebUiSnapshotMapper
             _ => "unsupported"
         };
         var versioning = VersioningCapability(server.Definition.Ecosystem);
+        var connection = ConnectionSummary(viewModel, server);
         return new
         {
             id = server.Definition.Id,
@@ -412,13 +400,14 @@ internal sealed class WebUiSnapshotMapper
             cpuPercent = server.CurrentStatistics?.CpuPercent,
             memoryBytes = server.CurrentStatistics?.WorkingSetBytes,
             maximumMemoryBytes = (long)server.Definition.MaximumRamMb * 1024 * 1024,
-            localAddress = $"localhost:{server.Definition.Port}",
-            lanAddress = string.IsNullOrWhiteSpace(host.LanAddress) ? null : $"{host.LanAddress}:{server.Definition.Port}",
-            connectionMode = networkMode == NetworkMode.PortForwarding ? "PortForwarding" : "HomeNetwork",
-            publicAddress,
-            publicAddressKind,
-            publicAddressObservedAt = publicVerified ? viewModel.ExternalReachability.CheckedAt : router?.LastCheckedAt,
-            publicReachability = publicVerified
+            localAddress = connection.LocalAddress ?? (server.State == ServerState.Stopped ? connection.ConfiguredLocalAddress : null),
+            lanAddress = connection.LanAddress ?? (server.State == ServerState.Stopped ? connection.ConfiguredLanAddress : null),
+            connectionMode = networkMode.ToString(),
+            connection,
+            publicAddress = connection.Kind is "public" or "router" or "last" ? connection.Address : null,
+            publicAddressKind = connection.Kind == "public" ? "verified" : connection.Kind is "router" or "last" ? connection.Kind : null,
+            publicAddressObservedAt = connection.PublicVerifiedAddress is not null ? viewModel.ExternalReachability.CheckedAt : router?.LastCheckedAt,
+            publicReachability = connection.PublicVerifiedAddress is not null
                 ? "confirmed"
                 : networkMode == NetworkMode.PortForwarding
                     ? "not-confirmed"
@@ -536,12 +525,16 @@ internal sealed class WebUiSnapshotMapper
             external.CheckedEndpoint.PublicAddress.Length > 0 && external.CheckedEndpoint.ExternalPort > 0
                 ? $"{external.CheckedEndpoint.PublicAddress}:{external.CheckedEndpoint.ExternalPort}"
                 : null;
-        var effectiveMode = mode == NetworkMode.PortForwarding ? NetworkMode.PortForwarding : NetworkMode.HomeNetwork;
-        var modeTitle = effectiveMode == NetworkMode.PortForwarding ? "Internet hosting" : "LAN";
-        var modeSummary = effectiveMode == NetworkMode.PortForwarding
-            ? "Friends elsewhere can join after deliberate Windows and router setup. Optional diagnostics do not define persistent setup state."
-            : "People on this Wi-Fi or wired LAN can use the LAN address when Windows allows it.";
-        var (statusTitle, statusDetail, statusTone) = ConnectivityStatus(viewModel, server);
+        var effectiveMode = mode;
+        var modeTitle = effectiveMode switch { NetworkMode.PortForwarding => "Internet hosting", NetworkMode.HomeNetwork => "LAN", NetworkMode.ThisComputerOnly => "This computer", _ => "Not selected" };
+        var modeSummary = effectiveMode switch
+        {
+            NetworkMode.PortForwarding => "Internet hosting is requested. Binding, Windows and router setup, and outside-in reachability are separate facts.",
+            NetworkMode.HomeNetwork => "LAN hosting is requested. The effective binding and current listener determine which address can be used.",
+            NetworkMode.ThisComputerOnly => "Only this computer is requested; no broader audience is inferred.",
+            _ => "An audience has not been selected. Effective connection evidence is shown separately."
+        };
+        var connection = ConnectionSummary(viewModel, server);
 
         return new
         {
@@ -549,12 +542,13 @@ internal sealed class WebUiSnapshotMapper
             mode = effectiveMode.ToString(),
             modeTitle,
             modeSummary,
-            status = new { title = statusTitle, detail = statusDetail, tone = statusTone },
+            connection,
+            status = new { title = connection.Badge, detail = connection.Explanation, tone = connection.Tone },
             addresses = new
             {
-                local = viewModel.ServerLocalAddress,
-                lan = viewModel.ServerLanAddress == "Unavailable" ? null : viewModel.ServerLanAddress,
-                publicVerified = publicEndpoint,
+                local = connection.LocalAddress ?? (server.State == ServerState.Stopped ? connection.ConfiguredLocalAddress : null),
+                lan = connection.LanAddress ?? (server.State == ServerState.Stopped ? connection.ConfiguredLanAddress : null),
+                publicVerified = connection.PublicVerifiedAddress,
                 routerReported = router.ServerId == selectedId && router.HasRouterReportedAddress
                     ? router.RouterReportedEndpoint
                     : null,
@@ -690,35 +684,25 @@ internal sealed class WebUiSnapshotMapper
         return issues;
     }
 
-    private static (string Title, string Detail, string Tone) ConnectivityStatus(
-        MainViewModel viewModel,
-        ServerSnapshot server)
+    internal static ServerConnectionSummary ConnectionSummary(MainViewModel viewModel, ServerSnapshot server)
     {
-        if (viewModel.SelectedNetworkMode == NetworkMode.HomeNetwork)
-            return viewModel.ServerLanAddress == "Unavailable"
-                ? ("Needs attention", "ChunkPilot has not established a suitable home-network address.", "warning")
-                : ("Available on your home network", $"People on this network can use {viewModel.ServerLanAddress} when Windows allows it.", "info");
-        if (viewModel.SelectedNetworkMode != NetworkMode.PortForwarding)
-            return ("LAN setup incomplete", "This server uses an older private-mode setting. Choose LAN to confirm ordinary home-network access.", "warning");
-        if (viewModel.IsDirectInternetBusy)
-            return ("Setting up Internet sharing", "ChunkPilot is reconciling its exact Windows or router configuration.", "info");
-        if (viewModel.RouterMapping.Phase is RouterMappingPhase.Conflict or RouterMappingPhase.NeedsAttention or
-            RouterMappingPhase.Unavailable or RouterMappingPhase.Undetermined)
-            return ("Internet sharing needs attention", viewModel.DirectInternetSummary, "warning");
-        if (viewModel.FirewallAccess.Phase is FirewallAccessPhase.NeedsAttention or FirewallAccessPhase.Stale or
-            FirewallAccessPhase.BlockedByPolicy or FirewallAccessPhase.OwnershipConflict)
-            return ("Internet sharing needs attention", viewModel.FirewallSummary, "warning");
-        if (viewModel.RouterMapping.Enabled && viewModel.FirewallAccess.Configured)
-        {
-            var running = server.State == ServerState.Running
-                ? "The server is running."
-                : "The server must be running for friends to connect.";
-            var diagnostic = viewModel.PublicAccessVerified
-                ? $" An optional outside-in diagnostic reached {viewModel.PublicAccessVerifiedEndpoint}."
-                : " This status describes ChunkPilot-owned setup, not a guarantee about every outside network.";
-            return ("Internet sharing configured", $"{running}{diagnostic}", "success");
-        }
-        return ("Internet sharing not set up", viewModel.DirectInternetSummary, "neutral");
+        var id = server.Definition.Id;
+        var network = viewModel.Dashboard.NetworkConfigurations.FirstOrDefault(item => item.ServerId == id);
+        var router = viewModel.Dashboard.RouterMappings.FirstOrDefault(item => item.ServerId == id);
+        var selected = viewModel.SelectedServer?.Definition.Id == id;
+        var mode = router?.DirectInternetEnabled == true ? NetworkMode.PortForwarding : network?.Mode ??
+            VanillaNetworkingPreferencePolicy.ToNetworkMode(server.Definition.CreationNetworkingPreference);
+        return ServerConnectionSummaryPolicy.Build(server, mode, viewModel.Dashboard.Host.LanAddress, DateTimeOffset.UtcNow,
+            firewallConfigured: selected && viewModel.FirewallAccess.ServerId == id && viewModel.FirewallAccess.Configured,
+            routerConfigured: router?.HasActiveMapping == true,
+            routerAddress: router is { RouterReportedExternalAddress.Length: > 0, ExternalPort: > 0 }
+                ? $"{router.RouterReportedExternalAddress}:{router.ExternalPort}" : null,
+            publicVerifiedAddress: selected && viewModel.ExternalReachability.ServerId == id && viewModel.PublicAccessVerified
+                ? viewModel.PublicAccessVerifiedEndpoint : null,
+            lastPublicAddress: selected && viewModel.ExternalReachability.ServerId == id &&
+                viewModel.ExternalReachability.CheckedAt is not null &&
+                viewModel.ExternalReachability.CheckedEndpoint is { PublicAddress.Length: > 0, ExternalPort: > 0 } last
+                    ? $"{last.PublicAddress}:{last.ExternalPort}" : null);
     }
 
     private static string Tone(ChunkPilot.App.DesignSystem.AppTone tone) => tone.ToString().ToLowerInvariant();

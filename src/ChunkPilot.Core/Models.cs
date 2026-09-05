@@ -235,6 +235,7 @@ public sealed record ServerSnapshot
     public required ServerDefinition Definition { get; init; }
     public ServerState State { get; init; }
     public int? RootProcessId { get; init; }
+    public long RootProcessCreationTicks { get; init; }
     public DateTimeOffset? StartedAt { get; init; }
     public TimeSpan Uptime { get; init; }
     public int? LastExitCode { get; init; }
@@ -244,6 +245,7 @@ public sealed record ServerSnapshot
     /// A crashed process is not necessarily a failed start: it may have run successfully first.
     /// </summary>
     public bool LastStartReachedReadiness { get; init; }
+    public ServerConnectionEvidence ConnectionEvidence { get; init; } = new();
     public DateTimeOffset? LastSaveAt { get; init; }
     public DateTimeOffset? LastBackupAt { get; init; }
     public bool ConsoleConnected { get; init; }

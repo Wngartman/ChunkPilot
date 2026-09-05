@@ -822,14 +822,17 @@ internal static class WindowsStagedNetworkEndpoints
     private const int MaximumTableBytes = 16 * 1024 * 1024;
 
     public static IReadOnlyList<WindowsStagedNetworkEndpoint> Capture()
+        => CaptureTcp()
+            .Concat(ParseUdp(ReadUdp(AddressFamilyInternet), AddressFamily.InterNetwork))
+            .Concat(ParseUdp(ReadUdp(AddressFamilyInternetV6), AddressFamily.InterNetworkV6)).ToArray();
+
+    internal static IReadOnlyList<WindowsStagedNetworkEndpoint> CaptureTcp()
     {
         if (!OperatingSystem.IsWindows())
             throw new PlatformNotSupportedException(
                 "Exact staged endpoint ownership requires Windows IP Helper tables.");
         return ParseTcp(ReadTcp(AddressFamilyInternet), AddressFamily.InterNetwork)
             .Concat(ParseTcp(ReadTcp(AddressFamilyInternetV6), AddressFamily.InterNetworkV6))
-            .Concat(ParseUdp(ReadUdp(AddressFamilyInternet), AddressFamily.InterNetwork))
-            .Concat(ParseUdp(ReadUdp(AddressFamilyInternetV6), AddressFamily.InterNetworkV6))
             .ToArray();
     }
 

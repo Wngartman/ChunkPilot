@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen, within } from '@testing-library/rea
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { BridgeAdapter } from '../bridge/client';
 import type { BridgeMethod } from '../bridge/types';
-import { fixtures } from '../fixtures/catalog';
+import { fixtures, refreshFixtureConnections } from '../fixtures/catalog';
 import { NavigationGuardProvider } from '../app/NavigationGuard';
 import { useAppStore } from '../state/store';
 import { ServerWorkspace } from './ServerWorkspace';
@@ -27,6 +27,7 @@ beforeEach(() => {
 afterEach(cleanup);
 
 function workspace() {
+  refreshFixtureConnections(useAppStore.getState().snapshot!);
   const server = useAppStore.getState().snapshot!.servers[0];
   render(<NavigationGuardProvider><ServerWorkspace serverId={server.id} /></NavigationGuardProvider>);
   return server;

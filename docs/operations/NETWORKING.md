@@ -32,9 +32,24 @@ A private/shared WAN address may indicate CGNAT; the safe next step is to ask th
 
 ## WebUI presentation mapping
 
-The server hero reduces the authoritative state to LAN, setting up Internet access, connection
-confirmed, needs attention, or checking unavailable. Overview, Share, Servers, and Connectivity reuse
-one audience-aware summary: this computer, the same home network, or friends outside the home. Normal
+The native `ServerConnectionSummary` contract drives the server header, Overview, Share, Servers,
+and Connectivity. It separates requested audience, saved `server-ip`/port, launch baseline, a fresh
+exact-owned TCP game listener, pending changes, Windows/router configuration, and outside-in evidence.
+A host LAN address is never listener evidence. A running loopback game listener says **Only on this
+computer**; a stopped server says **Server stopped**, with configured addresses labelled not currently
+available. Starting and unknown states do not claim joinability. A verified LAN-interface listener does
+not certify access from another device. IPv6 wildcard records do not imply IPv4 dual-stack listening.
+
+Observation is read-only and Agent-owned: at most once per server per five seconds while dashboard
+snapshots are requested, a bounded 64 KiB properties read and two stable TCP table observations bracketed
+by the held root-process handle/raw kernel creation identity. No network probe or exposure mutation is
+performed. Listener facts expire after 15 seconds and clear at each launch. Wrapper/descendant listeners
+without proven root ownership remain unknown; no process is adopted from a port number. Saved bind/port
+changes relative to launch require restart. Broader saved audience with local-only configuration is
+explicitly not applied. The audience selector still saves intent; a new guided binding apply/restart
+workflow is not delivered by this checkpoint.
+
+Normal
 Internet setup is three owned facts: the exact Windows rule, the exact router mapping, and a running
 server. Outside-in probing is an explicit Advanced diagnostic; it does not poll automatically and is not
 required for persistent setup status. The

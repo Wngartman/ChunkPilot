@@ -10,7 +10,7 @@ using Microsoft.Extensions.Logging;
 
 namespace ChunkPilot.Agent;
 
-public sealed class ManagedServer : IAsyncDisposable
+public sealed partial class ManagedServer : IAsyncDisposable
 {
     internal static readonly TimeSpan ManualStopGateDeadline = TimeSpan.FromSeconds(10);
     private readonly SemaphoreSlim operationGate = new(1, 1);
@@ -1181,11 +1181,13 @@ public sealed class ManagedServer : IAsyncDisposable
             Definition = Definition,
             State = State,
             RootProcessId = currentProcess is { HasExited: false } ? currentProcess.Id : null,
+            RootProcessCreationTicks = currentProcess is { HasExited: false } ? ProcessCreationIdentity.Of(currentProcess.SafeHandle) : 0,
             StartedAt = startedAt,
             Uptime = startedAt is { } value && State is not ServerState.Stopped ? DateTimeOffset.Now - value : TimeSpan.Zero,
             LastExitCode = lastExitCode,
             LastError = lastError,
             LastStartReachedReadiness = lastStartReachedReadiness,
+            ConnectionEvidence = connectionEvidence,
             LastSaveAt = lastSaveAt,
             LastBackupAt = lastBackupAt,
             ConsoleConnected = currentProcess is { HasExited: false } && currentProcess.StartInfo.RedirectStandardInput,
@@ -1210,6 +1212,7 @@ public sealed class ManagedServer : IAsyncDisposable
         }
         lifecycle.TransitionTo(ServerState.Starting);
         lastStartReachedReadiness = false;
+        connectionEvidence = connectionEvidence with { Listener = new(), AtLaunch = new() };
         if (!File.Exists(Definition.Executable))
         {
             RecordStartupFailure($"Launch executable does not exist: {Definition.Executable}", 400);
@@ -1260,6 +1263,8 @@ public sealed class ManagedServer : IAsyncDisposable
         ChildProcessEnvironmentPolicy.Apply(startInfo, Definition.Environment);
         CurseForgeCredentialEnvironment.RemoveFromChild(startInfo);
         var newProcess = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
+        var launchBinding = await ServerConnectionObserver.ReadSavedAsync(Definition, new SafeFileService(paths), cancellationToken).ConfigureAwait(false);
+        connectionEvidence = new() { Saved = launchBinding, AtLaunch = launchBinding };
         try
         {
             if (!newProcess.Start())

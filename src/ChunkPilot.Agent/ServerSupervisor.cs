@@ -183,6 +183,8 @@ public sealed class ServerSupervisor : IAsyncDisposable
 
     public async Task<DashboardSnapshot> DashboardAsync(CancellationToken cancellationToken = default)
     {
+        foreach (var server in servers.Values)
+            await server.RefreshConnectionEvidenceAsync(cancellationToken).ConfigureAwait(false);
         var snapshots = servers.Values.Select(server => server.Snapshot()).ToArray();
         var schedules = await store.GetSchedulesAsync(cancellationToken).ConfigureAwait(false);
         var networkConfigurations = await store.GetNetworkConfigurationsAsync(cancellationToken).ConfigureAwait(false);

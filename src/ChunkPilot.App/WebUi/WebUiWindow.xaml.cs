@@ -1002,14 +1002,15 @@ public partial class WebUiWindow : Window
                 var storedRouter = viewModel.Dashboard.RouterMappings.FirstOrDefault(item =>
                     item.ServerId == addressServerId);
                 var isSelectedAddressServer = viewModel.SelectedServer?.Definition.Id == addressServerId;
+                var connection = WebUiSnapshotMapper.ConnectionSummary(viewModel, addressServer);
                 var kind = RequiredString(parameters, "kind", 20).ToLowerInvariant();
                 var address = kind switch
                 {
-                    "local" => $"localhost:{addressServer.Definition.Port}",
-                    "lan" when !string.IsNullOrWhiteSpace(viewModel.Dashboard.Host.LanAddress) =>
-                        $"{viewModel.Dashboard.Host.LanAddress}:{addressServer.Definition.Port}",
-                    "public" when isSelectedAddressServer && viewModel.PublicAccessVerified =>
-                        viewModel.PublicAccessVerifiedEndpoint,
+                    "local" when connection.LocalAddress is not null => connection.LocalAddress,
+                    "local" when addressServer.State == ServerState.Stopped && connection.ConfiguredLocalAddress is not null => connection.ConfiguredLocalAddress,
+                    "lan" when connection.LanAddress is not null => connection.LanAddress,
+                    "lan" when addressServer.State == ServerState.Stopped && connection.ConfiguredLanAddress is not null => connection.ConfiguredLanAddress,
+                    "public" when connection.PublicVerifiedAddress is not null => connection.PublicVerifiedAddress,
                     "router" when isSelectedAddressServer && viewModel.RouterMapping.Enabled &&
                         viewModel.RouterMapping.HasRouterReportedAddress =>
                         viewModel.RouterMapping.RouterReportedEndpoint,
@@ -1025,6 +1026,7 @@ public partial class WebUiWindow : Window
                     "router" => throw new InvalidOperationException("The active router mapping has not reported a likely public address."),
                     "public" => throw new InvalidOperationException("No outside-in check has verified a public address for this server."),
                     "lan" => throw new InvalidOperationException("ChunkPilot has not established a LAN address for this server."),
+                    "local" => throw new InvalidOperationException("ChunkPilot has not established a local address for this server."),
                     "last" => throw new InvalidOperationException("No previously checked Internet address is available for this server."),
                     _ => throw new ArgumentException("Address kind must be local, lan, router, last, or public.")
                 };

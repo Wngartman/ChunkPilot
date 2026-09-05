@@ -50,9 +50,10 @@ export interface ServerSummary {
   cpuPercent: number | null;
   memoryBytes: number | null;
   maximumMemoryBytes: number;
-  localAddress: string;
+  localAddress: string | null;
   lanAddress: string | null;
-  connectionMode: 'HomeNetwork' | 'PortForwarding';
+  connectionMode: ConnectivityMode;
+  connection: NativeConnectionSummary;
   publicAddress: string | null;
   publicAddressKind: 'verified' | 'router' | 'last' | null;
   publicAddressObservedAt: string | null;
@@ -242,14 +243,36 @@ export interface ActivityEntry { id: number; timestamp: string; serverId: string
 export type ConnectivityMode = 'ThisComputerOnly' | 'HomeNetwork' | 'PortForwarding' | 'ConfigureLater';
 export type SemanticTone = 'neutral' | 'info' | 'success' | 'warning' | 'danger';
 
+export interface NativeConnectionSummary {
+  serverId: string;
+  requestedAudience: ConnectivityMode;
+  audience: 'computer' | 'home' | 'internet';
+  label: string;
+  badge: string;
+  tone: 'neutral' | 'info' | 'success' | 'warning';
+  explanation: string;
+  address?: string | null;
+  kind?: 'local' | 'lan' | 'router' | 'last' | 'public' | null;
+  localAddress?: string | null;
+  lanAddress?: string | null;
+  configuredLocalAddress?: string | null;
+  configuredLanAddress?: string | null;
+  pendingRestart: boolean;
+  requestedAudienceNotApplied: boolean;
+  listenerVerified: boolean;
+  firewallConfigured: boolean;
+  routerConfigured: boolean;
+}
+
 export interface ConnectivitySnapshot {
   serverId: string;
   mode: ConnectivityMode;
   modeTitle: string;
   modeSummary: string;
   status: { title: string; detail: string; tone: SemanticTone };
+  connection: NativeConnectionSummary;
   addresses: {
-    local: string;
+    local: string | null;
     lan: string | null;
     publicVerified: string | null;
     routerReported: string | null;

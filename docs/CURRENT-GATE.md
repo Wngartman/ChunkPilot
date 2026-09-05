@@ -1,175 +1,82 @@
 # Current ChunkPilot Gate
 
-**VALIDATION FIX AND ATM10 LIFECYCLE VERIFIED — USER ACCEPTANCE PENDING**
+**MODPACK CREATION / EVERYDAY CONTROLS — CONNECTION-EVIDENCE CHECKPOINT, PHASE INCOMPLETE**
 
-## Repository
+## Repository and recovery
 
-Worktree: `temp/atm10-creation-hardening`; branch: `codex/atm10-creation-hardening`.
-Starting SHA: `12bb1f8cf308d94a3ad871c3d7a657abf74ad0c9`. Recovery/checkpoint: `ea1855e`.
-Tested live code: `5a82ac82a392bdd33f61e85256b44d446d13afdd`. The final handoff commit changes
-documentation only; the packaged manifest records its exact Git identity and unchanged code-input digest.
-Local checkpoints `7176309`, `4ab5bf7`, `2a3948f`, `9d3899e`, `f906d3a`, and `5a82ac8` preserve
-successive live-discovered corrections rather than rewriting history. No push, tag, installer,
-signing, publication, installation or normal-data-root migration was performed.
+Source worktree: `temp/atm10-creation-hardening`; branch: `codex/modpack-creation-everyday-controls`.
+Starting candidate: `005b9d98ab29b14abec1c7250a6fc6a098da0d16`, clean, version `1.3.0-alpha.5`,
+database schema `6`, creation journal shape `2`. The previous branch and all its evidence remain intact.
+Exact baseline binaries are retained in `artifacts/recovery/modpack-controls-base-005b9d9`.
+The checkpoint package is `artifacts/dev-current`; its schema-3 manifest records the exact build commit.
+No version/schema change, push, tag, installer, portable ZIP, signing, installation or publication.
 
-Version remains `1.3.0-alpha.5`; database schema `6`. Creation journal shape is `2`, with shape-1
-read compatibility and fail-closed handling by older builds. Primary checkout, unrelated worktrees/stash,
-real servers, installed release, firewall/router, registry and services are untouched.
+## Request status — none of the remaining work is waived
 
-Self-contained candidate: `artifacts/dev-current/ChunkPilot.exe`, with Agent and Certification siblings.
-Manifest: `artifacts/dev-current/.chunkpilot-build-manifest.json`, schema 3, isolated HEAD archive,
-437 package-input files, exact HEAD/index/worktree input agreement. Code-input SHA-256:
-`e020a5491dfd6f0b9c7fb7c762322eb370aa8013210506c4c6e2290ff63aacea`.
-Installer, portable ZIP, signing and publication are outside this correction, not failed checks.
+| Requirement | Current status / next evidence |
+|---|---|
+| Truthful effective connection state | Implemented locally: shared native summary, bounded saved bind/port, exact root-owned listeners, stopped/starting/unknown wording, copy fencing, pending changes. Focused tests passed. Full package gate pending below. |
+| Deliberate broader binding apply/restart | NOT IMPLEMENTED. Audience selection still saves intent only, now explicitly labelled when not applied. Continue here before broader networking presentation. |
+| StaTech rc5 exact official relationship | REPRODUCED at native metadata boundary: project 1605376/client 8699911 resolves to no server ID and generated route in the baseline. Actual additional server-file ID is still UNRESOLVED. |
+| One exact-release installation decision | NOT IMPLEMENTED. Trace row/detail/request generation and optional relationship fields, then replace contradictory route booleans. |
+| Faithful generated route / AE2 Blackout | INVESTIGATED, NOT FIXED: generated planner sends every required manifest entry through a loader-specific mod resolver and its combined error. Project 1060372/file 8393438 class/layout and server consumption still need authenticated exact evidence. |
+| Browse default / preserved intentional flow | NOT STARTED. |
+| Installed pack identity / truthful update copy | NOT STARTED. Preserve installed identity versus provider-catalog persistence boundary. |
+| Edit existing icon / repeatable recipe | NOT STARTED; correctness gates precede image effects. |
+| Stopped player access / Start serialization | NOT STARTED; no offline writer or queued-success claim added. |
+| Ordinary Start/Restart progress | NOT STARTED; existing creation progress remains unchanged. |
+| Official and generated live acceptance | NOT RUN in this phase. New exact runs need deliberate EULA acceptance; previous consent was limited to earlier disposable tests. |
+| Packaged visuals / accessibility | NOT RUN yet. Keep headless fixtures distinct from 1100x700/larger, 125%/150%, keyboard, High Contrast, Reduced Motion and live provider UI acceptance. |
+| Exact Beta b1.8/b1.8.1 feasibility | DEFERRED until supported-pack correctness gates pass; no new support claim. |
 
-## Actual root cause
+## Evidence and tests
 
-Production rejected `ownedEndpoints.Any(endpoint => !endpoint.IsLoopback)` without checking TCP
-state. The controller used a different listener-only collector, so its passing tests missed the production
-decision. A documentation-address regression captures the old false rejection. The older failed report
-did not preserve its raw socket tuple; its exact destination cannot be reconstructed.
+`artifacts/modpack-controls/evidence/certification-statech-baseline.json`: metadata transport PASSED at
+the starting exact package, but `serverPackFileId` empty and `resolvedHasServerPackage=false` reproduce
+the routing defect; this does not certify absence of an official pack. Both owned Agent Jobs exited 0.
+New phase ledger: **zero CurseForge payload bytes**, unchanged 2 GiB ceiling; no new Java/loader downloads.
+Prior ledgers are untouched. The metadata-only disposable bootstrap run was recycled by the controller.
 
-The corrected control exposed separate cleanup defects: newly retained input/evidence was called unsafe
-residue; timestamp-prefixed terminal logs were misparsed; managed Java left an empty extraction wrapper.
-All were corrected and regression-tested. Only the exact verified-empty control wrapper was removed
-non-recursively; no files were deleted by that repair.
+Connection root cause: private/unknown modes were collapsed into HomeNetwork, and the UI treated a host
+LAN address as current server availability regardless of bind or lifecycle. See CP-2026-067 in the
+[bug register](troubleshooting/BUG-REGISTER.md). The native contract now supplies every joining surface.
+Read-only observation never applies settings or probes another machine. Wrapper/descendant or unresolved
+listener evidence is unknown, not LAN. Real LAN, firewall and router acceptance remain UNAVAILABLE here.
 
-ATM10 then exposed NeoForge's independent LAN advertisement. `server-ip=127.0.0.1` did not disable
-the dedicated-server pinger. This was a networking-preference gap, not a reason to allow unknown UDP.
+Focused checks: PASSED 35 native unit tests, PASSED one exact-owned loopback fake-server
+start/restart/stop integration, PASSED 16 targeted WebUI tests (six new), PASSED all 198 WebUI tests,
+PASSED typecheck/lint, PASSED `git diff --check`. Native targeted builds: zero warnings/errors.
+First failures: one helper incorrectly called an instance path method statically (compile failure);
+four newly added invalid/oversized-file tests exposed an incomplete exception filter. Both were corrected,
+then all focused cases passed. No failed test is counted as a pass before its rerun.
 
-## Observed connection
+Final HighRisk package gate, package integrity/secret checks, dependency/documentation audit, and packaged
+Agent self-check: **PENDING at the source checkpoint**. The visible
+`Minimize_keeps_hosting_then_WM_CLOSE` fixture must stay explicitly excluded while avoiding desktop control;
+it is not certified by a headless run.
 
-Control validation: exact-owned Java PID 20920, raw creation 134330984935300860, expected loopback
-listener and 71 non-listening observations (Established/FinWait1). No SynSent was captured; initiating
-direction, hostname, component and purpose remain unknown.
+## Preserved ATM10 acceptance
 
-Initial ATM10: Java PID 10352, raw creation 134331033769765365; expected loopback listener plus
-wildcard IPv4/IPv6 UDP port 58729. Inventory/ownership succeeded; UDP purpose could not be verified.
-It failed closed, stopped cleanly, restored configuration, removed its disposable world, proved Job
-empty/port absent, and retained its archive without promotion. The first native retry reproduced
-unknown UDP with Java PID 26064, raw creation 134331042465026125.
+The earlier actual pack run remains separate: project/client/server **925200 / 8764211 / 8764245**,
+Minecraft **1.21.1**, NeoForge **21.1.249**. Installation, promotion, second launch, local status and clean
+stop passed at `5a82ac82a392bdd33f61e85256b44d446d13afdd`; final documentation/package checkpoint was
+`005b9d9`. Owner local join is subsequently **REPORTED**, not independently re-tested in this phase.
+Prior full counts were 1,701 unit / 408 headless integration / 192 WebUI, not current checkpoint counts.
 
-One bounded, exact-identity-checked read-only thread dump caught `LanServerPinger`. NeoForge's
-[official configuration](https://github.com/neoforged/NeoForge/blob/1.21.1/src/main/java/net/neoforged/neoforge/common/NeoForgeConfig.java)
-and [dedicated-server patch](https://github.com/neoforged/NeoForge/blob/1.21.1/patches/net/minecraft/server/dedicated/DedicatedServer.java.patch)
-explain its default-on LAN advertisement. This supports probable attribution, not socket-level proof
-from a thread name. No packet-content capture, TLS interception, certificate changes, whole-machine
-history collection or credential inspection was used.
-
-Successful ATM10 validation: Java PID 28524, raw creation 134331054191171218, port 56302. History:
-one expected listener, 88 non-listening TCP observations with direction unknown, one SynSent outgoing
-attempt, no unresolved UDP. Destination hostnames/third-party purposes remain unestablished.
-This is bounded observed startup validation, not an air gap, telemetry verdict or mod security certification.
-
-## Correction
-
-One typed policy serves production, controller and regressions. Non-loopback TCP LISTEN rows block;
-non-listening rows retain uncertainty; SynSent establishes an outgoing attempt only. Unknown UDP,
-ownership, collector failures and stale attempts fail closed. Exact Job-member handles/raw creation
-identities span IPv4/IPv6 capture. No PID-only attribution, test-only bypass or real wildcard fixture.
-
-Startup uses a uniquely owned disposable world/loopback port, query/RCON disabled, absolute deadline,
-bounded evidence/output and exact-owned shutdown. Success/cancellation/failure independently check Job
-emptiness, listener absence, configuration restoration and owned-world removal. Cleanup failures retain
-the original failure and cannot offer unsafe retry or claim no change.
-
-New NeoForge creations choosing **This computer only** disable only `advertiseDedicatedServerToLan`
-in the effective new configuration. Validation uses its own world-local override; intended configuration
-bytes and pack defaults are preserved. The bounded editor preserves other values/comments/BOM/line
-endings and rejects ambiguous shapes. Existing registered servers are not rewritten. Unknown UDP
-still blocks, including in the new integration regression.
-
-## Live outcomes
-
-All reports below are under `artifacts/cf-startup-control/evidence/` and remain unedited.
-
-| Check | Exact small official control | Exact new ATM10 acceptance case |
-|---|---|---|
-| Project / client / server file | 1172292 / 6110282 / 6110285 | 925200 / 8764211 / 8764245 |
-| Selection | Optimized Performance, fixed prior selection | Explicitly approved new latest-official case, pinned before transfer |
-| Minecraft / loader | 1.21.1 / Fabric | 1.21.1 / NeoForge 21.1.249 |
-| Verified client / server bytes | 679,356 / 13,983,967 | 201,751,521 / 1,205,156,753 |
-| Staged startup/status/clean stop | Passed, 37.97 s | Passed, 110.45 s |
-| Promotion | Passed | Passed, same retained operation/server identity |
-| Promoted start / status / stop | Final recheck: 8.59 s / 70 ms / 0.86 s | 84.71 s / 34 ms / 25.07 s |
-| Job empty / game port absent | Passed / passed | Passed / passed |
-| Final report | `certification-control-9d3899e-resume.json`: PASSED | `certification-atm10-5a82ac8-retry.json`: PASSED |
-
-Small staged/promoted lifecycle passed at `7176309`; complete cleanup passed at `9d3899e`. Its three
-failed reports remain. Both ATM10 unknown-UDP reports (`certification-atm10-9d3899e.json`,
-`certification-atm10-f906d3a-retry.json`) remain FAILED, not relabeled. Successful retry creation took
-144.48 s. Both exact Agent Jobs exited 0 with zero members.
-
-Historical ATM10 operation `e0ca54b5f22f4dfbb9ecaf0ed63def6f` lost its provider file IDs. It establishes
-Minecraft/NeoForge only. This new case does not reproduce that unknown release. EULA acceptance was
-deliberate and limited to these disposable tests.
-
-Content: all 87 small-archive files matched. ATM10's pre-validation production ownership baseline has
-2,229 entries: 1,293 byte-identical, 770 byte-identical under documented language-splitter
-`.snbt_merged` names, 165 present but rewritten during startup, and the operation marker intentionally
-removed at promotion. No unexplained missing content. All 461 mods, 102 libraries, three default configs
-and the datapack match. 537/538 KubeJS files match; `Crops.js` explicitly generates changed
-`cropInfo.json`. FTB Quests loaded 15 translation tables. Runtime config/quest rewrites are recorded
-in `atm10-content-preservation.json`; gameplay semantics are not certified. This compares the
-production pre-validation baseline, not an independent original-archive entry manifest.
-The [language-splitter documentation](https://github.com/pietro-lopes/FTB-Quests-Lang-Splitter#features)
-explains the merge/rename. No mod, quest, recipe, script or datapack was removed to obtain startup.
-
-## Progress and retry
-
-Existing measured transfer progress remains. The WebUI distinguishes indeterminate first-start elapsed
-time, last meaningful milestone and fresh output; exposes cancel/Activity; bounds reconnects; and restores
-native retained operations across navigation/restart. Warning spam cannot fake advancement or extend
-deadlines. Recovery labels identify what did and did not change.
-
-Native Retry/Discard revalidate exact provider relationship/digests and local SHA-256/ownership/expiry,
-fence generations/duplicates, reconstruct mutable validation state and preserve server identity.
-Generic creation cannot smuggle retry flags or overwrite journals. Uncertain cleanup is RecoveryRequired.
-Archive retention is capped at eight operations / 8 GiB total / 4 GiB each, expires after 48 hours and
-reserves partial capacity. Promotion releases input; late failures retain it.
-
-ATM10 operation `7198ad8a-cdf1-4d0e-992b-d3f644bc1455` proved real late failure and two native retries.
-Both transferred **zero repeated CurseForge archive bytes**, with fresh metadata/API checks. The second
-succeeded and released its archive. Java/loader traffic is separate. The new ledger totals
-1,421,571,597 completed bytes, zero unknown reservations, 725,912,051 bytes remaining under its unchanged
-conservative 2 GiB cap. The user authorized 3 GiB new payload; the cap was not raised. Historical ledger
-and conservative unknown reservations are untouched.
-
-## Checks
-
-Focused final correction: 45 unit and 21 integration passed. HighRisk at tested code: 1,701 unit,
-408 headless integration and 192 WebUI tests passed, zero failed/skipped among selected tests.
-Restore, explicit Release solution build (zero warnings/errors), typecheck/lint/frontend build and
-self-contained App/Agent/controller publish passed. Database migration fixtures are included in the
-passing integration suite; no normal user database was migrated. Visible `Minimize_keeps_hosting_then_WM_CLOSE` is explicitly
-excluded, not passed. No desktop takeover or normal-close foreground smoke was performed.
-
-Initial failures were corrected, not hidden: obsolete endpoint expectations; path helper misuse;
-fast-root-exit handle lifetime; missing loader-temp parent/attempt ID; pre-cancel directory assumption;
-obsolete journal deletion; collision recovery preservation; new helper's absent-parent check.
-The final public-document check caught an absolute local worktree path; it was changed to a relative path.
-The CancellationToken-order warning was corrected before the passing rerun. Failed live cleanup and
-unknown-UDP evidence remain separate from successful reruns.
-
-History audit at tested code: 79 commits, 1,461 reachable blobs, zero unexpected secrets/prohibited paths,
-two existing documented false positives. Git emitted long-path warnings for ignored generated pack
-cache directories, not tracked source omissions. Pre-existing missing source-license file remains a
-publication issue. NuGet check found no listed vulnerabilities in nine projects.
-Packaged Agent smoke passed all 15 self-checks, created only a disposable database, and exited 0.
-All 51 public Markdown documents/local links and `git diff --check` passed. Final manifest/clean-tree
-rechecks accompany the documentation-only handoff package; its code-input digest is unchanged.
-
-## Remaining gate and retained candidate
-
-Stopped ATM10 server `e902afe1-e0fc-4805-9194-05fe2db7015c` is retained at:
+Retained server ID `e902afe1-e0fc-4805-9194-05fe2db7015c`, operation
+`7198ad8a-cdf1-4d0e-992b-d3f644bc1455`, remains under
 `artifacts/cf-startup-control/runs/run-20260905-173518-1859e8fb455b47a38cd97085fdc55329/servers/ATM10-latest-official-acceptance`.
-Intended settings: loopback `127.0.0.1:25586`, world `world`, online mode/whitelist true, query/RCON false,
-2–8 GiB heap. Validation world/ephemeral settings are absent. Its archive was released after promotion;
-the small stopped control and its archive remain.
+Intended loopback `127.0.0.1:25586`, world `world`, online-mode/whitelist true, query/RCON false, 2–8 GiB
+heap. This milestone has not accessed, adopted, launched, or modified that retained acceptance instance.
+Its released 1,205,156,753-byte archive is not redownloaded. Small retained control, failed reports,
+successful retry report and prior 1,421,571,597-byte ledger remain unchanged. No personal world was touched.
 
-Pending: owner foreground progress/failure/retry/layout/keyboard/normal-close acceptance, client join,
-multiplayer, quests/recipes/gameplay, broader pack/version/provider scenarios. No public reachability,
-modpack update/rollback, provider approval, signing, licensing or public Beta readiness is implied.
-This milestone's startup/lifecycle and retained-input retry gates are verified, not those separate gates.
+## Exact continuation
 
-**WAITING ON USER ACCEPTANCE**
+Finish the package gate for this checkpoint. Then implement/review a deliberate serialized binding
+apply/restart path without changing live networking on this PC. Next resolve the exact authenticated
+StaTech relationship (never choose a nearby/latest file), establish AE2's authoritative content class and
+pack use, and deliver the shared exact-release decision and faithful generated preparation. Only then
+continue Browse/identity, icons, stopped players, ordinary startup progress, bounded official/generated
+live runs, visual acceptance, and the separate legacy assessment. Preserve every open equal-High item in
+the [friction register](troubleshooting/PRODUCT-FRICTION-REGISTER.md).

@@ -1,8 +1,55 @@
 import type { BridgeAdapter } from '../bridge/client';
-import type { BridgeEvent, BridgeMethod, ConnectivitySnapshot, ModpackProject, ModpackProvider, ServerSummary, WebUiSnapshot } from '../bridge/types';
+import type { BridgeEvent, BridgeMethod, ConnectivitySnapshot, ModpackProject, ModpackProvider, NativeConnectionSummary, ServerSummary, WebUiSnapshot } from '../bridge/types';
 
 const now = '2026-08-14T16:42:00-06:00';
 const gib = 1024 ** 3;
+
+// Invented native responses for fixture mode only; production renders the native summary unchanged.
+function fixtureConnection(selected: Partial<ServerSummary>, network?: ConnectivitySnapshot | null): NativeConnectionSummary {
+  const id = selected.id ?? '8bb67c1f-6eb4-45a7-bb41-c97da6be0f42';
+  const mode = network?.mode ?? selected.connectionMode ?? 'HomeNetwork';
+  const local = `127.0.0.1:${selected.port ?? 25565}`;
+  const lan = selected.lanAddress ?? '192.168.1.42:25565';
+  const base: NativeConnectionSummary = { serverId: id, requestedAudience: mode,
+    audience: 'home', label: 'Share on your LAN', address: lan, kind: 'lan',
+    badge: 'Listening for home-network connections', tone: 'info',
+    explanation: 'The exact-owned fixture listener accepts this interface. This address will not work over the Internet. Access from another device is not verified.',
+    localAddress: local, lanAddress: lan, configuredLocalAddress: local, configuredLanAddress: lan,
+    pendingRestart: false, requestedAudienceNotApplied: false, listenerVerified: true,
+    firewallConfigured: network?.firewall.configured ?? false, routerConfigured: network?.router.enabled ?? false };
+  if (selected.state && !['Running', 'Saving', 'BackingUp'].includes(selected.state)) return {
+    ...base, audience: 'computer', label: selected.state === 'Stopped' ? 'Configured address' : 'Connection status',
+    badge: selected.state === 'Stopped' ? 'Server stopped' : ['Starting', 'Restarting'].includes(selected.state) ? 'Server starting' : 'Connection not verified',
+    address: selected.state === 'Stopped' ? local : null, kind: selected.state === 'Stopped' ? 'local' : null,
+    localAddress: null, lanAddress: null, listenerVerified: false, tone: 'neutral',
+    explanation: 'The server is not ready. Configured addresses are not currently available connections.' };
+  if (mode === 'ThisComputerOnly') return { ...base, audience: 'computer', label: 'Join on this computer',
+    address: local, kind: 'local', badge: 'Only on this computer', tone: 'neutral', lanAddress: null, configuredLanAddress: null,
+    explanation: 'The exact-owned fixture game listener accepts connections only on this computer.' };
+  if (mode === 'PortForwarding') {
+    const verified = network?.addresses.publicVerified ?? (selected.publicReachability === 'confirmed' ? selected.publicAddress : null);
+    const router = network?.addresses.routerReported ?? (selected.publicAddressKind === 'router' ? selected.publicAddress : null);
+    const last = network?.addresses.lastKnownPublic ?? selected.publicAddress;
+    return { ...base, audience: 'internet', label: 'Share with friends', address: verified ?? router ?? last,
+      kind: verified ? 'public' : router ? 'router' : last ? 'last' : null,
+      badge: verified ? 'Connection confirmed' : router ? 'Internet sharing configured' : last ? 'Last used' : 'Internet setup incomplete',
+      tone: verified ? 'success' : 'warning', explanation: verified ? 'The fixture outside-in check reached this exact endpoint.'
+        : 'Owned setup is separate from reachability. Outside networks can still impose limits; retained addresses may have changed.' };
+  }
+  return base;
+}
+
+export function refreshFixtureConnections(current: WebUiSnapshot): void {
+  for (const item of current.servers) item.connection = fixtureConnection(item, current.connectivity?.serverId === item.id ? current.connectivity : null);
+  const selected = current.servers.find(item => item.id === current.connectivity?.serverId);
+  if (selected && current.connectivity) {
+    const value = selected.connection;
+    current.connectivity.connection = value;
+    current.connectivity.status = { title: value.badge, detail: value.explanation, tone: value.tone };
+    current.connectivity.addresses.local = value.localAddress ?? (selected.state === 'Stopped' ? value.configuredLocalAddress ?? null : null);
+    current.connectivity.addresses.lan = value.lanAddress ?? (selected.state === 'Stopped' ? value.configuredLanAddress ?? null : null);
+  }
+}
 
 function catalogVersion(id: string, releaseKind: string, support: string, javaMajor: number | null, selectable = true) {
   const channel = releaseKind === 'Release' ? 'Stable' : releaseKind === 'Alpha' || releaseKind === 'Beta' ? 'Historic' : 'Snapshot';
@@ -74,6 +121,7 @@ function server(overrides: Partial<ServerSummary> = {}): ServerSummary {
     localAddress: 'localhost:25565',
     lanAddress: '192.168.1.42:25565',
     connectionMode: 'HomeNetwork',
+    connection: fixtureConnection(overrides),
     publicAddress: null,
     publicAddressKind: null,
     publicAddressObservedAt: null,
@@ -97,6 +145,7 @@ function connectivity(selected: ServerSummary | null): ConnectivitySnapshot | nu
   if (!selected) return null;
   return {
     serverId: selected.id,
+    connection: selected.connection,
     mode: 'HomeNetwork',
     modeTitle: 'Home network',
     modeSummary: 'People on this Wi-Fi or wired network can use the LAN address when Windows allows it.',
@@ -385,6 +434,7 @@ export class FixtureBridge implements BridgeAdapter {
   }
 
   async request<T>(method: BridgeMethod, params: Record<string, unknown> = {}): Promise<T> {
+    refreshFixtureConnections(this.current);
     if (method === 'snapshot.get' || method === 'renderer.ready') return (method === 'snapshot.get' ? this.current : { ready: true }) as T;
     if (method === 'players.head') return {
       serverId: params.serverId,
@@ -561,6 +611,7 @@ export class FixtureBridge implements BridgeAdapter {
       const state = method === 'servers.stop' ? 'Stopping' : method === 'servers.restart' ? 'Restarting' : 'Starting';
       this.current = { ...this.current, revision: this.current.revision + 1, servers: this.current.servers.map(item => item.id === params.serverId ? { ...item, state } : item) };
     }
+    refreshFixtureConnections(this.current);
     const event: BridgeEvent = { protocolVersion: 1, event: 'snapshot.changed', revision: this.current.revision, payload: this.current };
     this.listeners.forEach(listener => listener(event));
     return { accepted: true, operationId: `fixture-${Date.now()}` } as T;
