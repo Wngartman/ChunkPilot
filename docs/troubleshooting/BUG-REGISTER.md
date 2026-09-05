@@ -18,7 +18,7 @@ A shared native summary separates requested audience, bounded saved configuratio
 and fresh TCP LISTEN evidence from the exact held root process/raw creation identity. All joining surfaces
 and local/LAN copy actions use that result. Stopped/starting/unknown states outrank retained public setup;
 no binding, firewall, router, or user server is changed. Wrapper descendants remain explicitly unknown.
-Focused evidence: 35 native unit cases, one real isolated fake-server start/restart/stop integration,
+Focused evidence: 36 native unit cases, one real isolated fake-server start/restart/stop integration,
 and six new WebUI boundary regressions passed. Guided binding apply/restart remains a product gate,
 not part of this read-only presentation fix. Prior networking defects and open friction remain separate.
 

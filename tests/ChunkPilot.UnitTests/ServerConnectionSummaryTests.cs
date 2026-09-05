@@ -75,6 +75,8 @@ public sealed class ServerConnectionSummaryTests
         var value = Summary(Running("::"));
         Assert.Null(value.LanAddress);
         Assert.Null(value.ConfiguredLanAddress);
+        Assert.Equal("[::1]:25586", value.LocalAddress);
+        Assert.Equal("[::1]:25586", value.ConfiguredLocalAddress);
     }
 
     [Theory]
@@ -97,6 +99,7 @@ public sealed class ServerConnectionSummaryTests
     [InlineData("port")]
     [InlineData("missing")]
     [InlineData("unknown-address")]
+    [InlineData("empty-address")]
     public void Unresolved_or_mismatched_evidence_never_becomes_lan(string fault)
     {
         var server = Running("0.0.0.0");
@@ -111,6 +114,7 @@ public sealed class ServerConnectionSummaryTests
             "foreign" => listener with { ExactOwnerVerified = false },
             "port" => listener with { Port = 25565 },
             "missing" => listener with { BindAddresses = [] },
+            "empty-address" => listener with { BindAddresses = [""] },
             _ => listener with { BindAddresses = ["unresolved.invalid"] }
         };
         var value = Summary(server with { ConnectionEvidence = server.ConnectionEvidence with { Listener = listener } });
@@ -127,6 +131,7 @@ public sealed class ServerConnectionSummaryTests
             { Saved = new() { Known = true, BindAddress = "", Port = 25587 } } };
         var value = Summary(server);
         Assert.True(value.PendingRestart);
+        Assert.True(value.RequestedAudienceNotApplied);
         Assert.Equal("127.0.0.1:25586", value.Address);
         Assert.Equal("10.0.0.141:25587", value.ConfiguredLanAddress);
         Assert.Contains("require a restart", value.Explanation);

@@ -69,7 +69,7 @@ public static class ServerConnectionSummaryPolicy
         var listener = evidence.Listener;
         var savedIp = ParseBinding(saved.BindAddress);
         var configuredLocal = saved.Known && savedIp is not null && (IsLoopback(savedIp) || IsAny(savedIp))
-            ? Endpoint(IsAny(savedIp) ? IPAddress.Loopback : savedIp, saved.Port) : null;
+            ? Endpoint(LocalBinding(savedIp), saved.Port) : null;
         var configuredLan = saved.Known && savedIp is not null ? LanEndpoint(savedIp, saved.Port, lanIp) : null;
         var notApplied = saved.Known && savedIp is not null && IsLoopback(savedIp) &&
             requested is NetworkMode.HomeNetwork or NetworkMode.PortForwarding;
@@ -103,22 +103,28 @@ public static class ServerConnectionSummaryPolicy
             listener.ProcessId != server.RootProcessId || listener.Port != server.Definition.Port ||
             listener.CheckedAt is not { } checkedAt || checkedAt > now || now - checkedAt > TimeSpan.FromSeconds(15))
             return result with { Explanation = "ChunkPilot has not verified a fresh listener owned by this server attempt." + pendingDetail + audienceDetail };
-        var addresses = listener.BindAddresses.Select(ParseBinding).ToArray();
+        var addresses = listener.BindAddresses.Select(value => IPAddress.TryParse(value, out var ip) ? ip : null).ToArray();
         if (addresses.Length == 0 || addresses.Any(ip => ip is null))
             return result with { Explanation = "No supported exact-owned game listener was established." + pendingDetail + audienceDetail };
         var local = addresses.FirstOrDefault(ip => IsLoopback(ip!) || IsAny(ip!));
-        var localEndpoint = local is null ? null : Endpoint(IsAny(local) ? IPAddress.Loopback : local, listener.Port);
+        var localEndpoint = local is null ? null : Endpoint(LocalBinding(local), listener.Port);
         var lanEndpoint = addresses.Select(ip => LanEndpoint(ip!, listener.Port, lanIp)).FirstOrDefault(value => value is not null);
         result = result with { ListenerVerified = true, LocalAddress = localEndpoint, LanAddress = lanEndpoint };
         if (addresses.All(ip => IsLoopback(ip!)))
             return result with { Label = "Join on this computer", Badge = "Only on this computer",
                 Address = localEndpoint, Kind = "local",
-                Explanation = "The exact-owned game listener accepts connections only on this computer." + pendingDetail + audienceDetail };
+                RequestedAudienceNotApplied = requested is NetworkMode.HomeNetwork or NetworkMode.PortForwarding,
+                Explanation = "The exact-owned game listener accepts connections only on this computer." + pendingDetail + audienceDetail +
+                    (!notApplied && requested is NetworkMode.HomeNetwork or NetworkMode.PortForwarding
+                        ? " LAN/Internet access is selected but the running listener is still local-only." : "") };
         if (lanEndpoint is null)
             return result with { Address = localEndpoint, Kind = localEndpoint is null ? null : "local",
                 Explanation = "A game listener was observed, but a matching home-network address is not established." + pendingDetail + audienceDetail };
         if (requested == NetworkMode.ThisComputerOnly)
+        {
+            result = result with { RequestedAudienceNotApplied = true };
             pendingDetail += " This computer only is selected, but the running listener is broader. Review the saved binding before restarting.";
+        }
         if (requested == NetworkMode.PortForwarding)
             return result with { Audience = "internet", Label = "Share with friends", Address = publicVerifiedAddress ?? routerAddress ?? lastPublicAddress,
                 Kind = publicVerifiedAddress is not null ? "public" : routerAddress is not null && routerConfigured ? "router" : routerAddress is not null || lastPublicAddress is not null ? "last" : null,
@@ -136,6 +142,8 @@ public static class ServerConnectionSummaryPolicy
         IPAddress.TryParse(value, out var address) ? address : null;
     private static bool IsLoopback(IPAddress value) => IPAddress.IsLoopback(value.IsIPv4MappedToIPv6 ? value.MapToIPv4() : value);
     private static bool IsAny(IPAddress value) => value.Equals(IPAddress.Any) || value.Equals(IPAddress.IPv6Any);
+    private static IPAddress LocalBinding(IPAddress value) => value.Equals(IPAddress.IPv6Any) ? IPAddress.IPv6Loopback :
+        value.Equals(IPAddress.Any) ? IPAddress.Loopback : value;
     private static string Endpoint(IPAddress address, int port) => address.AddressFamily == AddressFamily.InterNetworkV6 ? $"[{address}]:{port}" : $"{address}:{port}";
     private static string? LanEndpoint(IPAddress bind, int port, string lanIp) =>
         IPAddress.TryParse(lanIp, out var lan) && !IsLoopback(lan) && !IsAny(lan) &&
