@@ -49,7 +49,11 @@ public sealed record StartupNetworkDecision(
     public bool Passed => ExpectedGameListener && !UnexpectedInboundListener && !Unresolved;
     public string Summary => UnexpectedInboundListener
         ? "Unexpected inbound TCP listener detected outside loopback."
-        : Unresolved ? "Startup check could not verify endpoint purpose or exact process ownership."
+        : !InventorySucceeded ? "Startup check could not read the endpoint inventory."
+        : !OwnershipVerified || Findings.Any(f => f.Classification == StartupEndpointClassification.ObservationUnresolved)
+            ? "Startup check could not verify an endpoint observation or exact process ownership."
+        : Findings.Any(f => f.Classification == StartupEndpointClassification.UdpPurposeUnknown)
+            ? "A non-loopback UDP binding was observed; its purpose could not be verified."
         : !ExpectedGameListener ? "The expected local game listener was not observed."
         : "Expected local game listener verified; no non-loopback inbound service was established by these observations. Connection purpose and traffic contents are not certified.";
 }

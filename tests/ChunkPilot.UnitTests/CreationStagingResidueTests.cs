@@ -1,11 +1,44 @@
 using ChunkPilot.Certification;
 using ChunkPilot.Core;
 using ChunkPilot.Infrastructure;
+using System.Text.Json;
 
 namespace ChunkPilot.UnitTests;
 
 public sealed class CreationStagingResidueTests
 {
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Retained_report_requires_terminal_cleanup_and_completed_transfer_not_creation_success(bool succeeded)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "ChunkPilot-retained-report-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(root, "evidence"));
+        try
+        {
+            var operation = Guid.NewGuid();
+            var path = Path.Combine(root, "evidence", "certification-fixture.json");
+            var report = new
+            {
+                documentType = "ChunkPilot.CurseForgeRuntimeCertificationReport", freshRunIntentionallyRetained = true,
+                cleanupSucceeded = true, terminalSelectedPortAbsent = true, agentJobActiveProcessesAfterCleanup = 0,
+                agentExitCode = 0, creationOperationId = operation, serverId = succeeded ? (Guid?)Guid.NewGuid() : null,
+                runId = "run-fixture", candidateGitSha = new string('a', 40), projectId = "1", clientFileId = "2", serverPackFileId = "3",
+                operationStates = new[] { new { operationId = operation, terminal = true, success = succeeded } },
+                payloads = new[] { new { kind = "official-server-pack", operationId = operation, expectedBytes = 4,
+                    downloadedBytes = 4, localSha256 = new string('b', 64), providerSha1Verified = true } }
+            };
+            var json = JsonSerializer.Serialize(report);
+            File.WriteAllText(path, json);
+            Assert.Equal(succeeded, RetainedControlSelection.Read(root, path).CreationSucceeded);
+            File.WriteAllText(path, json.Replace("\"downloadedBytes\":4", "\"downloadedBytes\":3", StringComparison.Ordinal));
+            Assert.Throws<InvalidDataException>(() => RetainedControlSelection.Read(root, path));
+            File.WriteAllText(path, json.Replace("\"agentJobActiveProcessesAfterCleanup\":0", "\"agentJobActiveProcessesAfterCleanup\":1", StringComparison.Ordinal));
+            Assert.Throws<InvalidDataException>(() => RetainedControlSelection.Read(root, path));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
     [Fact]
     public void New_acceptance_selection_pins_dated_official_relationship_not_an_undated_or_generated_release()
     {

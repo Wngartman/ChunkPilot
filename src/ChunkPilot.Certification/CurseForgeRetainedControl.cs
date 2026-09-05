@@ -8,7 +8,7 @@ namespace ChunkPilot.Certification;
 /// <summary>Rechecks a stopped, task-owned control without another pack creation or payload transfer.</summary>
 internal sealed record RetainedControlSelection(string RunId, Guid ServerId, Guid OperationId,
     string ProjectId, string ClientFileId, string ServerFileId, long ArchiveBytes, string ArchiveSha256,
-    string OriginalGitSha)
+    string OriginalGitSha, bool CreationSucceeded)
 {
     public static RetainedControlSelection Read(string runtime, string reportPath)
     {
@@ -31,10 +31,11 @@ internal sealed record RetainedControlSelection(string RunId, Guid ServerId, Gui
             root.GetProperty("agentExitCode").GetInt32() != 0)
             throw new InvalidDataException("The prior control does not prove intentional retention and exact terminal cleanup.");
         var operation = root.GetProperty("creationOperationId").GetGuid();
-        if (!root.GetProperty("operationStates").EnumerateArray().Any(row =>
-                row.GetProperty("operationId").GetGuid() == operation && row.GetProperty("terminal").GetBoolean() &&
-                row.GetProperty("success").GetBoolean()))
-            throw new InvalidDataException("The prior control did not complete creation.");
+        var terminal = root.GetProperty("operationStates").EnumerateArray().LastOrDefault(row =>
+            row.GetProperty("operationId").GetGuid() == operation && row.GetProperty("terminal").GetBoolean());
+        if (terminal.ValueKind != JsonValueKind.Object)
+            throw new InvalidDataException("The prior creation has no terminal operation evidence.");
+        var creationSucceeded = terminal.GetProperty("success").GetBoolean();
         var payload = root.GetProperty("payloads").EnumerateArray().Single(row =>
             row.GetProperty("kind").GetString() == "official-server-pack" &&
             row.GetProperty("operationId").GetGuid() == operation);
@@ -43,10 +44,11 @@ internal sealed record RetainedControlSelection(string RunId, Guid ServerId, Gui
         if (size <= 0 || payload.GetProperty("downloadedBytes").GetInt64() != size || sha.Length != 64 ||
             !sha.All(Uri.IsHexDigit) || !payload.GetProperty("providerSha1Verified").GetBoolean())
             throw new InvalidDataException("The prior input transfer was not complete and integrity-verified.");
-        return new(root.GetProperty("runId").GetString()!, root.GetProperty("serverId").GetGuid(), operation,
+        var server = root.GetProperty("serverId");
+        return new(root.GetProperty("runId").GetString()!, server.ValueKind == JsonValueKind.Null ? Guid.Empty : server.GetGuid(), operation,
             root.GetProperty("projectId").GetString()!, root.GetProperty("clientFileId").GetString()!,
             root.GetProperty("serverPackFileId").GetString()!, size, sha,
-            root.GetProperty("candidateGitSha").GetString()!);
+            root.GetProperty("candidateGitSha").GetString()!, creationSucceeded);
     }
 }
 
@@ -89,6 +91,11 @@ internal sealed partial class CurseForgeRuntimeCertificationSession
             prior.ClientFileId != release.ClientFileId || prior.ServerFileId != release.ServerPackFileId ||
             prior.ArchiveBytes != release.SizeBytes)
             throw new InvalidDataException("The retained control differs from the exact fresh official relationship.");
+        if (!prior.CreationSucceeded)
+        {
+            await ResumeFailedCreationAsync(options, report, project, release, prior, cancellationToken);
+            return;
+        }
         var dashboard = await transport.SendAsync<DashboardSnapshot>("Dashboard", cancellationToken: cancellationToken);
         var server = dashboard.Servers.Single(item => item.Definition.Id == prior.ServerId);
         if (server.State != ServerState.Stopped || server.Definition.Port != options.Port)
@@ -124,6 +131,43 @@ internal sealed partial class CurseForgeRuntimeCertificationSession
         await ExerciseLifecycleAsync(options, report, prior.ServerId, cancellationToken);
         await VerifyRetainedControlInputAsync(cancellationToken);
         await VerifyCertifiedPostconditionsAsync(options, report, prior.ServerId, cancellationToken);
+        report.Success = true;
+    }
+
+    private async Task ResumeFailedCreationAsync(CurseForgeRuntimeCertificationOptions options,
+        CurseForgeRuntimeCertificationReport report, CatalogItem project, CatalogVersion release,
+        RetainedControlSelection prior, CancellationToken cancellationToken)
+    {
+        var failed = await transport.SendAsync<InstallOperationSnapshot>("InstallProgress",
+            new InstallOperationRequest(prior.OperationId), cancellationToken);
+        var proof = await VerifyFailedCreationTransferAsync(options, project, release, failed, cancellationToken)
+            ?? throw new InvalidDataException("The failed creation has no reusable verified input.");
+        if (!failed.CanRetry || proof.LocalSha256 != prior.ArchiveSha256 || proof.SizeBytes != prior.ArchiveBytes)
+            throw new InvalidDataException("The exact retained failure is no longer retryable.");
+        report.CreationOperationId = prior.OperationId;
+        activeCreationOperationId = prior.OperationId;
+        var accepted = await transport.SendAsync<InstallOperationRequest>("RetryModpackCreation",
+            new CreationRecoveryRequest(prior.OperationId, failed.RetryGeneration), cancellationToken);
+        if (accepted.OperationId != prior.OperationId)
+            throw new InvalidDataException("Retry changed the exact operation identity.");
+        report.Steps.Add(new CertificationStepEvidence { Name = "native retained-input retry", Status = "PASSED",
+            OperationId = prior.OperationId, Detail = "Fresh exact release and local archive reverified; retry accepted through the production Agent recovery command. No archive reservation or download was requested." });
+        var retried = await PollCreationAsync(options, report, prior.OperationId, cancellationToken);
+        activeCreationTerminal = true;
+        terminalCreationOperationIds.Add(prior.OperationId);
+        ApplyBudget(report, await payloadBudget.GetSnapshotAsync(cancellationToken));
+        if (!retried.Success || retried.Result is null)
+        {
+            _ = await VerifyFailedCreationTransferAsync(options, project, release, retried, cancellationToken)
+                ?? throw new InvalidDataException("The retry lost its verified input evidence.");
+            report.Steps.Add(new CertificationStepEvidence { Name = "retry retained-input integrity", Status = "PASSED",
+                Detail = "The same immutable input is still verified after safe failure; zero repeated CurseForge archive payload bytes." });
+            throw new InvalidOperationException("The exact retained-input retry failed safely; see its structured validation evidence.");
+        }
+        if (retried.Result.Definition.Id != proof.ServerId)
+            throw new InvalidDataException("Retry promoted a different server identity.");
+        await ExerciseLifecycleAsync(options, report, proof.ServerId, cancellationToken);
+        await VerifyCertifiedPostconditionsAsync(options, report, proof.ServerId, cancellationToken);
         report.Success = true;
     }
 
