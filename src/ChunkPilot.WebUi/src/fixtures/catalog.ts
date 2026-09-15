@@ -188,6 +188,8 @@ function snapshot(servers: ServerSummary[]): WebUiSnapshot {
     playerAccess: selected?.gameKind === 'Minecraft' ? {
       serverId: selected.id,
       serverRunning: selected.state === 'Running',
+      canManageWhileStopped: selected.state === 'Stopped',
+      accessAvailabilityDetail: selected.state === 'Stopped' ? 'Saved access lists can be edited while this modern Java server is stopped. Unknown player names require a locally known Java UUID.' : '',
       whitelistEnabled: true,
       supportsAllowlist: true,
       supportsOperators: true,
@@ -225,7 +227,7 @@ function snapshot(servers: ServerSummary[]): WebUiSnapshot {
       { name: 'GlassBadger', uuid: null, online: true, allowlisted: false, operator: false, banned: false },
       { name: 'NorthSignal', uuid: null, online: true, allowlisted: true, operator: false, banned: false },
       { name: 'OldQuartz', uuid: null, online: false, allowlisted: true, operator: false, banned: false }
-    ],
+    ].map(player => selected?.state === 'Running' ? player : { ...player, online: false }),
     files: [
       { name: 'world', relativePath: 'world', kind: 'folder', sizeBytes: null, modifiedAt: now },
       { name: 'logs', relativePath: 'logs', kind: 'folder', sizeBytes: null, modifiedAt: now },
@@ -361,7 +363,11 @@ export const fixtures: Record<string, WebUiSnapshot> = {
   imported: snapshot([importedMinecraft]),
   terraria: snapshot([terraria]),
   attention: snapshot([attention]),
-  starting: snapshot([server({ state: 'Starting', playersOnline: null, playersMaximum: null, uptimeSeconds: null, cpuPercent: null, memoryBytes: null, samples: [] })]),
+  starting: snapshot([server({ state: 'Starting', playersOnline: null, playersMaximum: null, uptimeSeconds: null, cpuPercent: null, memoryBytes: null, samples: [],
+    startupProgress: { serverId: '8bb67c1f-6eb4-45a7-bb41-c97da6be0f42', attemptId: 'fixture-startup-attempt', stage: 'PreparingWorld', title: 'Preparing the world',
+      detail: 'The fixture server reported world preparation. ChunkPilot is still waiting for its exact readiness message.',
+      startedAt: '2026-08-14T16:41:10-06:00', updatedAt: now, lastOutputAt: now, processId: 1234, isActive: true }
+  })]),
   unknown: snapshot([server({ playersOnline: null, playersMaximum: null, cpuPercent: null, memoryBytes: null, samples: [], publicReachability: 'unavailable', lastBackupAt: null })]),
   curseforge: snapshot([server()]),
   'curseforge-many': snapshot([server()]),

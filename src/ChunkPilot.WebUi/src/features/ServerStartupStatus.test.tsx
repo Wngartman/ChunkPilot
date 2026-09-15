@@ -5,7 +5,7 @@ import { fixtures } from '../fixtures/catalog';
 import type { ServerStartupProgress } from '../bridge/types';
 import { ServerStartupStatus } from './ServerStartupStatus';
 
-afterEach(cleanup);
+afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 const progress: ServerStartupProgress = {
   serverId: fixtures.running.servers[0].id, attemptId: 'attempt-one', stage: 'PreparingWorld',
   title: 'Preparing the world', detail: 'The server reported world preparation; readiness is not confirmed.',
@@ -14,6 +14,12 @@ const progress: ServerStartupProgress = {
 };
 
 describe('ordinary startup evidence', () => {
+  it('formats native timestamps in explicit 12-hour time regardless of the system preference', () => {
+    const time = vi.spyOn(Date.prototype, 'toLocaleTimeString');
+    render(<ServerStartupStatus server={{ ...fixtures.running.servers[0], state: 'Starting', startupProgress: progress }} onConsole={() => undefined} />);
+    expect(time).toHaveBeenCalledWith([], { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true });
+  });
+
   it('shows native detail and a console action without a fabricated percentage or ETA', () => {
     const onConsole = vi.fn();
     render(<ServerStartupStatus server={{ ...fixtures.running.servers[0], state: 'Starting', startupProgress: progress }} onConsole={onConsole} />);
