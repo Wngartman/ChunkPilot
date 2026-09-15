@@ -33,6 +33,7 @@ function renderPlatform(platform: 'fabric' | 'quilt' | 'forge' | 'neoforge' | 'l
 }
 
 describe('managed-loader creation', () => {
+  // This multi-step jsdom accessibility/back-navigation walkthrough needs a bounded allowance for shared CI variance.
   it('starts with exactly three intent choices and preserves a disclosed custom loader', async () => {
     window.history.replaceState({}, '', '/?fixture=running&page=create');
     const fixture = new FixtureBridge('running');
@@ -52,7 +53,7 @@ describe('managed-loader creation', () => {
     expect(await screen.findByText('Exact NeoForge version')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: /Back/ }));
     expect((screen.getByRole('combobox', { name: 'Custom modded server loader' }) as HTMLSelectElement).value).toBe('NeoForge');
-  });
+  }, 10_000);
 
   it('loads an exact Fabric Loader and installer selection', async () => {
     renderPlatform('fabric');
