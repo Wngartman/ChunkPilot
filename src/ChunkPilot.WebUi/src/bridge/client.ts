@@ -8,6 +8,9 @@ const METHOD_REQUEST_TIMEOUT_MS: Partial<Record<BridgeMethod, number>> = {
   'mods.search': 2 * 60_000,
   'mods.release': 2 * 60_000,
   'mods.plan': 2 * 60_000,
+  'plugins.search': 2 * 60_000,
+  'plugins.release': 2 * 60_000,
+  'plugins.plan': 2 * 60_000,
   'versions.check': 2 * 60_000,
   'versions.rollback': 30 * 60_000,
   'versions.verify': 30 * 60_000,
@@ -24,7 +27,9 @@ const METHOD_REQUEST_TIMEOUT_MS: Partial<Record<BridgeMethod, number>> = {
   'creation.chooseFolder': 10 * 60_000,
   'creation.chooseWorld': 10 * 60_000,
   'creation.chooseLegacyArtifact': 10 * 60_000,
-  'modpacks.chooseLocal': 10 * 60_000
+  'modpacks.chooseLocal': 10 * 60_000,
+  'mods.chooseLocal': 10 * 60_000,
+  'plugins.chooseLocal': 10 * 60_000
 };
 
 export class BridgeError extends Error {
@@ -79,12 +84,17 @@ export class WebViewBridge {
   }
 
   private cancelNative(requestId: string): void {
-    window.chrome?.webview?.postMessage({
-      protocolVersion,
-      id: `cancel-${Date.now().toString(36)}-${++this.sequence}`,
-      method: 'bridge.cancel',
-      params: { requestId }
-    } satisfies BridgeRequest);
+    try {
+      window.chrome?.webview?.postMessage({
+        protocolVersion,
+        id: `cancel-${Date.now().toString(36)}-${++this.sequence}`,
+        method: 'bridge.cancel',
+        params: { requestId }
+      } satisfies BridgeRequest);
+    } catch {
+      // A disconnected host cannot receive cancellation. Still settle the original request;
+      // this best-effort notification must never turn a timeout/abort into a stuck promise.
+    }
   }
 
   subscribe(listener: EventListener): () => void {

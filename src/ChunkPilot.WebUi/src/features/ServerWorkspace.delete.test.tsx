@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BridgeAdapter } from '../bridge/client';
 import type { BridgeMethod, ServerDeletionPreflight } from '../bridge/types';
 import { fixtures } from '../fixtures/catalog';
@@ -41,7 +41,7 @@ beforeEach(() => {
   current.servers[0].state = 'Stopped';
   useAppStore.setState({ snapshot: current, bridge, busy: new Set(), error: null });
 });
-afterEach(cleanup);
+afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 function renderWorkspace() {
   const server = useAppStore.getState().snapshot!.servers[0];
@@ -50,6 +50,27 @@ function renderWorkspace() {
 }
 
 describe('server deletion', () => {
+  it('does not apply a late deletion review after its dialog was cancelled and reopened', async () => {
+    const server = useAppStore.getState().snapshot!.servers[0];
+    const reviewed = await bridge.request<ServerDeletionPreflight>('servers.deletePreflight', { serverId: server.id });
+    const completions: ((review: ServerDeletionPreflight) => void)[] = [];
+    vi.spyOn(bridge, 'request').mockImplementation(<T,>(method: BridgeMethod) => method === 'servers.deletePreflight'
+      ? new Promise<T>(resolve => completions.push(resolve as (review: ServerDeletionPreflight) => void))
+      : Promise.resolve({} as T));
+    renderWorkspace();
+    const first = await screen.findByRole('dialog', { name: `Delete ${server.name}?` });
+    await waitFor(() => expect(completions).toHaveLength(1));
+    fireEvent.click(within(first).getByRole('button', { name: 'Cancel' }));
+    fireEvent.keyDown(screen.getByRole('button', { name: `More actions for ${server.name}` }), { key: 'ArrowDown' });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete server…' }));
+    await waitFor(() => expect(completions).toHaveLength(2));
+    await act(async () => completions[0]({ ...reviewed, token: 'old-review' }));
+    const reopened = screen.getByRole('dialog', { name: `Delete ${server.name}?` });
+    expect(within(reopened).queryByText('Deletion ownership proven')).toBeNull();
+    await act(async () => completions[1]({ ...reviewed, token: 'current-review' }));
+    expect(await within(reopened).findByText('Deletion ownership proven')).toBeTruthy();
+  });
+
   it('requires exact permanent-deletion acknowledgements before sending the command', async () => {
     const server = renderWorkspace();
     const dialog = await screen.findByRole('dialog', { name: `Delete ${server.name}?` });

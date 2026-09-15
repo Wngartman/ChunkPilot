@@ -124,8 +124,11 @@ export function ServerWorkspace({ serverId, onOpenHelp = () => undefined }: { se
   };
   useEffect(() => {
     if (!deleteOpen || deletePreflight || !server) return;
+    let active = true;
     void command<ServerDeletionPreflight>('servers.deletePreflight', { serverId: server.id })
-      .then(setDeletePreflight).catch(() => setDeleteOpen(false));
+      .then(review => { if (active && review.serverId === server.id) setDeletePreflight(review); })
+      .catch(() => { if (active) setDeleteOpen(false); });
+    return () => { active = false; };
   }, [deleteOpen, deletePreflight, server?.id]);
   return <div className={styles.workspace}>
     <section className={styles.hero}>
@@ -175,7 +178,7 @@ function DeleteServerDialog({ open, preflight, server, onClose }: {
     setConfirmation(''); setWorldAcknowledged(false); setBackupsAcknowledged(false);
   }, [open, preflight?.token]);
   const permanentReady = confirmation === server.name && worldAcknowledged && backupsAcknowledged;
-  const canSubmit = preflight && !busy.has('servers.delete') &&
+  const canSubmit = preflight && preflight.serverId === server.id && !busy.has('servers.delete') &&
     (mode === 'RemoveFromChunkPilot' || preflight.ownershipProven) &&
     (mode !== 'Permanent' || permanentReady) && !preflight.firewallRemovalRequired;
   const submit = () => {
@@ -188,7 +191,7 @@ function DeleteServerDialog({ open, preflight, server, onClose }: {
     }).then(onClose);
   };
   const createManagedCopy = () => {
-    if (!preflight?.canCreateManagedCopy || busy.has('servers.createManagedCopy')) return;
+    if (!preflight?.canCreateManagedCopy || preflight.serverId !== server.id || busy.has('servers.createManagedCopy')) return;
     void command('servers.createManagedCopy', {
       serverId: server.id,
       preflightToken: preflight.token
@@ -918,7 +921,7 @@ function VersionsPage({ server }: { server: ServerSummary }) {
   const snapshot = useAppStore(state => state.snapshot)!;
   const command = useAppStore(state => state.command);
   const [showInstall, setShowInstall] = useState(false);
-  const [showMarkHealthy, setShowMarkHealthy] = useState(false);
+  const [validationTarget, setValidationTarget] = useState<NonNullable<UpdateSummary['pendingValidation']> | null>(null);
   const [rollbackTarget, setRollbackTarget] = useState<{ serverId: string; version: VersionEntry } | null>(null);
   const [dismissedReviewId, setDismissedReviewId] = useState<string | null>(null);
   const markHealthyRequest = useRef<AbortController | null>(null);
@@ -933,7 +936,7 @@ function VersionsPage({ server }: { server: ServerSummary }) {
       server.capabilities.versioning === 'forge' ? 'Forge' :
         server.capabilities.versioning === 'neoforge' ? 'NeoForge' : null;
   useEffect(() => {
-    setShowMarkHealthy(false);
+    setValidationTarget(null);
     return () => {
       markHealthyRequest.current?.abort();
       markHealthyRequest.current = null;
@@ -1021,7 +1024,7 @@ function VersionsPage({ server }: { server: ServerSummary }) {
       {pendingValidation && <div className={styles.catalogPolicy}>
         <div><span>Validation needed</span><strong>{pendingValidation.versionName}</strong></div>
         <p>Confirm this update only after the server starts, answers a local status check, and you have joined or otherwise verified the gameplay you care about. The previous rollback snapshot will remain retained for 30 days.</p>
-        <Button icon={<Check size={14} />} variant="primary" disabled={versionBusy} onClick={() => setShowMarkHealthy(true)}>{busy.has('versions.markHealthy') ? 'Saving validation…' : 'Mark update healthy'}</Button>
+        <Button icon={<Check size={14} />} variant="primary" disabled={versionBusy} onClick={() => setValidationTarget(pendingValidation)}>{busy.has('versions.markHealthy') ? 'Saving validation…' : 'Mark update healthy'}</Button>
       </div>}
       {update && <UpdateInstallDialog open={showInstall} onClose={() => setShowInstall(false)} server={server} update={update} />}
       {update?.migrationReview && <MigrationReviewDialog key={update.migrationReview.reviewOperationId} open={dismissedReviewId !== update.migrationReview.reviewOperationId} onClose={() => setDismissedReviewId(update.migrationReview!.reviewOperationId)} server={server} review={update.migrationReview} />}
@@ -1043,20 +1046,20 @@ function VersionsPage({ server }: { server: ServerSummary }) {
     </section>
     {catalog && <details className={styles.inventory}><summary>Browse the complete official {isPaper ? 'PaperMC' : loaderPlatform ?? 'Minecraft'} inventory ({catalog.versions.length.toLocaleString()} versions)</summary><div><VersionBrowser catalog={catalog} value={server.minecraftVersion} readonly compact />{isLoader && loaderBuilds && <div className={styles.catalogPolicy}><div><span>Exact builds for {server.minecraftVersion}</span><strong>{loaderBuilds.builds.length.toLocaleString()}</strong></div><div><span>Installed</span><strong>{server.loaderVersion || 'Unavailable'}</strong></div><p>{loaderBuilds.stale ? 'Showing the last-known-good offline cache. ' : ''}Only builds bound to this exact Minecraft version are shown.</p></div>}</div></details>}
     <ConfirmDialog
-      open={showMarkHealthy && pendingValidation !== null}
-      title={`Mark ${pendingValidation?.versionName ?? 'this update'} healthy?`}
+      open={validationTarget !== null && validationTarget.serverId === pendingValidation?.serverId && validationTarget.versionId === pendingValidation.versionId}
+      title={`Mark ${validationTarget?.versionName ?? 'this update'} healthy?`}
       detail={`Confirm that ${server.name} is working correctly on this exact updated version. ChunkPilot will keep the previous rollback snapshot for 30 days.`}
       confirmLabel="Mark update healthy"
-      onCancel={() => setShowMarkHealthy(false)}
+      onCancel={() => setValidationTarget(null)}
       onConfirm={() => {
-        if (!pendingValidation) return;
-        setShowMarkHealthy(false);
+        if (!validationTarget || validationTarget.serverId !== pendingValidation?.serverId || validationTarget.versionId !== pendingValidation.versionId) return;
+        setValidationTarget(null);
         markHealthyRequest.current?.abort();
         const controller = new AbortController();
         markHealthyRequest.current = controller;
         void command('versions.markHealthy', {
-          serverId: pendingValidation.serverId,
-          versionId: pendingValidation.versionId,
+          serverId: validationTarget.serverId,
+          versionId: validationTarget.versionId,
           confirmed: true
         }, controller.signal).catch(() => undefined).finally(() => {
           if (markHealthyRequest.current === controller) markHealthyRequest.current = null;

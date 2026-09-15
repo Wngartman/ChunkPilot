@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { BridgeAdapter } from '../bridge/client';
 import type { BridgeMethod } from '../bridge/types';
@@ -94,6 +94,17 @@ describe('server version rollback', () => {
 });
 
 describe('pending update validation', () => {
+  it('withdraws confirmation when the pending version changes instead of approving a different update', () => {
+    renderPendingValidation();
+    fireEvent.click(screen.getByRole('button', { name: 'Mark update healthy' }));
+    expect(screen.getByRole('alertdialog')).toBeTruthy();
+    const changed = structuredClone(useAppStore.getState().snapshot!);
+    changed.update!.pendingValidation = { ...changed.update!.pendingValidation!, versionId: 'different-version', versionName: 'Different release' };
+    act(() => useAppStore.setState({ snapshot: changed }));
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(calls.some(call => call.method === 'versions.markHealthy')).toBe(false);
+  });
+
   it('shows no healthy action without an exact authoritative pending-validation identity', () => {
     renderVersions();
     expect(screen.queryByRole('button', { name: 'Mark update healthy' })).toBeNull();

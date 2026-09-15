@@ -53,6 +53,9 @@ describe('WebView bridge client', () => {
     { method: 'mods.search' as const, timeoutMs: 2 * 60_000 },
     { method: 'mods.release' as const, timeoutMs: 2 * 60_000 },
     { method: 'mods.plan' as const, timeoutMs: 2 * 60_000 },
+    { method: 'plugins.search' as const, timeoutMs: 2 * 60_000 },
+    { method: 'plugins.release' as const, timeoutMs: 2 * 60_000 },
+    { method: 'plugins.plan' as const, timeoutMs: 2 * 60_000 },
     { method: 'versions.check' as const, timeoutMs: 2 * 60_000 },
     { method: 'versions.rollback' as const, timeoutMs: 30 * 60_000 },
     { method: 'servers.start' as const, timeoutMs: 30 * 60_000 },
@@ -63,7 +66,9 @@ describe('WebView bridge client', () => {
     { method: 'backups.restore' as const, timeoutMs: 60 * 60_000 },
     { method: 'backups.verify' as const, timeoutMs: 60 * 60_000 },
     { method: 'connectivity.applyBinding' as const, timeoutMs: 30 * 60_000 },
-    { method: 'appearance.chooseIcon' as const, timeoutMs: 10 * 60_000 }
+    { method: 'appearance.chooseIcon' as const, timeoutMs: 10 * 60_000 },
+    { method: 'mods.chooseLocal' as const, timeoutMs: 10 * 60_000 },
+    { method: 'plugins.chooseLocal' as const, timeoutMs: 10 * 60_000 }
   ])('gives $method a bounded long-running timeout', async ({ method, timeoutMs }) => {
     vi.useFakeTimers();
     const native = host();
@@ -117,6 +122,21 @@ describe('WebView bridge client', () => {
     unsubscribe();
     native.reply({ protocolVersion: 1, event: 'snapshot.changed', revision: 3, payload: {} });
     expect(received).toEqual(['snapshot.changed']);
+    bridge.dispose();
+  });
+
+  it.each(['timeout', 'cancelled'] as const)('settles %s even if the host disconnects before the cancellation notification', async kind => {
+    vi.useFakeTimers();
+    host();
+    const bridge = new WebViewBridge(20);
+    const cancellation = new AbortController();
+    const pending = bridge.request('snapshot.get', {}, cancellation.signal);
+    const rejected = expect(pending).rejects.toMatchObject({ code: kind });
+    window.chrome!.webview!.postMessage = () => { throw new Error('Host disconnected'); };
+    if (kind === 'timeout') await vi.advanceTimersByTimeAsync(20);
+    else cancellation.abort();
+    await rejected;
+    expect(vi.getTimerCount()).toBe(0);
     bridge.dispose();
   });
 
