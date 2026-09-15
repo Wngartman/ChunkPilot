@@ -13,6 +13,12 @@ internal static class CurseForgeMetadataInspectionCommand
     {
         var project = ReadId(arguments, "--project");
         var fileId = ReadId(arguments, "--file");
+        var ledgerIndex = Array.IndexOf(arguments, "--ledger");
+        var ledgerPath = ledgerIndex >= 0 && ledgerIndex + 1 < arguments.Length
+            ? arguments[ledgerIndex + 1]
+            : Path.Combine(Directory.GetCurrentDirectory(), "artifacts", "modpack-controls", "curseforge-payload-ledger.json");
+        var budget = new CurseForgePayloadBudget(ledgerPath);
+        var operationId = Guid.NewGuid();
         var root = Path.Combine(Path.GetTempPath(), "ChunkPilot-cf-metadata-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
         try
@@ -47,8 +53,12 @@ internal static class CurseForgeMetadataInspectionCommand
                 if (release.CurseForgeInstallRoute != CurseForgeInstallRoute.GeneratedCandidate ||
                     release.ClientSizeBytes is not > 0 or > 256L * 1024 * 1024)
                     throw new InvalidDataException("This exact selection is not a bounded generated-candidate route.");
+                await budget.ReserveAsync(operationId, "client-manifest", project, fileId,
+                    release.ClientSizeBytes.Value, release.ClientSha1, timeout.Token).ConfigureAwait(false);
                 var preflight = await new CurseForgeModpackPreflightService(paths, api).InspectAsync(
                     new CurseForgeModpackPreflightRequest(Guid.NewGuid(), project, fileId, ""), timeout.Token).ConfigureAwait(false);
+                await budget.CompleteAsync(operationId, "client-manifest", preflight.ClientSizeBytes,
+                    preflight.ClientSha256, "VerifiedClientArchive", true, timeout.Token).ConfigureAwait(false);
                 Console.WriteLine(JsonSerializer.Serialize(new
                 {
                     status = preflight.State == CatalogReleasePreflightState.Ready ? "VERIFIED_PLAN_ONLY" : "BLOCKED_PLAN",
@@ -70,13 +80,22 @@ internal static class CurseForgeMetadataInspectionCommand
                 if (!release.HasServerPackage || release.SizeBytes is not > 0 || release.ClientSizeBytes is not > 0 ||
                     checked(release.SizeBytes.Value + release.ClientSizeBytes.Value) > 2L * 1024 * 1024 * 1024)
                     throw new InvalidDataException("The exact official release is unavailable or exceeds the 2 GiB download budget.");
+                await budget.ReserveBatchAsync(
+                [
+                    new(operationId, "client-manifest", project, fileId, release.ClientSizeBytes.Value, release.ClientSha1),
+                    new(operationId, "official-archive", project, release.ServerPackFileId, release.SizeBytes.Value, release.Sha1)
+                ], timeout.Token).ConfigureAwait(false);
                 var preflight = await new CurseForgeModpackPreflightService(paths, api).InspectAsync(
                     new CurseForgeModpackPreflightRequest(Guid.NewGuid(), project, fileId, release.ServerPackFileId), timeout.Token)
                     .ConfigureAwait(false);
+                await budget.CompleteAsync(operationId, "client-manifest", preflight.ClientSizeBytes,
+                    preflight.ClientSha256, "VerifiedClientArchive", true, timeout.Token).ConfigureAwait(false);
                 if (preflight.State != CatalogReleasePreflightState.Ready)
                     throw new InvalidDataException("Exact client manifest preflight failed.");
                 var archive = Path.Combine(root, "official-server.zip");
                 var sha256 = await VerifyDownloadAsync(api, release, archive, timeout.Token).ConfigureAwait(false);
+                await budget.CompleteAsync(operationId, "official-archive", release.SizeBytes.Value,
+                    sha256, "VerifiedOfficialArchive", true, timeout.Token).ConfigureAwait(false);
                 var inspection = await new ServerImportInspectionService().InspectFileAsync(archive, timeout.Token)
                     .ConfigureAwait(false);
                 Console.WriteLine(JsonSerializer.Serialize(new
@@ -102,9 +121,9 @@ internal static class CurseForgeMetadataInspectionCommand
             }
             return 0;
         }
-        catch (Exception exception) when (exception is HttpRequestException or InvalidDataException or OperationCanceledException)
+        catch (Exception exception) when (exception is HttpRequestException or IOException or InvalidOperationException or OperationCanceledException)
         {
-            Console.Error.WriteLine($"Metadata inspection failed: {exception.GetType().Name}");
+            Console.Error.WriteLine($"Metadata inspection failed: {exception.GetType().Name}: {SecretRedactor.Redact(exception.Message)}");
             return 1;
         }
         finally
