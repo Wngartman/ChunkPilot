@@ -240,13 +240,17 @@ describe('modpack provider browser', () => {
     expect(container.querySelector('aside img')).toBeNull();
   });
 
-  it('shows the native credential boundary instead of asking an end user for a key', async () => {
+  it('opens native CurseForge setup without renderer credential input and refreshes discovery', async () => {
     render(<ModpackPicker value={null} onChange={() => undefined} />);
     fireEvent.click(await screen.findByRole('tab', { name: /CurseForge/ }));
     expect(await screen.findByText('CurseForge unavailable')).toBeTruthy();
-    expect(screen.getAllByText(/native CurseForge credential/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/native setup window/).length).toBeGreaterThan(0);
     expect(screen.queryByText(/API key/i)).toBeNull();
     expect(screen.queryByText('No matching server pack')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Set up CurseForge' }));
+    expect(await screen.findByRole('button', { name: /Copper Trails/ })).toBeTruthy();
+    expect(calls).toContainEqual({ method: 'providers.configureCurseForge', params: {} });
+    expect(screen.queryByText('CurseForge unavailable')).toBeNull();
   });
 
   it('resolves a pasted Modrinth project link in place and preserves the exact reviewed release', async () => {

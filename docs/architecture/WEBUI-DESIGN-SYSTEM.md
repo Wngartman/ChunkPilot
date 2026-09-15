@@ -7,3 +7,11 @@ Global CSS custom properties in `src/ChunkPilot.WebUi/src/design-system/tokens.c
 Hierarchy comes first from alignment, spacing, one-pixel borders, dividers, rows, and tonal surface steps. Radii stay between 4 and 10 px. Cards are specific compositions rather than one universal rounded container. Motion is 80–220 ms, uses opacity or small transforms, and is removed by `prefers-reduced-motion`. Forced-colors retains focus, selection, and textual state.
 
 Reusable primitives cover buttons, icon buttons, inputs, search, status, metrics, sparklines, headings, empty/unavailable states, confirmation dialogs, shell navigation, server identity, settings rows, save bars, and a portal-based action menu. Radix Dropdown Menu supplies collision-aware placement, keyboard navigation, focus return, and outside-click behavior for the server action menu; other controls remain small semantic primitives rather than adopting a themed component framework.
+
+CurseForge setup is a narrowly scoped native credential dialog using the existing `AppDialogWindow`,
+`AppPasswordBox`, `AppAlert`, and button resources. `CurseForgeSetupButton` reuses the shared WebUI
+button in General settings and unavailable-provider discovery. Its bridge request has no parameters;
+the renderer receives only configured/cancelled state. Empty input disables saving, validation is
+bounded and cancellable, failures preserve previous configuration, and all submit/close paths clear
+the native password field. Keys never appear in React state, browser storage, diagnostic messages,
+or plaintext App-to-Agent requests. Provider discovery refreshes after an accepted native change.

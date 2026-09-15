@@ -4,6 +4,7 @@ type EventListener = (event: BridgeEvent) => void;
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
 const METHOD_REQUEST_TIMEOUT_MS: Partial<Record<BridgeMethod, number>> = {
+  'providers.configureCurseForge': 10 * 60_000,
   'modpacks.preflight': 30 * 60_000,
   'mods.search': 2 * 60_000,
   'mods.release': 2 * 60_000,

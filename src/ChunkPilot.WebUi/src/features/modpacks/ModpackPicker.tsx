@@ -10,6 +10,7 @@ import type {
 } from '../../bridge/types';
 import styles from './ModpackPicker.module.css';
 import { modpackRouteLabel } from './installationRoute';
+import { CurseForgeSetupButton } from './CurseForgeSetupButton';
 
 export type ModpackSelection =
   | { kind: 'remote'; project: ModpackProject; release: ModpackRelease }
@@ -456,7 +457,10 @@ function BrowseModpackPicker({ value, onChange }: {
       {filtersActive && <Button type="button" onClick={clearFilters}>Clear filters</Button>}
     </form>
     <div className={styles.trendNote}><Info size={13} /><span>{status?.detail ?? `${provider} provider status is loading.`}</span></div>
-    {session.state === 'Authentication required' && <div className={styles.connectState} role="status"><Box size={22} /><div><strong>CurseForge unavailable</strong><span>This development candidate has no approved native CurseForge credential. Modrinth and local pack import remain available.</span></div></div>}
+    {session.state === 'Authentication required' && <div className={styles.connectState} role="status"><Box size={22} /><div><strong>CurseForge unavailable</strong><span>Connect your approved CurseForge access in the native setup window. Modrinth and local pack import are also available.</span><CurseForgeSetupButton onConfigured={() => {
+      void bridge?.request<ModpackProviderStatus[]>('modpacks.providers').then(setProviderStatuses).catch(() => undefined);
+      updateSession('CurseForge', current => ({ ...current, revision: current.revision + 1, loadedKey: '' }));
+    }} /></div></div>}
     {(session.state === 'Failed' || session.state === 'Rate limited') && <div className={styles.error} role="alert"><strong>{session.state === 'Rate limited' ? `${provider} rate limit active` : `${provider} catalog unavailable`}</strong><span>{session.detail}</span><Button onClick={() => updateSession(provider, current => ({ ...current, revision: current.revision + 1, loadedKey: '' }))}>Retry</Button>{session.failedStage && <details><summary>Technical details</summary><code>Failed stage: {session.failedStage}</code></details>}</div>}
     {session.state === 'Offline cache' && <div className={styles.cacheNotice} role="status">{session.detail}</div>}
     {(session.projects.length > 0 || refreshing) && <div className={styles.resultsSummary} role="status" aria-live="polite"><strong>{resultSummary}</strong><span>{refreshing ? `Refreshing ${provider}…` : session.projects.length >= sessionResultLimit && session.canLoadMore === false ? 'Session limit reached — narrow the filters to continue.' : 'Exact server setup is checked when you open a pack.'}</span></div>}

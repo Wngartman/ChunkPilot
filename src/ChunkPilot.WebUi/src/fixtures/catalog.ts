@@ -455,6 +455,10 @@ export class FixtureBridge implements BridgeAdapter {
 
   async request<T>(method: BridgeMethod, params: Record<string, unknown> = {}): Promise<T> {
     refreshFixtureConnections(this.current);
+    if (method === 'providers.configureCurseForge') {
+      this.curseForgeConfigured = true;
+      return { configured: true, cancelled: false } as T;
+    }
     if (method === 'snapshot.get' || method === 'renderer.ready') return (method === 'snapshot.get' ? this.current : { ready: true }) as T;
     if (method === 'players.head') return {
       serverId: params.serverId,

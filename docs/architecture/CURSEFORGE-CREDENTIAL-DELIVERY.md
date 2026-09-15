@@ -4,7 +4,15 @@ Status date: 2026-09-14
 
 ## Production decision
 
-**PUBLIC CREDENTIAL DELIVERY STILL GATED**
+**PERSONAL NATIVE SETUP IMPLEMENTED; SHARED APPLICATION-KEY DELIVERY STILL GATED**
+
+The selected public-client model is now optional personal setup: the user enters their own approved
+CurseForge API access in a native password window. ChunkPilot validates it against the official API and
+stores it with Windows DPAPI CurrentUser protection. Settings > General > Set up CurseForge is always
+reachable; unavailable CurseForge discovery also offers the same entry. This does not distribute the
+developer's key or introduce a hosted relay. Users remain responsible for obtaining approved access for
+their intended API use. This implementation is not evidence of separate CurseForge approval for every
+end-user use case.
 
 ChunkPilot has an approved developer application credential available for bounded local development, but
 the currently published CurseForge third-party API terms do not establish permission to put that credential
@@ -12,13 +20,12 @@ in a desktop binary distributed to end users. Section 2.2 says the unique key is
 shared with a third party, and may be disclosed only to employees with corresponding confidentiality duties.
 An extractable key in a public Windows executable would disclose it to end users, who are third parties.
 
-This is a product-policy gate, not a missing-code gate. The typed provider, safe local provisioning,
-deterministic fixtures, and local approved smoke path may exist while public builds truthfully keep
-CurseForge unavailable.
+This remaining gate applies to shipping a shared developer application credential. Public builds contain
+no shared credential and keep CurseForge unavailable until the user supplies their own working access.
 
 The official terms and application-guidance pages were rechecked on 2026-09-14. Their displayed
 modification dates and relevant restrictions remain the same. Successful native developer-key requests,
-archive verification, and exact-release fixes do not establish a public credential-delivery mechanism.
+archive verification, and exact-release fixes do not authorize disclosure of a shared developer key.
 
 ## Official evidence
 
@@ -45,7 +52,16 @@ to arbitrary end users or that persistent provider caching is allowed.
 
 ## Implemented local credential boundary
 
-- The only default source is the repository-local `.secrets\curseforge-api-key.txt` provisioning file;
+- Personal setup uses a native `PasswordBox`, never a React input. The renderer requests
+  `providers.configureCurseForge` with an empty object and receives only configured/cancelled state.
+- The App protects the entered value with DPAPI CurrentUser before sending the bounded encrypted request
+  over the named pipe. The Agent authenticates the UI session, decrypts into bounded native memory,
+  validates the key with the official API, rechecks cancellation and session ownership, and only then
+  replaces the stored secret. Invalid or unavailable validation preserves the previous key.
+- The native dialog can remove the saved personal key through an authenticated session request. Cancel,
+  submit, and close clear its password field. Mutable transport buffers are cleared; unavoidable short-lived
+  managed strings cannot be securely zeroed and are never logged, returned to React, or retained in a ViewModel.
+- Repository-local `.secrets\curseforge-api-key.txt` provisioning remains a development-only path;
   native code binds that developer path exactly and the file is never tracked or packaged.
 - `CHUNKPILOT_CURSEFORGE_KEY_FILE` may contain one absolute file path. It never contains the key value.
 - The Agent reads a bounded single-value file directly and imports it into the existing DPAPI CurrentUser
@@ -59,8 +75,8 @@ to arbitrary end users or that persistent provider caching is allowed.
   staged validation, approved automation programs, and runtime certifiers start from a bounded Windows/Java
   environment allowlist, then receive only their explicit server/workflow variables. Removing one known secret
   name is not treated as sufficient child-process isolation.
-- No raw-key App/Agent command exists. The WebUI allowlist contains no key status/save/remove/console method,
-  and renderer state never receives the key.
+- No raw-key App/Agent command exists. The WebUI allowlist exposes only the native setup launcher,
+  and renderer state never receives plaintext or encrypted keys, source paths, or secret-store data.
 - `.secrets` and `curseforge-api-key*.txt` are ignored. Publication audit rejects either path even if a file
   is accidentally forced into Git.
 - Diagnostic redaction covers `x-api-key`, ordinary API-key key/value forms, structured JSON, authorization
@@ -73,12 +89,15 @@ allowed through the ignore pattern so the safe shape remains reviewable.
 
 ## Public-build behavior
 
-Until the gate below is cleared, public packages must not include or derive a shared CurseForge key. Public
-provider status remains unavailable with plain-language activation copy. Modrinth and local server-pack
-imports remain available. No hosted relay, proxy, scraping fallback, or user-key input is introduced by this
-milestone.
+Public packages must not include or derive a shared CurseForge key. A user can connect, replace, or remove
+their own approved access using the native setup flow. Provider status stays unavailable until access is
+configured, and subsequent provider responses remain authoritative about authentication or quota failures.
+Modrinth and local server-pack imports remain available. No hosted relay, proxy, or scraping fallback is used.
 
-## Unblocking checklist
+Acceptance must distinguish fake-provider credential validation, native dialog checks, and a real approved
+key checked live. Passing synthetic tests does not claim a live key, account approval, or public quota grant.
+
+## Shared application-key delivery checklist
 
 Every item requires evidence before changing the decision to `DIRECT CLIENT DELIVERY ESTABLISHED`:
 

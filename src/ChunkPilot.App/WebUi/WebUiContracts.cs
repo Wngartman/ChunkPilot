@@ -48,6 +48,7 @@ internal static class WebUiMethodPolicy
         "backups.create", "backups.restore", "backups.verify", "players.moderate", "players.addAllowlist", "players.setWhitelist", "players.head",
         "schedules.upsert", "schedules.delete",
         "settings.saveGlobal", "settings.saveServer", "help.openExternal",
+        "providers.configureCurseForge",
         "connectivity.copyAddress", "connectivity.open", "connectivity.setMode", "connectivity.applyBinding",
         "connectivity.router.check", "connectivity.router.confirm", "connectivity.router.cancelConsent",
         "connectivity.router.stop", "connectivity.router.cancel", "connectivity.router.retry",

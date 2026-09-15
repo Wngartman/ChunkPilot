@@ -1,5 +1,7 @@
 export const protocolVersion = 1 as const;
 
+export interface CurseForgeConfigurationResult { configured: boolean; cancelled: boolean; }
+
 export type ServerState = 'Stopped' | 'Starting' | 'Running' | 'Saving' | 'Stopping' | 'Restarting' | 'BackingUp' | 'Restoring' | 'Crashed' | 'Unresponsive' | 'Unknown';
 
 export interface MetricSample {
@@ -461,6 +463,7 @@ export type BridgeMethod =
   | 'mods.openFolder' | 'mods.chooseLocal' | 'mods.installLocal' | 'mods.providers' | 'mods.search' | 'mods.release'
   | 'mods.install' | 'mods.plan' | 'mods.installPlan' | 'mods.setEnabled' | 'mods.remove' | 'mods.configFiles' | 'mods.saveConfig'
   | 'content.operations' | 'content.cancel' | 'content.invalidatePlan'
+  | 'providers.configureCurseForge'
   | 'modpacks.providers' | 'modpacks.versions' | 'modpacks.cache' | 'modpacks.search' | 'modpacks.project' | 'modpacks.resolveLink' | 'modpacks.preflight' | 'modpacks.invalidatePreflight' | 'modpacks.image' | 'modpacks.chooseLocal'
   | 'console.send' | 'workspace.load' | 'files.openFolder' | 'files.navigate' | 'files.read' | 'files.write'
   | 'backups.create' | 'backups.restore' | 'backups.verify'

@@ -12,7 +12,7 @@ ChunkPilot uses documented APIs and never scrapes provider websites.
 | Forge | Installer metadata | Official Forge Maven metadata and checksum sidecar. |
 | NeoForge | Installer metadata | Official NeoForge Maven metadata and checksum sidecar. |
 | Modrinth | Mods, plugins, and server-capable `.mrpack` projects/releases | Official v2 API and CDN. Exact `.mrpack` size, SHA-1 and SHA-512 are retained; project links resolve through the API, never scraping. |
-| CurseForge | Modpack/mod discovery, exact files, official server packs, generated candidates, and whole-pack updates | Native official REST/CDN adapter with exact IDs, hashes, distribution checks, bounded responses, cancellation, and typed errors. Development access uses the one approved local key file imported into DPAPI; no key is bundled and users are never asked for one. Public credential delivery remains gated. |
+| CurseForge | Modpack/mod discovery, exact files, official server packs, generated candidates, and whole-pack updates | Native official REST/CDN adapter with exact IDs, hashes, distribution checks, bounded responses, cancellation, and typed errors. Optional native setup accepts the user's own approved access and validates before storing with DPAPI CurrentUser protection. No shared key is bundled. |
 | Geyser/Floodgate | Java/Bedrock crossplay packages | Official downloads v2 metadata, platform-specific package, and required SHA-256. |
 | ViaVersion | Optional cross-version plugin | Official Modrinth project release and SHA-512. |
 | FTB | Server packs | Unavailable until a documented supported public server-pack API is configured. No scraping fallback. |
@@ -51,9 +51,15 @@ small size cannot bypass this forecast, and arithmetic saturates rather than wra
 
 Official references: [Fabric server install](https://fabricmc.net/use/server/), [Quilt server install](https://quiltmc.org/en/install/server/), [NeoForge server install](https://docs.neoforged.net/user/docs/server/), [Modrinth search API](https://docs.modrinth.com/api/operations/searchprojects/), [CurseForge API](https://docs.curseforge.com/rest-api/).
 
-CurseForge provider contracts are developer-gated. A local developer provisions the repository-local
+CurseForge setup is available under Settings > General and in unavailable-provider discovery. The user's
+own approved key is entered in a native password field, protected before App-to-Agent transport, validated
+against the official API, and stored only after a successful response and a fresh UI-session check. Cancel
+or validation failure preserves existing access. Setup also supports replacement and removal; React receives
+only configured/cancelled state. Public packages contain no developer key and no hosted credential broker.
+
+A local developer can still provision the repository-local
 `.secrets\curseforge-api-key.txt`, or places its absolute path in
 `CHUNKPILOT_CURSEFORGE_KEY_FILE`; the variable contains a path, never the key. The Agent imports the value
-into its isolated DPAPI secret store and only native HTTP code can consume it. Public packages remain unable
-to activate CurseForge until written direct-desktop credential delivery permission is established. See
+into its isolated DPAPI secret store and only native HTTP code can consume it. Distribution of a shared
+developer application key remains gated independently of personal setup. See
 [MODPACKS.md](MODPACKS.md) and the [credential decision](../architecture/CURSEFORGE-CREDENTIAL-DELIVERY.md).

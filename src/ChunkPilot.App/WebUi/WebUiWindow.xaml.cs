@@ -284,6 +284,7 @@ public partial class WebUiWindow : Window
 
         return method switch
         {
+            "providers.configureCurseForge" => ConfigureCurseForgeAsync(parameters, cancellationToken),
             "modpacks.versions" => LoadModpackVersionsAsync(parameters, cancellationToken),
             "modpacks.cache" => SearchModpacksAsync(parameters, cacheOnly: true, cancellationToken),
             "modpacks.search" => SearchModpacksAsync(parameters, cacheOnly: false, cancellationToken),
