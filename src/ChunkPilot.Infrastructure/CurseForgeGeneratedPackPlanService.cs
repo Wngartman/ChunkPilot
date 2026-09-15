@@ -110,16 +110,17 @@ public sealed class CurseForgeGeneratedPackPlanService
                 return;
             try
             {
-                var release = await mods.ResolveReleaseAsync(projectId, manifest.MinecraftVersion,
-                    manifest.Loader.ToString(), requestedFileId, cancellationToken).ConfigureAwait(false)
+                var file = await mods.ResolvePackFileAsync(projectId, manifest.MinecraftVersion,
+                    manifest.Loader.ToString(), requestedFileId, allowResourcePacks: true, cancellationToken).ConfigureAwait(false)
                     ?? throw new InvalidDataException(
-                        $"Required CurseForge project/file {projectId}/{requestedFileId ?? "compatible release"} is unavailable, restricted, or incompatible.");
+                        $"Required CurseForge project/file {projectId}/{requestedFileId ?? "compatible release"} could not be resolved as an available, distributable mod or resource pack for this exact Minecraft version. No required content was omitted.");
+                var release = file.Release;
                 if (!release.ProjectId.Equals(projectId, StringComparison.Ordinal) ||
                     requestedFileId is not null &&
                     !release.VersionId.Equals(requestedFileId, StringComparison.Ordinal))
                     throw new InvalidDataException("CurseForge returned contradictory exact dependency identity.");
 
-                var selected = new ResolvedFile(release);
+                var selected = new ResolvedFile(release, file.ContentKind);
                 selected.AddEvidence(evidence);
                 resolved.Add(projectId, selected);
 
@@ -214,8 +215,8 @@ public sealed class CurseForgeGeneratedPackPlanService
             var fileId = RequireCanonicalId(file.FileId, "file");
             if (!projects.Add(projectId))
                 throw new InvalidDataException("The generated CurseForge plan selects multiple files for one project.");
-            if (!SafeJarName(file.FileName) || !names.Add(file.FileName))
-                throw new InvalidDataException("The generated CurseForge plan contains an unsafe or colliding JAR filename.");
+            if (!SafeContentName(file) || !names.Add($"{file.ContentKind}/{file.FileName}"))
+                throw new InvalidDataException("The generated CurseForge plan contains an unsafe or colliding content filename.");
             if (!Uri.TryCreate(file.DownloadUrl, UriKind.Absolute, out var uri) ||
                 !CurseForgeApiClient.IsApprovedDownloadUri(uri) || file.DownloadUrl.Length > 2_048)
                 throw new InvalidDataException("The generated CurseForge plan contains an unapproved download destination.");
@@ -405,6 +406,7 @@ public sealed class CurseForgeGeneratedPackPlanService
         {
             AppendString(hash, file.ProjectId);
             AppendString(hash, file.FileId);
+            AppendInt(hash, (int)file.ContentKind);
             AppendString(hash, file.FileName);
             AppendString(hash, file.DownloadUrl);
             AppendLong(hash, file.SizeBytes);
@@ -443,12 +445,21 @@ public sealed class CurseForgeGeneratedPackPlanService
     private static bool InvalidText(string value, int maximum) =>
         string.IsNullOrWhiteSpace(value) || value.Length > maximum || value.Any(char.IsControl);
 
-    private static bool SafeJarName(string value) =>
-        value.Length is > 0 and <= 180 &&
+    private static bool SafeContentName(CurseForgeGeneratedFilePlan file)
+    {
+        var value = file.FileName;
+        var extension = file.ContentKind switch
+        {
+            CurseForgeGeneratedContentKind.Mod => ".jar",
+            CurseForgeGeneratedContentKind.ResourcePack => ".zip",
+            _ => null
+        };
+        return extension is not null && value.Length is > 0 and <= 180 &&
         value.Equals(Path.GetFileName(value), StringComparison.Ordinal) &&
         value.IndexOfAny(Path.GetInvalidFileNameChars()) < 0 &&
         !value.EndsWith(' ') && !value.EndsWith('.') &&
-        value.EndsWith(".jar", StringComparison.OrdinalIgnoreCase);
+        value.EndsWith(extension, StringComparison.OrdinalIgnoreCase);
+    }
 
     private static bool Sha1(string value) =>
         value.Length == 40 && value.All(Uri.IsHexDigit);
@@ -491,7 +502,7 @@ public sealed class CurseForgeGeneratedPackPlanService
         hash.AppendData(bytes);
     }
 
-    private sealed class ResolvedFile(PluginRelease release)
+    private sealed class ResolvedFile(PluginRelease release, CurseForgeGeneratedContentKind contentKind)
     {
         private readonly List<CurseForgeGeneratedFileEvidence> evidence = [];
         public PluginRelease Release { get; } = release;
@@ -505,6 +516,7 @@ public sealed class CurseForgeGeneratedPackPlanService
         {
             ProjectId = Release.ProjectId,
             FileId = Release.VersionId,
+            ContentKind = contentKind,
             FileName = Release.FileName,
             DownloadUrl = Release.DownloadUrl,
             SizeBytes = Release.SizeBytes,

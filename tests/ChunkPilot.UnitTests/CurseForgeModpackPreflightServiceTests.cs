@@ -12,14 +12,16 @@ public sealed class CurseForgeModpackPreflightServiceTests
 {
     private static readonly string[] MisleadingApiGameVersions = ["1.20.1", "Fabric"];
 
-    [Fact]
-    public async Task Official_server_pack_still_inspects_verified_client_manifest_for_exact_loader()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Official_server_pack_still_inspects_verified_client_manifest_for_exact_loader(bool alternateServerLink)
     {
         var root = TempRoot();
         try
         {
             var archive = ClientArchive("forge-47.3.0");
-            var handler = new PreflightHandler(archive, serverPackFileId: 222);
+            var handler = new PreflightHandler(archive, serverPackFileId: 222, alternateServerLink: alternateServerLink);
             var secrets = new MemorySecrets();
             secrets.SetSecret(CurseForgeUpdateProvider.ApiKeyName, "fixture-key");
             using var api = new CurseForgeApiClient(secrets, handler);
@@ -278,7 +280,8 @@ public sealed class CurseForgeModpackPreflightServiceTests
     private sealed class PreflightHandler(
         byte[] archive,
         long? serverPackFileId = null,
-        string? sha1 = null) : HttpMessageHandler
+        string? sha1 = null,
+        bool alternateServerLink = false) : HttpMessageHandler
     {
         private int cdnRequests;
         public int CdnRequests => cdnRequests;
@@ -312,7 +315,8 @@ public sealed class CurseForgeModpackPreflightServiceTests
                             isAvailable = true,
                             fileName = "fixture-client.zip",
                             fileLength = archive.LongLength,
-                            serverPackFileId,
+                            serverPackFileId = alternateServerLink ? null : serverPackFileId,
+                            alternateFileId = alternateServerLink ? serverPackFileId : null,
                             gameVersions = MisleadingApiGameVersions,
                             downloadUrl = "https://mediafilez.forgecdn.net/files/111/fixture-client.zip",
                             hashes = new[] { new { algo = 1, value = sha1 ?? Sha1(archive) } }
@@ -356,7 +360,9 @@ public sealed class CurseForgeModpackPreflightServiceTests
                             id = 222,
                             modId = 10,
                             isAvailable = true,
-                            fileName = "fixture-server.zip",
+                            fileName = "fixture-serverpack.zip",
+                            parentProjectFileId = alternateServerLink ? 111 : (int?)null,
+                            isServerPack = false,
                             fileLength = 2_048,
                             downloadUrl = "https://mediafilez.forgecdn.net/files/222/fixture-server.zip",
                             hashes = new[] { new { algo = 1, value = new string('b', 40) } }

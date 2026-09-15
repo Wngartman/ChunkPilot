@@ -192,14 +192,15 @@ public sealed class CurseForgePackManifestReader
 
 /// <summary>
 /// Builds a dedicated-server candidate from an exact CurseForge client manifest. Pack-provided
-/// scripts and executable launchers are never copied or executed; only narrowly server-safe override
-/// roots and exact provider-verified JARs enter the candidate.
+/// operating-system launchers are never copied or executed. Pack gameplay scripts/resources are
+/// preserved byte-for-byte under their authored content roots, with exact provider-verified files.
 /// </summary>
 public sealed class CurseForgePackService
 {
     private static readonly HashSet<string> AllowedOverrideRoots = new(StringComparer.OrdinalIgnoreCase)
     {
-        "config", "defaultconfigs"
+        "config", "defaultconfigs", "kubejs", "scripts", "resourcepacks", "resources",
+        "datapacks", "global_packs", "openloader", "patchouli_books"
     };
 
     private readonly CurseForgePackManifestReader reader;
@@ -335,15 +336,19 @@ public sealed class CurseForgePackService
         string destination,
         CancellationToken cancellationToken)
     {
-        var modsRoot = Path.Combine(destination, "mods");
-        Directory.CreateDirectory(modsRoot);
         var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var result = new List<CurseForgeMaterializedFile>(releases.Count);
         long totalBytes = 0;
         foreach (var release in releases)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (!names.Add(release.FileName))
+            var contentDirectory = release.ContentKind switch
+            {
+                CurseForgeGeneratedContentKind.Mod => "mods",
+                CurseForgeGeneratedContentKind.ResourcePack => "resourcepacks",
+                _ => throw new InvalidDataException("The reviewed CurseForge content kind is unsupported.")
+            };
+            if (!names.Add($"{contentDirectory}/{release.FileName}"))
                 throw new InvalidDataException($"CurseForge files collide on the Windows destination name {release.FileName}.");
             totalBytes = checked(totalBytes + release.SizeBytes);
             if (totalBytes > CurseForgeGeneratedPackPlanService.MaximumResolvedBytes)
@@ -351,7 +356,9 @@ public sealed class CurseForgePackService
             if (!Uri.TryCreate(release.DownloadUrl, UriKind.Absolute, out var uri) ||
                 !CurseForgeApiClient.IsApprovedDownloadUri(uri))
                 throw new InvalidDataException("CurseForge returned an unapproved mod download destination.");
-            var target = Path.Combine(modsRoot, release.FileName);
+            var contentRoot = Path.Combine(destination, contentDirectory);
+            Directory.CreateDirectory(contentRoot);
+            var target = Path.Combine(contentRoot, release.FileName);
             using var response = await api.SendDownloadAsync(uri, cancellationToken).ConfigureAwait(false);
             if (response.Content.Headers.ContentLength is { } declared && declared != release.SizeBytes)
                 throw new InvalidDataException($"CurseForge file {release.FileId} changed size after review.");
@@ -382,6 +389,8 @@ public sealed class CurseForgePackService
                 throw new InvalidDataException($"CurseForge SHA-1 verification failed for exact file {release.FileId}.");
             }
             var localSha256 = Hash(target, SHA256.Create());
+            if (release.ContentKind == CurseForgeGeneratedContentKind.ResourcePack)
+                ServerImportInspectionService.ValidateResourcePackArchive(target, cancellationToken);
             result.Add(new CurseForgeMaterializedFile(long.Parse(release.ProjectId,
                     System.Globalization.CultureInfo.InvariantCulture),
                 long.Parse(release.FileId, System.Globalization.CultureInfo.InvariantCulture),
@@ -389,7 +398,9 @@ public sealed class CurseForgePackService
                 localSha256, new FileInfo(target).Length,
                 release.RequiredBy.Any(evidence =>
                     evidence.Relation == CurseForgeGeneratedFileRelation.ManifestRequired),
-                "unknown-until-staged-validation"));
+                release.ContentKind == CurseForgeGeneratedContentKind.ResourcePack
+                    ? "provider-classified-resource-pack-preserved"
+                    : "unknown-until-staged-validation"));
         }
         return result;
     }

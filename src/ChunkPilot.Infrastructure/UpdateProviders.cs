@@ -426,6 +426,32 @@ public sealed class CurseForgeUpdateProvider : IUpdateProviderAdapter, IDisposab
 
     public CurseForgeUpdateProvider(CurseForgeApiClient api) => this.api = api;
 
+    /// <summary>Labels for the exact installed identity, returned in-memory after a deliberate check.</summary>
+    public async Task<UpdateSource> GetInstalledIdentityAsync(UpdateSource source,
+        CancellationToken cancellationToken = default)
+    {
+        if (!long.TryParse(source.ProjectId, out var projectId) || projectId <= 0 ||
+            !long.TryParse(source.InstalledVersionId, out var fileId) || fileId <= 0)
+            return source;
+        using var projectDocument = await api.GetJsonAsync($"/v1/mods/{projectId}", cancellationToken)
+            .ConfigureAwait(false);
+        var project = projectDocument.RootElement.GetProperty("data");
+        using var fileDocument = await api.GetJsonAsync($"/v1/mods/{projectId}/files/{fileId}", cancellationToken)
+            .ConfigureAwait(false);
+        var file = fileDocument.RootElement.GetProperty("data");
+        if (!CurseForgeCatalogProvider.Text(project, "id").Equals(source.ProjectId, StringComparison.Ordinal) ||
+            !CurseForgeCatalogProvider.Text(file, "id").Equals(source.InstalledVersionId, StringComparison.Ordinal) ||
+            !CurseForgeCatalogProvider.Text(file, "modId").Equals(source.ProjectId, StringComparison.Ordinal))
+            throw new InvalidDataException("CurseForge returned a different installed project or release identity.");
+        var name = CurseForgeCatalogProvider.Text(file, "displayName");
+        if (name.Length == 0) name = CurseForgeCatalogProvider.Text(file, "fileName");
+        return source with
+        {
+            ProjectName = CurseForgeCatalogProvider.Text(project, "name"),
+            InstalledVersionName = name
+        };
+    }
+
     public async Task<IReadOnlyList<PackVersionInfo>> GetVersionsAsync(
         UpdateSource source,
         UpdatePreferences preferences,
@@ -451,11 +477,15 @@ public sealed class CurseForgeUpdateProvider : IUpdateProviderAdapter, IDisposab
         var results = new List<PackVersionInfo>();
         foreach (var parent in parents)
         {
+            if (parent.TryGetProperty("parentProjectFileId", out var parentIdentity) &&
+                parentIdentity.ValueKind == JsonValueKind.Number && parentIdentity.TryGetInt64(out var attachedTo) && attachedTo > 0)
+                continue;
             var parentVersion = ParseFile(source, parent);
             PackVersionInfo package;
             long fileId = 0;
-            var official = parent.TryGetProperty("serverPackFileId", out var officialId) &&
-                           officialId.ValueKind == JsonValueKind.Number && officialId.TryGetInt64(out fileId) && fileId > 0;
+            var relatedServerId = await new CurseForgeServerPackRelationshipResolver(api)
+                .ResolveAsync(source.ProjectId, parent, cancellationToken).ConfigureAwait(false);
+            var official = long.TryParse(relatedServerId, out fileId) && fileId > 0;
             if (official)
             {
                 using var serverPack = await api.GetJsonAsync(

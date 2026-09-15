@@ -15,6 +15,12 @@ public enum CurseForgeGeneratedFileRelation
     RequiredDependency
 }
 
+public enum CurseForgeGeneratedContentKind
+{
+    Mod,
+    ResourcePack
+}
+
 public enum CurseForgeGeneratedOptionalRelation
 {
     ManifestOptional,
@@ -36,6 +42,7 @@ public sealed record CurseForgeGeneratedFileEvidence
 /// <summary>One exact immutable download selected during native CurseForge preflight.</summary>
 public sealed record CurseForgeGeneratedFilePlan
 {
+    public CurseForgeGeneratedContentKind ContentKind { get; init; }
     public string ProjectId { get; init; } = "";
     public string FileId { get; init; } = "";
     public string FileName { get; init; } = "";
@@ -63,7 +70,7 @@ public sealed record CurseForgeGeneratedOptionalExclusion
 /// </summary>
 public sealed record CurseForgeGeneratedPackPlan
 {
-    public const int CurrentSchemaVersion = 1;
+    public const int CurrentSchemaVersion = 2;
 
     public int SchemaVersion { get; init; } = CurrentSchemaVersion;
     public string MinecraftVersion { get; init; } = "";

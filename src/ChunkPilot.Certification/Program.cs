@@ -17,6 +17,9 @@ if (args.Length > 0 && args[0].Equals("certify-terraria", StringComparison.Ordin
 if (args.Length > 0 && args[0].Equals("smoke-curseforge", StringComparison.OrdinalIgnoreCase))
     return await SmokeCurseForgeAsync(args.Skip(1).ToArray());
 
+if (args.Length > 0 && args[0].Equals("inspect-curseforge-metadata", StringComparison.OrdinalIgnoreCase))
+    return await CurseForgeMetadataInspectionCommand.RunAsync(args.Skip(1).ToArray());
+
 if (args.Length > 0 && args[0].Equals("certify-curseforge-runtime", StringComparison.OrdinalIgnoreCase))
     return await CurseForgeRuntimeCertificationCommand.RunAsync(args.Skip(1).ToArray());
 

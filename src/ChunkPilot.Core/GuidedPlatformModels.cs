@@ -466,8 +466,18 @@ public enum CatalogReleasePreflightState
     Unsupported
 }
 
+public enum CurseForgeInstallRoute
+{
+    Unchecked,
+    OfficialServerPack,
+    GeneratedCandidate,
+    Unavailable
+}
+
 public sealed record CatalogVersion
 {
+    public CurseForgeInstallRoute CurseForgeInstallRoute { get; init; }
+    public string InstallationRouteDetail { get; init; } = "";
     public string VersionId { get; init; } = "";
     public string VersionName { get; init; } = "";
     public string MinecraftVersion { get; init; } = "";

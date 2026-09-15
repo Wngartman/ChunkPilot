@@ -75,6 +75,16 @@ public sealed partial class ServerImportInspectionService
         return await InspectZipAsync(info, sha256, entries, archive, cancellationToken).ConfigureAwait(false);
     }
 
+    internal static void ValidateResourcePackArchive(string path, CancellationToken cancellationToken = default)
+    {
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+        using var archive = new ZipArchive(stream, ZipArchiveMode.Read);
+        var entries = ValidateArchive(archive, cancellationToken);
+        if (!entries.Any(entry => !entry.IsDirectory &&
+                entry.NormalizedPath.Equals("pack.mcmeta", StringComparison.OrdinalIgnoreCase)))
+            throw new InvalidDataException("The exact resource-pack ZIP has no root pack.mcmeta.");
+    }
+
     public static async Task ExtractAsync(
         string archivePath,
         string destinationPath,

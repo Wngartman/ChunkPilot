@@ -6,6 +6,30 @@ namespace ChunkPilot.UnitTests;
 public sealed class CurseForgeGeneratedPackPlanServiceTests
 {
     [Fact]
+    public void Resource_pack_kind_is_sealed_and_cannot_be_changed_into_a_mod_or_unsafe_path()
+    {
+        var raw = RawPlan();
+        raw = raw with
+        {
+            RequiredFiles = [raw.RequiredFiles[0] with
+            {
+                ContentKind = CurseForgeGeneratedContentKind.ResourcePack,
+                FileName = "resource.zip"
+            }]
+        };
+        var plan = CurseForgeGeneratedPackPlanService.Seal(raw);
+        Assert.Equal(CurseForgeGeneratedContentKind.ResourcePack,
+            CurseForgeGeneratedPackPlanService.ValidateAndClone(plan).RequiredFiles[0].ContentKind);
+        Assert.Throws<InvalidDataException>(() => CurseForgeGeneratedPackPlanService.ValidateAndClone(plan with
+        {
+            RequiredFiles = [plan.RequiredFiles[0] with { ContentKind = CurseForgeGeneratedContentKind.Mod }]
+        }));
+        Assert.Throws<InvalidDataException>(() => CurseForgeGeneratedPackPlanService.Seal(raw with
+        {
+            RequiredFiles = [raw.RequiredFiles[0] with { FileName = "../outside.zip" }]
+        }));
+    }
+    [Fact]
     public void Seal_is_deterministic_and_digest_binds_every_exact_file_field()
     {
         var first = RawPlan();

@@ -111,19 +111,38 @@ public sealed class CurseForgePluginProvider : IPluginCatalogProvider
         string loader,
         string? versionId = null,
         CancellationToken cancellationToken = default)
+        => (await ResolvePackFileAsync(projectId, minecraftVersion, loader, versionId,
+            allowResourcePacks: false, cancellationToken).ConfigureAwait(false))?.Release;
+
+    internal async Task<CurseForgePackFileRelease?> ResolvePackFileAsync(
+        string projectId,
+        string minecraftVersion,
+        string loader,
+        string? versionId,
+        bool allowResourcePacks,
+        CancellationToken cancellationToken = default)
     {
         if (!api.HasCredential || !long.TryParse(projectId, out var numericProject) || numericProject <= 0)
             return null;
         var loaderType = LoaderType(loader);
         if (loaderType == 0) return null;
+        var contentKind = CurseForgeGeneratedContentKind.Mod;
         using (var projectDocument = await api.GetJsonAsync(
                    $"/v1/mods/{numericProject}", cancellationToken).ConfigureAwait(false))
         {
             if (!projectDocument.RootElement.TryGetProperty("data", out var project) ||
                 project.ValueKind != JsonValueKind.Object || Long(project, "id") != numericProject ||
-                Long(project, "gameId") != MinecraftGameId || Long(project, "classId") != ModClassId ||
+                Long(project, "gameId") != MinecraftGameId ||
                 !ProjectAvailable(project))
                 return null;
+            var classId = Long(project, "classId");
+            if (classId != ModClassId)
+            {
+                // CurseForge Minecraft resource packs are content class 12, not loader-specific
+                // mods. Preserve the exact ZIP in resourcepacks; never quietly omit it.
+                if (!allowResourcePacks || classId != 12) return null;
+                contentKind = CurseForgeGeneratedContentKind.ResourcePack;
+            }
         }
         IReadOnlyList<JsonElement> files;
         if (!string.IsNullOrWhiteSpace(versionId))
@@ -139,7 +158,8 @@ public sealed class CurseForgePluginProvider : IPluginCatalogProvider
         {
             using var inventory = await api.GetJsonAsync(
                 $"/v1/mods/{numericProject}/files?gameVersion=" + Uri.EscapeDataString(minecraftVersion) +
-                $"&modLoaderType={loaderType}&pageSize=50&index=0", cancellationToken).ConfigureAwait(false);
+                (contentKind == CurseForgeGeneratedContentKind.Mod ? $"&modLoaderType={loaderType}" : "") +
+                "&pageSize=50&index=0", cancellationToken).ConfigureAwait(false);
             if (!inventory.RootElement.TryGetProperty("data", out var values) ||
                 values.ValueKind != JsonValueKind.Array) return null;
             files = values.EnumerateArray().Select(value => value.Clone()).ToArray();
@@ -149,9 +169,12 @@ public sealed class CurseForgePluginProvider : IPluginCatalogProvider
                      .OrderBy(file => ReleaseRank(CurseForgeCatalogProvider.ReleaseType(file)))
                      .ThenByDescending(file => Date(file, "fileDate")))
         {
-            if (Long(file, "modId") is { } parent && parent != numericProject) continue;
+            if (Long(file, "modId") != numericProject) continue;
+            if (!string.IsNullOrWhiteSpace(versionId) &&
+                !CurseForgeCatalogProvider.Text(file, "id").Equals(versionId, StringComparison.Ordinal)) continue;
             var gameVersions = Strings(file, "gameVersions");
             if (!gameVersions.Contains(minecraftVersion, StringComparer.OrdinalIgnoreCase) ||
+                contentKind == CurseForgeGeneratedContentKind.Mod &&
                 !gameVersions.Contains(loader, StringComparer.OrdinalIgnoreCase)) continue;
             var fileId = file.GetProperty("id").ToString();
             var url = Text(file, "downloadUrl");
@@ -169,8 +192,12 @@ public sealed class CurseForgePluginProvider : IPluginCatalogProvider
             var fileName = Text(file, "fileName");
             var sha1 = CurseForgeCatalogProvider.Hash(file, 1);
             var size = Long(file, "fileLength") ?? 0;
-            if (!fileName.EndsWith(".jar", StringComparison.OrdinalIgnoreCase) ||
+            var extension = contentKind == CurseForgeGeneratedContentKind.Mod ? ".jar" : ".zip";
+            if (!fileName.EndsWith(extension, StringComparison.OrdinalIgnoreCase) ||
                 sha1.Length != 40 || size is <= 0 or > JarInventoryService.MaximumJarBytes) continue;
+            if (file.TryGetProperty("dependencies", out var boundedRelations) &&
+                boundedRelations.ValueKind == JsonValueKind.Array && boundedRelations.GetArrayLength() > 128)
+                throw new InvalidDataException("The exact CurseForge file exceeds the bounded dependency relationship limit; no relationships were silently discarded.");
             var dependencies = file.TryGetProperty("dependencies", out var relationValues) &&
                                relationValues.ValueKind == JsonValueKind.Array
                 ? relationValues.EnumerateArray().Select(relation => new PluginDependency
@@ -180,7 +207,7 @@ public sealed class CurseForgePluginProvider : IPluginCatalogProvider
                     Type = RelationType(Long(relation, "relationType"))
                 }).Where(relation => relation.ProjectId.Length > 0).Take(128).ToArray()
                 : [];
-            return new PluginRelease
+            return new CurseForgePackFileRelease(new PluginRelease
             {
                 Kind = ManagedAddonKind.Mod,
                 Provider = Provider,
@@ -200,7 +227,7 @@ public sealed class CurseForgePluginProvider : IPluginCatalogProvider
                 ClientSide = "unknown",
                 ClientRequirement = "Unknown",
                 Dependencies = dependencies
-            };
+            }, contentKind);
         }
         return null;
     }
@@ -242,7 +269,7 @@ public sealed class CurseForgePluginProvider : IPluginCatalogProvider
             ? result.GetString() ?? "" : "";
 
     private static long? Long(JsonElement value, string property) =>
-        value.TryGetProperty(property, out var result) && result.TryGetInt64(out var number)
+        value.TryGetProperty(property, out var result) && result.ValueKind == JsonValueKind.Number && result.TryGetInt64(out var number)
             ? number : null;
 
     private static DateTimeOffset? Date(JsonElement value, string property) =>
@@ -254,6 +281,10 @@ public sealed class CurseForgePluginProvider : IPluginCatalogProvider
             ? result.EnumerateArray().Where(item => item.ValueKind == JsonValueKind.String)
                 .Select(item => item.GetString() ?? "").ToArray() : [];
 }
+
+internal sealed record CurseForgePackFileRelease(
+    PluginRelease Release,
+    CurseForgeGeneratedContentKind ContentKind);
 
 public sealed class ModrinthPluginProvider : IPluginCatalogProvider
 {

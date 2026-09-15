@@ -107,7 +107,10 @@ public sealed class ServerUpdateCoordinator
         try
         {
             var preferences = await store.GetUpdatePreferencesAsync(serverId, cancellationToken).ConfigureAwait(false);
-            var available = await providers.Get(source.Provider)
+            var provider = providers.Get(source.Provider);
+            if (provider is CurseForgeUpdateProvider curseForge)
+                source = await curseForge.GetInstalledIdentityAsync(source, cancellationToken).ConfigureAwait(false);
+            var available = await provider
                 .GetVersionsAsync(source, preferences, cancellationToken).ConfigureAwait(false);
             if (source.Provider == UpdateProvider.LocalPackageHistory)
             {

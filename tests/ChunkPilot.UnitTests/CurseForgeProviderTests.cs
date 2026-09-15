@@ -15,6 +15,113 @@ public sealed class CurseForgeProviderTests
     private const string Cdn = "https://mediafilez.forgecdn.net/files/222/fixture-server.zip";
 
     [Fact]
+    public async Task Installed_identity_hydrates_only_the_exact_record_without_mutating_the_saved_source()
+    {
+        var handler = new Handler(request => request.RequestUri!.AbsolutePath switch
+        {
+            "/v1/mods/123" => Json(ProjectObject()),
+            "/v1/mods/123/files/111" => Json(ClientFile(111, 123, 222)),
+            _ => throw new InvalidOperationException()
+        });
+        using var api = Api(handler);
+        using var provider = new CurseForgeUpdateProvider(api);
+        var source = new UpdateSource
+        {
+            Provider = UpdateProvider.CurseForge, ProjectId = "123", InstalledVersionId = "111"
+        };
+        var hydrated = await provider.GetInstalledIdentityAsync(source);
+        Assert.Equal("Fixture Pack", hydrated.ProjectName);
+        Assert.Equal("Fixture 1.0", hydrated.InstalledVersionName);
+        Assert.Empty(source.ProjectName);
+        Assert.Empty(source.InstalledVersionName);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Exact_author_linked_additional_server_pack_does_not_require_optional_server_flag_or_reverse_id(bool reversePresent)
+    {
+        var client = JsonNode.Parse(ClientFile(111, 123, 0))!;
+        client["data"]!["serverPackFileId"] = null;
+        client["data"]!["alternateFileId"] = 222;
+        var server = JsonNode.Parse(ServerFile(222, 123, Cdn, "fixture-serverpack.zip"))!;
+        server["data"]!["isServerPack"] = false;
+        if (reversePresent) server["data"]!["parentProjectFileId"] = 111;
+        var handler = new Handler(request => request.RequestUri!.AbsolutePath switch
+        {
+            "/v1/mods/123" => Json(ProjectObject()),
+            "/v1/mods/123/files/111" => Json(client.ToJsonString()),
+            "/v1/mods/123/files/222" => Json(server.ToJsonString()),
+            _ => throw new InvalidOperationException("No unrelated inventory or nearby ID may be requested.")
+        });
+        using var provider = Provider(handler);
+        var item = await provider.ResolveProjectAsync("123", "111");
+        var release = Assert.Single(item!.Versions);
+        Assert.Equal("111", release.ClientFileId);
+        Assert.Equal("222", release.ServerPackFileId);
+        Assert.Equal(CurseForgeInstallRoute.OfficialServerPack, release.CurseForgeInstallRoute);
+        Assert.True(release.HasServerPackage);
+        Assert.False(release.CanGenerateServerCandidate);
+    }
+
+    [Fact]
+    public async Task Additional_server_file_attached_to_another_client_is_rejected()
+    {
+        var client = JsonNode.Parse(ClientFile(111, 123, 0))!;
+        client["data"]!["alternateFileId"] = 222;
+        var server = JsonNode.Parse(ServerFile(222, 123, Cdn, "fixture-serverpack.zip"))!;
+        server["data"]!["parentProjectFileId"] = 999;
+        var handler = new Handler(request => request.RequestUri!.AbsolutePath switch
+        {
+            "/v1/mods/123" => Json(ProjectObject()),
+            "/v1/mods/123/files/111" => Json(client.ToJsonString()),
+            "/v1/mods/123/files/222" => Json(server.ToJsonString()),
+            _ => throw new InvalidOperationException()
+        });
+        using var provider = Provider(handler);
+        await Assert.ThrowsAsync<InvalidDataException>(() => provider.ResolveProjectAsync("123", "111"));
+    }
+
+    [Fact]
+    public async Task Unavailable_linked_official_pack_never_silently_becomes_generated()
+    {
+        var server = JsonNode.Parse(ServerFile(222, 123, Cdn, "fixture-serverpack.zip"))!;
+        server["data"]!["isAvailable"] = false;
+        var handler = new Handler(request => request.RequestUri!.AbsolutePath switch
+        {
+            "/v1/mods/123" => Json(ProjectObject()),
+            "/v1/mods/123/files/111" => Json(ClientFile(111, 123, 222)),
+            "/v1/mods/123/files/222" => Json(server.ToJsonString()),
+            _ => throw new InvalidOperationException()
+        });
+        using var provider = Provider(handler);
+        var item = await provider.ResolveProjectAsync("123", "111");
+        var release = Assert.Single(item!.Versions);
+        Assert.Equal(CurseForgeInstallRoute.Unavailable, release.CurseForgeInstallRoute);
+        Assert.False(release.CanGenerateServerCandidate);
+        Assert.False(release.HasServerPackage);
+    }
+
+    [Fact]
+    public async Task Resource_pack_exact_file_does_not_require_loader_tags_but_never_enters_mod_browser()
+    {
+        var handler = new Handler(request => request.RequestUri!.AbsolutePath switch
+        {
+            "/v1/mods/55" => Json("""{"data":{"id":55,"gameId":432,"classId":12,"isAvailable":true,"allowModDistribution":true}}"""),
+            "/v1/mods/55/files/333" => Json("""{"data":{"id":333,"modId":55,"fileName":"resource.zip","isAvailable":true,"gameVersions":["1.21.1"],"fileLength":123,"downloadUrl":"https://mediafilez.forgecdn.net/files/333/resource.zip","hashes":[{"algo":1,"value":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}}"""),
+            _ => throw new InvalidOperationException()
+        });
+        using var api = Api(handler);
+        var mods = new CurseForgePluginProvider(api);
+        Assert.Null(await mods.ResolveReleaseAsync("55", "1.21.1", "NeoForge", "333"));
+        var packFile = await mods.ResolvePackFileAsync("55", "1.21.1", "NeoForge", "333", true);
+        Assert.NotNull(packFile);
+        Assert.Equal(CurseForgeGeneratedContentKind.ResourcePack, packFile.ContentKind);
+        Assert.Equal("333", packFile.Release.VersionId);
+        Assert.Null(await mods.ResolvePackFileAsync("55", "1.20.1", "NeoForge", "333", true));
+    }
+
+    [Fact]
     public async Task Search_is_shallow_and_exact_resolution_preserves_client_and_server_file_identity()
     {
         var handler = new Handler(request => request.RequestUri!.AbsolutePath switch

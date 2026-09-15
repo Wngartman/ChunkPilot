@@ -200,8 +200,8 @@ public sealed class CurseForgeModpackPreflightService : ICurseForgeModpackPrefli
             !True(file, "isAvailable"))
             throw new InvalidDataException("CurseForge returned a contradictory or unavailable client file identity.");
 
-        var serverPackFileId = Number(file, "serverPackFileId")?.ToString(
-            System.Globalization.CultureInfo.InvariantCulture) ?? "";
+        var serverPackFileId = await new CurseForgeServerPackRelationshipResolver(api)
+            .ResolveAsync(request.ProjectId, file, cancellationToken).ConfigureAwait(false);
         if (!serverPackFileId.Equals(request.ExpectedServerPackFileId, StringComparison.Ordinal))
             throw new InvalidDataException("The exact CurseForge server-pack relationship changed. Refresh the provider release before continuing.");
 
@@ -367,7 +367,7 @@ public sealed class CurseForgeModpackPreflightService : ICurseForgeModpackPrefli
 
     private static long? Number(JsonElement value, string property) =>
         value.TryGetProperty(property, out var result) && result.ValueKind == JsonValueKind.Number &&
-        result.TryGetInt64(out var number) ? number : null;
+        result.ValueKind == JsonValueKind.Number && result.TryGetInt64(out var number) ? number : null;
 
     private static bool True(JsonElement value, string property) =>
         value.TryGetProperty(property, out var result) && result.ValueKind == JsonValueKind.True;

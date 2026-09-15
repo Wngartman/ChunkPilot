@@ -87,7 +87,7 @@ public sealed class CurseForgePackServiceTests
     }
 
     [Fact]
-    public async Task Generated_candidate_resolves_required_cycle_skips_optional_and_ignores_script_overrides()
+    public async Task Generated_candidate_preserves_gameplay_scripts_and_skips_optional_and_os_launchers()
     {
         var root = TempRoot();
         try
@@ -101,7 +101,8 @@ public sealed class CurseForgePackServiceTests
             ]), new Dictionary<string, byte[]>
             {
                 ["overrides/config/fixture.toml"] = "safe=true"u8.ToArray(),
-                ["overrides/kubejs/server_scripts/unsafe.js"] = "throw 'never copied'"u8.ToArray(),
+                ["overrides/kubejs/server_scripts/recipes.js"] = "ServerEvents.recipes(event => {});"u8.ToArray(),
+                ["overrides/scripts/recipes.zs"] = "// authored gameplay script"u8.ToArray(),
                 ["overrides/start.ps1"] = "never copied"u8.ToArray()
             });
             var handler = new FixtureHandler(request => Response(request, first, second, loader));
@@ -121,12 +122,15 @@ public sealed class CurseForgePackServiceTests
 
             Assert.Equal(2, result.MaterializedFiles.Count);
             Assert.Contains(result.SkippedOptionalProjects, value => value == "30/300");
-            Assert.Contains(result.IgnoredOverridePaths, value => value.Equals("kubejs", StringComparison.OrdinalIgnoreCase));
+            Assert.DoesNotContain(result.IgnoredOverridePaths, value => value.Equals("kubejs", StringComparison.OrdinalIgnoreCase));
             Assert.Contains(result.IgnoredOverridePaths, value => value.Equals("start.ps1", StringComparison.OrdinalIgnoreCase));
             Assert.True(File.Exists(Path.Combine(destination, "mods", "first.jar")));
             Assert.True(File.Exists(Path.Combine(destination, "mods", "second.jar")));
             Assert.True(File.Exists(Path.Combine(destination, "config", "fixture.toml")));
-            Assert.False(File.Exists(Path.Combine(destination, "kubejs", "server_scripts", "unsafe.js")));
+            Assert.Equal("ServerEvents.recipes(event => {});",
+                await File.ReadAllTextAsync(Path.Combine(destination, "kubejs", "server_scripts", "recipes.js")));
+            Assert.Equal("// authored gameplay script",
+                await File.ReadAllTextAsync(Path.Combine(destination, "scripts", "recipes.zs")));
             Assert.True(File.Exists(Path.Combine(destination, "fabric-server-launch.jar")));
             var evidence = await File.ReadAllTextAsync(Path.Combine(destination, ".chunkpilot",
                 "curseforge-pack-evidence.json"));
@@ -137,13 +141,16 @@ public sealed class CurseForgePackServiceTests
         finally { Directory.Delete(root, recursive: true); }
     }
 
-    [Fact]
-    public async Task Reviewed_generated_plan_materializes_exact_files_without_provider_metadata_reresolution()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Reviewed_generated_plan_materializes_exact_files_without_provider_metadata_reresolution(bool resourcePack)
     {
         var root = TempRoot();
         try
         {
-            var required = "reviewed-mod"u8.ToArray();
+            var required = resourcePack ? ResourceArchive() : "reviewed-mod"u8.ToArray();
+            var name = resourcePack ? "reviewed.zip" : "reviewed.jar";
             var loader = "fabric-loader"u8.ToArray();
             var archive = Pack(root, Manifest([
                 new { projectID = 10, fileID = 100, required = true },
@@ -160,7 +167,8 @@ public sealed class CurseForgePackServiceTests
                     {
                         ProjectId = "10",
                         FileId = "100",
-                        FileName = "reviewed.jar",
+                        FileName = name,
+                        ContentKind = resourcePack ? CurseForgeGeneratedContentKind.ResourcePack : CurseForgeGeneratedContentKind.Mod,
                         DownloadUrl = "https://mediafilez.forgecdn.net/files/100/reviewed.jar",
                         SizeBytes = required.LongLength,
                         ProviderSha1 = Sha1(required),
@@ -216,13 +224,46 @@ public sealed class CurseForgePackServiceTests
             Assert.Equal(0, handler.ApiRequests);
             Assert.Equal(1, handler.CdnRequests);
             Assert.Equal(100, Assert.Single(result.MaterializedFiles).FileId);
-            Assert.True(File.Exists(Path.Combine(destination, "mods", "reviewed.jar")));
+            var installed = Path.Combine(destination, resourcePack ? "resourcepacks" : "mods", name);
+            Assert.Equal(required, await File.ReadAllBytesAsync(installed));
+            if (resourcePack) Assert.False(File.Exists(Path.Combine(destination, "mods", name)));
             Assert.Contains("30/300", result.SkippedOptionalProjects);
             var evidence = await File.ReadAllTextAsync(Path.Combine(destination, ".chunkpilot",
                 "curseforge-pack-evidence.json"));
             Assert.Contains(reviewed.Digest, evidence, StringComparison.Ordinal);
         }
         finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public void Resource_pack_container_validation_rejects_traversal_and_missing_metadata()
+    {
+        var root = TempRoot();
+        try
+        {
+            var traversal = Path.Combine(root, "traversal.zip");
+            File.WriteAllBytes(traversal, ResourceArchive("../escape.txt"));
+            Assert.Throws<InvalidDataException>(() => ServerImportInspectionService.ValidateResourcePackArchive(traversal));
+            var missing = Pack(root, "{}");
+            Assert.Throws<InvalidDataException>(() => ServerImportInspectionService.ValidateResourcePackArchive(missing));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    private static byte[] ResourceArchive(string? additional = null)
+    {
+        using var output = new MemoryStream();
+        using (var archive = new ZipArchive(output, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            using (var entry = archive.CreateEntry("pack.mcmeta").Open())
+                entry.Write("{\"pack\":{\"pack_format\":34,\"description\":\"fixture\"}}"u8);
+            if (additional is not null)
+            {
+                using var entry = archive.CreateEntry(additional).Open();
+                entry.WriteByte(1);
+            }
+        }
+        return output.ToArray();
     }
 
     [Fact]
