@@ -89,6 +89,19 @@ Authenticated metadata-only verification on 2026-09-14 established StaTech proje
 certification. Installed upstream labels are refreshed in memory from the exact project/client-file IDs
 after an explicit release check; the persistent CurseForge minimization policy remains unchanged.
 
+The exact StaTech client and author-linked server ZIP were then downloaded through the native authenticated
+CDN path and verified: 475,063,831 combined bytes; client manifest establishes NeoForge `21.1.248` on
+Minecraft `1.21.1`; the server ZIP contains 2,775 files with 456,017,987 expanded bytes and passes bounded
+import inspection. Its locally computed SHA-256 is
+`696aa67e9dc88af3aa2f135b71fd781a880f4ef5c1345c1ce46836aebfb322c5`.
+No Java process, world, or server runtime was started. The existing conservative 2 GiB payload ledger
+guards archive-only and generated-plan certification too; interrupted reservations are not discarded.
+
+Generated traversal resolves unversioned dependencies against all exact client-manifest pins before
+visiting any root, including optional entries that become required dependencies. It never picks a newer
+file merely because the dependency was encountered before its manifest entry. A real no-official-pack
+preflight exposed this ordering defect; genuinely contradictory explicit pins still fail closed.
+
 ## HTTP and failure policy
 
 - Only `https://api.curseforge.com` is accepted for metadata. Redirects are disabled for API calls.
