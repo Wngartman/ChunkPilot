@@ -46,6 +46,7 @@ public sealed partial class ManagedServer : IAsyncDisposable
     private readonly Dictionary<string, DateTimeOffset> lastSeenByPlayer = new(StringComparer.OrdinalIgnoreCase);
     private long playerAccessRevision;
     private Process? process;
+    private OwnedServerProcess? ownedProcess;
     private Task? stdoutTask;
     private Task? stderrTask;
     private Task? monitorTask;
@@ -190,6 +191,8 @@ public sealed partial class ManagedServer : IAsyncDisposable
             current = process;
         try
         {
+            if (ownedProcess?.HasLiveProcesses == true)
+                return true;
             if (current is { HasExited: false })
                 return true;
         }
@@ -498,20 +501,20 @@ public sealed partial class ManagedServer : IAsyncDisposable
         Process? current;
         lock (processGate)
             current = process;
-        if (current is null || current.HasExited)
+        if (current is null)
         {
             return await StopCoreAsync(saveFirst: false, cancellationToken).ConfigureAwait(false);
         }
         intentionalStop = true;
-        ProcessTree.Kill(current.Id);
+        TerminateProcessTree(current);
         await current.WaitForExitAsync(cancellationToken)
             .WaitAsync(TimeSpan.FromSeconds(15), cancellationToken).ConfigureAwait(false);
-        await WaitForProcessTreeExitAsync(current.Id, cancellationToken).ConfigureAwait(false);
+        await WaitForProcessTreeExitAsync(current, cancellationToken).ConfigureAwait(false);
         if (!await WaitForPortReleaseAsync(Definition.Port, cancellationToken).ConfigureAwait(false))
         {
             SafeTransition(ServerState.Unresponsive);
             return OperationResult.Fail(
-                $"The exact managed process tree exited, but port {Definition.Port} is still listening. " +
+                $"The exact managed process tree exited, but cleanup is unconfirmed because port {Definition.Port} is still listening. " +
                 "Another local process is holding the port.");
         }
         SafeTransition(ServerState.Stopped);
@@ -808,10 +811,8 @@ public sealed partial class ManagedServer : IAsyncDisposable
         {
             if (requireStopped && State != ServerState.Stopped)
                 throw new InvalidOperationException($"Stop the server before {operationName}.");
-            if (requireStopped && (HasDetachedProcess || HasExactOwnedProcessAlive()))
-                throw new InvalidOperationException($"The server process must be proven stopped before {operationName}.");
-            if (saveIfRunning && State != ServerState.Running && HasExactOwnedProcessAlive())
-                throw new InvalidOperationException($"The server cannot confirm a save in state {State}; {operationName} was not started.");
+            if (requireStopped || (saveIfRunning && State != ServerState.Running))
+                await VerifyStoppedDataAccessAsync(cancellationToken).ConfigureAwait(false);
             if (saveIfRunning && State == ServerState.Running)
             {
                 if (freezeWorldSaving)
@@ -970,7 +971,7 @@ public sealed partial class ManagedServer : IAsyncDisposable
             cancellationToken.ThrowIfCancellationRequested();
             var restoredStart = await StartCoreAsync(cancellationToken).ConfigureAwait(false);
             throw new InvalidOperationException(restoredStart.Success
-                ? $"The changed files prevented a healthy restart after {operationName}. ChunkPilot restored the previous files and restarted the server."
+                ? $"The changed files prevented a healthy restart after {operationName}. ChunkPilot restored the previous files and restarted the server. Startup: {start.Message}"
                 : $"The changed files prevented a healthy restart after {operationName}. ChunkPilot restored the previous files, " +
                   $"but the server still did not start: {restoredStart.Message}");
         }
@@ -1221,15 +1222,24 @@ public sealed partial class ManagedServer : IAsyncDisposable
             current = samples.LastOrDefault();
             recent = samples.ToArray();
         }
-        Process? currentProcess;
+        int? currentProcessId = null;
+        long currentProcessCreation = 0;
+        var consoleConnected = false;
         lock (processGate)
-            currentProcess = process;
+        {
+            if (process is { HasExited: false } currentProcess)
+            {
+                currentProcessId = currentProcess.Id;
+                currentProcessCreation = ProcessCreationIdentity.Of(currentProcess.SafeHandle);
+                consoleConnected = ownedProcess is { } owned && ReferenceEquals(owned.Process, currentProcess);
+            }
+        }
         return new ServerSnapshot
         {
             Definition = Definition,
             State = State,
-            RootProcessId = currentProcess is { HasExited: false } ? currentProcess.Id : null,
-            RootProcessCreationTicks = currentProcess is { HasExited: false } ? ProcessCreationIdentity.Of(currentProcess.SafeHandle) : 0,
+            RootProcessId = currentProcessId,
+            RootProcessCreationTicks = currentProcessCreation,
             StartedAt = startedAt,
             Uptime = startedAt is { } value && State is not ServerState.Stopped ? DateTimeOffset.Now - value : TimeSpan.Zero,
             LastExitCode = lastExitCode,
@@ -1239,7 +1249,7 @@ public sealed partial class ManagedServer : IAsyncDisposable
             StartupProgress = StartupProgressSnapshot(),
             LastSaveAt = lastSaveAt,
             LastBackupAt = lastBackupAt,
-            ConsoleConnected = currentProcess is { HasExited: false } && currentProcess.StartInfo.RedirectStandardInput,
+            ConsoleConnected = consoleConnected,
             OnlinePlayers = onlinePlayers,
             MaxPlayers = maxPlayers,
             PlayerStatus = playerStatus,
@@ -1302,12 +1312,35 @@ public sealed partial class ManagedServer : IAsyncDisposable
 
         // Stop waits for the process, but the redirected streams and monitor can finish a few
         // milliseconds later. Do not let that old attempt observe or mutate the next attempt's state.
-        if (monitorTask is not null)
-            await IgnoreCancellationAsync(monitorTask).ConfigureAwait(false);
-        if (stdoutTask is not null)
-            await IgnoreCancellationAsync(stdoutTask).ConfigureAwait(false);
-        if (stderrTask is not null)
-            await IgnoreCancellationAsync(stderrTask).ConfigureAwait(false);
+        try
+        {
+            if (ownedProcess?.HasLiveProcesses == true)
+            {
+                SafeTransition(ServerState.Unresponsive);
+                return OperationResult.Fail("The previous server attempt still owns running child processes. " +
+                    "Use exact-process recovery before starting another attempt.", requiresForce: true);
+            }
+            await WaitForPreviousAttemptAsync(monitorTask, stdoutTask, stderrTask, cancellationToken).ConfigureAwait(false);
+        }
+        catch (TimeoutException)
+        {
+            SafeTransition(ServerState.Unresponsive);
+            return OperationResult.Fail("The previous process's console or child-process cleanup did not finish. " +
+                "No new process was started. Stop or use exact-process recovery before retrying.", requiresForce: true);
+        }
+        catch (OperationCanceledException)
+        {
+            SafeTransition(ServerState.Unresponsive);
+            throw;
+        }
+
+        lock (processGate)
+        {
+            ownedProcess?.Dispose();
+            ownedProcess = null;
+            process?.Dispose();
+            process = null;
+        }
 
         intentionalStop = false;
         lastError = "";
@@ -1336,19 +1369,19 @@ public sealed partial class ManagedServer : IAsyncDisposable
         };
         ChildProcessEnvironmentPolicy.Apply(startInfo, Definition.Environment);
         CurseForgeCredentialEnvironment.RemoveFromChild(startInfo);
-        var newProcess = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
+        Process newProcess;
         var launchBinding = await ServerConnectionObserver.ReadSavedAsync(Definition, new SafeFileService(paths), cancellationToken).ConfigureAwait(false);
         connectionEvidence = new() { Saved = launchBinding, AtLaunch = launchBinding };
         try
         {
-            if (!newProcess.Start())
-            {
-                lifecycle.TransitionTo(ServerState.Crashed);
-                return OperationResult.Fail("Windows did not start the configured process.");
-            }
+            ownedProcess = OwnedServerProcess.Start(startInfo);
+            newProcess = ownedProcess.Process;
+            newProcess.EnableRaisingEvents = true;
         }
         catch (Exception exception) when (exception is InvalidOperationException or System.ComponentModel.Win32Exception)
         {
+            ownedProcess?.Dispose();
+            ownedProcess = null;
             lifecycle.TransitionTo(ServerState.Crashed);
             lastError = exception.Message;
             return OperationResult.Fail($"Launch failed: {exception.Message}");
@@ -1386,8 +1419,8 @@ public sealed partial class ManagedServer : IAsyncDisposable
         console.Add("ChunkPilot", $"Started process {newProcess.Id}: {Definition.Executable} {SecretRedactor.Redact(startInfo.Arguments)}");
         UpdateStartupProgress(progressAttempt, ServerStartupStage.WaitingForReadiness,
             "The process is running; waiting for its configured readiness marker. Large packs can take several minutes.");
-        stdoutTask = PumpAsync(newProcess.StandardOutput, "stdout", attemptReadiness, lifetime.Token);
-        stderrTask = PumpAsync(newProcess.StandardError, "stderr", attemptReadiness, lifetime.Token);
+        stdoutTask = PumpAsync(ownedProcess.StandardOutput, "stdout", attemptReadiness, lifetime.Token);
+        stderrTask = PumpAsync(ownedProcess.StandardError, "stderr", attemptReadiness, lifetime.Token);
         monitorTask = MonitorAsync(newProcess, attemptReadiness, stdoutTask, stderrTask, lifetime.Token);
 
         try
@@ -1512,7 +1545,7 @@ public sealed partial class ManagedServer : IAsyncDisposable
             try
             {
                 if (current is not null)
-                    await WaitForProcessTreeExitAsync(current.Id, cancellationToken).ConfigureAwait(false);
+                    await WaitForProcessTreeExitAsync(current, cancellationToken).ConfigureAwait(false);
                 if (!await WaitForPortReleaseAsync(Definition.Port, cancellationToken).ConfigureAwait(false))
                     throw new TimeoutException("The configured port remains occupied.");
             }
@@ -1539,11 +1572,11 @@ public sealed partial class ManagedServer : IAsyncDisposable
             {
                 console.Add("ChunkPilot",
                     "Minecraft exited and released its port; closing the leftover launcher script.");
-                ProcessTree.Kill(current.Id);
+                TerminateProcessTree(current);
                 await current.WaitForExitAsync(cancellationToken)
                     .WaitAsync(TimeSpan.FromSeconds(5), cancellationToken).ConfigureAwait(false);
             }
-            await WaitForProcessTreeExitAsync(current.Id, cancellationToken).ConfigureAwait(false);
+            await WaitForProcessTreeExitAsync(current, cancellationToken).ConfigureAwait(false);
             if (!await WaitForPortReleaseAsync(Definition.Port, cancellationToken).ConfigureAwait(false))
             {
                 SafeTransition(ServerState.Unresponsive);
@@ -1586,8 +1619,10 @@ public sealed partial class ManagedServer : IAsyncDisposable
         try
         {
             console.Add("command", $"> {command}");
-            await current.StandardInput.WriteLineAsync(command.AsMemory(), cancellationToken).ConfigureAwait(false);
-            await current.StandardInput.FlushAsync(cancellationToken).ConfigureAwait(false);
+            var input = ownedProcess is { } owned && ReferenceEquals(owned.Process, current)
+                ? owned.StandardInput : current.StandardInput;
+            await input.WriteLineAsync(command.AsMemory(), cancellationToken).ConfigureAwait(false);
+            await input.FlushAsync(cancellationToken).ConfigureAwait(false);
             return true;
         }
         catch (Exception exception) when (exception is IOException or InvalidOperationException)
@@ -1607,14 +1642,14 @@ public sealed partial class ManagedServer : IAsyncDisposable
             if (HasDetachedProcess)
                 throw new InvalidOperationException("Detached process ownership must be resolved before rollback.");
             intentionalStop = true;
-            if (current is { HasExited: false })
+            if (current is not null)
             {
-                ProcessTree.Kill(current.Id);
+                TerminateProcessTree(current);
                 await current.WaitForExitAsync(cancellationToken)
                     .WaitAsync(TimeSpan.FromSeconds(15), cancellationToken).ConfigureAwait(false);
             }
             if (current is not null)
-                await WaitForProcessTreeExitAsync(current.Id, cancellationToken).ConfigureAwait(false);
+                await WaitForProcessTreeExitAsync(current, cancellationToken).ConfigureAwait(false);
             if (!await WaitForPortReleaseAsync(Definition.Port, cancellationToken).ConfigureAwait(false))
                 throw new InvalidOperationException("The failed server's port is still held. Files were not rolled back while a listener may be active.");
         }
@@ -1674,6 +1709,7 @@ public sealed partial class ManagedServer : IAsyncDisposable
     {
         try
         {
+            var processExit = watched.WaitForExitAsync(cancellationToken);
             while (!watched.HasExited && !cancellationToken.IsCancellationRequested)
             {
                 var sample = statistics.SampleProcessTree(watched.Id);
@@ -1761,9 +1797,9 @@ public sealed partial class ManagedServer : IAsyncDisposable
                         }
                     }
                 }
-                await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken).ConfigureAwait(false);
+                await Task.WhenAny(processExit, Task.Delay(TimeSpan.FromSeconds(2), cancellationToken)).ConfigureAwait(false);
             }
-            await watched.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+            await processExit.ConfigureAwait(false);
             await Task.WhenAll(stdoutPump, stderrPump).ConfigureAwait(false);
             lastExitCode = watched.ExitCode;
             ClearOnlinePlayers();
@@ -1866,20 +1902,41 @@ public sealed partial class ManagedServer : IAsyncDisposable
         catch (OperationCanceledException) { }
     }
 
-    private async Task WaitForProcessTreeExitAsync(int rootProcessId, CancellationToken cancellationToken)
+    private void TerminateProcessTree(Process ownedRoot)
     {
+        if (ownedProcess is { } owned && ReferenceEquals(owned.Process, ownedRoot))
+            owned.Terminate();
+        else
+            ProcessTree.Kill(ownedRoot);
+    }
+
+    private async Task WaitForProcessTreeExitAsync(Process ownedRoot, CancellationToken cancellationToken)
+    {
+        if (ownedProcess is { } owned && ReferenceEquals(owned.Process, ownedRoot))
+        {
+            try
+            {
+                if (await owned.WaitForEmptyAsync(TimeSpan.FromSeconds(15), cancellationToken).ConfigureAwait(false))
+                    return;
+            }
+            catch (Exception exception) when (exception is InvalidOperationException or System.ComponentModel.Win32Exception)
+            {
+                throw new TimeoutException("Exact server Job cleanup could not be verified. Windows process evidence is unavailable.", exception);
+            }
+            throw new TimeoutException("A server descendant remained in its exact-owned Job after the launcher exited.");
+        }
         var timeout = DateTimeOffset.UtcNow.AddSeconds(15);
         while (DateTimeOffset.UtcNow < timeout)
         {
-            var alive = ProcessTree.GetDescendantsAndSelf(rootProcessId).Any(id =>
+            bool alive;
+            try
             {
-                try { using var child = Process.GetProcessById(id); return !child.HasExited; }
-                // The exact owned root process has already exited. A PID from the Toolhelp snapshot
-                // can disappear or be reused by a protected process before it is opened; neither is
-                // evidence that an owned child remains. Port release is verified separately below.
-                catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or
-                                                  System.ComponentModel.Win32Exception) { return false; }
-            });
+                alive = ProcessTree.HasLiveProcesses(ownedRoot);
+            }
+            catch (Exception exception) when (exception is InvalidOperationException or System.ComponentModel.Win32Exception)
+            {
+                throw new TimeoutException("Exact process-tree cleanup could not be verified. Windows process evidence is unavailable.", exception);
+            }
             if (!alive)
                 return;
             await Task.Delay(200, cancellationToken).ConfigureAwait(false);
@@ -1998,9 +2055,10 @@ public sealed partial class ManagedServer : IAsyncDisposable
             }
 
             intentionalStop = true;
-            ProcessTree.Kill(detachedProcess.Id);
+            ProcessTree.Kill(detachedProcess);
             await detachedProcess.WaitForExitAsync(cancellationToken)
                 .WaitAsync(TimeSpan.FromSeconds(15), cancellationToken).ConfigureAwait(false);
+            await WaitForProcessTreeExitAsync(detachedProcess, cancellationToken).ConfigureAwait(false);
             if (!await WaitForPortReleaseAsync(Definition.Port, cancellationToken).ConfigureAwait(false))
             {
                 return OperationResult.Fail(
@@ -2502,6 +2560,7 @@ public sealed partial class ManagedServer : IAsyncDisposable
         if (monitorTask is not null)
             await IgnoreCancellationAsync(monitorTask).ConfigureAwait(false);
         process?.Dispose();
+        ownedProcess?.Dispose();
         operationGate.Dispose();
         lifetime.Dispose();
     }
