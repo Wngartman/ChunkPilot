@@ -69,6 +69,49 @@ if (args.FirstOrDefault()?.Equals("staged-validation-child", StringComparison.Or
     return 0;
 }
 
+if (args.FirstOrDefault() == "owned-job-arguments")
+{
+    Console.WriteLine(JsonSerializer.Serialize(args.Skip(1)));
+    Console.WriteLine(Environment.GetEnvironmentVariable("CHUNKPILOT_FIXTURE_ARGUMENT_ENV"));
+    return 0;
+}
+
+if (args.FirstOrDefault() is "owned-job-orphan-root" or "owned-job-orphan-parent")
+{
+    var isRoot = args[0] == "owned-job-orphan-root";
+    var childStart = new ProcessStartInfo
+    {
+        FileName = Environment.ProcessPath!, WorkingDirectory = Environment.CurrentDirectory,
+        UseShellExecute = false, CreateNoWindow = true
+    };
+    // Tests also invoke this fixture through dotnet; keep that launch form when necessary.
+    if (string.Equals(Path.GetFileNameWithoutExtension(Environment.ProcessPath), "dotnet", StringComparison.OrdinalIgnoreCase))
+        childStart.ArgumentList.Add(typeof(NativeProcessCreation).Assembly.Location);
+    childStart.ArgumentList.Add(isRoot ? "owned-job-orphan-parent" : "owned-job-orphan-leaf");
+    childStart.ArgumentList.Add(args[1]);
+    using var child = Process.Start(childStart)!;
+    if (isRoot)
+    {
+        await child.WaitForExitAsync();
+        Console.WriteLine("[Server thread/INFO]: Done (0.123s)! For help, type \"help\"");
+        await Console.Out.FlushAsync();
+    }
+    return 37;
+}
+
+if (args.FirstOrDefault() == "owned-job-orphan-leaf")
+{
+    using var listener = new TcpListener(IPAddress.Loopback,
+        int.Parse(args[1], System.Globalization.CultureInfo.InvariantCulture));
+    listener.Start();
+    using var current = Process.GetCurrentProcess();
+    await File.WriteAllTextAsync("owned-job-leaf.pid.partial",
+        FormattableString.Invariant($"{current.Id}|{current.StartTime.ToUniversalTime().Ticks}"));
+    File.Move("owned-job-leaf.pid.partial", "owned-job-leaf.pid");
+    await Task.Delay(Timeout.InfiniteTimeSpan);
+    return 0;
+}
+
 if (args.Any(argument => Path.GetFileName(argument)
         .Equals("staged-spawn-child-and-exit.jar", StringComparison.OrdinalIgnoreCase)))
 {

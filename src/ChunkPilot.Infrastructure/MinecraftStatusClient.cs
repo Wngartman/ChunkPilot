@@ -26,6 +26,22 @@ public sealed class MinecraftStatusClient
         string? minecraftVersion,
         CancellationToken cancellationToken = default)
     {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(TimeSpan.FromSeconds(3));
+        try
+        {
+            return await QueryDetailedCoreAsync(host, port, minecraftVersion, timeout.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            // A listening socket that never sends its status is unavailable, not a known zero count.
+            return null;
+        }
+    }
+
+    private static async Task<PlayerStatusEvidence?> QueryDetailedCoreAsync(
+        string host, int port, string? minecraftVersion, CancellationToken cancellationToken)
+    {
         if (PrefersSimpleLegacyPing(minecraftVersion))
         {
             if (await TryQueryLegacySimpleAsync(host, port, cancellationToken).ConfigureAwait(false) is { } simple)
@@ -96,8 +112,14 @@ public sealed class MinecraftStatusClient
             var jsonBytes = new byte[jsonLength];
             await stream.ReadExactlyAsync(jsonBytes, cancellationToken).ConfigureAwait(false);
             using var document = JsonDocument.Parse(jsonBytes);
-            var players = document.RootElement.GetProperty("players");
-            return (players.GetProperty("online").GetInt32(), players.GetProperty("max").GetInt32());
+            if (document.RootElement.ValueKind != JsonValueKind.Object ||
+                !document.RootElement.TryGetProperty("players", out var players) || players.ValueKind != JsonValueKind.Object ||
+                !players.TryGetProperty("online", out var onlineElement) || onlineElement.ValueKind != JsonValueKind.Number ||
+                !onlineElement.TryGetInt32(out var online) ||
+                !players.TryGetProperty("max", out var maximumElement) || maximumElement.ValueKind != JsonValueKind.Number ||
+                !maximumElement.TryGetInt32(out var maximum) || !ValidCounts(online, maximum))
+                return null;
+            return (online, maximum);
         }
         catch (Exception exception) when (exception is IOException or SocketException or TimeoutException or
                                                   JsonException or InvalidDataException)

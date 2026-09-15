@@ -109,13 +109,31 @@ internal sealed class WindowsStagedProcessJob : IDisposable
 
     public WindowsStagedProcess Start(ProcessStartInfo startInfo)
     {
-        ObjectDisposedException.ThrowIf(disposed, this);
         ArgumentNullException.ThrowIfNull(startInfo);
-        if (startInfo.UseShellExecute || !startInfo.CreateNoWindow ||
-            !startInfo.RedirectStandardInput || !startInfo.RedirectStandardOutput ||
-            !startInfo.RedirectStandardError || !string.IsNullOrEmpty(startInfo.Arguments))
+        if (!string.IsNullOrEmpty(startInfo.Arguments))
             throw new ArgumentException(
                 "Staged process ownership requires a no-shell, no-window launch with redirected streams and structured arguments.");
+        return StartCore(startInfo, approvedRawArguments: null);
+    }
+
+    // Existing server definitions contain user-approved Windows command lines. Passing them through
+    // a parser and re-quoting would change custom script semantics. This separate path preserves that
+    // exact argument string without relaxing the staged provider installer's ArgumentList contract.
+    internal WindowsStagedProcess StartApprovedServer(ProcessStartInfo startInfo)
+    {
+        ArgumentNullException.ThrowIfNull(startInfo);
+        if (startInfo.ArgumentList.Count != 0 || startInfo.Arguments.Contains('\0'))
+            throw new ArgumentException("Approved server arguments must be one valid Windows argument string.");
+        return StartCore(startInfo, startInfo.Arguments);
+    }
+
+    private WindowsStagedProcess StartCore(ProcessStartInfo startInfo, string? approvedRawArguments)
+    {
+        ObjectDisposedException.ThrowIf(disposed, this);
+        if (startInfo.UseShellExecute || !startInfo.CreateNoWindow ||
+            !startInfo.RedirectStandardInput || !startInfo.RedirectStandardOutput ||
+            !startInfo.RedirectStandardError)
+            throw new ArgumentException("Exact process ownership requires a no-shell, no-window launch with redirected streams.");
 
         var executable = Path.GetFullPath(startInfo.FileName);
         if (!File.Exists(executable))
@@ -184,7 +202,9 @@ internal sealed class WindowsStagedProcessJob : IDisposable
                 AttributeList = attributeList
             };
             var commandText = CommandLineQuoter.QuoteWindowsArgument(executable);
-            if (startInfo.ArgumentList.Count > 0)
+            if (!string.IsNullOrEmpty(approvedRawArguments))
+                commandText += " " + approvedRawArguments;
+            else if (startInfo.ArgumentList.Count > 0)
                 commandText += " " + string.Join(
                     " ", startInfo.ArgumentList.Select(CommandLineQuoter.QuoteWindowsArgument));
             var commandLine = (commandText + '\0').ToCharArray();
@@ -220,10 +240,10 @@ internal sealed class WindowsStagedProcessJob : IDisposable
             parentError = null;
             owned = new WindowsStagedProcess(
                 process,
-                new StreamWriter(inputStream, new UTF8Encoding(false), 4_096, leaveOpen: false),
-                new StreamReader(outputStream, Encoding.UTF8, detectEncodingFromByteOrderMarks: false,
+                new StreamWriter(inputStream, startInfo.StandardInputEncoding ?? new UTF8Encoding(false), 4_096, leaveOpen: false),
+                new StreamReader(outputStream, startInfo.StandardOutputEncoding ?? Encoding.UTF8, detectEncodingFromByteOrderMarks: false,
                     4_096, leaveOpen: false),
-                new StreamReader(errorStream, Encoding.UTF8, detectEncodingFromByteOrderMarks: false,
+                new StreamReader(errorStream, startInfo.StandardErrorEncoding ?? Encoding.UTF8, detectEncodingFromByteOrderMarks: false,
                     4_096, leaveOpen: false));
             process = null;
             if (ResumeThread(processInformation.ThreadHandle) == uint.MaxValue)

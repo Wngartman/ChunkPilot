@@ -9,6 +9,30 @@ namespace ChunkPilot.UnitTests;
 
 public sealed class MinecraftStatusClientTests
 {
+    [Fact(Timeout = 10_000)]
+    public async Task Accepted_status_socket_that_never_replies_has_a_complete_query_deadline()
+    {
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        var query = new MinecraftStatusClient().QueryDetailedAsync("127.0.0.1", port, "1.21.1");
+        using var peer = await listener.AcceptTcpClientAsync().WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.Null(await query.WaitAsync(TimeSpan.FromSeconds(5)));
+    }
+
+    [Fact(Timeout = 5_000)]
+    public async Task Caller_cancellation_interrupts_a_status_socket_read()
+    {
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        using var cancellation = new CancellationTokenSource();
+        var query = new MinecraftStatusClient().QueryDetailedAsync("127.0.0.1", port, "1.21.1", cancellation.Token);
+        using var peer = await listener.AcceptTcpClientAsync().WaitAsync(TimeSpan.FromSeconds(2));
+        cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => query.WaitAsync(TimeSpan.FromSeconds(2)));
+    }
+
     [Fact]
     public async Task Query_falls_back_to_the_bounded_legacy_server_list_protocol()
     {

@@ -25,6 +25,21 @@ Each `ManagedServer` has a lifecycle state machine and a single operation semaph
 
 Supported Minecraft ecosystems receive exactly one `nogui` token before launch. The final process uses `UseShellExecute=false`, redirected standard streams, and `CreateNoWindow=true`. Newly launched process records include PID plus raw Windows creation `FILETIME`, executable and existing provenance. Automatic detached termination requires an exact no-tolerance match; a legacy record without raw creation identity remains truthful recovery evidence but never kill authority. Detached `start` scripts and `javaw` are diagnosed instead of hidden after launch.
 
+Every new managed server attempt is born atomically inside its own Windows Job through
+`OwnedServerProcess`. Job membership retains descendants after a launcher or intermediate parent
+exits; stop, force recovery, restart admission, and data-operation guards use its live-process count
+and verified empty state. User-approved raw Windows arguments and configured stream encodings are
+preserved. Provider staging still requires structured arguments through its separate strict entry
+point. Normal application close keeps the Job open through the Agent's save and graceful-stop path.
+Forced Agent termination closes its Jobs and terminates remaining descendants; this crash path
+cannot promise a graceful save. Legacy detached records retain their existing exact-handle recovery
+path; they do not acquire retrospective Job membership or authority from a PID alone.
+
+Minecraft status queries have one three-second deadline covering connection, request, response reads,
+and protocol fallbacks. A silent socket reports unavailable status. Caller cancellation remains
+cancellation, and starting a new attempt waits at most five seconds for the old console and monitor
+tasks to finish; a timeout leaves recovery required and starts no second process.
+
 Cancellation is honored before activation. After the directory switch begins, ChunkPilot finishes transaction finalization, startup validation, or rollback before returning control. Raw process output enters a bounded sequence buffer and rolling ISO-timestamped local log.
 
 ## Managed installation transaction

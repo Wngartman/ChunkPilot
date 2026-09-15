@@ -5,6 +5,7 @@ using System.Net.NetworkInformation;
 using System.Net;
 using System.Net.Sockets;
 using Microsoft.Win32;
+using Microsoft.Win32.SafeHandles;
 using ChunkPilot.Core;
 
 namespace ChunkPilot.Infrastructure;
@@ -486,35 +487,133 @@ public static class ProcessTree
         return result;
     }
 
-    public static void Kill(int rootProcessId)
+    /// <summary>Terminates only handle-pinned processes with a verified parent lifetime relationship.</summary>
+    public static void Kill(Process ownedRoot)
     {
-        foreach (var id in GetDescendantsAndSelf(rootProcessId).Reverse())
+        ArgumentNullException.ThrowIfNull(ownedRoot);
+        if (!OperatingSystem.IsWindows())
         {
-            try
-            {
-                using var process = Process.GetProcessById(id);
-                process.Kill(entireProcessTree: false);
-            }
-            catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or Win32Exception) { }
+            if (!ownedRoot.HasExited) ownedRoot.Kill(entireProcessTree: true);
+            return;
+        }
+        using var tree = CaptureVerifiedTree(ownedRoot);
+        foreach (var process in tree.Processes.AsEnumerable().Reverse())
+        {
+            if (process.HasExited) continue;
+            // Never reopen a PID to terminate it. The retained handle is the instance we verified.
+            if (!TerminateProcess(process.SafeHandle, 1) && !process.HasExited)
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "An exact owned process could not be terminated.");
         }
     }
 
-    private static Dictionary<int, int> EnumerateParents()
+    public static bool HasLiveProcesses(Process ownedRoot)
+    {
+        ArgumentNullException.ThrowIfNull(ownedRoot);
+        if (!OperatingSystem.IsWindows()) return !ownedRoot.HasExited;
+        using var tree = CaptureVerifiedTree(ownedRoot);
+        return tree.Processes.Any(process => !process.HasExited);
+    }
+
+    internal static bool IsWithinParentLifetime(long parentCreation, long parentExit, long childCreation) =>
+        parentCreation > 0 && childCreation >= parentCreation &&
+        (parentExit == 0 || childCreation <= parentExit);
+
+    private static VerifiedTree CaptureVerifiedTree(Process root)
+    {
+        var tree = new VerifiedTree(root);
+        try
+        {
+            var parents = EnumerateParents(requireComplete: true);
+            var rootLifetime = ReadLifetime(root);
+            var accepted = new Dictionary<int, (long Created, long Exited)> { [root.Id] = rootLifetime };
+            var ids = new List<int> { root.Id };
+            var excludedBranches = new HashSet<int>();
+            for (var index = 0; index < ids.Count; index++)
+            {
+                if (ids.Count > 4_096) throw new InvalidOperationException("The process tree exceeds its safe inspection limit.");
+                var parentId = ids[index];
+                if (excludedBranches.Contains(parentId)) continue;
+                foreach (var childId in parents.Where(pair => pair.Value == parentId && !ids.Contains(pair.Key)).Select(pair => pair.Key))
+                {
+                    ids.Add(childId);
+                    Process child;
+                    try { child = Process.GetProcessById(childId); }
+                    catch (ArgumentException) { continue; } // This snapshot entry is genuinely gone.
+                    try
+                    {
+                        var lifetime = ReadLifetime(child); // Pins the exact process handle before another snapshot.
+                        if (!accepted.TryGetValue(parentId, out var parentLifetime))
+                        {
+                            if (!child.HasExited)
+                                throw new InvalidOperationException("A descendant's parent identity is unavailable; process cleanup is unconfirmed.");
+                            continue;
+                        }
+                        if (!IsWithinParentLifetime(parentLifetime.Created, parentLifetime.Exited, lifetime.Created))
+                        {
+                            // This is a proven foreign branch left by a reused parent PID. Its own
+                            // descendants cannot regain ownership through the unrelated branch.
+                            excludedBranches.Add(childId);
+                            continue;
+                        }
+                        accepted.Add(childId, lifetime);
+                        tree.Processes.Add(child);
+                        child = null!;
+                    }
+                    finally { child?.Dispose(); }
+                }
+            }
+            var confirmedParents = EnumerateParents(requireComplete: true);
+            foreach (var child in tree.Processes.Skip(1))
+            {
+                if (!child.HasExited && (!confirmedParents.TryGetValue(child.Id, out var actualParent) ||
+                                        actualParent != parents[child.Id]))
+                    throw new InvalidOperationException("A process-tree identity changed during inspection; nothing was terminated.");
+            }
+            return tree;
+        }
+        catch { tree.Dispose(); throw; }
+    }
+
+    private static (long Created, long Exited) ReadLifetime(Process process)
+    {
+        if (!GetProcessTimes(process.SafeHandle, out var created, out var exited, out _, out _) || created <= 0)
+            throw new Win32Exception(Marshal.GetLastWin32Error(), "Windows did not expose exact process lifetime evidence.");
+        return (created, exited);
+    }
+
+    private sealed class VerifiedTree(Process root) : IDisposable
+    {
+        public List<Process> Processes { get; } = [root];
+        public void Dispose()
+        {
+            foreach (var child in Processes.Skip(1)) child.Dispose();
+        }
+    }
+
+    private static Dictionary<int, int> EnumerateParents(bool requireComplete = false)
     {
         var result = new Dictionary<int, int>();
         var snapshot = CreateToolhelp32Snapshot(SnapshotProcesses, 0);
         if (snapshot == new IntPtr(-1))
+        {
+            if (requireComplete) throw new Win32Exception(Marshal.GetLastWin32Error(), "Process-tree inspection is unavailable.");
             return result;
+        }
         try
         {
             var entry = new ProcessEntry32 { Size = (uint)Marshal.SizeOf<ProcessEntry32>() };
             if (!Process32First(snapshot, ref entry))
+            {
+                if (requireComplete) throw new Win32Exception(Marshal.GetLastWin32Error(), "Process-tree inspection is incomplete.");
                 return result;
+            }
             do
             {
                 result[checked((int)entry.ProcessId)] = checked((int)entry.ParentProcessId);
                 entry.Size = (uint)Marshal.SizeOf<ProcessEntry32>();
             } while (Process32Next(snapshot, ref entry));
+            if (requireComplete && Marshal.GetLastWin32Error() != 18) // ERROR_NO_MORE_FILES is normal completion.
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "Process-tree inspection did not complete.");
             return result;
         }
         finally
@@ -542,15 +641,24 @@ public static class ProcessTree
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern IntPtr CreateToolhelp32Snapshot(uint flags, uint processId);
 
-    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool Process32First(IntPtr snapshot, ref ProcessEntry32 entry);
 
-    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool Process32Next(IntPtr snapshot, ref ProcessEntry32 entry);
 
     [DllImport("kernel32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool CloseHandle(IntPtr handle);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetProcessTimes(SafeProcessHandle process, out long creation, out long exit,
+        out long kernel, out long user);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool TerminateProcess(SafeProcessHandle process, uint exitCode);
 }

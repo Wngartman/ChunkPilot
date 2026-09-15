@@ -714,7 +714,7 @@ public sealed class AgentReconnectIntegrationTests
     }
 
     [Fact(Timeout = 60_000)]
-    public async Task Replacement_agent_exit_terminates_a_verified_detached_server_and_releases_its_port()
+    public async Task Forced_agent_death_closes_its_owned_server_job_and_replacement_does_not_restart_it()
     {
         var root = Path.Combine(Path.GetTempPath(), "ChunkPilot-detached-agent-" + Guid.NewGuid().ToString("N"));
         var instanceId = Guid.NewGuid().ToString("N");
@@ -742,19 +742,23 @@ public sealed class AgentReconnectIntegrationTests
 
             firstAgent.Kill(entireProcessTree: false);
             await firstAgent.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
-            Assert.True(IsPortListening(port), "The fixture must survive its first agent to exercise recovery.");
+            var cleanupDeadline = DateTimeOffset.UtcNow.AddSeconds(5);
+            while ((IsPortListening(port) || IsProcessAlive(detachedProcessId.Value)) && DateTimeOffset.UtcNow < cleanupDeadline)
+                await Task.Delay(50);
+            Assert.False(IsPortListening(port), "The exact server Job must close when its Agent dies.");
+            Assert.False(IsProcessAlive(detachedProcessId.Value));
 
             replacementAgent = StartAgent(root, instanceId);
             await WaitForAgentAsync(pipeName);
             var session = await RegisterCurrentUiAsync(pipeName);
             var recovered = (await SendAsync<DashboardSnapshot>(pipeName, "Dashboard")).Servers
                 .Single(server => server.Definition.Id == definition.Id);
-            Assert.Equal(ServerState.Unknown, recovered.State);
+            Assert.Equal(ServerState.Stopped, recovered.State);
+            Assert.Null(recovered.RootProcessId);
 
             var stop = await SendAsync<OperationResult>(pipeName, "Stop",
                 AuthorizedStopRequest(definition.Id, session));
-            Assert.False(stop.Success);
-            Assert.True(stop.RequiresForceConfirmation);
+            Assert.True(stop.Success, stop.Message);
             var exit = await SendAsync<OperationResult>(pipeName, "SafeApplicationExit",
                 new SafeApplicationExitRequest(session.Session.SessionId, [definition.Id], DateTimeOffset.UtcNow)
                 {
@@ -786,6 +790,66 @@ public sealed class AgentReconnectIntegrationTests
             }
             if (Directory.Exists(root))
                 Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact(Timeout = 40_000)]
+    public async Task Replacement_agent_preserves_exact_legacy_detached_process_recovery()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "ChunkPilot-legacy-detached-" + Guid.NewGuid().ToString("N"));
+        var instanceId = Guid.NewGuid().ToString("N");
+        var pipeName = ChunkPilotConstants.PipeNameFor(instanceId);
+        var port = TestPortAllocator.Reserve();
+        var definition = await CreateStoredFakeServerAsync(root, "survive-eof", port);
+        var start = new ProcessStartInfo(definition.Executable, definition.Arguments)
+        {
+            WorkingDirectory = definition.WorkingDirectory, UseShellExecute = false, CreateNoWindow = true,
+            RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true
+        };
+        ChildProcessEnvironmentPolicy.Apply(start, definition.Environment);
+        IntegrationTestRuntime.IsolateAgentCredentialSource(start, root);
+        using var legacy = Process.Start(start)!; // Deliberately outside the new server-owned Job.
+        Process? agent = null;
+        try
+        {
+            _ = legacy.SafeHandle;
+            var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
+            while (!IsPortListening(port) && DateTimeOffset.UtcNow < deadline) await Task.Delay(50);
+            Assert.True(IsPortListening(port));
+            await using (var store = new ChunkPilotStore(new AppDataPaths(root)))
+            {
+                await store.InitializeAsync();
+                await store.UpsertProcessIdentityAsync(new ProcessIdentity
+                {
+                    ServerId = definition.Id, ProcessId = legacy.Id,
+                    ProcessStartTime = new DateTimeOffset(legacy.StartTime),
+                    ProcessCreationTicks = ProcessCreationIdentity.Of(legacy.SafeHandle),
+                    ExecutablePath = definition.Executable, WorkingDirectory = definition.WorkingDirectory,
+                    CommandSignature = ProcessIdentityPolicy.Signature(definition.Executable, definition.Arguments, definition.WorkingDirectory)
+                });
+            }
+            agent = StartAgent(root, instanceId);
+            await WaitForAgentAsync(pipeName);
+            var session = await RegisterCurrentUiAsync(pipeName);
+            var recovered = (await SendAsync<DashboardSnapshot>(pipeName, "Dashboard")).Servers.Single();
+            Assert.Equal(ServerState.Unknown, recovered.State);
+            var exit = await SendAsync<OperationResult>(pipeName, "SafeApplicationExit",
+                new SafeApplicationExitRequest(session.Session.SessionId, [definition.Id], DateTimeOffset.UtcNow)
+                { SessionCapability = session.SessionCapability });
+            Assert.True(exit.Success, exit.Message);
+            await agent.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(15));
+            await legacy.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.False(IsPortListening(port));
+        }
+        finally
+        {
+            if (agent is { HasExited: false }) agent.Kill(entireProcessTree: true);
+            if (agent is not null) await agent.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
+            agent?.Dispose();
+            if (!legacy.HasExited) legacy.Kill();
+            await legacy.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
+            legacy.Dispose();
+            await DeleteFixtureRootAsync(root);
         }
     }
 
