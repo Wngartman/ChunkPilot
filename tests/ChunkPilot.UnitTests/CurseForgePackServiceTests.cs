@@ -31,7 +31,7 @@ public sealed class CurseForgePackServiceTests
             InstallSourceType.Fabric, "0.15.11", "overrides",
             [new(10, 100, true), new(20, 200, required)]);
         var plan = await new CurseForgeGeneratedPackPlanService(api).ResolveAsync(manifest);
-        var dependency = Assert.Single(plan.RequiredFiles.Where(file => file.ProjectId == "20"));
+        var dependency = Assert.Single(plan.RequiredFiles, file => file.ProjectId == "20");
         Assert.Equal("200", dependency.FileId);
         Assert.Contains(dependency.RequiredBy, evidence => evidence.Relation == CurseForgeGeneratedFileRelation.RequiredDependency);
         Assert.Equal(required, dependency.RequiredBy.Any(evidence => evidence.Relation == CurseForgeGeneratedFileRelation.ManifestRequired));
