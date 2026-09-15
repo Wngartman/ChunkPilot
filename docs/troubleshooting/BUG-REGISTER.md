@@ -6,6 +6,21 @@ become the durable record and the entry can leave this active register.
 
 ---
 
+## CP-2026-078 — A missing demo preflight response corrupted fixture release labels
+
+**Fixture-only reproduction fixed; production response handling hardened.** The shared CurseForge
+demo bridge returned generic acknowledgement data for `modpacks.preflight`; it lacked the real native
+release shape. This replaced release labels with undefined values and disabled creation. The fixture
+now returns its exact synthetic release. Malformed or mismatched native responses are explicitly
+rejected without replacing the user's selection or granting creation authority. Native production
+already returned the full validated release; no production occurrence was established.
+
+## CP-2026-077 — Startup performance panel falsely said the server was stopped
+
+**Medium; packaged reproduction fixed with lifecycle-state regressions.** The performance card
+treated every non-Running state as Stopped while the header correctly reported Starting. Each native
+lifecycle state now has accurate status and empty-sample wording; no metrics or readiness are invented.
+
 ## CP-2026-076 — Implicit developer bootstrap could override personal CurseForge setup
 
 **High; corrected in the 1.0 candidate.** Startup previously probed a hardcoded developer credential

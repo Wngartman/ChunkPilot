@@ -1,6 +1,6 @@
 # Current ChunkPilot Gate
 
-## 1.0 release candidate — September 14, 2026
+## 1.0 release gate — September 14, 2026
 
 Branch: `codex/release-readiness-2026-09-14`. Product version **1.0.0**; Windows numeric version
 **1.3.1** preserves upgrade order from previously distributed 1.3.0-alpha installers. Database schema
@@ -53,6 +53,15 @@ publication status. A failed gate prevents that workflow from publishing.
 Logs/TRX live under ignored `logs/`. Package manifests bind artifacts to committed inputs; an older
 `dev-current` does not certify newer source. No normal database or personal server was a test fixture.
 
+The complete native gate at `0c651ea01a598066c9cb4de609e9bfeb57f5ee90` passed **1,850 unit tests**
+and **469 integration tests**, with zero failures, one explicit file-symbolic-link privilege skip,
+and zero compiler warnings/errors. Packaged Agent smoke passed **15/15**. Twelve exact-package
+desktop fixtures were captured and reviewed. That review exposed transitional performance wording
+and a missing fixture-only CurseForge preflight response. Publication was deliberately cancelled
+before any tag/assets were created; the UI-only corrections and malformed-response regression passed
+**261/261 frontend tests**, typecheck, lint and build. Native implementation files were unchanged.
+The final exact commit still must pass the immutable release workflow; its results are authoritative.
+
 ## Live provider evidence
 
 The new native credential service passed a live official API validation in disposable protected
@@ -75,6 +84,13 @@ Earlier ATM10 acceptance is separate: **925200 / 8764211 / 8764245**, Minecraft 
 NeoForge 21.1.249. Installation, promotion, second launch, local status and clean stop passed at
 `5a82ac82a392bdd33f61e85256b44d446d13afdd`; a subsequent owner join was reported. The retained world
 was not adopted, launched or modified here. That earlier run does not independently certify this freeze.
+
+A fresh small official pack **1172292 / 6110282 / 6110285** passed on exact package `0c651ea`:
+download/install, real Java readiness, Minecraft status, explicit save, normal stop and every exact
+process/listener cleanup check. Total time was about 50 seconds; no forced termination was needed.
+Its new disposable world is retained separately from older acceptance worlds. The cumulative phase
+ledger increased to **490,068,440 bytes**, with no uncertain reservations. This proves the packaged
+native workflow, not a GUI-driven creation or public network connection.
 
 ## Remaining boundaries
 
