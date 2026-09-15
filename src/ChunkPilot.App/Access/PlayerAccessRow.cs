@@ -32,13 +32,14 @@ public sealed partial class PlayerAccessRow : ObservableObject
         bool whitelistEnabled,
         bool serverRunning,
         Func<PlayerModerationAction, PlayerAccessRow, Task<bool>> moderate,
-        Action<string> copy)
+        Action<string> copy,
+        bool canManageWhileStopped = false)
     {
         ArgumentNullException.ThrowIfNull(player);
         this.moderate = moderate;
         this.copy = copy;
         Name = player.Name;
-        Adopt(player, whitelistEnabled, serverRunning);
+        Adopt(player, whitelistEnabled, serverRunning, canManageWhileStopped);
     }
 
     /// <summary>The player's exact name, as the server records it.</summary>
@@ -129,21 +130,24 @@ public sealed partial class PlayerAccessRow : ObservableObject
     private bool serverRunning;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsInteractive))]
+    private bool canManageWhileStopped;
+
+    [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(StatusText))]
     private bool whitelistEnabled;
 
     public bool HasError => ErrorMessage.Length > 0;
 
     /// <summary>
-    /// Controls are live only while the server can answer and no change is in flight.
+    /// Live commands or exact-identity stopped edits are available when no change is in flight.
     /// </summary>
     /// <remarks>
-    /// Every one of these actions is a console command, so a stopped server cannot perform any of them.
-    /// A switch that looks operable while the server is stopped is a promise ChunkPilot cannot keep.
+    /// A stopped edit needs a server-recorded UUID. The Agent revalidates that identity before writing.
     /// </remarks>
-    public bool IsInteractive => ServerRunning && !IsPending;
+    public bool IsInteractive => (ServerRunning || CanManageWhileStopped && HasUuid) && !IsPending;
 
-    public bool CanKick => IsInteractive && Online;
+    public bool CanKick => IsInteractive && ServerRunning && Online;
 
     public bool CanBan => IsInteractive && !Banned;
 
@@ -262,7 +266,7 @@ public sealed partial class PlayerAccessRow : ObservableObject
     private void DismissError() => ErrorMessage = "";
 
     /// <summary>Takes authoritative state from the Agent without triggering any command.</summary>
-    public void Adopt(UnifiedPlayerAccess player, bool whitelistIsEnabled, bool isRunning)
+    public void Adopt(UnifiedPlayerAccess player, bool whitelistIsEnabled, bool isRunning, bool canManageStopped = false)
     {
         ArgumentNullException.ThrowIfNull(player);
         suppressCommands = true;
@@ -278,6 +282,7 @@ public sealed partial class PlayerAccessRow : ObservableObject
             LastSeenAt = player.LastSeenAt;
             WhitelistEnabled = whitelistIsEnabled;
             ServerRunning = isRunning;
+            CanManageWhileStopped = canManageStopped;
             SetProperty(ref whitelisted, player.Whitelisted, nameof(Whitelisted));
             SetProperty(ref @operator, player.Operator, nameof(Operator));
             IsPending = false;

@@ -14,7 +14,8 @@ public sealed class LifecycleStateMachine
             [ServerState.BackingUp] = [ServerState.Running, ServerState.Stopped, ServerState.Crashed],
             [ServerState.Restoring] = [ServerState.Stopped, ServerState.Crashed],
             [ServerState.Crashed] = [ServerState.Starting, ServerState.Stopped, ServerState.BackingUp, ServerState.Restoring],
-            [ServerState.Unresponsive] = [ServerState.Stopping, ServerState.Stopped, ServerState.Crashed],
+            // A still-owned startup attempt can report readiness after its initial deadline.
+            [ServerState.Unresponsive] = [ServerState.Running, ServerState.Stopping, ServerState.Stopped, ServerState.Crashed],
             [ServerState.Unknown] = [ServerState.Stopped, ServerState.Running, ServerState.Crashed]
         };
 

@@ -830,6 +830,160 @@ public sealed class ManagedServerIntegrationTests : IAsyncLifetime
         Assert.True((await server.StopAsync()).Success);
     }
 
+    [Fact(Timeout = 30_000)]
+    public async Task Stopped_access_write_finishes_before_a_concurrent_start()
+    {
+        var definition = Definition("normal") with { Ecosystem = ServerEcosystem.NeoForge, MinecraftVersion = "1.21.1" };
+        var playerId = Guid.NewGuid();
+        await File.WriteAllTextAsync(Path.Combine(definition.RootPath, "usercache.json"),
+            System.Text.Json.JsonSerializer.Serialize(new[]
+            {
+                new { uuid = playerId, name = "FixturePlayer", expiresOn = "2099-01-01 00:00:00 +0000" }
+            }));
+        var locks = new CanonicalPathLockManager();
+        var files = new SafeFileService(paths, locks);
+        await using var server = new ManagedServer(definition, new ProcessStatisticsProvider(), new MinecraftStatusClient(),
+            store, paths, loggerFactory.CreateLogger<ManagedServer>());
+        await using var heldFile = await locks.AcquireAsync(Path.Combine(definition.RootPath, "whitelist.json"));
+        var moderation = server.ModeratePlayerAsync(PlayerModerationAction.AddToWhitelist, "FixturePlayer", offlineFiles: files);
+        var start = server.StartAsync();
+        await Task.Delay(100);
+        Assert.False(moderation.IsCompleted);
+        Assert.False(start.IsCompleted);
+        Assert.Null(server.RootProcessId);
+        await heldFile.DisposeAsync();
+        var written = await moderation;
+        Assert.True(written.Success, written.Message);
+        Assert.True((await start).Success);
+        var whitelist = await new WhitelistService(files).ReadAsync(definition);
+        Assert.Equal(playerId, Assert.Single(whitelist).Uuid);
+        Assert.True((await server.StopAsync()).Success);
+    }
+
+    [Fact(Timeout = 15_000)]
+    public async Task Stopped_access_refuses_a_foreign_loopback_listener()
+    {
+        var definition = Definition("normal") with { Ecosystem = ServerEcosystem.NeoForge, MinecraftVersion = "1.21.1" };
+        await using var server = new ManagedServer(definition, new ProcessStatisticsProvider(), new MinecraftStatusClient(),
+            store, paths, loggerFactory.CreateLogger<ManagedServer>());
+        using var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, definition.Port);
+        listener.Start();
+        var result = await server.ModeratePlayerAsync(PlayerModerationAction.AddToWhitelist, "FixturePlayer",
+            offlineFiles: new SafeFileService(paths));
+        Assert.False(result.Success);
+        Assert.Contains("port is still in use", result.Message);
+        Assert.False(File.Exists(Path.Combine(definition.RootPath, "whitelist.json")));
+        listener.Stop();
+    }
+
+    [Fact(Timeout = 30_000)]
+    public async Task Startup_progress_survives_snapshots_and_restart_uses_a_new_attempt()
+    {
+        await using var server = CreateManaged("normal");
+        Assert.Null(server.Snapshot(0).StartupProgress);
+        Assert.True((await server.StartAsync()).Success);
+        var first = Assert.IsType<ServerStartupProgress>(server.Snapshot(0).StartupProgress);
+        Assert.Equal(ServerStartupStage.Ready, first.Stage);
+        Assert.False(first.IsActive);
+        Assert.Equal(server.Definition.Id, first.ServerId);
+        Assert.Equal(server.RootProcessId, first.ProcessId);
+        Assert.Equal(first, server.Snapshot(0).StartupProgress);
+        Assert.True((await server.RestartAsync()).Success);
+        var second = Assert.IsType<ServerStartupProgress>(server.Snapshot(0).StartupProgress);
+        Assert.NotEqual(first.AttemptId, second.AttemptId);
+        Assert.Equal(ServerStartupStage.Ready, second.Stage);
+        Assert.True((await server.StopAsync()).Success);
+    }
+
+    [Fact(Timeout = 20_000)]
+    public async Task Cancelled_start_progress_never_claims_readiness()
+    {
+        await using var server = CreateManaged("no-readiness");
+        using var cancellation = new CancellationTokenSource();
+        var start = server.StartAsync(cancellationToken: cancellation.Token);
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
+        while (server.RootProcessId is null && DateTimeOffset.UtcNow < deadline)
+            await Task.Delay(25);
+        Assert.NotNull(server.RootProcessId);
+        var waiting = Assert.IsType<ServerStartupProgress>(server.Snapshot(0).StartupProgress);
+        Assert.True(waiting.IsActive);
+        Assert.NotEqual(ServerStartupStage.Ready, waiting.Stage);
+        cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => start);
+        Assert.Equal(ServerStartupStage.Cancelled, server.Snapshot(0).StartupProgress?.Stage);
+        Assert.False(server.Snapshot(0).LastStartReachedReadiness);
+        Assert.True((await server.StopAsync(saveFirst: false)).Success);
+    }
+
+    [Fact(Timeout = 30_000)]
+    public async Task Cancelled_restartable_mutation_does_not_launch_a_new_process()
+    {
+        await using var server = CreateManaged("normal");
+        Assert.True((await server.StartAsync()).Success);
+        using var cancellation = new CancellationTokenSource();
+        var rollbackCount = 0;
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => server.RunExclusiveRestartableDataOperationAsync(
+            "testing cancelled fixture change", true,
+            _ => { cancellation.Cancel(); return Task.FromResult("fixture change"); },
+            (_, _) => { rollbackCount++; return Task.CompletedTask; }, cancellation.Token));
+        Assert.Equal(1, rollbackCount);
+        Assert.Equal(ServerState.Stopped, server.State);
+        Assert.Null(server.RootProcessId);
+        Assert.Single(server.Snapshot(1_000).Console, line => line.Text.Contains("Starting fake Minecraft server", StringComparison.Ordinal));
+    }
+
+    [Fact(Timeout = 25_000)]
+    public async Task Slow_server_readiness_after_initial_deadline_updates_the_same_attempt()
+    {
+        var definition = Definition("delayed-readiness") with { StartupTimeoutSeconds = 5 };
+        await using var server = new ManagedServer(definition, new ProcessStatisticsProvider(), new MinecraftStatusClient(),
+            store, paths, loggerFactory.CreateLogger<ManagedServer>());
+        Assert.False((await server.StartAsync()).Success);
+        Assert.Equal(ServerState.Unresponsive, server.State);
+        var attempt = server.Snapshot(0).StartupProgress!.AttemptId;
+        await WaitForStateAsync(server, ServerState.Running);
+        Assert.True(server.Snapshot(0).LastStartReachedReadiness);
+        Assert.Equal(attempt, server.Snapshot(0).StartupProgress!.AttemptId);
+        Assert.Equal(ServerStartupStage.Ready, server.Snapshot(0).StartupProgress!.Stage);
+        Assert.Empty(server.Snapshot(0).LastError);
+        Assert.True((await server.StopAsync()).Success);
+    }
+
+    [Fact(Timeout = 25_000)]
+    public async Task Manual_stop_before_late_readiness_never_promotes_or_restarts()
+    {
+        var definition = Definition("delayed-readiness") with { StartupTimeoutSeconds = 5 };
+        await using var server = new ManagedServer(definition, new ProcessStatisticsProvider(), new MinecraftStatusClient(),
+            store, paths, loggerFactory.CreateLogger<ManagedServer>());
+        Assert.False((await server.StartAsync()).Success);
+        Assert.True((await server.StopAsync(saveFirst: false)).Success);
+        await Task.Delay(100);
+        Assert.Equal(ServerState.Stopped, server.State);
+        Assert.False(server.Snapshot(0).LastStartReachedReadiness);
+        Assert.NotEqual(ServerStartupStage.Ready, server.Snapshot(0).StartupProgress!.Stage);
+        Assert.Single(server.Snapshot(1_000).Console, line => line.Text.Contains("Starting fake Minecraft server", StringComparison.Ordinal));
+    }
+
+    [Theory(Timeout = 25_000)]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Exited_root_does_not_make_stop_or_force_claim_a_held_port_is_clean(bool force)
+    {
+        await using var server = CreateManaged("immediate-crash");
+        Assert.False((await server.StartAsync()).Success);
+        using var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, server.Definition.Port);
+        listener.Start();
+        try
+        {
+            var stopped = force ? await server.ForceTerminateAsync() : await server.StopAsync(saveFirst: false);
+            Assert.False(stopped.Success);
+            Assert.Contains("cleanup", stopped.Message);
+            Assert.True(IsPortListening(server.Definition.Port));
+        }
+        finally { listener.Stop(); }
+        Assert.True((await server.StopAsync(saveFirst: false)).Success);
+    }
+
     private ManagedServer CreateManaged(string mode, int saveTimeoutSeconds = 5, int shutdownTimeoutSeconds = 5)
     {
         var definition = Definition(mode) with

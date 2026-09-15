@@ -60,7 +60,8 @@ public sealed record IconInstallRequest(
     double CropX = 0,
     double CropY = 0,
     double CropSize = 1,
-    bool SaveToLibrary = true);
+    bool SaveToLibrary = true,
+    string? ExpectedIconSha256 = null);
 public sealed record ServerIconLibraryEntry(string Path, string Name, DateTimeOffset CreatedAt);
 public sealed record WhitelistPlayerRequest(Guid ServerId, string PlayerName);
 public sealed record InstallVersionsRequest(InstallSourceType SourceType, bool IncludeSnapshots = false);

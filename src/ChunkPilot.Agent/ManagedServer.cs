@@ -409,10 +409,12 @@ public sealed partial class ManagedServer : IAsyncDisposable
         using var trackedOperation = TrackOperation(cancellationToken);
         cancellationToken = trackedOperation.Token;
         var timer = Stopwatch.StartNew();
+        Guid? progressAttempt = null;
         try
         {
             if (State != ServerState.Running)
                 return OperationResult.Fail($"Cannot restart while the server is {State}.");
+            progressAttempt = BeginStartupProgress(ServerStartupStage.RestartSaving);
             lastIntent = source.Equals("Scheduled", StringComparison.OrdinalIgnoreCase)
                 ? LifecycleIntentKind.ScheduledRestart
                 : LifecycleIntentKind.SafeRestart;
@@ -421,23 +423,36 @@ public sealed partial class ManagedServer : IAsyncDisposable
             var save = await SaveCoreAsync(transitionState: false, cancellationToken).ConfigureAwait(false);
             if (!save.Success)
             {
+                UpdateStartupProgress(progressAttempt.Value, ServerStartupStage.Failed, save.Message);
                 lifecycle.TransitionTo(ServerState.Running);
                 await RecordAsync("Safe restart", save, timer, source, cancellationToken).ConfigureAwait(false);
                 return save;
             }
+            UpdateStartupProgress(progressAttempt.Value, ServerStartupStage.RestartStopping,
+                "Save was confirmed. Waiting for the owned server to stop.");
             var stop = await StopCoreAsync(saveFirst: false, cancellationToken).ConfigureAwait(false);
             if (!stop.Success)
             {
+                UpdateStartupProgress(progressAttempt.Value, ServerStartupStage.Failed, stop.Message);
                 await RecordAsync("Safe restart", stop, timer, source, cancellationToken).ConfigureAwait(false);
                 return stop;
             }
+            UpdateStartupProgress(progressAttempt.Value, ServerStartupStage.RestartDelay,
+                "The previous process stopped. The configured restart delay is being observed.");
             await Task.Delay(TimeSpan.FromSeconds(Math.Max(0, Definition.RestartDelaySeconds)), cancellationToken).ConfigureAwait(false);
-            var start = await StartCoreAsync(cancellationToken).ConfigureAwait(false);
+            var start = await StartCoreAsync(cancellationToken, progressAttempt).ConfigureAwait(false);
             var result = start.Success
                 ? OperationResult.Ok("Server saved, stopped, and restarted successfully.")
                 : start;
             await RecordAsync("Safe restart", result, timer, source, cancellationToken).ConfigureAwait(false);
             return result;
+        }
+        catch (OperationCanceledException)
+        {
+            if (progressAttempt is { } attempt)
+                UpdateStartupProgress(attempt, ServerStartupStage.Cancelled,
+                    "Restart was cancelled. Current lifecycle and process state remain authoritative.");
+            throw;
         }
         finally
         {
@@ -485,13 +500,13 @@ public sealed partial class ManagedServer : IAsyncDisposable
             current = process;
         if (current is null || current.HasExited)
         {
-            SafeTransition(ServerState.Stopped);
-            return OperationResult.Ok("Server process is already stopped.");
+            return await StopCoreAsync(saveFirst: false, cancellationToken).ConfigureAwait(false);
         }
         intentionalStop = true;
         ProcessTree.Kill(current.Id);
         await current.WaitForExitAsync(cancellationToken)
             .WaitAsync(TimeSpan.FromSeconds(15), cancellationToken).ConfigureAwait(false);
+        await WaitForProcessTreeExitAsync(current.Id, cancellationToken).ConfigureAwait(false);
         if (!await WaitForPortReleaseAsync(Definition.Port, cancellationToken).ConfigureAwait(false))
         {
             SafeTransition(ServerState.Unresponsive);
@@ -568,7 +583,7 @@ public sealed partial class ManagedServer : IAsyncDisposable
     public void MarkPlayerAccessChanged() => Interlocked.Increment(ref playerAccessRevision);
 
     /// <summary>
-    /// Sends one moderation command and waits for the server's own answer.
+    /// Sends one live moderation command, or safely writes known-player access while proven stopped.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -585,6 +600,7 @@ public sealed partial class ManagedServer : IAsyncDisposable
         PlayerModerationAction action,
         string playerName,
         string reason = "",
+        SafeFileService? offlineFiles = null,
         CancellationToken cancellationToken = default)
     {
         var name = PlayerModerationPolicy.ValidatePlayerName(playerName);
@@ -595,6 +611,15 @@ public sealed partial class ManagedServer : IAsyncDisposable
         var timer = Stopwatch.StartNew();
         try
         {
+            if (State == ServerState.Stopped && offlineFiles is not null)
+            {
+                var offline = await ModerateStoppedPlayerCoreAsync(action, name, reason, offlineFiles, cancellationToken)
+                    .ConfigureAwait(false);
+                if (offline.Success)
+                    MarkPlayerAccessChanged();
+                await RecordAsync($"Player {action}", offline, timer, "Stopped access", cancellationToken).ConfigureAwait(false);
+                return offline;
+            }
             if (State != ServerState.Running)
                 return OperationResult.Fail(
                     $"{PlayerModerationPolicy.Describe(action)} needs a running server. This server is {State}.");
@@ -783,6 +808,10 @@ public sealed partial class ManagedServer : IAsyncDisposable
         {
             if (requireStopped && State != ServerState.Stopped)
                 throw new InvalidOperationException($"Stop the server before {operationName}.");
+            if (requireStopped && (HasDetachedProcess || HasExactOwnedProcessAlive()))
+                throw new InvalidOperationException($"The server process must be proven stopped before {operationName}.");
+            if (saveIfRunning && State != ServerState.Running && HasExactOwnedProcessAlive())
+                throw new InvalidOperationException($"The server cannot confirm a save in state {State}; {operationName} was not started.");
             if (saveIfRunning && State == ServerState.Running)
             {
                 if (freezeWorldSaving)
@@ -865,6 +894,10 @@ public sealed partial class ManagedServer : IAsyncDisposable
         {
             if (State is not ServerState.Running and not ServerState.Stopped)
                 throw new InvalidOperationException($"Cannot {operationName} while the server is {State}.");
+            if (HasDetachedProcess || (!wasRunning && HasExactOwnedProcessAlive()))
+                throw new InvalidOperationException($"Resolve the server's process ownership before {operationName}.");
+            if (!wasRunning && await store.GetProcessIdentityAsync(Definition.Id, cancellationToken).ConfigureAwait(false) is not null)
+                throw new InvalidOperationException($"Resolve the recorded process identity before {operationName}.");
             if (wasRunning && !restartIfRunning)
                 throw new InvalidOperationException(
                     $"Stop the server before {operationName}, or explicitly choose Apply and restart now.");
@@ -887,6 +920,8 @@ public sealed partial class ManagedServer : IAsyncDisposable
                         $"{operationName} was cancelled because the server did not stop: {stop.Message}");
             }
 
+            if (HasDetachedProcess || HasExactOwnedProcessAlive() || IsTcpPortListening(Definition.Port))
+                throw new InvalidOperationException($"The server process and listening port must be stopped before {operationName}.");
             T result;
             try
             {
@@ -894,15 +929,26 @@ public sealed partial class ManagedServer : IAsyncDisposable
             }
             catch
             {
-                if (wasRunning && State == ServerState.Stopped)
-                    _ = await StartCoreAsync(CancellationToken.None).ConfigureAwait(false);
+                if (wasRunning && State == ServerState.Stopped && !cancellationToken.IsCancellationRequested)
+                    _ = await StartCoreAsync(cancellationToken).ConfigureAwait(false);
                 throw;
             }
 
             if (!wasRunning)
                 return result;
 
-            var start = await StartCoreAsync(CancellationToken.None).ConfigureAwait(false);
+            OperationResult start;
+            try
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                start = await StartCoreAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                await TerminateCurrentProcessTreeAsync(CancellationToken.None).ConfigureAwait(false);
+                await rollback(result, CancellationToken.None).ConfigureAwait(false);
+                throw;
+            }
             if (start.Success)
                 return result;
 
@@ -916,14 +962,16 @@ public sealed partial class ManagedServer : IAsyncDisposable
             {
                 throw new InvalidOperationException(
                     $"The server did not restart after {operationName}, and automatic rollback also failed. " +
-                    $"The changed JAR and recovery evidence were preserved. Startup: {start.Message} " +
+                    $"The changed files and recovery evidence were preserved. Startup: {start.Message} " +
                     $"Rollback: {rollbackFailure.Message}", rollbackFailure);
             }
 
-            var restoredStart = await StartCoreAsync(CancellationToken.None).ConfigureAwait(false);
+            // A manual Stop or application close arriving during recovery must never launch again.
+            cancellationToken.ThrowIfCancellationRequested();
+            var restoredStart = await StartCoreAsync(cancellationToken).ConfigureAwait(false);
             throw new InvalidOperationException(restoredStart.Success
-                ? $"The changed plugin prevented a healthy restart after {operationName}. ChunkPilot restored the previous JAR and restarted the server."
-                : $"The changed plugin prevented a healthy restart after {operationName}. ChunkPilot restored the previous JAR, " +
+                ? $"The changed files prevented a healthy restart after {operationName}. ChunkPilot restored the previous files and restarted the server."
+                : $"The changed files prevented a healthy restart after {operationName}. ChunkPilot restored the previous files, " +
                   $"but the server still did not start: {restoredStart.Message}");
         }
         finally
@@ -1188,6 +1236,7 @@ public sealed partial class ManagedServer : IAsyncDisposable
             LastError = lastError,
             LastStartReachedReadiness = lastStartReachedReadiness,
             ConnectionEvidence = connectionEvidence,
+            StartupProgress = StartupProgressSnapshot(),
             LastSaveAt = lastSaveAt,
             LastBackupAt = lastBackupAt,
             ConsoleConnected = currentProcess is { HasExited: false } && currentProcess.StartInfo.RedirectStandardInput,
@@ -1203,8 +1252,33 @@ public sealed partial class ManagedServer : IAsyncDisposable
         };
     }
 
-    private async Task<OperationResult> StartCoreAsync(CancellationToken cancellationToken)
+    private async Task<OperationResult> StartCoreAsync(CancellationToken cancellationToken, Guid? progressAttempt = null)
     {
+        var attempt = progressAttempt ?? BeginStartupProgress(ServerStartupStage.Preflight);
+        UpdateStartupProgress(attempt, ServerStartupStage.Preflight, "Checking the configured executable and working folder.");
+        try
+        {
+            var result = await StartProcessCoreAsync(attempt, cancellationToken).ConfigureAwait(false);
+            UpdateStartupProgress(attempt, result.Success ? ServerStartupStage.Ready : ServerStartupStage.Failed,
+                result.Success ? "The configured readiness marker was observed. This is not proof of Internet reachability." : result.Message);
+            return result;
+        }
+        catch (OperationCanceledException)
+        {
+            UpdateStartupProgress(attempt, ServerStartupStage.Cancelled,
+                "The startup wait was cancelled. Current lifecycle and process state remain authoritative.");
+            throw;
+        }
+        catch (Exception exception)
+        {
+            UpdateStartupProgress(attempt, ServerStartupStage.Failed, SecretRedactor.Redact(exception.Message));
+            throw;
+        }
+    }
+
+    private async Task<OperationResult> StartProcessCoreAsync(Guid progressAttempt, CancellationToken cancellationToken)
+    {
+        var attemptLifecycleGeneration = Volatile.Read(ref lifecycleGeneration);
         if (pendingDefinition is { } pending)
         {
             Definition = pending;
@@ -1282,6 +1356,8 @@ public sealed partial class ManagedServer : IAsyncDisposable
 
         lock (processGate)
             process = newProcess;
+        UpdateStartupProgress(progressAttempt, ServerStartupStage.ProcessStarted,
+            "Windows started the configured process. It has not reported readiness yet.", newProcess.Id);
         lock (samples)
             samples.Clear();
         statistics.BeginProcessAttempt(newProcess.Id);
@@ -1308,6 +1384,8 @@ public sealed partial class ManagedServer : IAsyncDisposable
             logger.LogWarning(exception, "Could not persist process identity for {Server}", Definition.Name);
         }
         console.Add("ChunkPilot", $"Started process {newProcess.Id}: {Definition.Executable} {SecretRedactor.Redact(startInfo.Arguments)}");
+        UpdateStartupProgress(progressAttempt, ServerStartupStage.WaitingForReadiness,
+            "The process is running; waiting for its configured readiness marker. Large packs can take several minutes.");
         stdoutTask = PumpAsync(newProcess.StandardOutput, "stdout", attemptReadiness, lifetime.Token);
         stderrTask = PumpAsync(newProcess.StandardError, "stderr", attemptReadiness, lifetime.Token);
         monitorTask = MonitorAsync(newProcess, attemptReadiness, stdoutTask, stderrTask, lifetime.Token);
@@ -1336,6 +1414,7 @@ public sealed partial class ManagedServer : IAsyncDisposable
             }
             SafeTransition(ServerState.Unresponsive);
             RecordStartupFailure("Startup timeout expired before a configured readiness message was observed.", 200);
+            _ = ObserveLateReadinessAsync(newProcess, attemptReadiness, progressAttempt, attemptLifecycleGeneration);
             return OperationResult.Fail(LastStartupFailure());
         }
         catch (InvalidOperationException exception)
@@ -1430,6 +1509,18 @@ public sealed partial class ManagedServer : IAsyncDisposable
             current = process;
         if (current is null || current.HasExited)
         {
+            try
+            {
+                if (current is not null)
+                    await WaitForProcessTreeExitAsync(current.Id, cancellationToken).ConfigureAwait(false);
+                if (!await WaitForPortReleaseAsync(Definition.Port, cancellationToken).ConfigureAwait(false))
+                    throw new TimeoutException("The configured port remains occupied.");
+            }
+            catch (Exception exception) when (exception is TimeoutException or OperationCanceledException)
+            {
+                SafeTransition(ServerState.Unresponsive);
+                return OperationResult.Fail("The root process exited, but child-process and port cleanup are not confirmed. Retry Stop after resolving the remaining listener.");
+            }
             SafeTransition(ServerState.Stopped);
             return OperationResult.Ok("Server is stopped.");
         }
@@ -1474,9 +1565,9 @@ public sealed partial class ManagedServer : IAsyncDisposable
         {
             if (current.HasExited)
             {
-                SafeTransition(ServerState.Stopped);
-                return OperationResult.Ok(
-                    "The stop operation was interrupted after the server process had already exited.");
+                SafeTransition(ServerState.Unresponsive);
+                return OperationResult.Fail(
+                    "The root process exited, but stop was interrupted before child-process and port cleanup were verified. Retry Stop to complete verification.");
             }
             SafeTransition(ServerState.Unresponsive);
             return OperationResult.Fail(
@@ -1511,21 +1602,26 @@ public sealed partial class ManagedServer : IAsyncDisposable
         Process? current;
         lock (processGate)
             current = process;
-        if (current is null || current.HasExited)
-        {
-            SafeTransition(ServerState.Stopped);
-            return;
-        }
-        intentionalStop = true;
-        ProcessTree.Kill(current.Id);
         try
         {
-            await current.WaitForExitAsync(cancellationToken)
-                .WaitAsync(TimeSpan.FromSeconds(15), cancellationToken).ConfigureAwait(false);
+            if (HasDetachedProcess)
+                throw new InvalidOperationException("Detached process ownership must be resolved before rollback.");
+            intentionalStop = true;
+            if (current is { HasExited: false })
+            {
+                ProcessTree.Kill(current.Id);
+                await current.WaitForExitAsync(cancellationToken)
+                    .WaitAsync(TimeSpan.FromSeconds(15), cancellationToken).ConfigureAwait(false);
+            }
+            if (current is not null)
+                await WaitForProcessTreeExitAsync(current.Id, cancellationToken).ConfigureAwait(false);
+            if (!await WaitForPortReleaseAsync(Definition.Port, cancellationToken).ConfigureAwait(false))
+                throw new InvalidOperationException("The failed server's port is still held. Files were not rolled back while a listener may be active.");
         }
-        catch (TimeoutException)
+        catch (Exception exception) when (exception is TimeoutException or InvalidOperationException)
         {
-            throw new InvalidOperationException("The failed update process tree could not be terminated for rollback.");
+            SafeTransition(ServerState.Unresponsive);
+            throw new InvalidOperationException("The failed server process tree and port could not be proven stopped for rollback.", exception);
         }
         SafeTransition(ServerState.Stopped);
     }
@@ -1543,6 +1639,7 @@ public sealed partial class ManagedServer : IAsyncDisposable
                 var line = await reader.ReadLineAsync(cancellationToken).ConfigureAwait(false);
                 if (line is null)
                     break;
+                ObserveStartupOutput(attemptReadiness, line);
                 console.Add(streamName, line);
                 await AppendRollingLogAsync(streamName, line, cancellationToken).ConfigureAwait(false);
                 if (Regex.IsMatch(line, Definition.ReadinessPattern, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
@@ -1869,9 +1966,9 @@ public sealed partial class ManagedServer : IAsyncDisposable
         }
         catch (NetworkInformationException)
         {
-            // If Windows cannot provide its listener table, do not turn a clean process exit into a
-            // false failure. The process-tree check above remains authoritative in that rare case.
-            return false;
+            // Missing endpoint evidence is not proof of port release. Preserve the bounded failure
+            // and owned process record instead of declaring cleanup successful.
+            return true;
         }
     }
 

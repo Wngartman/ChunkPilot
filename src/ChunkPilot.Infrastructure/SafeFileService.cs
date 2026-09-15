@@ -91,11 +91,16 @@ public sealed class SafeFileService
         => _ = await WriteTextAtomicWithReceiptAsync(root, content, createRecoveryCopy, cancellationToken)
             .ConfigureAwait(false);
 
-    public async Task<TextWriteReceipt> WriteTextAtomicWithReceiptAsync(
+    public Task<TextWriteReceipt> WriteTextAtomicWithReceiptAsync(
         string root,
         TextFileContent content,
         bool createRecoveryCopy = true,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        WriteTextAtomicCoreAsync(root, content, createRecoveryCopy, requireUnchanged: false, cancellationToken);
+
+    private async Task<TextWriteReceipt> WriteTextAtomicCoreAsync(
+        string root, TextFileContent content, bool createRecoveryCopy, bool requireUnchanged,
+        CancellationToken cancellationToken)
     {
         var target = ResolveWithinRoot(root, content.RelativePath, mustExist: false);
         await using var pathLock = await pathLocks.AcquireAsync(target, cancellationToken).ConfigureAwait(false);
@@ -103,14 +108,11 @@ public sealed class SafeFileService
         if (!TextExtensions.Contains(Path.GetExtension(target)))
             throw new IOException("This file type is not enabled for integrated text editing.");
 
+        if (requireUnchanged)
+            await VerifyUnchangedAsync(target, content.LoadedSha256, cancellationToken).ConfigureAwait(false);
+
         if (File.Exists(target) && !string.IsNullOrWhiteSpace(content.LoadedSha256))
-        {
-            var current = await File.ReadAllBytesAsync(target, cancellationToken).ConfigureAwait(false);
-            var currentHash = Convert.ToHexString(SHA256.HashData(current));
-            if (!currentHash.Equals(content.LoadedSha256, StringComparison.OrdinalIgnoreCase))
-                throw new IOException(
-                    "The file changed outside ChunkPilot after it was opened. Reload it before saving.");
-        }
+            await VerifyUnchangedAsync(target, content.LoadedSha256, cancellationToken).ConfigureAwait(false);
 
         var targetExisted = File.Exists(target);
         string? recoveryPath = null;
@@ -136,6 +138,10 @@ public sealed class SafeFileService
                 await stream.WriteAsync(bytes, cancellationToken).ConfigureAwait(false);
                 await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
             }
+            // A safe path at read time is not authority for a subsequently replaced directory.
+            _ = ResolveWithinRoot(root, content.RelativePath, mustExist: false);
+            if (requireUnchanged)
+                await VerifyUnchangedAsync(target, content.LoadedSha256, cancellationToken).ConfigureAwait(false);
             if (File.Exists(target))
                 File.Replace(temporary, target, null, ignoreMetadataErrors: true);
             else
@@ -147,6 +153,28 @@ public sealed class SafeFileService
                 File.Delete(temporary);
         }
         return new TextWriteReceipt(content.RelativePath, recoveryPath, targetExisted);
+    }
+
+    /// <summary>Empty LoadedSha256 means the target must still be absent; otherwise it must match.</summary>
+    public Task<TextWriteReceipt> WriteTextAtomicIfUnchangedAsync(
+        string root, TextFileContent content, CancellationToken cancellationToken = default) =>
+        WriteTextAtomicCoreAsync(root, content, createRecoveryCopy: true, requireUnchanged: true, cancellationToken);
+
+    private static async Task VerifyUnchangedAsync(
+        string target, string expectedSha256, CancellationToken cancellationToken)
+    {
+        var exists = File.Exists(target);
+        if (exists != !string.IsNullOrWhiteSpace(expectedSha256))
+            throw new IOException("The file was created or removed outside ChunkPilot. Reload it before saving.");
+        if (!exists)
+            return;
+        await using var stream = new FileStream(target, FileMode.Open, FileAccess.Read, FileShare.Read,
+            64 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
+        if (stream.Length > 10 * 1024 * 1024)
+            throw new IOException("The file grew beyond the supported text-editing limit. Reload it before saving.");
+        var actual = Convert.ToHexString(await SHA256.HashDataAsync(stream, cancellationToken).ConfigureAwait(false));
+        if (!actual.Equals(expectedSha256, StringComparison.OrdinalIgnoreCase))
+            throw new IOException("The file changed outside ChunkPilot after it was opened. Reload it before saving.");
     }
 
     public async Task RollbackTextWriteAsync(

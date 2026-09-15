@@ -118,6 +118,15 @@ public sealed partial class MainViewModel
     private bool playerModerationAvailable;
 
     [ObservableProperty]
+    private bool accessServerRunning;
+
+    [ObservableProperty]
+    private bool playerAccessWhileStoppedAvailable;
+
+    [ObservableProperty]
+    private string accessAvailabilityDetail = "";
+
+    [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasAccessError))]
     private string accessErrorMessage = "";
 
@@ -206,13 +215,17 @@ public sealed partial class MainViewModel
             WhitelistEnabled = snapshot.WhitelistEnabled;
             OnlinePlayerCount = snapshot.OnlineCount;
             PlayerSlotCount = snapshot.MaxPlayers;
-            PlayerModerationAvailable = snapshot.ServerRunning;
+            AccessServerRunning = snapshot.ServerRunning;
+            PlayerAccessWhileStoppedAvailable = snapshot.CanManageAccessWhileStopped;
+            AccessAvailabilityDetail = snapshot.AccessAvailabilityDetail;
+            PlayerModerationAvailable = snapshot.ServerRunning || snapshot.CanManageAccessWhileStopped;
             ApplyPlayerRows(snapshot);
         }
         catch (Exception exception) when (
             exception is IOException or TimeoutException or InvalidOperationException)
         {
-            AccessErrorMessage = exception.Message;
+            if (SelectedServer?.Definition.Id == serverId)
+                AccessErrorMessage = exception.Message;
         }
         finally
         {
@@ -232,12 +245,13 @@ public sealed partial class MainViewModel
             if (existing is null)
             {
                 var row = new PlayerAccessRow(
-                    player, snapshot.WhitelistEnabled, snapshot.ServerRunning, ModeratePlayerAsync, CopyPlayerText);
+                    player, snapshot.WhitelistEnabled, snapshot.ServerRunning, ModeratePlayerAsync, CopyPlayerText,
+                    snapshot.CanManageAccessWhileStopped);
                 row.PropertyChanged += PlayerRow_PropertyChanged;
                 PlayerRows.Insert(Math.Min(index, PlayerRows.Count), row);
                 continue;
             }
-            existing.Adopt(player, snapshot.WhitelistEnabled, snapshot.ServerRunning);
+            existing.Adopt(player, snapshot.WhitelistEnabled, snapshot.ServerRunning, snapshot.CanManageAccessWhileStopped);
             var current = PlayerRows.IndexOf(existing);
             if (current != index && index < PlayerRows.Count)
                 PlayerRows.Move(current, index);
@@ -268,6 +282,9 @@ public sealed partial class MainViewModel
         OnlinePlayerCount = 0;
         WhitelistEnabled = false;
         PlayerModerationAvailable = false;
+        AccessServerRunning = false;
+        PlayerAccessWhileStoppedAvailable = false;
+        AccessAvailabilityDetail = "";
         AccessErrorMessage = "";
         OnPropertyChanged(nameof(HasPlayerRows));
         OnPropertyChanged(nameof(HasOnlinePlayerRows));

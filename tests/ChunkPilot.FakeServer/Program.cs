@@ -224,6 +224,8 @@ if (mode == "high-volume")
     for (var index = 0; index < 10_000; index++)
         Console.WriteLine($"[Server thread/INFO]: generated line {index}");
 }
+if (mode == "delayed-readiness")
+    await Task.Delay(TimeSpan.FromSeconds(6));
 if (mode != "no-readiness")
     Console.WriteLine("[Server thread/INFO]: Done (0.123s)! For help, type \"help\"");
 

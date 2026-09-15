@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using ChunkPilot.Core;
 using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.Formats;
 using SixLabors.ImageSharp.Formats.Png;
 using SixLabors.ImageSharp.Processing;
 
@@ -12,31 +13,57 @@ namespace ChunkPilot.Infrastructure;
 public sealed class ServerIconService
 {
     private readonly AppDataPaths paths;
+    private readonly SafeFileService files;
+    private readonly CanonicalPathLockManager pathLocks;
 
-    public ServerIconService(AppDataPaths paths) => this.paths = paths;
+    public ServerIconService(AppDataPaths paths, CanonicalPathLockManager? pathLocks = null)
+    {
+        this.paths = paths;
+        this.pathLocks = pathLocks ?? new CanonicalPathLockManager();
+        files = new SafeFileService(paths, this.pathLocks);
+    }
 
-    public async Task<string> ConvertAndInstallAsync(
+    public Task<string> ConvertAndInstallAsync(
         ServerDefinition server,
         string sourcePath,
         double cropX = 0,
         double cropY = 0,
         double cropSize = 1,
         bool saveToLibrary = true,
+        CancellationToken cancellationToken = default) =>
+        ConvertAndInstallIfUnchangedAsync(server, sourcePath, expectedIconSha256: null,
+            cropX, cropY, cropSize, saveToLibrary, cancellationToken);
+
+    /// <summary>A null expectation is a legacy replacement; empty explicitly requires no prior icon.</summary>
+    public async Task<string> ConvertAndInstallIfUnchangedAsync(
+        ServerDefinition server, string sourcePath, string? expectedIconSha256,
+        double cropX = 0, double cropY = 0, double cropSize = 1, bool saveToLibrary = true,
         CancellationToken cancellationToken = default)
     {
         if (!File.Exists(sourcePath))
             throw new FileNotFoundException("The selected image does not exist.", sourcePath);
-        var target = Path.Combine(server.RootPath, "server-icon.png");
-        var temporary = Path.Combine(server.RootPath, $".server-icon.{Guid.NewGuid():N}.tmp");
+        if (expectedIconSha256 is { Length: > 0 } &&
+            (expectedIconSha256.Length != 64 || expectedIconSha256.Any(character => !Uri.IsHexDigit(character))))
+            throw new InvalidDataException("The expected server-icon identity is not a SHA-256 hash.");
+        var target = files.ResolveWithinRoot(server.RootPath, "server-icon.png", mustExist: false);
+        await using var targetLock = await pathLocks.AcquireAsync(target, cancellationToken).ConfigureAwait(false);
+        await VerifyIconUnchangedAsync(server.RootPath, expectedIconSha256, cancellationToken).ConfigureAwait(false);
+        var temporary = files.ResolveWithinRoot(server.RootPath, $".server-icon.{Guid.NewGuid():N}.tmp", mustExist: false);
         string? libraryStaging = null;
         try
         {
             // Decode completely and dispose the source before replacing anything. This means the
             // caller can move or delete its original immediately after the operation returns.
-            using (var source = new FileStream(sourcePath, FileMode.Open, FileAccess.Read,
-                       FileShare.ReadWrite | FileShare.Delete))
-            using (var image = await Image.LoadAsync(source, cancellationToken).ConfigureAwait(false))
+            using (var source = new FileStream(sourcePath, FileMode.Open, FileAccess.Read, FileShare.Read))
             {
+                if (source.Length is <= 0 or > 32 * 1024 * 1024)
+                    throw new InvalidDataException("The source icon is empty or larger than 32 MB.");
+                var decoder = new DecoderOptions { MaxFrames = 1 };
+                var info = await Image.IdentifyAsync(decoder, source, cancellationToken).ConfigureAwait(false);
+                if (info.Width <= 0 || info.Height <= 0 || (long)info.Width * info.Height > 40_000_000)
+                    throw new InvalidDataException("The source icon exceeds the supported image dimensions.");
+                source.Position = 0;
+                using var image = await Image.LoadAsync(decoder, source, cancellationToken).ConfigureAwait(false);
                 var crop = ServerIconPixelCrop.FromNormalized(
                     image.Width, image.Height, cropX, cropY, cropSize);
                 image.Mutate(context => context
@@ -73,6 +100,7 @@ public sealed class ServerIconService
 
             // Only now create a recovery point. Invalid/cancelled conversions never produce noise,
             // and the existing icon is still the live file until this same-directory atomic move.
+            await VerifyIconUnchangedAsync(server.RootPath, expectedIconSha256, cancellationToken).ConfigureAwait(false);
             if (File.Exists(target))
             {
                 Directory.CreateDirectory(paths.Recovery);
@@ -81,6 +109,7 @@ public sealed class ServerIconService
                 Directory.CreateDirectory(Path.GetDirectoryName(recovery)!);
                 File.Copy(target, recovery, overwrite: false);
             }
+            await VerifyIconUnchangedAsync(server.RootPath, expectedIconSha256, cancellationToken).ConfigureAwait(false);
             File.Move(temporary, target, overwrite: true);
 
             if (libraryStaging is not null && libraryPath is not null)
@@ -109,6 +138,24 @@ public sealed class ServerIconService
             if (libraryStaging is not null && File.Exists(libraryStaging))
                 File.Delete(libraryStaging);
         }
+    }
+
+    private async Task VerifyIconUnchangedAsync(string root, string? expectedSha256, CancellationToken cancellationToken)
+    {
+        var target = files.ResolveWithinRoot(root, "server-icon.png", mustExist: false);
+        if (expectedSha256 is null)
+            return;
+        if (File.Exists(target) != (expectedSha256.Length > 0))
+            throw new IOException("The server icon was created or removed after editing began. Reopen the editor; the current file was preserved.");
+        if (expectedSha256.Length == 0)
+            return;
+        await using var stream = new FileStream(target, FileMode.Open, FileAccess.Read, FileShare.Read,
+            16 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
+        if (stream.Length > 32 * 1024 * 1024)
+            throw new IOException("The current server icon exceeds the safe verification limit. It was preserved.");
+        var hash = Convert.ToHexString(await SHA256.HashDataAsync(stream, cancellationToken).ConfigureAwait(false));
+        if (!hash.Equals(expectedSha256, StringComparison.OrdinalIgnoreCase))
+            throw new IOException("The server icon changed after editing began. Reopen the editor; the current file was preserved.");
     }
 
     public IReadOnlyList<ServerIconLibraryEntry> ListLibrary()

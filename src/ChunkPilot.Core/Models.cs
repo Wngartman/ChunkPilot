@@ -246,6 +246,7 @@ public sealed record ServerSnapshot
     /// </summary>
     public bool LastStartReachedReadiness { get; init; }
     public ServerConnectionEvidence ConnectionEvidence { get; init; } = new();
+    public ServerStartupProgress? StartupProgress { get; init; }
     public DateTimeOffset? LastSaveAt { get; init; }
     public DateTimeOffset? LastBackupAt { get; init; }
     public bool ConsoleConnected { get; init; }

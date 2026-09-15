@@ -269,6 +269,10 @@ public sealed record PlayerAccessSnapshot
     /// <summary>True while the server process is running and can answer moderation commands.</summary>
     public bool ServerRunning { get; init; }
 
+    /// <summary>The Agent can serialize a stopped-file mutation for this known modern Java profile.</summary>
+    public bool CanManageAccessWhileStopped { get; init; }
+    public string AccessAvailabilityDetail { get; init; } = "";
+
     /// <summary>The <c>white-list</c> property as written in server.properties.</summary>
     public bool WhitelistEnabled { get; init; }
 
