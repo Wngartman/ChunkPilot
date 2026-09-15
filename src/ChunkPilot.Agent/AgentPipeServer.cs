@@ -50,6 +50,7 @@ public sealed class AgentPipeServer
     private readonly UiSessionAuthority uiSessions;
     private readonly WindowsFirewallCoordinator firewallAccess;
     private readonly ISecretStore secrets;
+    private readonly SemaphoreSlim providerCredentialGate = new(1, 1);
     private readonly AppDataPaths paths;
     private readonly ServerDeletionCoordinator deletions;
     private readonly ServerImportInspectionService importInspection = new();
@@ -267,6 +268,7 @@ public sealed class AgentPipeServer
         AgentResponse response;
         Guid? provisionalCurseForgeAuthorization = null;
         Guid? provisionalCurseForgeContentPlanAuthorization = null;
+        CredentialRequestPipeLifetime? credentialRequest = null;
         try
         {
             using var readDeadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -285,8 +287,11 @@ public sealed class AgentPipeServer
 
             request = JsonSerializer.Deserialize<AgentRequest>(line, ProtocolJson.Options)
                       ?? throw new JsonException("Request was empty.");
+            if (request.Operation is "ConfigureCurseForgeCredential" or "RemoveCurseForgeCredential")
+                credentialRequest = new CredentialRequestPipeLifetime(pipe, cancellationToken);
             var payload = await DispatchAsync(
-                request, NamedPipeClientProcessId(pipe), cancellationToken).ConfigureAwait(false);
+                request, NamedPipeClientProcessId(pipe), credentialRequest?.Token ?? cancellationToken,
+                credentialRequest is null ? null : credentialRequest.DemandConnected).ConfigureAwait(false);
             if (request.Operation.Equals("PreflightCurseForgeModpack", StringComparison.Ordinal))
             {
                 var preflight = payload.Deserialize<CurseForgeModpackPreflightResult>(ProtocolJson.Options);
@@ -307,6 +312,12 @@ public sealed class AgentPipeServer
                 Payload = payload
             };
         }
+        catch (OperationCanceledException) when (credentialRequest is not null && credentialRequest.Token.IsCancellationRequested)
+        {
+            // Closing native setup cancels this mutation, not the Agent. No response is needed on
+            // the disconnected request and no exception or credential payload enters the logger.
+            return;
+        }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             logger.LogWarning(exception, "Agent request {Operation} failed", request?.Operation ?? "unknown");
@@ -316,6 +327,11 @@ public sealed class AgentPipeServer
                 Success = false,
                 Error = SecretRedactor.Redact(exception.Message)
             };
+        }
+        finally
+        {
+            if (credentialRequest is not null)
+                await credentialRequest.DisposeAsync().ConfigureAwait(false);
         }
         try
         {
@@ -375,7 +391,8 @@ public sealed class AgentPipeServer
     private async Task<JsonElement> DispatchAsync(
         AgentRequest request,
         int clientProcessId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Action? demandCredentialConnection = null)
     {
         switch (request.Operation)
         {
@@ -1951,6 +1968,41 @@ public sealed class AgentPipeServer
                 cancellationToken.ThrowIfCancellationRequested();
                 var configured = secrets.Contains(CurseForgeUpdateProvider.ApiKeyName);
                 return JsonSerializer.SerializeToElement(new TextResponse(configured ? "configured" : ""), ProtocolJson.Options);
+            }
+            case "ConfigureCurseForgeCredential":
+            {
+                var input = Deserialize<CurseForgeCredentialChangeRequest>(request);
+                uiSessions.Demand(input.Session, "Configuring CurseForge access");
+                await providerCredentialGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    using var api = new CurseForgeApiClient(secrets);
+                    var result = await new CurseForgeCredentialSetupService(secrets, api).ConfigureAsync(
+                        input.ProtectedApiKey, () =>
+                        {
+                            uiSessions.Demand(input.Session, "Configuring CurseForge access");
+                            demandCredentialConnection?.Invoke();
+                        },
+                        cancellationToken).ConfigureAwait(false);
+                    return JsonSerializer.SerializeToElement(result, ProtocolJson.Options);
+                }
+                finally { providerCredentialGate.Release(); }
+            }
+            case "RemoveCurseForgeCredential":
+            {
+                var session = Deserialize<UiSessionCredential>(request);
+                uiSessions.Demand(session, "Disconnecting CurseForge access");
+                await providerCredentialGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    uiSessions.Demand(session, "Disconnecting CurseForge access");
+                    demandCredentialConnection?.Invoke();
+                    secrets.Delete(CurseForgeUpdateProvider.ApiKeyName);
+                    return JsonSerializer.SerializeToElement(OperationResult.Ok(
+                        "The saved CurseForge API key was removed. Installed servers and files were not changed."), ProtocolJson.Options);
+                }
+                finally { providerCredentialGate.Release(); }
             }
             case "SelfTest":
                 return JsonSerializer.SerializeToElement(await SelfTestAsync(cancellationToken).ConfigureAwait(false), ProtocolJson.Options);
