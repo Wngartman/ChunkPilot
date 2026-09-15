@@ -190,6 +190,7 @@ describe('CurseForge creation preflight', () => {
     fireEvent.click(await screen.findByRole('tab', { name: /CurseForge/ }));
     fireEvent.click(await screen.findByRole('button', { name: /Exact Loader Pack/ }));
     await waitFor(() => expect((screen.getByRole('button', { name: /Continue/ }) as HTMLButtonElement).disabled).toBe(false));
+    await waitFor(() => expect(timers.mock.calls.some(([, delay]) => Number(delay) > 800_000)).toBe(true));
     const expiryCallback = timers.mock.calls.find(([, delay]) => Number(delay) > 800_000)?.[0];
     expect(typeof expiryCallback).toBe('function');
 

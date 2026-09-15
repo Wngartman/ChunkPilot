@@ -26,6 +26,20 @@ Create Server and the existing-server Versions page request the native `creation
 
 Normal `ChunkPilot.exe` startup opens the WebUI. The retained WPF layer is only the native host and recovery surface.
 
+Server icon edits use a native, server-bound selection token and a bounded 256-pixel original.
+The renderer stages the crop and adjustment recipe; the Agent checks the exact previously opened
+icon under the shared file lock before replacing it. Cancelling or discarding writes nothing.
+After a successful save, one local `ServerIcons/Edits/<server-id>.json` record retains that original
+and recipe, so reopening an edit does not compound effects. Older or externally changed icons
+fall back to their existing 64-pixel image with an explicit resolution warning. These records are
+local application data, not server-pack files or release assets.
+
+Ordinary startup displays only native process/readiness evidence through `startupProgress`.
+The WebUI does not simulate percentages or infer readiness from an open port. Likewise, stopped
+player-list editing is enabled only by the native `canManageWhileStopped` capability; kicking
+always requires the actual running state. Long bridge commands have bounded per-command waits,
+and a timeout never means success or triggers an automatic retry.
+
 For a repeatable packaged idle sample that never touches normal application data:
 
 ```powershell

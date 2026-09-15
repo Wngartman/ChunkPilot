@@ -30,6 +30,7 @@ export interface ServerSummary {
   id: string;
   name: string;
   state: ServerState;
+  startupProgress?: ServerStartupProgress | null;
   gameKind: 'Minecraft' | 'Terraria';
   ecosystem: string;
   minecraftVersion: string;
@@ -73,6 +74,19 @@ export interface ServerSummary {
     backups: boolean;
     versions: boolean;
   };
+}
+
+export interface ServerStartupProgress {
+  serverId: string;
+  attemptId: string;
+  stage: 'Preflight' | 'ProcessStarted' | 'LoadingMods' | 'PreparingWorld' | 'WaitingForReadiness' | 'Ready' | 'Failed' | 'Cancelled' | 'RestartSaving' | 'RestartStopping' | 'RestartDelay';
+  title: string;
+  detail: string;
+  startedAt: string;
+  updatedAt: string;
+  lastOutputAt: string | null;
+  processId: number | null;
+  isActive: boolean;
 }
 
 export type ServerDeletionMode = 'RemoveFromChunkPilot' | 'MoveToRecovery' | 'Permanent';
@@ -147,7 +161,7 @@ export interface ManagedContentOperation {
   updatedAtUtc: string;
 }
 export interface PluginConfigFile { relativePath: string; name: string; sizeBytes: number; modifiedAt: string; format: 'yml' | 'yaml' | 'json' | 'jsonc' | 'toml' | 'properties' | 'conf'; }
-export interface ModpackRelease { versionId: string; versionName: string; minecraftVersion: string; loader: string; loaderVersion?: string; releaseChannel: 'Stable' | 'Beta' | 'Alpha'; publishedAt: string | null; sizeBytes: number | null; changelog: string; requiredJavaMajor: number; hasIntegrity: boolean; canCreate: boolean; preflightState?: 'NotRequired' | 'Required' | 'Inspecting' | 'Ready' | 'Unsupported' | 'Failed'; preflightDetail?: string; serverPath?: 'Official server pack' | 'ChunkPilot can generate and validate a server candidate' | 'No supportable server setup found'; limitation?: string; }
+export interface ModpackRelease { versionId: string; versionName: string; minecraftVersion: string; loader: string; loaderVersion?: string; releaseChannel: 'Stable' | 'Beta' | 'Alpha'; publishedAt: string | null; sizeBytes: number | null; changelog: string; requiredJavaMajor: number; hasIntegrity: boolean; canCreate: boolean; preflightState?: 'NotRequired' | 'Required' | 'Inspecting' | 'Ready' | 'Unsupported' | 'Failed'; preflightDetail?: string; serverPath?: 'Official server pack' | 'ChunkPilot can generate and validate a server candidate' | 'No supportable server setup found'; installationRoute?: 'Unchecked' | 'OfficialServerPack' | 'GeneratedCandidate' | 'Unavailable'; installationRouteDetail?: string; limitation?: string; }
 export type ModpackSelectionMethod = 'Browse' | 'Link';
 export interface CurseForgeModpackPreflightParameters extends Record<string, unknown> {
   projectId: string;
@@ -259,6 +273,8 @@ export interface NativeConnectionSummary {
   configuredLanAddress?: string | null;
   pendingRestart: boolean;
   requestedAudienceNotApplied: boolean;
+  canApplyBinding?: boolean;
+  bindingApplyUnavailableReason?: string;
   listenerVerified: boolean;
   firewallConfigured: boolean;
   routerConfigured: boolean;
@@ -387,6 +403,8 @@ export interface WebUiSnapshot {
   playerAccess: {
     serverId: string;
     serverRunning: boolean;
+    canManageWhileStopped?: boolean;
+    accessAvailabilityDetail?: string;
     whitelistEnabled: boolean;
     supportsAllowlist: boolean;
     supportsOperators: boolean;
@@ -437,6 +455,7 @@ export type BridgeMethod =
   | 'help.openExternal'
   | 'servers.import' | 'servers.rename' | 'servers.changeIcon'
   | 'appearance.chooseIcon'
+  | 'appearance.editIcon'
   | 'plugins.openFolder' | 'plugins.chooseLocal' | 'plugins.installLocal' | 'plugins.providers' | 'plugins.search' | 'plugins.release'
   | 'plugins.install' | 'plugins.plan' | 'plugins.installPlan' | 'plugins.setEnabled' | 'plugins.remove' | 'plugins.configFiles' | 'plugins.saveConfig'
   | 'mods.openFolder' | 'mods.chooseLocal' | 'mods.installLocal' | 'mods.providers' | 'mods.search' | 'mods.release'
@@ -446,7 +465,7 @@ export type BridgeMethod =
   | 'console.send' | 'workspace.load' | 'files.openFolder' | 'files.navigate' | 'files.read' | 'files.write'
   | 'backups.create' | 'backups.restore' | 'backups.verify'
   | 'players.moderate' | 'players.addAllowlist' | 'players.setWhitelist' | 'players.head' | 'schedules.upsert' | 'schedules.delete' | 'settings.saveGlobal' | 'settings.saveServer'
-  | 'connectivity.copyAddress' | 'connectivity.open' | 'connectivity.setMode'
+  | 'connectivity.copyAddress' | 'connectivity.open' | 'connectivity.setMode' | 'connectivity.applyBinding'
   | 'connectivity.router.check' | 'connectivity.router.confirm' | 'connectivity.router.cancelConsent' | 'connectivity.router.stop' | 'connectivity.router.cancel' | 'connectivity.router.retry'
   | 'connectivity.external.check' | 'connectivity.external.cancel'
   | 'connectivity.firewall.primary' | 'connectivity.firewall.secondary' | 'connectivity.firewall.confirm' | 'connectivity.firewall.cancelConsent' | 'connectivity.firewall.remove' | 'connectivity.firewall.cancel'

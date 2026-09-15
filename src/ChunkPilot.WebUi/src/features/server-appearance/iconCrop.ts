@@ -1,4 +1,7 @@
 export interface CropRect { x: number; y: number; size: number; width: number; height: number; }
+export interface IconRecipe { zoom: number; panX: number; panY: number; rotation: number; brightness: number; contrast: number; saturation: number; }
+export interface IconEdit { token: string; recipe: IconRecipe; }
+export const defaultIconRecipe: IconRecipe = { zoom: 1, panX: 0, panY: 0, rotation: 0, brightness: 1, contrast: 1, saturation: 1 };
 
 export function normalizedCropRect(width: number, height: number, zoom: number, panX: number, panY: number, rotation: number): CropRect {
   if (!Number.isFinite(width) || !Number.isFinite(height) || width < 1 || height < 1)

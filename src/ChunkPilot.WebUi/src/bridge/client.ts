@@ -9,7 +9,22 @@ const METHOD_REQUEST_TIMEOUT_MS: Partial<Record<BridgeMethod, number>> = {
   'mods.release': 2 * 60_000,
   'mods.plan': 2 * 60_000,
   'versions.check': 2 * 60_000,
-  'versions.rollback': 30 * 60_000
+  'versions.rollback': 30 * 60_000,
+  'versions.verify': 30 * 60_000,
+  'servers.start': 30 * 60_000,
+  'servers.stop': 10 * 60_000,
+  'servers.restart': 30 * 60_000,
+  'servers.createManagedCopy': 30 * 60_000,
+  'settings.saveServer': 5 * 60_000,
+  'backups.create': 60 * 60_000,
+  'backups.restore': 60 * 60_000,
+  'backups.verify': 60 * 60_000,
+  'connectivity.applyBinding': 30 * 60_000,
+  'appearance.chooseIcon': 10 * 60_000,
+  'creation.chooseFolder': 10 * 60_000,
+  'creation.chooseWorld': 10 * 60_000,
+  'creation.chooseLegacyArtifact': 10 * 60_000,
+  'modpacks.chooseLocal': 10 * 60_000
 };
 
 export class BridgeError extends Error {
@@ -39,7 +54,7 @@ export class WebViewBridge {
         this.pending.delete(id);
         signal?.removeEventListener('abort', abort);
         this.cancelNative(id);
-        reject(new BridgeError('timeout', 'ChunkPilot did not answer in time.'));
+        reject(new BridgeError('timeout', 'ChunkPilot did not answer within this operation’s time limit. The native operation may still be running or cleaning up. Check its current status before retrying; no retry was started automatically.'));
       }, requestTimeoutMs);
       const abort = () => {
         window.clearTimeout(timer);
@@ -53,7 +68,13 @@ export class WebViewBridge {
         reject: reason => { signal?.removeEventListener('abort', abort); reject(reason); },
         timer
       });
-      window.chrome!.webview!.postMessage(message);
+      try { window.chrome!.webview!.postMessage(message); }
+      catch (reason) {
+        window.clearTimeout(timer);
+        this.pending.delete(id);
+        signal?.removeEventListener('abort', abort);
+        reject(new BridgeError('backend_disconnected', reason instanceof Error ? reason.message : 'The request could not reach the native host.'));
+      }
     });
   }
 

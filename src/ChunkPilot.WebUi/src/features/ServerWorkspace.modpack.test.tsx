@@ -27,6 +27,42 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 describe('installed modpack workspace', () => {
+  it('does not present an unchecked provider as up to date or invent a pack name from the server alias', () => {
+    const snapshot = structuredClone(fixtures.modpack);
+    const server = snapshot.servers[0];
+    server.name = 'My renamed game night';
+    server.modpack = { provider: 'CurseForge', projectId: '1605376', projectName: '', versionId: '8699911', versionName: '' };
+    snapshot.update = { ...snapshot.update!, status: 'Not checked', detail: '', checkedAt: null, installedVersionName: '' };
+    useAppStore.setState({ snapshot });
+    const { container } = render(<NavigationGuardProvider><ServerWorkspace serverId={server.id} /></NavigationGuardProvider>);
+
+    expect(screen.getAllByText('CurseForge project 1605376').length).toBeGreaterThan(0);
+    expect(screen.getByText('File 8699911')).toBeTruthy();
+    expect(screen.getByText(/No current update result is available/)).toBeTruthy();
+    expect(screen.queryByText(/latest confirmed provider release/)).toBeNull();
+    expect(container.querySelector('[data-tone="neutral"]')).toBeTruthy();
+  });
+
+  it('keeps an unavailable provider check distinct from a successful up-to-date check', () => {
+    const snapshot = structuredClone(fixtures.modpack);
+    snapshot.update = { ...snapshot.update!, status: 'Provider unavailable', detail: '', checkedAt: '2026-09-14T21:00:00Z' };
+    useAppStore.setState({ snapshot });
+    const { container } = render(<NavigationGuardProvider><ServerWorkspace serverId={snapshot.servers[0].id} /></NavigationGuardProvider>);
+
+    expect(screen.getByText(/did not establish whether this installed release is current/)).toBeTruthy();
+    expect(container.querySelector('[data-tone="warning"]')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /^Install pack / })).toBeNull();
+  });
+
+  it('rejects an install flag when the target is the already-installed exact pack file', () => {
+    const snapshot = structuredClone(fixtures.modpack);
+    snapshot.update = { ...snapshot.update!, status: 'Update available', canInstall: true,
+      targetVersionId: snapshot.servers[0].modpack!.versionId };
+    useAppStore.setState({ snapshot });
+    render(<NavigationGuardProvider><ServerWorkspace serverId={snapshot.servers[0].id} /></NavigationGuardProvider>);
+    expect(screen.queryByRole('button', { name: /^Install pack / })).toBeNull();
+  });
+
   it('does not offer the already-installed release even if a stale renderer flag says it is installable', () => {
     const snapshot = structuredClone(fixtures.modpack);
     snapshot.update = { ...snapshot.update!, status: 'Up to date', canInstall: true };

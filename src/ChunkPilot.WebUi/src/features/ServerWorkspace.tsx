@@ -7,6 +7,7 @@ import { ActionMenu } from '../design-system/ActionMenu';
 import { useAppStore } from '../state/store';
 import { lifecycleAction } from './lifecycle';
 import { IconCropEditor } from './server-appearance/IconCropEditor';
+import type { IconEdit } from './server-appearance/iconCrop';
 import { MotdEditor } from './server-appearance/MotdEditor';
 import { validateMotd } from './server-appearance/motd';
 import { MemoryControl } from './memory/MemoryControl';
@@ -20,6 +21,8 @@ import { useGuardedNavigation, useUnsavedChangesGuard } from '../app/NavigationG
 import { runMeasuredNavigation } from '../app/performance';
 import { PluginConfigEditor } from './plugin-config/PluginConfigEditor';
 import { ConnectionSummary, connectionChoice } from './connectivity/ConnectionSummary';
+import { installedPackIdentity, installedPackUpdate } from './modpacks/installedPack';
+import { ServerStartupStatus } from './ServerStartupStatus';
 
 type Tab = 'overview' | 'console' | 'players' | 'files' | 'content' | 'backups' | 'versions' | 'settings';
 interface PaperBuildEvidence {
@@ -127,7 +130,7 @@ export function ServerWorkspace({ serverId, onOpenHelp = () => undefined }: { se
   return <div className={styles.workspace}>
     <section className={styles.hero}>
       <div className={styles.heroInner}><div className={styles.heroTop}>
-        <div className={styles.identity}><div className={styles.serverIcon}>{server.iconUrl ? <img src={server.iconUrl} alt="" aria-hidden="true" /> : <ServerIcon size={22} />}</div><div><h1>{server.name}</h1><div className={styles.meta}><StatusBadge tone={tone(server)}>{server.state}</StatusBadge><span><Box size={13} />{server.ecosystem}</span>{server.modpack && <span><Archive size={13} />{server.modpack.projectName} · {server.modpack.versionName}</span>}<span><Code2 size={13} />Minecraft {server.minecraftVersion}{server.loaderVersion ? ` · ${server.loaderVersion}` : ''}</span><span><Users size={13} />{server.playersOnline == null ? 'Players unavailable' : `${server.playersOnline}${server.playersMaximum == null ? '' : ` / ${server.playersMaximum}`} online`}</span><span><Wifi size={13} />{connectionChoice(server).badge}</span></div></div></div>
+        <div className={styles.identity}><div className={styles.serverIcon}>{server.iconUrl ? <img src={server.iconUrl} alt="" aria-hidden="true" /> : <ServerIcon size={22} />}</div><div><h1>{server.name}</h1><div className={styles.meta}><StatusBadge tone={tone(server)}>{server.state}</StatusBadge><span><Box size={13} />{server.ecosystem}</span>{server.modpack && <span><Archive size={13} />{installedPackIdentity(server.modpack).name} · {installedPackIdentity(server.modpack).release}</span>}<span><Code2 size={13} />Minecraft {server.minecraftVersion}{server.loaderVersion ? ` · ${server.loaderVersion}` : ''}</span><span><Users size={13} />{server.playersOnline == null ? 'Players unavailable' : `${server.playersOnline}${server.playersMaximum == null ? '' : ` / ${server.playersMaximum}`} online`}</span><span><Wifi size={13} />{connectionChoice(server).badge}</span></div></div></div>
         <div className={styles.actions}><Button icon={<Share2 size={14} />} onClick={() => setShareOpen(true)}>Share</Button><Button disabled={lifecycle.pending} variant={lifecycle.destructive ? 'danger' : 'primary'} icon={lifecycle.destructive ? <Square size={12} /> : <Play size={13} />} onClick={runLifecycle}>{lifecycle.label}</Button><ActionMenu label={`More actions for ${server.name}`} trigger={<MoreHorizontal size={17} />} open={menuOpen} onOpenChange={next => next ? runMeasuredNavigation('server-actions-menu', () => setMenuOpen(true)) : setMenuOpen(false)} items={[
           ...(isRunning ? [{ label: 'Restart server', icon: <RotateCw size={15} />, onSelect: () => void command('servers.restart', { serverId: server.id }) }] : []),
           { label: 'Open server folder', icon: <FolderOpen size={15} />, onSelect: () => void command('servers.openFolder', { serverId: server.id }) },
@@ -139,6 +142,7 @@ export function ServerWorkspace({ serverId, onOpenHelp = () => undefined }: { se
       <nav className={styles.tabs} aria-label={`${server.name} navigation`}>{tabs.filter(item => item.enabled).map(item => <button className={styles.tab} key={item.id} data-selected={tab === item.id} aria-current={tab === item.id ? 'page' : undefined} onClick={() => navigate(() => runMeasuredNavigation(`server-tab-${item.id}`, () => { setMenuOpen(false); setTab(item.id); }))}><item.icon size={14} />{item.label}</button>)}</nav>
     </section>
     <div className={styles.content}>
+      <ServerStartupStatus server={server} onConsole={() => setTab('console')} />
       {!scopedSnapshotReady ? (showColdOpening ? <section className={styles.panel} role="status"><EmptyState title={`Opening ${server.name}`} detail="Waiting for authoritative data from this server. Previous server details are not carried across the switch." /></section> : <div className={styles.selectionPlaceholder} aria-hidden="true" />) : <>
         {!detailsReady && <div className={styles.sectionLoading} role="status">Refreshing this server's remaining details in the background…</div>}
         {tab === 'overview' && <Overview server={server} onTab={setTab} onSettings={openSettings} onOpenHelp={onOpenHelp} />}
@@ -430,7 +434,9 @@ function PlayersPage({ server }: { server: ServerSummary }) {
   const [pending, setPending] = useState<{ player: string; action: string; label: string; detail: string } | null>(null);
   const players = snapshot.players.filter(player => player.name.toLowerCase().includes(search.toLowerCase()));
   const access = snapshot.playerAccess?.serverId === server.id ? snapshot.playerAccess : null;
-  const canModerate = Boolean(access?.serverRunning);
+  const canModerate = Boolean(access && (access.serverRunning && server.state === 'Running' ||
+    access.canManageWhileStopped && server.state === 'Stopped')) &&
+    !busy.has('players.moderate') && !busy.has('players.addAllowlist');
   const moderate = (playerName: string, action: string) => void command('players.moderate', { serverId: server.id, playerName, action });
   const setWhitelist = (enabled: boolean) => void command('players.setWhitelist', { serverId: server.id, enabled });
   const addAllowlist = () => { const playerName = newPlayer.trim(); if (!playerName) return; void command('players.addAllowlist', { serverId: server.id, playerName }).then(() => setNewPlayer('')); };
@@ -441,15 +447,15 @@ function PlayersPage({ server }: { server: ServerSummary }) {
   return <div className={styles.playerWorkspace}>
     <section className={styles.playerSummary}>
       <div><span>Online now</span><strong>{server.playersOnline == null ? 'Unknown' : server.playersMaximum == null ? server.playersOnline : `${server.playersOnline} / ${server.playersMaximum}`}</strong><small>{evidence}</small></div>
-      <div><div className={styles.playerSummaryHeading}><span>Whitelist</span>{access?.supportsAllowlist && <Switch checked={access.whitelistEnabled} label={access.whitelistEnabled ? 'Turn whitelist off' : 'Turn whitelist on'} disabled={busy.has('players.setWhitelist')} onClick={() => setWhitelist(!access.whitelistEnabled)} />}</div><strong>{access ? access.whitelistEnabled ? 'On' : 'Off' : 'Unavailable'}</strong><small>{access?.supportsAllowlist ? server.state === 'Running' ? 'Changes apply immediately.' : 'Changes apply the next time the server starts.' : 'Support has not been confirmed for this server.'}</small></div>
-      <div><span>Management</span><strong>{canModerate ? 'Available' : server.state === 'Running' ? 'Unavailable' : 'Server stopped'}</strong><small>{access?.capabilityKnown ? 'Actions use the authoritative server console and access files.' : 'ChunkPilot is still identifying this imported server.'}</small></div>
+      <div><div className={styles.playerSummaryHeading}><span>Whitelist</span>{access?.supportsAllowlist && <Switch checked={access.whitelistEnabled} label={access.whitelistEnabled ? 'Turn whitelist off' : 'Turn whitelist on'} disabled={!canModerate || busy.has('players.setWhitelist')} onClick={() => setWhitelist(!access.whitelistEnabled)} />}</div><strong>{access ? access.whitelistEnabled ? 'On' : 'Off' : 'Unavailable'}</strong><small>{access?.supportsAllowlist ? server.state === 'Running' ? 'Changes apply immediately.' : 'Changes apply the next time the server starts.' : 'Support has not been confirmed for this server.'}</small></div>
+      <div><span>Management</span><strong>{canModerate ? server.state === 'Stopped' ? 'Saved access available' : 'Available' : server.state === 'Running' ? 'Unavailable' : 'Not available in this state'}</strong><small>{access?.accessAvailabilityDetail || (access?.capabilityKnown ? 'Actions use the authoritative server console and access files.' : 'ChunkPilot is still identifying this imported server.')}</small></div>
     </section>
     <section className={styles.panel}>
       <div className={styles.playerToolbar}><SearchInput value={search} onChange={event => setSearch(event.target.value)} placeholder="Search players" aria-label="Search players" />{access?.supportsAllowlist && <form onSubmit={event => { event.preventDefault(); addAllowlist(); }}><TextInput value={newPlayer} maxLength={16} onChange={event => setNewPlayer(event.target.value)} placeholder="Minecraft player name" aria-label="Minecraft player name" /><Button variant="primary" disabled={!canModerate || !newPlayer.trim() || busy.has('players.addAllowlist')}>{busy.has('players.addAllowlist') ? 'Adding…' : 'Add to whitelist'}</Button></form>}</div>
       {access?.error && <div className={styles.playerError} role="alert">{access.error}</div>}
       {players.length ? <table className={styles.table}><thead><tr><th>Player</th><th>Status</th><th>Whitelist</th><th>Role</th><th aria-label="Actions" /></tr></thead><tbody>{players.map(player => <tr key={player.name}><td><PlayerIdentity serverId={server.id} player={player} /></td><td><StatusBadge tone={player.banned ? 'danger' : player.online ? 'success' : 'neutral'}>{player.banned ? 'Banned' : player.online ? 'Online' : 'Known player'}</StatusBadge></td><td>{player.allowlisted ? 'Whitelisted' : 'Not whitelisted'}</td><td>{player.operator ? 'Operator' : 'Player'}</td><td><div className={styles.tableActions}>{access?.supportsAllowlist && <Button variant="subtle" disabled={!canModerate} onClick={() => player.allowlisted ? confirm(player.name, 'RemoveFromWhitelist', 'Remove from whitelist', `${player.name} will no longer be able to join a whitelist-only server.`) : moderate(player.name, 'AddToWhitelist')}>{player.allowlisted ? 'Remove from whitelist' : 'Add to whitelist'}</Button>}<ActionMenu label={`Moderation actions for ${player.name}`} trigger={<MoreHorizontal size={16} />} items={[
         ...(access?.supportsOperators ? [{ label: player.operator ? 'Remove operator' : 'Make operator', icon: <ShieldCheck size={15} />, disabled: !canModerate, onSelect: () => player.operator ? confirm(player.name, 'RemoveOperator', 'Remove operator', `${player.name} will lose operator permissions.`) : moderate(player.name, 'GrantOperator') }] : []),
-        ...(player.online ? [{ label: 'Kick', icon: <Square size={13} />, disabled: !canModerate, onSelect: () => confirm(player.name, 'Kick', 'Kick player', `${player.name} will be disconnected from the running server.`) }] : []),
+        ...(player.online && access?.serverRunning && server.state === 'Running' ? [{ label: 'Kick', icon: <Square size={13} />, disabled: !canModerate, onSelect: () => confirm(player.name, 'Kick', 'Kick player', `${player.name} will be disconnected from the running server.`) }] : []),
         ...(access?.supportsPlayerBans ? [{ label: player.banned ? 'Pardon' : 'Ban', icon: player.banned ? <Check size={15} /> : <Trash2 size={15} />, disabled: !canModerate, destructive: !player.banned, onSelect: () => player.banned ? moderate(player.name, 'Pardon') : confirm(player.name, 'Ban', 'Ban player', `${player.name} will be banned and disconnected.`) }] : [])
       ]} /></div></td></tr>)}</tbody></table> : <EmptyState title={emptyTitle} detail={emptyDetail} />}
       <ConfirmDialog open={pending !== null} title={pending?.label ?? ''} detail={pending?.detail ?? ''} confirmLabel={pending?.label ?? 'Confirm'} destructive onCancel={() => setPending(null)} onConfirm={() => { if (pending) moderate(pending.player, pending.action); setPending(null); }} />
@@ -526,16 +532,19 @@ function ModpackPage({ server }: { server: ServerSummary }) {
   const [dismissedReviewId, setDismissedReviewId] = useState<string | null>(null);
   const migrationReview = update?.migrationReview ?? null;
   const pack = server.modpack;
+  const identity = pack ? installedPackIdentity(pack) : null;
   const providerUpdates = pack?.provider === 'Modrinth' || pack?.provider === 'CurseForge';
+  const updatePresentation = update ? installedPackUpdate(update, providerUpdates) : null;
   const updateAvailable = update?.status.startsWith('Update available') ?? false;
-  const canInstallUpdate = Boolean(providerUpdates && updateAvailable && update?.canInstall);
+  const canInstallUpdate = Boolean(providerUpdates && updateAvailable && update?.canInstall &&
+    update.targetVersionId && update.targetVersionId !== pack?.versionId);
   const versionBusy = ['versions.check', 'versions.install', 'versions.rollback', 'versions.cancel'].some(method => busy.has(method));
-  if (!pack || !update?.sourceLinked)
+  if (!pack || !identity || !update?.sourceLinked || !updatePresentation)
     return <section className={styles.panel}><EmptyState title="Pack identity unavailable" detail="ChunkPilot has not established an exact provider project and release for this server. Individual mods remain visible in the managed content inventory, but pack-level updates are disabled until identity is proven." /></section>;
   return <div className={styles.modpackPage}>
     <section className={styles.modpackOverview}>
       <header className={styles.modpackHeader}>
-        <div className={styles.modpackIdentity}><span aria-hidden="true"><Archive size={20} /></span><div><small>Installed modpack</small><strong>{pack.projectName}</strong><p>{pack.provider} · {update.installedVersionName || pack.versionName}</p></div></div>
+        <div className={styles.modpackIdentity}><span aria-hidden="true"><Archive size={20} /></span><div><small>Installed modpack</small><strong>{identity.name}</strong><p>{identity.provider} · {update.installedVersionName?.trim() || identity.release}</p></div></div>
         <div className={`${page.actions} ${styles.modpackActions}`}>
           {providerUpdates && update.cancellable && <Button variant="subtle" disabled={busy.has('versions.cancel')} onClick={() => void command('versions.cancel', { serverId: server.id })}>Cancel safely</Button>}
           {canInstallUpdate && <Button variant="primary" disabled={versionBusy} onClick={() => setShowInstall(true)}>Install pack {update.latestVersionName ?? 'update'}</Button>}
@@ -543,12 +552,12 @@ function ModpackPage({ server }: { server: ServerSummary }) {
         </div>
       </header>
       <div className={styles.modpackFacts}>
-        <div><span>Pack release</span><strong>{update.installedVersionName || pack.versionName}</strong><small>{update.releaseChannel || 'Release channel unavailable'}</small></div>
+        <div><span>Pack release</span><strong>{update.installedVersionName?.trim() || identity.release}</strong><small>{update.releaseChannel || 'Release channel unavailable'}</small></div>
         <div><span>Minecraft</span><strong>{update.minecraftVersion || server.minecraftVersion}</strong><small>Exact pack requirement</small></div>
         <div><span>Loader</span><strong>{update.loader || server.ecosystem}{update.loaderVersion ? ` ${update.loaderVersion}` : ''}</strong><small>Server runtime platform</small></div>
       </div>
-      <div className={styles.modpackUpdate} data-tone={canInstallUpdate ? 'warning' : providerUpdates ? 'success' : 'neutral'}>
-        <div><StatusBadge tone={canInstallUpdate ? 'warning' : providerUpdates ? 'success' : 'neutral'}>{providerUpdates ? update.status : 'Local pack'}</StatusBadge><span><strong>{providerUpdates ? update.detail || 'The installed release is the latest confirmed provider release.' : 'Provider updates are unavailable for this local archive.'}</strong><small>{providerUpdates ? update.checkedAt ? `Last checked ${new Date(update.checkedAt).toLocaleString()}` : 'No provider check has completed yet.' : 'The inspected archive remains the installed baseline until an exact project release is linked.'}</small></span></div>
+      <div className={styles.modpackUpdate} data-tone={updatePresentation.tone}>
+        <div><StatusBadge tone={updatePresentation.tone}>{providerUpdates ? update.status : 'Local pack'}</StatusBadge><span><strong>{updatePresentation.detail}</strong><small>{providerUpdates ? update.checkedAt ? `Last checked ${new Date(update.checkedAt).toLocaleString()}` : 'No provider check has completed yet.' : 'The inspected archive remains the installed baseline until an exact project release is linked.'}</small>{providerUpdates && !identity.labelsAvailable && <small>Exact installed IDs are retained. Check pack release to refresh the upstream name and release label; your server name is separate.</small>}</span></div>
         {update.operationPercent != null && <div className={styles.updateProgress} aria-label={`Pack update progress ${update.operationPercent.toFixed(0)} percent`}><i><b style={{ width: `${Math.max(0, Math.min(100, update.operationPercent))}%` }} /></i><span>{update.operationStep || update.operationState} · {update.operationPercent.toFixed(0)}%</span>{update.operationDetail && update.operationDetail !== update.operationStep && <small>{update.operationDetail}</small>}</div>}
       </div>
       <UpdateInstallDialog open={showInstall} onClose={() => setShowInstall(false)} server={server} update={update} />
@@ -557,7 +566,7 @@ function ModpackPage({ server }: { server: ServerSummary }) {
     <section className={styles.packEvidence}>
       <header><div><strong>Verified pack identity</strong><p>These exact identifiers bind updates and recovery history to this installed release.</p></div><StatusBadge tone="info">Exact release linked</StatusBadge></header>
       <div className={styles.packEvidenceBody}>
-        <dl className={styles.packEvidenceGrid}><div><dt>Provider</dt><dd>{pack.provider}</dd></div><div><dt>Project</dt><dd>{pack.projectName}</dd></div><div><dt>Update model</dt><dd>Whole pack release</dd></div><div><dt>Project ID</dt><dd><code>{pack.projectId}</code></dd></div><div><dt>Release ID</dt><dd><code>{pack.versionId}</code></dd></div></dl>
+        <dl className={styles.packEvidenceGrid}><div><dt>Provider</dt><dd>{identity.provider}</dd></div><div><dt>Project</dt><dd>{identity.name}</dd></div><div><dt>Update model</dt><dd>Whole pack release</dd></div><div><dt>Project ID</dt><dd><code>{pack.projectId}</code></dd></div><div><dt>Release ID</dt><dd><code>{pack.versionId}</code></dd></div></dl>
         <div className={styles.packRules}><div><strong>Updates stay pack-aware</strong><p>ChunkPilot compares exact provider releases. It will never update constituent mods independently or split the pack from its tested release.</p></div><div><strong>User files stay user-owned</strong><p>Files added outside the pack remain yours. Changed pack-managed files are reviewed during update migration rather than silently overwritten.</p></div></div>
       </div>
       <footer className={styles.packDestinations}><span><strong>Versions</strong> contains verified recovery snapshots and rollback history.</span><span><strong>Mods</strong> shows pack-managed and user-added JAR inventory.</span></footer>
@@ -1085,6 +1094,7 @@ function ServerSettingsPage({ server, initialCategory }: { server: ServerSummary
   const [baseline, setBaseline] = useState(authoritative);
   const [draft, setDraft] = useState<typeof authoritative>(() => authoritative == null ? null : new URLSearchParams(window.location.search).has('dirty') ? { ...authoritative, motd: `${authoritative.motd} Ready for Friday.` } : { ...authoritative });
   const [stagedIcon, setStagedIcon] = useState<string | null>(null);
+  const [stagedIconEdit, setStagedIconEdit] = useState<IconEdit | null>(null);
   const [saving, setSaving] = useState(false);
   const [editorReset, setEditorReset] = useState(0);
   useEffect(() => setCategory(initialCategory), [initialCategory]);
@@ -1095,7 +1105,7 @@ function ServerSettingsPage({ server, initialCategory }: { server: ServerSummary
   }, [authoritative, dirty]);
   const discard = useCallback(() => {
     if (!baseline) return;
-    setDraft({ ...baseline }); setStagedIcon(null); setEditorReset(value => value + 1);
+    setDraft({ ...baseline }); setStagedIcon(null); setStagedIconEdit(null); setEditorReset(value => value + 1);
   }, [baseline]);
   useUnsavedChangesGuard(dirty, discard, 'Your server icon, MOTD, or settings changes have not been saved.');
   if (!draft || !baseline) return <EmptyState title="Settings unavailable" detail="ChunkPilot has not received an authoritative settings snapshot for this server." />;
@@ -1106,14 +1116,14 @@ function ServerSettingsPage({ server, initialCategory }: { server: ServerSummary
     if (motdError) return;
     setSaving(true);
     try {
-      await command('settings.saveServer', { ...draft, serverId: server.id, iconPngBase64: stagedIcon?.split(',', 2)[1] ?? null });
-      setBaseline({ ...draft }); setStagedIcon(null); setEditorReset(value => value + 1);
+      await command('settings.saveServer', { ...draft, serverId: server.id, iconPngBase64: stagedIconEdit ? null : stagedIcon?.split(',', 2)[1] ?? null, ...(stagedIconEdit ? { iconEdit: stagedIconEdit } : {}) });
+      setBaseline({ ...draft }); setStagedIcon(null); setStagedIconEdit(null); setEditorReset(value => value + 1);
     } catch {
       // The store owns the user-visible error. Keep the draft and its dirty guard intact for retry.
     } finally { setSaving(false); }
   };
   return <div className={styles.settingsLayout}><nav className={styles.settingsNav} aria-label="Server settings categories">{categories.map(item => <button key={item} data-selected={category === item} onClick={() => setCategory(item)}>{item}</button>)}</nav><div>
-    {category === 'Appearance' ? <div className={appearance.appearanceStack}><section className={appearance.appearancePanel}><div className={appearance.appearanceIntro}><div><h2>Server appearance</h2><p>Set the icon and two-line message players see in Minecraft's multiplayer list. Changes stay local until you save.</p></div><StatusBadge tone={server.state === 'Running' && draft.motd !== baseline.motd ? 'warning' : 'neutral'}>{server.state === 'Running' && draft.motd !== baseline.motd ? 'Restart required' : 'Vanilla server list'}</StatusBadge></div><IconCropEditor serverName={server.name} savedIconUrl={server.iconUrl} stagedIconUrl={stagedIcon} onStagedIcon={setStagedIcon} /><MotdEditor serverName={draft.name} serverIconUrl={stagedIcon ?? server.iconUrl} savedRaw={baseline.motd} resetToken={editorReset} onChange={value => update('motd', value)} /></section></div> : <section className={styles.settingsForm}>
+    {category === 'Appearance' ? <div className={appearance.appearanceStack}><section className={appearance.appearancePanel}><div className={appearance.appearanceIntro}><div><h2>Server appearance</h2><p>Set the icon and two-line message players see in Minecraft's multiplayer list. Changes stay local until you save.</p></div><StatusBadge tone={server.state === 'Running' && draft.motd !== baseline.motd ? 'warning' : 'neutral'}>{server.state === 'Running' && draft.motd !== baseline.motd ? 'Restart required' : 'Vanilla server list'}</StatusBadge></div><IconCropEditor serverId={server.id} serverName={server.name} savedIconUrl={server.iconUrl} stagedIconUrl={stagedIcon} resetToken={editorReset} onStagedIcon={(value, edit) => { setStagedIcon(value); setStagedIconEdit(edit ?? null); }} /><MotdEditor serverName={draft.name} serverIconUrl={stagedIcon ?? server.iconUrl} savedRaw={baseline.motd} resetToken={editorReset} onChange={value => update('motd', value)} /></section></div> : <section className={styles.settingsForm}>
       {category === 'General' && <><Setting label="Server name" detail="Renaming changes only ChunkPilot's display name; it never renames the folder or world."><div className={page.actions}><TextInput value={draft.name} readOnly /><Button onClick={() => void command('servers.rename', { serverId: server.id })}>Rename</Button></div></Setting><Setting label="Server port" detail="Changing the port does not create firewall or router access."><TextInput type="number" min={1} max={65535} value={draft.port} onChange={event => update('port', Number(event.target.value))} /></Setting></>}
       {category === 'Gameplay' && <><Setting label="Maximum players" detail="The slot limit reported by the server."><TextInput type="number" min={1} max={1000} value={draft.maximumPlayers} onChange={event => update('maximumPlayers', Number(event.target.value))} /></Setting><Setting label="Difficulty" detail="Applied through server.properties and may require restart."><SelectInput aria-label="Difficulty" value={draft.difficulty} onChange={event => update('difficulty', event.target.value)}>{!['peaceful', 'easy', 'normal', 'hard'].includes(draft.difficulty) && <option value={draft.difficulty}>Custom value: {draft.difficulty || '(empty)'}</option>}<option value="peaceful">Peaceful</option><option value="easy">Easy</option><option value="normal">Normal</option><option value="hard">Hard</option></SelectInput></Setting><Setting label="Player versus player" detail="Allow players to damage one another."><Toggle value={draft.pvp} onChange={value => update('pvp', value)} /></Setting></>}
       {category === 'Resources' && <><Setting label="Memory" detail="Most small Vanilla servers run well with 2–4 GB. Choose a preset or enter an exact amount."><MemoryControl valueMib={draft.maximumRamMb} onChange={value => update('maximumRamMb', value)} hostTotalBytes={useAppStore.getState().snapshot?.host.totalMemoryBytes} ariaLabel="Maximum server memory" /></Setting><Setting label="Advanced" detail="Initial memory controls Java's starting heap. It must not exceed maximum memory."><details className={styles.resourceAdvanced}><summary>Initial memory</summary><MemoryControl valueMib={draft.minimumRamMb} onChange={value => update('minimumRamMb', value)} hostTotalBytes={null} ariaLabel="Initial server memory" minimumMib={256} maximumMib={draft.maximumRamMb} /></details></Setting></>}
@@ -1129,9 +1139,11 @@ function ConnectivitySettings({ server }: { server: ServerSummary }) {
   const busy = useAppStore(state => state.busy);
   const [confirmStop, setConfirmStop] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState(false);
+  const [confirmBinding, setConfirmBinding] = useState(false);
   if (!connectivity || connectivity.serverId !== server.id)
     return <EmptyState title="Connectivity unavailable" detail="ChunkPilot has not received authoritative networking state for this server." />;
   const modes: { id: ConnectivitySnapshot['mode']; title: string; detail: string; icon: typeof Wifi }[] = [
+    { id: 'ThisComputerOnly', title: 'Local only', detail: 'Only this computer, after applying the binding.', icon: ServerIcon },
     { id: 'HomeNetwork', title: 'LAN', detail: 'People on the same Wi-Fi or wired network.', icon: Wifi },
     { id: 'PortForwarding', title: 'Internet', detail: 'Friends outside your home, after deliberate setup.', icon: Globe2 }
   ];
@@ -1172,6 +1184,11 @@ function ConnectivitySettings({ server }: { server: ServerSummary }) {
   return <div className={styles.connectivityPage}>
     <header className={styles.connectivityHeader}><div><h2>Connectivity</h2><p>Choose whether people join from your home network or from anywhere on the Internet.</p></div><StatusBadge tone={joining.tone}>{joining.badge}</StatusBadge></header>
     <div className={styles.modeGrid} aria-label="Connection method">{modes.map(mode => <button key={mode.id} data-selected={connectivity.mode === mode.id} onClick={() => setMode(mode.id)} disabled={busy.has('connectivity.setMode')}><mode.icon size={17} /><span><strong>{mode.title}</strong><small>{mode.detail}</small></span><i aria-hidden="true" /></button>)}</div>
+    {server.connection.requestedAudienceNotApplied && <section className={styles.inlineConsent}>
+      <strong>The selected audience is not applied to the server binding</strong>
+      <p>{server.connection.bindingApplyUnavailableReason || 'Review and apply this change deliberately. Choosing an audience alone does not change the server listener.'}</p>
+      <Button variant="primary" disabled={!server.connection.canApplyBinding || busy.has('connectivity.applyBinding')} onClick={() => setConfirmBinding(true)}>{busy.has('connectivity.applyBinding') ? 'Applying binding…' : server.state === 'Running' ? 'Apply binding and restart' : 'Apply server binding'}</Button>
+    </section>}
     <div className={styles.connectivityStatus} data-tone={joining.tone}><div><strong>{joining.badge}</strong><p>{joining.explanation}</p></div><span>{joining.audience === 'internet' ? 'Internet' : joining.audience === 'home' ? 'LAN' : 'This computer'}</span></div>
     <section className={styles.internetPrompt}><Globe2 size={20} /><div><strong>{sharingConfigured ? 'Internet sharing is configured' : connectivity.mode === 'PortForwarding' ? 'Finish Internet setup' : 'Let friends outside your home join'}</strong><p>ChunkPilot maintains its exact Windows and router configuration when this server starts. A configured route is not a guarantee that every outside network can connect.</p></div>{mainAction ? <Button variant="primary" disabled={setupBusy} onClick={() => void advanceInternetSetup()}>{setupBusy ? 'Working…' : mainAction}</Button> : <StatusBadge tone="success">Configured</StatusBadge>}</section>
     {connectivity.mode === 'PortForwarding' && <div className={styles.setupStepper} aria-label="Internet setup progress">{setupSteps.map((step, index) => <div key={step.label} data-complete={step.done || undefined} data-active={step.active || undefined}><span>{step.done ? <Check size={12} /> : index + 1}</span><div><strong>{step.label}</strong><small>{step.state}</small></div></div>)}</div>}
@@ -1187,6 +1204,10 @@ function ConnectivitySettings({ server }: { server: ServerSummary }) {
     </>}
     <ConfirmDialog open={confirmStop} title="Stop Internet sharing?" detail="ChunkPilot will remove only the router mapping it can prove it owns. The server and Windows Firewall configuration remain unchanged." confirmLabel="Stop sharing" destructive onCancel={() => setConfirmStop(false)} onConfirm={() => { setConfirmStop(false); void command('connectivity.router.stop', { serverId: server.id, confirmed: true }); }} />
     <ConfirmDialog open={confirmRemove} title="Remove Windows Firewall access?" detail="ChunkPilot will remove only the exact firewall rule it can prove it created. The server folder and router setup remain unchanged." confirmLabel="Remove rule" destructive onCancel={() => setConfirmRemove(false)} onConfirm={() => { setConfirmRemove(false); void command('connectivity.firewall.remove', { serverId: server.id, confirmed: true }); }} />
+    <ConfirmDialog open={confirmBinding} title="Apply the selected server binding?"
+      detail={`${connectivity.mode === 'ThisComputerOnly' ? 'This sets server-ip to the local loopback address so only this computer can connect.' : 'This sets server-ip to all interfaces. Existing firewall or router rules may already permit other computers or the Internet to connect.'} No firewall or router rules are added. ${server.state === 'Running' ? 'The running server will be saved, stopped, and restarted deliberately.' : 'The stopped server will stay stopped; the change takes effect at its next start.'}`}
+      confirmLabel={server.state === 'Running' ? 'Apply and restart server' : 'Apply binding'} destructive onCancel={() => setConfirmBinding(false)}
+      onConfirm={() => { setConfirmBinding(false); if (server.connection.canApplyBinding) void command('connectivity.applyBinding', { serverId: server.id, mode: connectivity.mode, confirmed: true, restartIfRunning: server.state === 'Running' }); }} />
   </div>;
 }
 

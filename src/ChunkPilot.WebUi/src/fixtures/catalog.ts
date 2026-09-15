@@ -498,7 +498,7 @@ export class FixtureBridge implements BridgeAdapter {
     } as T;
     if (method === 'servers.delete') return { accepted: true, operationId: 'fixture-delete-operation' } as T;
     if (method === 'servers.createManagedCopy') return { accepted: true, operationId: 'fixture-copy-operation' } as T;
-    if (method === 'appearance.chooseIcon') return { cancelled: false, sourceUrl: './fixtures/icon-source.png', width: 256, height: 256, fileName: 'ChunkPilot-256.png' } as T;
+    if (method === 'appearance.chooseIcon' || method === 'appearance.editIcon') return { cancelled: false, sourceUrl: './fixtures/icon-source.png', width: 256, height: 256, fileName: 'ChunkPilot-256.png', detail: 'Invented bounded source for isolated preview.' } as T;
     if (method === 'plugins.providers') return [
       { provider: 'Modrinth', available: true, detail: 'Official API available.' },
       { provider: 'Hangar', available: false, detail: 'Unavailable; ChunkPilot does not scrape.' }

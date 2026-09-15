@@ -9,6 +9,7 @@ import type {
   ModpackProviderStatus, ModpackRelease, ModpackVersionInventory, ResolvedModpackLink
 } from '../../bridge/types';
 import styles from './ModpackPicker.module.css';
+import { modpackRouteLabel } from './installationRoute';
 
 export type ModpackSelection =
   | { kind: 'remote'; project: ModpackProject; release: ModpackRelease }
@@ -114,7 +115,8 @@ function BrowseModpackPicker({ value, onChange }: {
       if (active.selectedProjectId !== reviewedProject.projectId) return current;
       const tracked = active.selection?.release;
       if (tracked?.versionId === value.release.versionId && tracked.canCreate === value.release.canCreate &&
-          tracked.preflightState === value.release.preflightState && tracked.limitation === value.release.limitation)
+          tracked.preflightState === value.release.preflightState && tracked.limitation === value.release.limitation &&
+          tracked.installationRoute === value.release.installationRoute && tracked.installationRouteDetail === value.release.installationRouteDetail)
         return current;
       return {
         ...current,
@@ -468,7 +470,7 @@ function BrowseModpackPicker({ value, onChange }: {
         {pending && !session.projects.length && <LoadingSkeleton provider={provider} />}
         {!pending && session.state === 'Empty' && <div className={styles.loading}><Box size={24} /><strong>No matching modpacks</strong><span>Clear a filter or search another provider.</span></div>}
         {session.projects.length > 0 && session.projects.length <= 20 && session.projects.map(project => <ProjectRow key={`${project.provider}:${project.projectId}`}
-          project={project} selected={selectedProject?.projectId === project.projectId} onSelect={() => void selectProject(project)} />)}
+          project={project} selected={selectedProject?.projectId === project.projectId} selectedRelease={selectedProject?.projectId === project.projectId ? session.selection?.release : undefined} onSelect={() => void selectProject(project)} />)}
         {session.projects.length > 20 && <div className={styles.virtualContent} style={{ height: virtual.getTotalSize() }}>
           {virtual.getVirtualItems().map(row => {
             const project = session.projects[row.index];
@@ -477,7 +479,7 @@ function BrowseModpackPicker({ value, onChange }: {
               data-selected={selectedProject?.projectId === project.projectId || undefined} onClick={() => void selectProject(project)}>
               <PackImage project={project} />
               <span className={styles.projectCopy}><strong>{project.name}</strong><small>{project.author} · {project.downloadCount?.toLocaleString() ?? 'Downloads unavailable'} downloads</small><span>{project.summary}</span></span>
-              <StatusBadge tone={projectStatus(project).tone}>{projectStatus(project).label}</StatusBadge>
+              <StatusBadge tone={projectStatus(project, selectedProject?.projectId === project.projectId ? session.selection?.release : undefined).tone}>{projectStatus(project, selectedProject?.projectId === project.projectId ? session.selection?.release : undefined).label}</StatusBadge>
             </button>;
           })}
         </div>}
@@ -500,7 +502,7 @@ function BrowseModpackPicker({ value, onChange }: {
             const release = releaseOptions.find(item => item.versionId === versionId);
             if (release) chooseRelease(release);
           }} ariaLabel="Exact modpack release" options={releaseOptions.map(release => ({ value: release.versionId, label: `${release.versionName} · Minecraft ${release.minecraftVersion} · ${release.loader}` }))} /></label>}
-          {session.selection && <><dl><div><dt>Release</dt><dd>{session.selection.release.releaseChannel}</dd></div><div><dt>Server path</dt><dd>{session.selection.release.serverPath ?? 'No supportable server setup found'}</dd></div><div><dt>Integrity</dt><dd>{session.selection.release.hasIntegrity ? session.selection.project.provider === 'Modrinth' ? 'SHA-1 + SHA-512' : 'Provider SHA-1 + local SHA-256 after download' : 'Unavailable'}</dd></div><div><dt>Size</dt><dd>{session.selection.release.sizeBytes ? `${(session.selection.release.sizeBytes / 1024 / 1024).toFixed(1)} MB` : 'Unavailable'}</dd></div><div><dt>Published</dt><dd>{session.selection.release.publishedAt ? new Date(session.selection.release.publishedAt).toLocaleDateString() : 'Unavailable'}</dd></div></dl>{session.selection.release.changelog && <details><summary>Release notes</summary><p>{session.selection.release.changelog}</p></details>}</>}
+          {session.selection && <><dl><div><dt>Release</dt><dd>{session.selection.release.releaseChannel}</dd></div><div><dt>Server path</dt><dd>{modpackRouteLabel(session.selection.release)}</dd></div><div><dt>Integrity</dt><dd>{session.selection.release.hasIntegrity ? session.selection.project.provider === 'Modrinth' ? 'SHA-1 + SHA-512' : 'Provider SHA-1 + local SHA-256 after download' : 'Unavailable'}</dd></div><div><dt>Size</dt><dd>{session.selection.release.sizeBytes ? `${(session.selection.release.sizeBytes / 1024 / 1024).toFixed(1)} MB` : 'Unavailable'}</dd></div><div><dt>Published</dt><dd>{session.selection.release.publishedAt ? new Date(session.selection.release.publishedAt).toLocaleDateString() : 'Unavailable'}</dd></div></dl>{session.selection.release.installationRouteDetail && <p>{session.selection.release.installationRouteDetail}</p>}{session.selection.release.changelog && <details><summary>Release notes</summary><p>{session.selection.release.changelog}</p></details>}</>}
           {session.selection && !session.selection.release.canCreate && <div className={styles.releaseLimitation} role="status"><strong>Creation unavailable</strong><span>{session.selection.release.limitation || 'This exact release does not have a complete managed server path.'}</span></div>}
           {selectedProject.serverPathChecked === false && session.detailState !== 'failed' && <StatusBadge tone="neutral">Server setup not checked yet</StatusBadge>}
           {selectedProject.serverPathChecked !== false && <StatusBadge tone={session.selection?.release.canCreate ? 'warning' : 'neutral'}>{session.selection?.release.canCreate ? 'Validated during creation' : 'Browse only'}</StatusBadge>}
@@ -564,7 +566,7 @@ function ProviderLinkPicker({ value, onChange }: {
     {error && <div className={styles.error} role="alert"><strong>Could not resolve link</strong><span>{error}</span></div>}
     {remote && <article className={styles.resolvedLink} aria-label="Resolved modpack release">
       <PackImage project={remote.project} large />
-      <div><span className={styles.eyebrow}>{remote.project.provider} · resolved release</span><h3>{remote.project.name}</h3><p>{remote.release.versionName}</p><small>Minecraft {remote.release.minecraftVersion} · {remote.release.loader} · {remote.release.releaseChannel}</small>{detail && <span role="status">{detail}</span>}</div>
+      <div><span className={styles.eyebrow}>{remote.project.provider} · resolved release</span><h3>{remote.project.name}</h3><p>{remote.release.versionName}</p><small>Minecraft {remote.release.minecraftVersion} · {remote.release.loader} · {remote.release.releaseChannel}</small><small>{modpackRouteLabel(remote.release)}</small>{detail && <span role="status">{detail}</span>}</div>
       <StatusBadge tone={remote.release.canCreate ? 'success' : 'warning'}>{remote.release.canCreate ? 'Ready for review' : 'Unavailable'}</StatusBadge>
     </article>}
   </section>;
@@ -639,9 +641,13 @@ function sortLoadedProjects(projects: ModpackProject[], sort: string): ModpackPr
     : projects;
 }
 
-function projectStatus(project: ModpackProject): { tone: 'neutral' | 'success' | 'warning'; label: string } {
+function projectStatus(project: ModpackProject, release?: ModpackRelease): { tone: 'neutral' | 'success' | 'warning'; label: string } {
+  if (release?.installationRoute)
+    return { tone: release.installationRoute === 'OfficialServerPack' ? 'success' : release.installationRoute === 'GeneratedCandidate' ? 'warning' : 'neutral', label: modpackRouteLabel(release) };
   if (project.serverPathChecked === false)
     return { tone: 'neutral', label: 'Server setup not checked yet' };
+  if (project.provider === 'CurseForge' && project.versions.some(candidate => candidate.installationRoute))
+    return { tone: 'neutral', label: 'Choose an exact release' };
   if (project.serverSupport === 'FullyAutomated')
     return { tone: 'success', label: 'Official server pack' };
   if (project.serverSupport === 'AutomatedWithReview')
@@ -655,11 +661,11 @@ function LoadingSkeleton({ provider }: { provider: ModpackProvider }) {
   </div>;
 }
 
-function ProjectRow({ project, selected, onSelect }: { project: ModpackProject; selected: boolean; onSelect: () => void }) {
+function ProjectRow({ project, selected, selectedRelease, onSelect }: { project: ModpackProject; selected: boolean; selectedRelease?: ModpackRelease; onSelect: () => void }) {
   return <button type="button" className={styles.project} data-selected={selected || undefined} onClick={onSelect}>
     <PackImage project={project} />
     <span className={styles.projectCopy}><strong>{project.name}</strong><small>{project.author} · {project.downloadCount?.toLocaleString() ?? 'Downloads unavailable'} downloads</small><span>{project.summary}</span></span>
-    <StatusBadge tone={projectStatus(project).tone}>{projectStatus(project).label}</StatusBadge>
+    <StatusBadge tone={projectStatus(project, selectedRelease).tone}>{projectStatus(project, selectedRelease).label}</StatusBadge>
   </button>;
 }
 

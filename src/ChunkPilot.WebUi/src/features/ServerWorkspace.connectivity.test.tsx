@@ -46,15 +46,47 @@ describe('server connectivity presentation', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
-  it('offers exactly the ordinary LAN and Internet modes and persists the selected mode', () => {
+  it('offers explicit Local only alongside LAN and Internet without applying bindings automatically', () => {
     window.history.replaceState({}, '', '/?tab=settings&settings=Connectivity');
     const server = workspace();
     expect(screen.getByRole('button', { name: /^LAN People/ }).getAttribute('data-selected')).toBe('true');
     expect(screen.getByRole('button', { name: /^Internet Friends/ })).toBeTruthy();
-    expect(screen.queryByRole('button', { name: /Local only/ })).toBeNull();
+    expect(screen.getByRole('button', { name: /Local only/ })).toBeTruthy();
     expect(screen.queryByRole('button', { name: /Configure later/ })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: /^Internet Friends/ }));
     expect(calls).toContainEqual({ method: 'connectivity.setMode', params: { serverId: server.id, mode: 'PortForwarding' } });
+    expect(calls.some(call => call.method === 'connectivity.applyBinding')).toBe(false);
+  });
+
+  it('requires an explicit binding review before applying broader access and restarting a running server', () => {
+    window.history.replaceState({}, '', '/?tab=settings&settings=Connectivity');
+    const snapshot = structuredClone(fixtures.running);
+    const server = snapshot.servers[0];
+    server.connection = { ...server.connection, requestedAudienceNotApplied: true, canApplyBinding: true };
+    useAppStore.setState({ snapshot });
+    render(<NavigationGuardProvider><ServerWorkspace serverId={server.id} /></NavigationGuardProvider>);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Apply binding and restart' }));
+    expect(screen.getByRole('alertdialog', { name: 'Apply the selected server binding?' })).toBeTruthy();
+    expect(screen.getByText(/Existing firewall or router rules may already permit/)).toBeTruthy();
+    expect(calls.some(call => call.method === 'connectivity.applyBinding')).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Apply and restart server' }));
+    expect(calls).toContainEqual({ method: 'connectivity.applyBinding', params: {
+      serverId: server.id, mode: 'HomeNetwork', confirmed: true, restartIfRunning: true
+    } });
+  });
+
+  it('does not offer an actionable binding mutation when the native safety gate is unavailable', () => {
+    window.history.replaceState({}, '', '/?tab=settings&settings=Connectivity');
+    const snapshot = structuredClone(fixtures.stopped);
+    const server = snapshot.servers[0];
+    server.connection = { ...server.connection, requestedAudienceNotApplied: true, canApplyBinding: false,
+      bindingApplyUnavailableReason: 'The server layout is not eligible for safe binding changes.' };
+    useAppStore.setState({ snapshot });
+    render(<NavigationGuardProvider><ServerWorkspace serverId={server.id} /></NavigationGuardProvider>);
+    expect((screen.getByRole('button', { name: 'Apply server binding' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText('The server layout is not eligible for safe binding changes.')).toBeTruthy();
+    expect(calls.some(call => call.method === 'connectivity.applyBinding')).toBe(false);
   });
 
   it('uses a verified public endpoint only when outside-in evidence exists', () => {

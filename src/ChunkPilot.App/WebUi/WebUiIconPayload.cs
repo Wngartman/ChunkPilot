@@ -1,4 +1,5 @@
 using ImageSharpImage = SixLabors.ImageSharp.Image;
+using SixLabors.ImageSharp.Formats;
 
 namespace ChunkPilot.App.WebUi;
 
@@ -27,9 +28,11 @@ internal static class WebUiIconPayload
         if (format is null || !string.Equals(format.Name, "PNG", StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("The cropped icon payload must be a PNG image.");
         stream.Position = 0;
-        using var image = ImageSharpImage.Load(stream);
-        if (image.Width != 64 || image.Height != 64)
+        var info = ImageSharpImage.Identify(new DecoderOptions { MaxFrames = 1 }, stream);
+        if (info.Width != 64 || info.Height != 64)
             throw new InvalidDataException("Minecraft server icons must be exactly 64 x 64 pixels.");
+        stream.Position = 0;
+        using var image = ImageSharpImage.Load(new DecoderOptions { MaxFrames = 1 }, stream);
         return bytes;
     }
 }

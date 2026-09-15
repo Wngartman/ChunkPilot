@@ -33,6 +33,31 @@ function renderWorkspace() {
 }
 
 describe('Minecraft players workspace', () => {
+  it('allows saved access changes only when the native stopped-server capability explicitly permits them', () => {
+    const current = structuredClone(fixtures.running);
+    current.servers[0].state = 'Stopped';
+    current.playerAccess = { ...current.playerAccess!, serverRunning: false, canManageWhileStopped: true,
+      accessAvailabilityDetail: 'Saved access files can be edited safely while stopped.' };
+    current.players = current.players.map(player => ({ ...player, online: false }));
+    useAppStore.setState({ snapshot: current });
+    const server = renderWorkspace();
+    expect(screen.getByText('Saved access available')).toBeTruthy();
+    expect(screen.getByText('Saved access files can be edited safely while stopped.')).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Minecraft player name'), { target: { value: 'KnownPlayer' } });
+    fireEvent.click(screen.getAllByRole('button', { name: 'Add to whitelist' })[0]);
+    expect(calls).toContainEqual({ method: 'players.addAllowlist', params: { serverId: server.id, playerName: 'KnownPlayer' } });
+    expect(screen.queryByRole('button', { name: 'Kick' })).toBeNull();
+  });
+
+  it('does not reuse an offline edit permission once the server starts', () => {
+    const current = structuredClone(fixtures.running);
+    current.servers[0].state = 'Starting';
+    current.playerAccess = { ...current.playerAccess!, serverRunning: false, canManageWhileStopped: true };
+    useAppStore.setState({ snapshot: current });
+    renderWorkspace();
+    expect((screen.getByRole('switch', { name: 'Turn whitelist off' }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getAllByRole('button', { name: 'Remove from whitelist' })[0] as HTMLButtonElement).disabled).toBe(true);
+  });
   it('never renders the previous server roster while a new authoritative selection is pending', () => {
     const current = structuredClone(fixtures.running);
     const previous = current.servers[0];
@@ -151,7 +176,7 @@ describe('Minecraft players workspace', () => {
     next.playerAccess!.serverRunning = false;
     act(() => useAppStore.getState().applySnapshot(next));
     expect(screen.getByRole('button', { name: 'Players' }).getAttribute('aria-current')).toBe('page');
-    expect(screen.getByText('Server stopped')).toBeTruthy();
+    expect(screen.getByText('Not available in this state')).toBeTruthy();
     expect(screen.getByText('MapleRook')).toBeTruthy();
   });
 });

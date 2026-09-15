@@ -54,7 +54,16 @@ describe('WebView bridge client', () => {
     { method: 'mods.release' as const, timeoutMs: 2 * 60_000 },
     { method: 'mods.plan' as const, timeoutMs: 2 * 60_000 },
     { method: 'versions.check' as const, timeoutMs: 2 * 60_000 },
-    { method: 'versions.rollback' as const, timeoutMs: 30 * 60_000 }
+    { method: 'versions.rollback' as const, timeoutMs: 30 * 60_000 },
+    { method: 'servers.start' as const, timeoutMs: 30 * 60_000 },
+    { method: 'servers.stop' as const, timeoutMs: 10 * 60_000 },
+    { method: 'servers.restart' as const, timeoutMs: 30 * 60_000 },
+    { method: 'settings.saveServer' as const, timeoutMs: 5 * 60_000 },
+    { method: 'backups.create' as const, timeoutMs: 60 * 60_000 },
+    { method: 'backups.restore' as const, timeoutMs: 60 * 60_000 },
+    { method: 'backups.verify' as const, timeoutMs: 60 * 60_000 },
+    { method: 'connectivity.applyBinding' as const, timeoutMs: 30 * 60_000 },
+    { method: 'appearance.chooseIcon' as const, timeoutMs: 10 * 60_000 }
   ])('gives $method a bounded long-running timeout', async ({ method, timeoutMs }) => {
     vi.useFakeTimers();
     const native = host();
@@ -84,6 +93,18 @@ describe('WebView bridge client', () => {
 
   it('uses structured bridge errors', () => {
     expect(new BridgeError('validation', 'Invalid').code).toBe('validation');
+  });
+
+  it('cleans a rejected host send without later reporting a second timeout', async () => {
+    vi.useFakeTimers();
+    const native = host();
+    window.chrome!.webview!.postMessage = () => { throw new Error('Host disconnected'); };
+    const bridge = new WebViewBridge();
+    await expect(bridge.request('snapshot.get')).rejects.toMatchObject({ code: 'backend_disconnected' });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(native.sent).toHaveLength(0);
+    expect(vi.getTimerCount()).toBe(0);
+    bridge.dispose();
   });
 
   it('publishes authoritative events to subscribers', () => {
