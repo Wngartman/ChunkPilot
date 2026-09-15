@@ -908,9 +908,59 @@ public sealed class AgentReconnectIntegrationTests
         finally
         {
             if (!process.HasExited)
+            {
                 process.Kill(entireProcessTree: true);
-            if (Directory.Exists(root))
-                Directory.Delete(root, recursive: true);
+                await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
+            }
+            // WebView2 can release its profile files shortly after the proven App/Agent exit.
+            // Retry only fixture deletion; never relax the lifecycle assertions above.
+            await DeleteFixtureRootAsync(root);
+        }
+    }
+
+    [Fact(Timeout = 15_000)]
+    public async Task Fixture_cleanup_waits_for_delayed_profile_lock_release_without_touching_sibling()
+    {
+        var container = Path.Combine(Path.GetTempPath(), "ChunkPilot-cleanup-lock-" + Guid.NewGuid().ToString("N"));
+        var root = Path.Combine(container, "profile");
+        Directory.CreateDirectory(root);
+        var sibling = Path.Combine(container, "unrelated.txt");
+        await File.WriteAllTextAsync(sibling, "preserved");
+        using var profileLock = new FileStream(Path.Combine(root, "000003.log"), FileMode.Create,
+            FileAccess.ReadWrite, FileShare.None);
+        try
+        {
+            var deletion = DeleteFixtureRootAsync(root);
+            await Task.Delay(1_500);
+            Assert.False(deletion.IsCompleted, "Cleanup must await the actual outstanding file lock.");
+            profileLock.Dispose();
+            await deletion;
+            Assert.False(Directory.Exists(root));
+            Assert.Equal("preserved", await File.ReadAllTextAsync(sibling));
+        }
+        finally
+        {
+            profileLock.Dispose();
+            await DeleteFixtureRootAsync(container);
+        }
+    }
+
+    [Fact(Timeout = 15_000)]
+    public async Task Fixture_cleanup_reports_a_profile_lock_that_never_releases()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "ChunkPilot-cleanup-held-lock-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var profilePath = Path.Combine(root, "000003.log");
+        using var profileLock = new FileStream(profilePath, FileMode.Create, FileAccess.ReadWrite, FileShare.None);
+        try
+        {
+            await Assert.ThrowsAsync<IOException>(() => DeleteFixtureRootAsync(root));
+            Assert.True(File.Exists(profilePath));
+        }
+        finally
+        {
+            profileLock.Dispose();
+            await DeleteFixtureRootAsync(root);
         }
     }
 
@@ -951,7 +1001,7 @@ public sealed class AgentReconnectIntegrationTests
 
     private static async Task DeleteFixtureRootAsync(string root)
     {
-        for (var attempt = 0; attempt < 10; attempt++)
+        for (var attempt = 0; attempt < 50; attempt++)
         {
             try
             {
@@ -959,7 +1009,8 @@ public sealed class AgentReconnectIntegrationTests
                     Directory.Delete(root, recursive: true);
                 return;
             }
-            catch (IOException) when (attempt < 9)
+            catch (IOException exception) when (attempt < 49 &&
+                (exception.HResult & 0xffff) is 32 or 33)
             {
                 await Task.Delay(100);
             }
