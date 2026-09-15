@@ -38,6 +38,10 @@ public sealed class CurseForgeGeneratedPackPlanService
         var optional = new List<CurseForgeGeneratedOptionalExclusion>();
         var incompatible = new List<(string Owner, string Target)>();
         var relationshipCount = 0;
+        var manifestPins = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var entry in manifest.Files)
+            if (!manifestPins.TryAdd(CanonicalId(entry.ProjectId), CanonicalId(entry.FileId)))
+                throw new InvalidDataException("The CurseForge client manifest selects a project more than once.");
 
         foreach (var entry in manifest.Files)
         {
@@ -89,6 +93,16 @@ public sealed class CurseForgeGeneratedPackPlanService
             CurseForgeGeneratedFileEvidence evidence)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            // The client manifest pins the whole pack. A dependency without a version must use
+            // that pin even when traversal encounters it before the manifest's own root entry.
+            // Otherwise choosing today's latest dependency can conflict with (or upgrade) the pack.
+            if (manifestPins.TryGetValue(projectId, out var manifestPin))
+            {
+                if (!string.IsNullOrWhiteSpace(requestedFileId) &&
+                    !requestedFileId.Equals(manifestPin, StringComparison.Ordinal))
+                    throw new InvalidDataException($"CurseForge project {projectId} requires contradictory exact file identities.");
+                requestedFileId = manifestPin;
+            }
             relationshipCount = checked(relationshipCount + 1);
             if (relationshipCount > MaximumRelationshipEvidence)
                 throw new InvalidDataException(

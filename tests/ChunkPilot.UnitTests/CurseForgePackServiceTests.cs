@@ -10,6 +10,34 @@ namespace ChunkPilot.UnitTests;
 
 public sealed class CurseForgePackServiceTests
 {
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Unversioned_dependency_uses_later_manifest_pin_instead_of_latest(bool required)
+    {
+        var handler = new FixtureHandler(request => request.RequestUri!.AbsolutePath switch
+        {
+            "/v1/mods/10" => Json(Project(10)),
+            "/v1/mods/20" => Json(Project(20)),
+            "/v1/mods/10/files/100" => Json(ApiFile(10, 100, "first.jar", [1],
+                [new { modId = 20, relationType = 3 }])),
+            "/v1/mods/20/files/200" => Json(ApiFile(20, 200, "pinned.jar", [2], [])),
+            _ => throw new InvalidOperationException("Do not resolve today's latest when the manifest pins an exact file.")
+        });
+        var secrets = new MemorySecrets();
+        secrets.SetSecret(CurseForgeUpdateProvider.ApiKeyName, "fixture-key");
+        using var api = new CurseForgeApiClient(secrets, handler);
+        var manifest = new CurseForgePackManifest("Fixture", "1", "Fixture", "1.20.1",
+            InstallSourceType.Fabric, "0.15.11", "overrides",
+            [new(10, 100, true), new(20, 200, required)]);
+        var plan = await new CurseForgeGeneratedPackPlanService(api).ResolveAsync(manifest);
+        var dependency = Assert.Single(plan.RequiredFiles.Where(file => file.ProjectId == "20"));
+        Assert.Equal("200", dependency.FileId);
+        Assert.Contains(dependency.RequiredBy, evidence => evidence.Relation == CurseForgeGeneratedFileRelation.RequiredDependency);
+        Assert.Equal(required, dependency.RequiredBy.Any(evidence => evidence.Relation == CurseForgeGeneratedFileRelation.ManifestRequired));
+        Assert.Empty(plan.OptionalExclusions);
+    }
+
     [Fact]
     public void Generated_evidence_recomputes_size_from_the_installed_local_file()
     {
