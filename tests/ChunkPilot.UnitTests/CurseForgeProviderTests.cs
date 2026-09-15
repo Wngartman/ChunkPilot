@@ -64,10 +64,12 @@ public sealed class CurseForgeProviderTests
         Assert.False(release.CanGenerateServerCandidate);
     }
 
-    [Fact]
-    public async Task Additional_server_file_attached_to_another_client_is_rejected()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Additional_server_file_attached_to_another_client_is_rejected(bool dedicatedLink)
     {
-        var client = JsonNode.Parse(ClientFile(111, 123, 0))!;
+        var client = JsonNode.Parse(ClientFile(111, 123, dedicatedLink ? 222 : 0))!;
         client["data"]!["alternateFileId"] = 222;
         var server = JsonNode.Parse(ServerFile(222, 123, Cdn, "fixture-serverpack.zip"))!;
         server["data"]!["parentProjectFileId"] = 999;

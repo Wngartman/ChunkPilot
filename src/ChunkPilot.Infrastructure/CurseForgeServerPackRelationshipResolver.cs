@@ -27,13 +27,9 @@ internal sealed partial class CurseForgeServerPackRelationshipResolver(CurseForg
 
         using var document = await api.GetJsonAsync(
             $"/v1/mods/{Uri.EscapeDataString(projectId)}/files/{selected}", cancellationToken).ConfigureAwait(false);
-        if (!document.RootElement.TryGetProperty("data", out var file) || file.ValueKind != JsonValueKind.Object ||
-            !CurseForgeCatalogProvider.Text(file, "id").Equals(selected, StringComparison.Ordinal) ||
-            !CurseForgeCatalogProvider.Text(file, "modId").Equals(projectId, StringComparison.Ordinal))
-            throw new InvalidDataException("CurseForge returned a contradictory exact additional-file identity.");
-        var parent = PositiveId(file, "parentProjectFileId");
-        if (parent.Length > 0 && !parent.Equals(clientId, StringComparison.Ordinal))
-            throw new InvalidDataException("The CurseForge server-pack file is attached to a different client release.");
+        if (!document.RootElement.TryGetProperty("data", out var file))
+            throw new InvalidDataException("CurseForge returned no exact additional-file identity.");
+        ValidateLinkedFile(projectId, clientId, selected, file);
 
         // The forward link is authoritative even if the optional reverse field is absent.
         // Without the dedicated server flag require an explicit server-pack label on this
@@ -42,6 +38,18 @@ internal sealed partial class CurseForgeServerPackRelationshipResolver(CurseForg
             ServerPackLabel().IsMatch(CurseForgeCatalogProvider.Text(file, "fileName")) ||
             ServerPackLabel().IsMatch(CurseForgeCatalogProvider.Text(file, "displayName"));
         return labelledServer ? selected : "";
+    }
+
+    internal static void ValidateLinkedFile(string projectId, string clientId, string selected, JsonElement file)
+    {
+        if (file.ValueKind != JsonValueKind.Object ||
+            !CurseForgeCatalogProvider.Text(file, "id").Equals(selected, StringComparison.Ordinal) ||
+            !CurseForgeCatalogProvider.Text(file, "modId").Equals(projectId, StringComparison.Ordinal))
+            throw new InvalidDataException("CurseForge returned a contradictory exact additional-file identity.");
+        var parent = PositiveId(file, "parentProjectFileId");
+        if (parent.Length > 0 && !parent.Equals(clientId, StringComparison.Ordinal))
+            throw new InvalidDataException("The CurseForge server-pack file is attached to a different client release.");
+
     }
 
     private static string PositiveId(JsonElement value, string property) =>

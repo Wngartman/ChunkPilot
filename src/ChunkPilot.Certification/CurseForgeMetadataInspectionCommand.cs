@@ -38,6 +38,29 @@ internal static class CurseForgeMetadataInspectionCommand
             using var exact = await api.GetJsonAsync($"/v1/mods/{project}/files/{fileId}", timeout.Token)
                 .ConfigureAwait(false);
             WriteFile(exact.RootElement.GetProperty("data"), "exact");
+            if (arguments.Contains("--verify-generated-plan", StringComparer.Ordinal))
+            {
+                using var provider = new CurseForgeCatalogProvider(api);
+                var item = await provider.ResolveProjectAsync(project, fileId, timeout.Token).ConfigureAwait(false);
+                var release = item?.Versions.SingleOrDefault(version => version.ClientFileId == fileId)
+                    ?? throw new InvalidDataException("The exact client release could not be resolved.");
+                if (release.CurseForgeInstallRoute != CurseForgeInstallRoute.GeneratedCandidate ||
+                    release.ClientSizeBytes is not > 0 or > 256L * 1024 * 1024)
+                    throw new InvalidDataException("This exact selection is not a bounded generated-candidate route.");
+                var preflight = await new CurseForgeModpackPreflightService(paths, api).InspectAsync(
+                    new CurseForgeModpackPreflightRequest(Guid.NewGuid(), project, fileId, ""), timeout.Token).ConfigureAwait(false);
+                Console.WriteLine(JsonSerializer.Serialize(new
+                {
+                    status = preflight.State == CatalogReleasePreflightState.Ready ? "VERIFIED_PLAN_ONLY" : "BLOCKED_PLAN",
+                    projectId = project, clientFileId = fileId, downloadedBytes = release.ClientSizeBytes,
+                    preflight.MinecraftVersion, preflight.Loader, preflight.LoaderVersion,
+                    preflight.Detail, requiredFiles = preflight.GeneratedPackPlan?.RequiredFiles.Count,
+                    resourcePacks = preflight.GeneratedPackPlan?.RequiredFiles.Count(file => file.ContentKind == CurseForgeGeneratedContentKind.ResourcePack),
+                    preflight.GeneratedPackPlan?.TotalResolvedBytes, preflight.GeneratedPackPlan?.Digest,
+                    javaLaunched = false, worldCreated = false
+                }));
+                return preflight.State == CatalogReleasePreflightState.Ready ? 0 : 2;
+            }
             if (arguments.Contains("--verify-official-archives", StringComparer.Ordinal))
             {
                 using var provider = new CurseForgeCatalogProvider(api);
@@ -67,6 +90,7 @@ internal static class CurseForgeMetadataInspectionCommand
                 }));
                 return 0;
             }
+            if (!arguments.Contains("--inventory", StringComparer.Ordinal)) return 0;
             // Inspect only metadata. Never select a nearby file by inventory position.
             for (var index = 0; index < 500; index += 50)
             {

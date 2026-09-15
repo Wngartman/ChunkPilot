@@ -1,6 +1,6 @@
 # CurseForge credential delivery
 
-Status date: 2026-08-29
+Status date: 2026-09-14
 
 ## Production decision
 
@@ -15,6 +15,10 @@ An extractable key in a public Windows executable would disclose it to end users
 This is a product-policy gate, not a missing-code gate. The typed provider, safe local provisioning,
 deterministic fixtures, and local approved smoke path may exist while public builds truthfully keep
 CurseForge unavailable.
+
+The official terms and application-guidance pages were rechecked on 2026-09-14. Their displayed
+modification dates and relevant restrictions remain the same. Successful native developer-key requests,
+archive verification, and exact-release fixes do not establish a public credential-delivery mechanism.
 
 ## Official evidence
 

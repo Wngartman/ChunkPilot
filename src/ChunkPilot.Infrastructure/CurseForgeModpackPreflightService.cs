@@ -106,7 +106,7 @@ public sealed class CurseForgeModpackPreflightService : ICurseForgeModpackPrefli
             var serverPack = request.ExpectedServerPackFileId.Length == 0
                 ? null
                 : await ResolveExactServerPackAsync(
-                    request.ProjectId, request.ExpectedServerPackFileId, cancellationToken).ConfigureAwait(false);
+                    request.ProjectId, request.ClientFileId, request.ExpectedServerPackFileId, cancellationToken).ConfigureAwait(false);
             CurseForgeGeneratedPackPlan? generatedPlan = null;
             if (serverPack is null)
             {
@@ -151,7 +151,7 @@ public sealed class CurseForgeModpackPreflightService : ICurseForgeModpackPrefli
         // manifest. Retry does not repeat that archive download or trust new renderer loader hints.
         _ = await ResolveExactClientFileAsync(new(entry.OperationId, settings.ProjectId,
             settings.ClientFileId, settings.ServerFileId), cancellationToken).ConfigureAwait(false);
-        var server = await ResolveExactServerPackAsync(settings.ProjectId, settings.ServerFileId, cancellationToken)
+        var server = await ResolveExactServerPackAsync(settings.ProjectId, settings.ClientFileId, settings.ServerFileId, cancellationToken)
             .ConfigureAwait(false);
         await using var input = new FileStream(archive, FileMode.Open, FileAccess.Read, FileShare.Read);
 #pragma warning disable CA5350 // Provider SHA-1 is required in addition to the already reverified local SHA-256.
@@ -233,6 +233,7 @@ public sealed class CurseForgeModpackPreflightService : ICurseForgeModpackPrefli
 
     private async Task<ExactServerPack> ResolveExactServerPackAsync(
         string projectId,
+        string clientFileId,
         string serverPackFileId,
         CancellationToken cancellationToken)
     {
@@ -240,6 +241,7 @@ public sealed class CurseForgeModpackPreflightService : ICurseForgeModpackPrefli
             $"/v1/mods/{Uri.EscapeDataString(projectId)}/files/{Uri.EscapeDataString(serverPackFileId)}",
             cancellationToken).ConfigureAwait(false);
         var file = RequireObject(fileDocument.RootElement, "data", "server-pack file");
+        CurseForgeServerPackRelationshipResolver.ValidateLinkedFile(projectId, clientFileId, serverPackFileId, file);
         if (!Text(file, "id").Equals(serverPackFileId, StringComparison.Ordinal) ||
             !Text(file, "modId").Equals(projectId, StringComparison.Ordinal) ||
             !True(file, "isAvailable"))

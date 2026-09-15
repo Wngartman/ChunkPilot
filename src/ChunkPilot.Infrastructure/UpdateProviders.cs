@@ -492,6 +492,8 @@ public sealed class CurseForgeUpdateProvider : IUpdateProviderAdapter, IDisposab
                     $"/v1/mods/{Uri.EscapeDataString(source.ProjectId)}/files/{fileId}",
                     cancellationToken).ConfigureAwait(false);
                 var serverFile = serverPack.RootElement.GetProperty("data");
+                CurseForgeServerPackRelationshipResolver.ValidateLinkedFile(
+                    source.ProjectId, parentVersion.VersionId, relatedServerId, serverFile);
                 if (!CurseForgeCatalogProvider.FileAvailable(serverFile) ||
                     serverFile.TryGetProperty("modId", out var parentProject) &&
                     !parentProject.ToString().Equals(source.ProjectId, StringComparison.Ordinal))
