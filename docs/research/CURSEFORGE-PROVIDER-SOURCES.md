@@ -1,6 +1,6 @@
 # CurseForge provider source record
 
-Research date: 2026-08-27
+Research date: 2026-09-14
 
 Only official CurseForge/Overwolf sources define the provider. ChunkPilot does not scrape CurseForge pages,
 infer unlisted files, synthesize CDN URLs, or treat a client manifest as proof of a dedicated-server package.
@@ -23,7 +23,7 @@ infer unlisted files, synthesize CDN URLs, or treat a client manifest as proof o
 | Search projects | `GET /v1/mods/search` | Minecraft game ID `432`; modpacks class ID `4471`; bounded search, game version, loader, sort, index, and page size |
 | Exact project | `GET /v1/mods/{modId}` and bounded batch equivalent where applicable | Numeric project identity, slug/name/author/summary, official link/icon, distribution and availability state |
 | Project files | `GET /v1/mods/{modId}/files` | Exact release history and filtering; never use only `latestFiles` as complete history |
-| Exact file | `GET /v1/mods/{modId}/files/{fileId}` | Immutable file identity, channel, dates, size, hashes, game versions, loader, dependencies, availability, `isServerPack`, and `serverPackFileId` |
+| Exact file | `GET /v1/mods/{modId}/files/{fileId}` | Immutable file identity, channel, dates, size, hashes, game versions, loader, dependencies, availability, `isServerPack`, `serverPackFileId`, `alternateFileId`, and `parentProjectFileId` |
 | Download URL | `GET /v1/mods/{modId}/files/{fileId}/download-url` | Resolve an official authorized URL when `downloadUrl` is absent; reject non-HTTPS or non-approved hosts |
 
 The REST schema defines file relation types as embedded library `1`, optional dependency `2`, required
@@ -40,7 +40,12 @@ does not guess a loader when they conflict or are absent.
 An official candidate is directly supportable only when all of these are established from exact responses:
 
 1. The numeric project and selected client file are available and distribution is allowed.
-2. The selected file has a positive `serverPackFileId`.
+2. The selected file has a positive `serverPackFileId`, or its exact `alternateFileId` points to an
+   author-labelled server pack. An additional file's optional `parentProjectFileId`, when present, must
+   match the selected client file. Missing optional reverse fields do not invalidate the forward link.
+   File names never locate or select a different release; the server-pack label classifies only the
+   already-linked additional file. A dedicated server flag is not mandatory for author-linked additional
+   files because the live API can report `isServerPack=false` for those server ZIPs.
 3. The exact referenced server-pack file is available and has an official HTTPS download route.
 4. Minecraft version and loader evidence are compatible with ChunkPilot's supported managed-loader path.
 5. Size is bounded and at least one provider hash is present; current CurseForge file hashes are SHA-1 or
@@ -58,12 +63,31 @@ CurseForge identity without exact project and file evidence.
 ChunkPilot may offer a generated server candidate only when the selected exact file manifest and all required
 artifact identities can be resolved through official API responses, every required file is available for
 third-party distribution, the loader has an existing verified headless installation path, and the resulting
-plan needs no arbitrary downloaded script. The UI must label this as **Generated server candidate**, show the
+plan needs no arbitrary operating-system launcher. The UI must label this as **Generated server candidate**, show the
 evidence and limitations before install, and keep it distinct from an **Official server pack**.
 
 The provider must not convert incomplete metadata into a best guess. Missing exact identity, unavailable
 required downloads, unknown loader/bootstrap behavior, or client-only configuration produces a truthful
 unsupported result.
+
+Required manifest content is not synonymous with mods. Generated plan schema 2 distinguishes exact mod
+JARs (class 6, loader and Minecraft metadata required) from resource-pack ZIPs (class 12, exact Minecraft
+metadata required, no invented loader requirement). Resource packs remain byte-for-byte under
+`resourcepacks/`, never renamed into `mods/` or silently omitted. Their ZIP containers use the common
+bounded path/link/collision checks and require root `pack.mcmeta`. The plan digest binds content kind and
+destination semantics. Unknown content classes remain unsupported rather than being dropped.
+
+Gameplay content under `config`, `defaultconfigs`, `kubejs`, `scripts`, `resourcepacks`, `resources`,
+`datapacks`, `global_packs`, `openloader`, and `patchouli_books` is preserved in its authored structure.
+KubeJS and CraftTweaker scripts are gameplay inputs, not Windows launchers. Root launch scripts are not
+copied or executed. Other override roots remain disclosed as ignored; a generated candidate is not a
+claim that every possible modpack runtime or custom content loader is supported.
+
+Authenticated metadata-only verification on 2026-09-14 established StaTech project `1605376`, client
+`8699911` -> alternate file `8699918` -> parent client `8699911`, and confirmed AE2 Blackout
+`1060372/8393438` as class 12. This is exact provider relationship/content evidence, not Minecraft runtime
+certification. Installed upstream labels are refreshed in memory from the exact project/client-file IDs
+after an explicit release check; the persistent CurseForge minimization policy remains unchanged.
 
 ## HTTP and failure policy
 
@@ -84,4 +108,3 @@ unsupported result.
 The typed and locally approved provider may be exercised only through the native developer credential gate.
 Public production activation remains **PUBLIC CREDENTIAL DELIVERY STILL GATED**; see
 `docs/architecture/CURSEFORGE-CREDENTIAL-DELIVERY.md` for the unblocking evidence required.
-
