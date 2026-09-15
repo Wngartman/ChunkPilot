@@ -16,6 +16,31 @@ describe('server switch performance evidence', () => {
     error: null
   }));
 
+  it('keeps cache ownership and work bounded with a 128-server library', () => {
+    const allServers = Array.from({ length: 128 }, (_, index) => ({
+      ...fixtures.running.servers[0], id: `large-${index}`, name: `Server ${index}`, samples: []
+    }));
+    const populateStarted = performance.now();
+    for (let index = 0; index < allServers.length; index++) {
+      const selected = selectedSnapshot(allServers[index].id, 1000 + index, `Player-${index}`, 'Ready');
+      selected.servers = allServers;
+      useAppStore.getState().applySnapshot(selected);
+    }
+    const populateMs = performance.now() - populateStarted;
+    const switches: number[] = [];
+    for (let index = 0; index < 256; index++) {
+      const serverIndex = 120 + index % 8;
+      const started = performance.now();
+      useAppStore.getState().prepareServerSelection(`large-${serverIndex}`);
+      switches.push(performance.now() - started);
+      expect(useAppStore.getState().snapshot?.players[0]?.name).toBe(`Player-${serverIndex}`);
+      expect(useAppStore.getState().snapshot?.servers).toHaveLength(128);
+    }
+    expect(useAppStore.getState().serverSnapshots.size).toBe(8);
+    expect(useAppStore.getState().serverSnapshots.has('large-0')).toBe(false);
+    console.info(`LARGE_LIBRARY_METRICS=${JSON.stringify({ servers: 128, populatedMs: Number(populateMs.toFixed(3)), warm256Ms: summarize(switches), retainedServerWorkspaces: 8 })}`);
+  });
+
   it('measures 30 warm, 10 cold, and 20 rapid identity-safe selections', async () => {
     const alpha = selectedSnapshot('alpha', 500, 'Alpha player', 'Ready');
     const bravo = selectedSnapshot('bravo', 501, 'Bravo player', 'Ready');

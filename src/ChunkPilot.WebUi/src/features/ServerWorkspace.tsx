@@ -433,9 +433,17 @@ function ConsolePage({ server }: { server: ServerSummary }) {
 
 function PlayersPage({ server }: { server: ServerSummary }) {
   const snapshot = useAppStore(state => state.snapshot)!; const command = useAppStore(state => state.command); const busy = useAppStore(state => state.busy); const [search, setSearch] = useState('');
+  const [playerPage, setPlayerPage] = useState(0);
   const [newPlayer, setNewPlayer] = useState('');
   const [pending, setPending] = useState<{ player: string; action: string; label: string; detail: string } | null>(null);
-  const players = snapshot.players.filter(player => player.name.toLowerCase().includes(search.toLowerCase()));
+  const matchingPlayers = useMemo(() => {
+    const needle = search.toLowerCase();
+    return snapshot.players.filter(player => player.name.toLowerCase().includes(needle));
+  }, [snapshot.players, search]);
+  const pageCount = Math.max(1, Math.ceil(matchingPlayers.length / 50));
+  const activePage = Math.min(playerPage, pageCount - 1);
+  const firstPlayer = activePage * 50;
+  const players = matchingPlayers.slice(firstPlayer, firstPlayer + 50);
   const access = snapshot.playerAccess?.serverId === server.id ? snapshot.playerAccess : null;
   const canModerate = Boolean(access && (access.serverRunning && server.state === 'Running' ||
     access.canManageWhileStopped && server.state === 'Stopped')) &&
@@ -454,7 +462,8 @@ function PlayersPage({ server }: { server: ServerSummary }) {
       <div><span>Management</span><strong>{canModerate ? server.state === 'Stopped' ? 'Saved access available' : 'Available' : server.state === 'Running' ? 'Unavailable' : 'Not available in this state'}</strong><small>{access?.accessAvailabilityDetail || (access?.capabilityKnown ? 'Actions use the authoritative server console and access files.' : 'ChunkPilot is still identifying this imported server.')}</small></div>
     </section>
     <section className={styles.panel}>
-      <div className={styles.playerToolbar}><SearchInput value={search} onChange={event => setSearch(event.target.value)} placeholder="Search players" aria-label="Search players" />{access?.supportsAllowlist && <form onSubmit={event => { event.preventDefault(); addAllowlist(); }}><TextInput value={newPlayer} maxLength={16} onChange={event => setNewPlayer(event.target.value)} placeholder="Minecraft player name" aria-label="Minecraft player name" /><Button variant="primary" disabled={!canModerate || !newPlayer.trim() || busy.has('players.addAllowlist')}>{busy.has('players.addAllowlist') ? 'Adding…' : 'Add to whitelist'}</Button></form>}</div>
+      <div className={styles.playerToolbar}><SearchInput value={search} onChange={event => { setSearch(event.target.value); setPlayerPage(0); }} placeholder="Search players" aria-label="Search players" />{access?.supportsAllowlist && <form onSubmit={event => { event.preventDefault(); addAllowlist(); }}><TextInput value={newPlayer} maxLength={16} onChange={event => setNewPlayer(event.target.value)} placeholder="Minecraft player name" aria-label="Minecraft player name" /><Button variant="primary" disabled={!canModerate || !newPlayer.trim() || busy.has('players.addAllowlist')}>{busy.has('players.addAllowlist') ? 'Adding…' : 'Add to whitelist'}</Button></form>}</div>
+      {matchingPlayers.length > 50 && <div className={styles.pathBar}><span role="status">Showing {firstPlayer + 1}–{Math.min(firstPlayer + 50, matchingPlayers.length)} of {matchingPlayers.length.toLocaleString()} players</span><div className={page.actions}><Button variant="subtle" disabled={activePage === 0} onClick={() => setPlayerPage(activePage - 1)}>Previous players</Button><Button variant="subtle" disabled={activePage >= pageCount - 1} onClick={() => setPlayerPage(activePage + 1)}>Next players</Button></div></div>}
       {access?.error && <div className={styles.playerError} role="alert">{access.error}</div>}
       {players.length ? <table className={styles.table}><thead><tr><th>Player</th><th>Status</th><th>Whitelist</th><th>Role</th><th aria-label="Actions" /></tr></thead><tbody>{players.map(player => <tr key={player.name}><td><PlayerIdentity serverId={server.id} player={player} /></td><td><StatusBadge tone={player.banned ? 'danger' : player.online ? 'success' : 'neutral'}>{player.banned ? 'Banned' : player.online ? 'Online' : 'Known player'}</StatusBadge></td><td>{player.allowlisted ? 'Whitelisted' : 'Not whitelisted'}</td><td>{player.operator ? 'Operator' : 'Player'}</td><td><div className={styles.tableActions}>{access?.supportsAllowlist && <Button variant="subtle" disabled={!canModerate} onClick={() => player.allowlisted ? confirm(player.name, 'RemoveFromWhitelist', 'Remove from whitelist', `${player.name} will no longer be able to join a whitelist-only server.`) : moderate(player.name, 'AddToWhitelist')}>{player.allowlisted ? 'Remove from whitelist' : 'Add to whitelist'}</Button>}<ActionMenu label={`Moderation actions for ${player.name}`} trigger={<MoreHorizontal size={16} />} items={[
         ...(access?.supportsOperators ? [{ label: player.operator ? 'Remove operator' : 'Make operator', icon: <ShieldCheck size={15} />, disabled: !canModerate, onSelect: () => player.operator ? confirm(player.name, 'RemoveOperator', 'Remove operator', `${player.name} will lose operator permissions.`) : moderate(player.name, 'GrantOperator') }] : []),

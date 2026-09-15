@@ -383,6 +383,20 @@ export class FixtureBridge implements BridgeAdapter {
   private largeCurseForgeCatalog = false;
   constructor(name = 'several') {
     this.current = structuredClone(fixtures[name] ?? fixtures.several);
+    if (name === 'large-roster') {
+      this.current = structuredClone(fixtures.running);
+      this.current.players = Array.from({ length: 1000 }, (_, index) => ({
+        name: `Player${String(index).padStart(4, '0')}`, uuid: null, online: index < 12,
+        allowlisted: true, operator: index === 0, banned: false
+      }));
+    }
+    if (name === 'large-library') {
+      this.current = structuredClone(fixtures.running);
+      this.current.servers = Array.from({ length: 128 }, (_, index) => ({
+        ...this.current.servers[0], id: index === 0 ? this.current.servers[0].id : `fixture-large-${index}`,
+        name: `Server ${String(index + 1).padStart(3, '0')} — Long-lived community world`, samples: []
+      }));
+    }
     const mode = new URLSearchParams(window.location.search).get('mode');
     this.curseForgeConfigured = name === 'curseforge' || name === 'curseforge-many' || name === 'curseforge-rate-limited';
     this.curseForgeRateLimited = name === 'curseforge-rate-limited';

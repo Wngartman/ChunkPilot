@@ -40,6 +40,12 @@ player-list editing is enabled only by the native `canManageWhileStopped` capabi
 always requires the actual running state. Long bridge commands have bounded per-command waits,
 and a timeout never means success or triggers an automatic retry.
 
+Large player lists use 50-row pages with whole-roster search, bounding rendered controls and
+native head-image requests without dropping known players. Development fixtures `large-roster`
+and `large-library` create 1,000 players and 128 servers only when explicitly selected. The
+performance tests report synthetic store/jsdom timings separately from packaged/native timing;
+their hard assertions cover row/request bounds, search reachability, and exact server identity.
+
 For a repeatable packaged idle sample that never touches normal application data:
 
 ```powershell
