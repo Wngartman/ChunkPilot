@@ -182,6 +182,14 @@ export function CreateServerPage({ onDone, onOpenProviderSettings, onActivity }:
         const release = await bridge.request<import('../bridge/types').ModpackRelease>(
           'modpacks.preflight', preflightParameters, controller.signal);
         if (controller.signal.aborted || modpackReviewIdRef.current !== reviewId) return;
+        if (!release || typeof release !== 'object' || release.versionId !== versionId ||
+          typeof release.versionName !== 'string' || !release.versionName.trim() ||
+          typeof release.minecraftVersion !== 'string' || !release.minecraftVersion.trim() ||
+          typeof release.loader !== 'string' || !release.loader.trim() ||
+          typeof release.canCreate !== 'boolean' ||
+          !['Stable', 'Beta', 'Alpha'].includes(release.releaseChannel) ||
+          !['NotRequired', 'Required', 'Inspecting', 'Ready', 'Unsupported', 'Failed'].includes(release.preflightState ?? ''))
+          throw new Error('The native CurseForge review returned an invalid or mismatched release. Select the release again to retry.');
         const reviewedSelection: RemoteModpackSelection = {
           ...selected,
           project: {

@@ -22,6 +22,48 @@ afterEach(() => {
 });
 
 describe('CurseForge creation preflight', () => {
+  it('keeps the shared fixture release intact through its real preflight path', async () => {
+    renderWithBridge((method, params, fixture) => fixture.request(method, params), 'curseforge');
+    fireEvent.click(await screen.findByRole('tab', { name: /CurseForge/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /Copper Trails/ }));
+    await waitFor(() => expect(calls.some(call => call.method === 'modpacks.preflight')).toBe(true));
+    await waitFor(() => expect((screen.getByRole('button', { name: /Continue/ }) as HTMLButtonElement).disabled).toBe(false));
+    expect(screen.getByRole('combobox', { name: 'Exact modpack release' }).textContent).toContain('4.2.0');
+    expect(screen.queryByText(/undefined/)).toBeNull();
+    expect(calls.find(call => call.method === 'modpacks.preflight')!.params).toMatchObject({
+      projectId: 'fixture-pack', versionId: 'fixture-pack-4'
+    });
+  });
+
+  it('preflights the exact numbered large-catalog fixture release and rejects another release', async () => {
+    const fixture = new FixtureBridge('curseforge-many');
+    const release = await fixture.request<ModpackRelease>('modpacks.preflight', {
+      projectId: 'fixture-pack-001', versionId: 'fixture-pack-001-release'
+    });
+    expect(release).toMatchObject({ versionId: 'fixture-pack-001-release', versionName: '4.0.1',
+      minecraftVersion: '1.21.8', preflightState: 'Ready', canCreate: true });
+    await expect(fixture.request('modpacks.preflight', {
+      projectId: 'fixture-pack-001', versionId: 'fixture-pack-002-release'
+    })).rejects.toThrow('exact fixture release');
+  });
+
+  it.each(['malformed', 'mismatched'] as const)('preserves release labels and blocks creation for a %s preflight response', async kind => {
+    renderWithBridge(async (method, params, fixture) => {
+      if (method === 'modpacks.cache') return catalogResult([]);
+      if (method === 'modpacks.search' && params.provider === 'CurseForge')
+        return catalogResult([curseForgeProject()]);
+      if (method === 'modpacks.preflight') return kind === 'malformed' ? { accepted: true }
+        : { ...curseForgeProject().versions[0], versionId: 'another-release', preflightState: 'Ready', canCreate: true };
+      return fixture.request(method, params);
+    });
+    fireEvent.click(await screen.findByRole('tab', { name: /CurseForge/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /Exact Loader Pack/ }));
+    expect(await screen.findByText(/native CurseForge review returned an invalid or mismatched release/)).toBeTruthy();
+    expect(screen.getByRole('combobox', { name: 'Exact modpack release' }).textContent).toContain('1.0.0');
+    expect(screen.queryByText(/undefined/)).toBeNull();
+    expect((screen.getByRole('button', { name: /Continue/ }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
   it('keeps an exact release blocked until native manifest inspection establishes the loader version', async () => {
     let complete!: (release: ModpackRelease) => void;
     const preflight = new Promise<ModpackRelease>(resolve => { complete = resolve; });
@@ -250,8 +292,8 @@ function renderWithBridge(handler: (
   method: BridgeMethod,
   params: Record<string, unknown>,
   fixture: FixtureBridge
-) => Promise<unknown>) {
-  const fixture = new FixtureBridge('running');
+) => Promise<unknown>, fixtureName = 'running') {
+  const fixture = new FixtureBridge(fixtureName);
   const bridge: BridgeAdapter = {
     request: async <T,>(method: BridgeMethod, params: Record<string, unknown> = {}) => {
       calls.push({ method, params });

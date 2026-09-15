@@ -304,16 +304,30 @@ function MigrationReviewDialog({ open, onClose, server, review }: {
   </Dialog>;
 }
 
+const performanceCopy = {
+  Running: { status: 'Current session · 15 min', detail: 'ChunkPilot is waiting for enough real samples.' },
+  Stopped: { status: 'Server stopped', detail: 'Start the server to collect performance data.' },
+  Starting: { status: 'Server starting', detail: 'Waiting for the server to become ready and report real samples.' },
+  Restarting: { status: 'Server restarting', detail: 'Waiting for the restart to finish and real samples to arrive.' },
+  Stopping: { status: 'Server stopping', detail: 'No performance samples are available while the server stops.' },
+  Crashed: { status: 'Server crashed', detail: 'The server exited unexpectedly. Review the console before starting it again.' },
+  Unresponsive: { status: 'Server unresponsive', detail: 'The server is not responding; no performance samples are available.' },
+  Saving: { status: 'Server saving', detail: 'No performance samples are available during this operation.' },
+  BackingUp: { status: 'Backup in progress', detail: 'No performance samples are available during this operation.' },
+  Restoring: { status: 'Restore in progress', detail: 'No performance samples are available during this operation.' },
+  Unknown: { status: 'Server state unknown', detail: 'ChunkPilot has not confirmed the server state or received enough real samples.' }
+} satisfies Record<ServerSummary['state'], { status: string; detail: string }>;
+
 function Overview({ server, onTab, onSettings, onOpenHelp }: { server: ServerSummary; onTab: (tab: Tab) => void; onSettings: (category: string) => void; onOpenHelp: (articleId: string) => void }) {
   const snapshot = useAppStore(state => state.snapshot)!;
   const command = useAppStore(state => state.command);
-  const running = server.state === 'Running';
+  const performanceState = performanceCopy[server.state];
   const connectivity = snapshot.connectivity?.serverId === server.id ? snapshot.connectivity : null;
   const memoryPercent = server.memoryBytes == null || !server.maximumMemoryBytes ? null : server.memoryBytes / server.maximumMemoryBytes * 100;
   return <>
     <ServerHealthPanel server={server} issues={snapshot.issues.filter(issue => issue.serverId === server.id)} onTab={onTab} onSettings={onSettings} onOpenHelp={onOpenHelp} />
     <div className={styles.overviewWorkbench}>
-      <section className={styles.performanceSurface}><PanelTitle title="Live performance" meta={running ? 'Current session · 15 min' : 'Server stopped'} /><div className={styles.performance}>{server.cpuPercent == null || server.samples.length < 2 ? <EmptyState title="No performance data" detail={running ? 'ChunkPilot is waiting for enough real samples.' : 'Start the server to collect performance data.'} /> : <><div className={styles.performanceHead}><strong>{server.cpuPercent.toFixed(1)}%</strong><span>CPU now · {bytes(server.memoryBytes)} memory</span></div><Sparkline values={server.samples.map(sample => sample.cpuPercent)} /><div className={styles.resourceBar}><span>Memory</span><i><b style={{ width: `${Math.min(100, memoryPercent ?? 0)}%` }} /></i><strong>{memoryPercent == null ? 'Unavailable' : `${memoryPercent.toFixed(0)}%`}</strong></div></>}</div></section>
+      <section className={styles.performanceSurface}><PanelTitle title="Live performance" meta={performanceState.status} /><div className={styles.performance}>{server.cpuPercent == null || server.samples.length < 2 ? <EmptyState title="No performance data" detail={performanceState.detail} /> : <><div className={styles.performanceHead}><strong>{server.cpuPercent.toFixed(1)}%</strong><span>CPU now · {bytes(server.memoryBytes)} memory</span></div><Sparkline values={server.samples.map(sample => sample.cpuPercent)} /><div className={styles.resourceBar}><span>Memory</span><i><b style={{ width: `${Math.min(100, memoryPercent ?? 0)}%` }} /></i><strong>{memoryPercent == null ? 'Unavailable' : `${memoryPercent.toFixed(0)}%`}</strong></div></>}</div></section>
       <aside className={styles.statusRail}>
         <div className={styles.statusItem}><header><Wifi size={15} /><span>Joinability</span></header><strong>{connectivity?.status.title ?? 'Not established'}</strong><p>{connectivity?.status.detail ?? 'No authoritative connection state is available.'}</p></div>
         <div className={styles.statusItem}><header><Users size={15} /><span>Players</span></header><strong>{server.playersOnline == null ? 'Unknown' : `${server.playersOnline}${server.playersMaximum == null ? '' : ` of ${server.playersMaximum}`} online`}</strong><p>{server.playerStatus?.detail ?? (server.playersOnline == null ? 'The server has not reported a count; unknown is not shown as zero.' : 'Reported by the server')}</p></div>

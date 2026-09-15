@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BridgeAdapter } from '../bridge/client';
 import type { BridgeMethod } from '../bridge/types';
@@ -17,6 +17,33 @@ beforeEach(() => { calls.length = 0; window.history.replaceState({}, '', '/?tab=
 afterEach(() => { cleanup(); vi.restoreAllMocks(); window.localStorage.clear(); Reflect.deleteProperty(HTMLElement.prototype, 'scrollTo'); });
 
 describe('bounded workspace rendering', () => {
+  it.each([
+    ['Starting', 'Server starting', 'Waiting for the server to become ready and report real samples.'],
+    ['Stopped', 'Server stopped', 'Start the server to collect performance data.'],
+    ['Restarting', 'Server restarting', 'Waiting for the restart to finish and real samples to arrive.'],
+    ['Stopping', 'Server stopping', 'No performance samples are available while the server stops.'],
+    ['Crashed', 'Server crashed', 'The server exited unexpectedly. Review the console before starting it again.'],
+    ['Unresponsive', 'Server unresponsive', 'The server is not responding; no performance samples are available.'],
+    ['Unknown', 'Server state unknown', 'ChunkPilot has not confirmed the server state or received enough real samples.']
+  ] as const)('describes %s without inventing performance or a stopped state', (state, status, detail) => {
+    window.history.replaceState({}, '', '/?tab=overview');
+    const current = structuredClone(fixtures.starting);
+    current.servers[0].state = state;
+    current.servers[0].cpuPercent = null;
+    current.servers[0].samples = [];
+    useAppStore.setState({ snapshot: current, bridge, busy: new Set(), error: null });
+    render(<NavigationGuardProvider><ServerWorkspace serverId={current.servers[0].id} /></NavigationGuardProvider>);
+    const surface = screen.getByText('Live performance').closest('section')!;
+    expect(within(surface).getByText(status)).toBeTruthy();
+    expect(within(surface).getByText(detail)).toBeTruthy();
+    expect(within(surface).getByText('No performance data')).toBeTruthy();
+    if (state !== 'Stopped') {
+      expect(within(surface).queryByText('Server stopped')).toBeNull();
+      expect(within(surface).queryByText('Start the server to collect performance data.')).toBeNull();
+    }
+    if (state === 'Starting') expect(screen.getByText('Preparing the world')).toBeTruthy();
+  });
+
   it('keeps a 2000-line native-sized console buffer virtualized while searching and appending', () => {
     window.history.replaceState({}, '', '/?tab=console&mode=console-unwrapped');
     vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(540);

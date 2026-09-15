@@ -574,6 +574,20 @@ export class FixtureBridge implements BridgeAdapter {
         nextIndex: 1, hasMore: false, totalCount: 1
       } as T;
     }
+    if (method === 'modpacks.preflight') {
+      if (!this.curseForgeConfigured) throw new Error('Approved fixture CurseForge access is unavailable.');
+      const match = /^fixture-pack(?:-(\d{3}))?$/.exec(String(params.projectId ?? ''));
+      const ordinal = match?.[1] ? Number(match[1]) : undefined;
+      if (!match || (ordinal !== undefined && (ordinal < 1 || ordinal > 150)))
+        throw new Error('The exact fixture project is unavailable.');
+      const paths: FixtureServerPath[] = ['official', 'generated', 'unsupported'];
+      const project = fixtureModpackProject('CurseForge', ordinal,
+        ordinal === undefined ? undefined : paths[(ordinal - 1) % paths.length]);
+      const release = project.versions.find(candidate => candidate.versionId === params.versionId);
+      if (!release) throw new Error('The exact fixture release is unavailable.');
+      return { ...release, loaderVersion: '0.19.3',
+        preflightDetail: 'Deterministic fixture manifest inspection; no provider or server was contacted.' } as T;
+    }
     if (method === 'modpacks.resolveLink') {
       const url = String(params.url ?? '');
       const provider = url.includes('curseforge.com') ? 'CurseForge' : 'Modrinth';
