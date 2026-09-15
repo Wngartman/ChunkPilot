@@ -62,6 +62,13 @@ before any tag/assets were created; the UI-only corrections and malformed-respon
 **261/261 frontend tests**, typecheck, lint and build. Native implementation files were unchanged.
 The final exact commit still must pass the immutable release workflow; its results are authoritative.
 
+The first exact `dda6e68` hosted gate passed **1,850 unit tests** and **261 frontend tests**, but
+integration ended at **469 passed / 1 failed / 0 skipped**: the minimize/WM_CLOSE lifecycle assertions
+passed, then immediate deletion of its disposable WebView2 profile encountered a still-locked log.
+Publication stopped before packaging or tag creation. The fixture now uses the existing bounded
+cleanup helper after exact process exit; lifecycle assertions remain unchanged. This failed hosted
+attempt is retained as evidence, not counted as a successful release gate.
+
 ## Live provider evidence
 
 The new native credential service passed a live official API validation in disposable protected
@@ -91,6 +98,18 @@ process/listener cleanup check. Total time was about 50 seconds; no forced termi
 Its new disposable world is retained separately from older acceptance worlds. The cumulative phase
 ledger increased to **490,068,440 bytes**, with no uncertain reservations. This proves the packaged
 native workflow, not a GUI-driven creation or public network connection.
+
+The same small official case was freshly repeated on exact package `dda6e68`: **46 seconds** overall,
+real Java readiness in **9.830 seconds**, loopback status in **58.7 ms**, and save-first normal stop in
+**1.405 seconds**. All owned process/listener cleanup checks passed, with no forced termination.
+Cumulative completed payload is **504,731,763 bytes**, eight completed ledger entries and no uncertain
+reservations. The canonical and evidence ledgers were reconciled with exclusive locks and atomic
+compare-and-replace, preserving the previous ledger as recovery evidence. No old world was touched.
+
+Exact `dda6e68` packaged UI acceptance covered twelve desktop render states plus stopped overview,
+CurseForge exact-release keyboard selection, and high-contrast keyboard navigation. Fifteen PNGs and
+identity-bound evidence are retained under ignored `logs/`. These are synthetic WebView2 fixtures;
+renderer scale flags do not certify actual Windows DPI configurations or phone support.
 
 ## Remaining boundaries
 
