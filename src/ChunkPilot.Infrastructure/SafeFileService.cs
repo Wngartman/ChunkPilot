@@ -226,9 +226,9 @@ public sealed class SafeFileService
         if (!candidate.Equals(canonicalRoot, StringComparison.OrdinalIgnoreCase) &&
             !candidate.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
             throw new UnauthorizedAccessException("The path escapes the selected server folder.");
+        ValidateExistingPathAncestry(candidate);
         if (mustExist && !File.Exists(candidate) && !Directory.Exists(candidate))
             throw new FileNotFoundException("The requested path does not exist.", candidate);
-        ValidateReparsePoints(canonicalRoot, candidate);
         return candidate;
     }
 
@@ -282,17 +282,21 @@ public sealed class SafeFileService
         }
     }
 
-    private static void ValidateReparsePoints(string root, string candidate)
+    internal static void ValidateExistingPathAncestry(string candidate)
     {
-        var relative = Path.GetRelativePath(root, candidate);
-        var current = root;
-        foreach (var segment in relative.Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries))
+        // A trusted lexical root can itself be a junction, or live below one. Check every existing
+        // ancestor and the final file, including dangling links; File.Exists alone hides those.
+        for (var current = Path.GetFullPath(candidate); current is not null;
+             current = Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(current)))
         {
-            current = Path.Combine(current, segment);
-            if (!Directory.Exists(current))
-                break;
-            if (File.GetAttributes(current).HasFlag(FileAttributes.ReparsePoint))
-                throw new UnauthorizedAccessException("ChunkPilot will not follow a reparse point from the server file manager.");
+            try
+            {
+                if (File.GetAttributes(current).HasFlag(FileAttributes.ReparsePoint))
+                    throw new UnauthorizedAccessException(
+                        "ChunkPilot cannot safely operate through a symbolic link or junction. Select the ordinary folder path instead.");
+            }
+            catch (FileNotFoundException) { }
+            catch (DirectoryNotFoundException) { }
         }
     }
 

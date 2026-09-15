@@ -7,15 +7,20 @@ using ChunkPilot.Core;
 
 namespace ChunkPilot.Infrastructure;
 
-public sealed class BackupService
+public sealed partial class BackupService
 {
     private readonly AppDataPaths paths;
     private readonly ChunkPilotStore store;
+    private readonly SafeFileService files;
+    private readonly CanonicalPathLockManager pathLocks;
 
-    public BackupService(AppDataPaths paths, ChunkPilotStore store)
+    public BackupService(AppDataPaths paths, ChunkPilotStore store, SafeFileService? files = null,
+        CanonicalPathLockManager? pathLocks = null)
     {
         this.paths = paths;
         this.store = store;
+        this.pathLocks = pathLocks ?? new CanonicalPathLockManager();
+        this.files = files ?? new SafeFileService(paths, this.pathLocks);
     }
 
     public BackupProfile GetDefaultProfile(ServerDefinition server)
@@ -23,18 +28,30 @@ public sealed class BackupService
         var destination = Path.Combine(paths.Backups, SanitizeFileName(server.Name));
         return new BackupProfile
         {
+            // A new random profile ID on each manual backup made retention a permanent no-op.
+            // Use a stable ID for future default backups; historical records remain untouched.
+            Id = server.Id,
             ServerId = server.Id,
             DestinationPath = destination
         };
     }
 
-    public async Task<BackupRecord> CreateAsync(
+    public Task<BackupRecord> CreateAsync(
         ServerDefinition server,
         BackupProfile profile,
         string source = "Manual",
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        CreateCoreAsync(server, profile, source, applyRetention: true, cancellationToken);
+
+    public Task<BackupRecord> CreatePreRestoreRecoveryAsync(ServerDefinition server, CancellationToken cancellationToken = default) =>
+        CreateCoreAsync(server, GetDefaultProfile(server), "Pre-restore safety backup", applyRetention: false, cancellationToken);
+
+    private async Task<BackupRecord> CreateCoreAsync(ServerDefinition server, BackupProfile profile,
+        string source, bool applyRetention, CancellationToken cancellationToken)
     {
         ValidateDestination(server.RootPath, profile.DestinationPath);
+        if (profile.ServerId != server.Id)
+            throw new InvalidOperationException("The backup profile belongs to a different server.");
         Directory.CreateDirectory(profile.DestinationPath);
         var timer = Stopwatch.StartNew();
         var id = Guid.NewGuid();
@@ -55,8 +72,12 @@ public sealed class BackupService
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     var relative = Path.GetRelativePath(server.RootPath, file).Replace('\\', '/');
-                    if (ShouldExclude(relative, profile.Exclusions) || IsWithin(file, profile.DestinationPath))
+                    if (ShouldExclude(relative, profile.Exclusions))
                         continue;
+                    if (relative.Equals(ManifestEntryName, StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    ValidateArchiveFileName(relative);
+                    _ = files.ResolveWithinRoot(server.RootPath, relative, mustExist: true);
                     var (length, hash) = await CaptureFileAsync(archive, file, relative, cancellationToken).ConfigureAwait(false);
                     entries.Add(new BackupManifestEntry(relative, length, hash));
                 }
@@ -86,14 +107,14 @@ public sealed class BackupService
 
             // Verification happens while the archive is still .partial, so a backup that fails it is
             // never renamed into place and can never be offered as a restore point. Only a verified
-            // archive is finalised, and only then is a record written.
+            // archive is labelled verified; explicitly disabled verification stays unverified.
             if (profile.VerificationEnabled &&
-                !await VerifyArchiveAsync(temporaryPath, cancellationToken).ConfigureAwait(false))
+                !await VerifyArchiveAsync(temporaryPath, id, server.Id, cancellationToken).ConfigureAwait(false))
                 throw new InvalidDataException(
                     "The backup archive failed verification and was not kept. Nothing in the server folder was changed.");
             File.Move(temporaryPath, finalPath);
 
-            const bool verified = true;
+            var verified = profile.VerificationEnabled;
             var record = new BackupRecord
             {
                 Id = id,
@@ -111,7 +132,8 @@ public sealed class BackupService
                 Source = source
             };
             await store.UpsertBackupAsync(record, cancellationToken).ConfigureAwait(false);
-            await ApplyRetentionAsync(profile, cancellationToken).ConfigureAwait(false);
+            if (applyRetention)
+                await ApplyRetentionAsync(profile, cancellationToken).ConfigureAwait(false);
             return record;
         }
         catch
@@ -127,7 +149,7 @@ public sealed class BackupService
 
     public async Task<bool> VerifyAsync(BackupRecord record, CancellationToken cancellationToken = default)
     {
-        var verified = await VerifyArchiveAsync(record.ArchivePath, cancellationToken).ConfigureAwait(false);
+        var verified = await VerifyArchiveAsync(record.ArchivePath, record.Id, record.ServerId, cancellationToken).ConfigureAwait(false);
         await store.UpsertBackupAsync(record with
         {
             Verified = verified,
@@ -136,59 +158,18 @@ public sealed class BackupService
         return verified;
     }
 
-    public async Task RestoreAsync(
+    public Task RestoreAsync(
         ServerDefinition server,
         BackupRecord record,
         CancellationToken cancellationToken = default)
     {
-        if (!File.Exists(record.ArchivePath))
-            throw new FileNotFoundException("Backup archive was not found.", record.ArchivePath);
-        if (!await VerifyArchiveAsync(record.ArchivePath, cancellationToken).ConfigureAwait(false))
-            throw new InvalidDataException("The backup failed verification and will not be restored.");
-
-        var staging = Path.Combine(Path.GetDirectoryName(server.RootPath)!, $".chunkpilot-restore-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(staging);
-        try
-        {
-            using var archive = ZipFile.OpenRead(record.ArchivePath);
-            foreach (var entry in archive.Entries.Where(entry => !entry.FullName.StartsWith(".chunkpilot/", StringComparison.Ordinal)))
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                var output = Path.GetFullPath(Path.Combine(staging, entry.FullName.Replace('/', Path.DirectorySeparatorChar)));
-                var stagingPrefix = Path.TrimEndingDirectorySeparator(staging) + Path.DirectorySeparatorChar;
-                if (!output.StartsWith(stagingPrefix, StringComparison.OrdinalIgnoreCase))
-                    throw new InvalidDataException($"Unsafe archive entry: {entry.FullName}");
-                Directory.CreateDirectory(Path.GetDirectoryName(output)!);
-                await using var source = entry.Open();
-                await using var destination = new FileStream(output, FileMode.CreateNew, FileAccess.Write, FileShare.None,
-                    128 * 1024, FileOptions.Asynchronous);
-                await source.CopyToAsync(destination, cancellationToken).ConfigureAwait(false);
-            }
-
-            foreach (var stagedFile in Directory.EnumerateFiles(staging, "*", SearchOption.AllDirectories))
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                var relative = Path.GetRelativePath(staging, stagedFile);
-                var target = Path.GetFullPath(Path.Combine(server.RootPath, relative));
-                if (!IsWithin(target, server.RootPath))
-                    throw new InvalidDataException($"Restore path escaped the server root: {relative}");
-                Directory.CreateDirectory(Path.GetDirectoryName(target)!);
-                var temporary = target + $".chunkpilot-{Guid.NewGuid():N}.tmp";
-                File.Copy(stagedFile, temporary);
-                if (File.Exists(target))
-                    File.Replace(temporary, target, null, ignoreMetadataErrors: true);
-                else
-                    File.Move(temporary, target);
-            }
-        }
-        finally
-        {
-            TryDeleteDirectory(staging);
-        }
+        return RestoreVerifiedAsync(server, record, cancellationToken);
     }
 
     public async Task DeleteAsync(BackupRecord record, CancellationToken cancellationToken = default)
     {
+        SafeFileService.ValidateExistingPathAncestry(record.ArchivePath);
+        SafeFileService.ValidateExistingPathAncestry(record.ManifestPath);
         if (File.Exists(record.ArchivePath))
             File.Delete(record.ArchivePath);
         if (File.Exists(record.ManifestPath))
@@ -200,6 +181,8 @@ public sealed class BackupService
     {
         var source = Path.TrimEndingDirectorySeparator(Path.GetFullPath(sourceRoot));
         var target = Path.TrimEndingDirectorySeparator(Path.GetFullPath(destination));
+        SafeFileService.ValidateExistingPathAncestry(source);
+        SafeFileService.ValidateExistingPathAncestry(target);
         if (target.Equals(source, StringComparison.OrdinalIgnoreCase) || IsWithin(target, source))
             throw new InvalidOperationException("The backup destination must be outside the server folder.");
     }
@@ -246,10 +229,14 @@ public sealed class BackupService
             .OrderByDescending(record => record.CreatedAt)
             .ToList();
         var retainedBytes = 0L;
+        var newestVerified = records.FirstOrDefault(record => record.Verified && File.Exists(record.ArchivePath));
         for (var index = 0; index < records.Count; index++)
         {
             var record = records[index];
             retainedBytes += record.SizeBytes;
+            // Retention limits are soft when the newest/only recovery point exceeds the budget.
+            if (index == 0 || record.Id == newestVerified?.Id)
+                continue;
             var expired = record.CreatedAt < DateTimeOffset.UtcNow.AddDays(-Math.Max(1, profile.MaximumAgeDays));
             var overCount = index >= Math.Max(1, profile.MaximumCount);
             var overStorage = retainedBytes > Math.Max(1, profile.MaximumStorageBytes);
@@ -375,34 +362,16 @@ public sealed class BackupService
             "No backup was created, and nothing in the server folder was changed. " +
             "Close whatever is using that file, or stop the server and back up again.", inner);
 
-    private static async Task<bool> VerifyArchiveAsync(string archivePath, CancellationToken cancellationToken)
+    private static async Task<bool> VerifyArchiveAsync(string archivePath, Guid backupId, Guid serverId, CancellationToken cancellationToken)
     {
         try
         {
+            SafeFileService.ValidateExistingPathAncestry(archivePath);
             using var archive = ZipFile.OpenRead(archivePath);
-            var manifestEntry = archive.GetEntry(".chunkpilot/manifest.json");
-            if (manifestEntry is null)
-                return false;
-            BackupManifest? manifest;
-            await using (var stream = manifestEntry.Open())
-                manifest = await JsonSerializer.DeserializeAsync<BackupManifest>(stream, ProtocolJson.Options, cancellationToken).ConfigureAwait(false);
-            if (manifest is null)
-                return false;
-            foreach (var expected in manifest.Files)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                var entry = archive.GetEntry(expected.RelativePath);
-                if (entry is null || entry.Length != expected.SizeBytes)
-                    return false;
-                await using var stream = entry.Open();
-                using var sha = SHA256.Create();
-                var actual = Convert.ToHexString(await sha.ComputeHashAsync(stream, cancellationToken).ConfigureAwait(false));
-                if (!actual.Equals(expected.Sha256, StringComparison.OrdinalIgnoreCase))
-                    return false;
-            }
+            _ = await ReadVerifiedManifestAsync(archive, backupId, serverId, cancellationToken).ConfigureAwait(false);
             return true;
         }
-        catch (Exception exception) when (exception is IOException or InvalidDataException or JsonException)
+        catch (Exception exception) when (exception is IOException or InvalidDataException or JsonException or UnauthorizedAccessException)
         {
             return false;
         }
@@ -411,27 +380,22 @@ public sealed class BackupService
     private static IEnumerable<string> EnumerateFilesBounded(string root)
     {
         var pending = new Stack<string>();
+        SafeFileService.ValidateExistingPathAncestry(root);
         pending.Push(root);
         var count = 0;
         while (pending.Count > 0)
         {
             var directory = pending.Pop();
-            IEnumerable<string> files;
-            try { files = Directory.EnumerateFiles(directory); }
-            catch (Exception exception) when (exception is UnauthorizedAccessException or IOException) { continue; }
-            foreach (var file in files)
+            foreach (var file in Directory.EnumerateFiles(directory))
             {
                 if (++count > 2_000_000)
                     throw new IOException("Backup aborted after reaching the two-million-file safety limit.");
                 yield return file;
             }
-            IEnumerable<string> children;
-            try { children = Directory.EnumerateDirectories(directory); }
-            catch (Exception exception) when (exception is UnauthorizedAccessException or IOException) { continue; }
-            foreach (var child in children)
+            foreach (var child in Directory.EnumerateDirectories(directory))
             {
-                if (!File.GetAttributes(child).HasFlag(FileAttributes.ReparsePoint))
-                    pending.Push(child);
+                SafeFileService.ValidateExistingPathAncestry(child);
+                pending.Push(child);
             }
         }
     }

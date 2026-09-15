@@ -369,12 +369,13 @@ public sealed class ServerSupervisor : IAsyncDisposable
 
     public async Task RestoreAsync(Guid serverId, BackupRecord record, CancellationToken cancellationToken = default)
     {
+        if (record.ServerId != serverId)
+            throw new InvalidOperationException("The selected backup belongs to a different server.");
         var server = Get(serverId);
         await server.RunExclusiveDataOperationAsync("restore", requireStopped: true, saveIfRunning: false,
             freezeWorldSaving: false, async token =>
             {
-                var profile = backups.GetDefaultProfile(server.Definition);
-                _ = await backups.CreateAsync(server.Definition, profile, "Pre-restore safety backup", token).ConfigureAwait(false);
+                _ = await backups.CreatePreRestoreRecoveryAsync(server.Definition, token).ConfigureAwait(false);
                 await backups.RestoreAsync(server.Definition, record, token).ConfigureAwait(false);
                 return true;
             }, cancellationToken).ConfigureAwait(false);
