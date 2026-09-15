@@ -142,7 +142,7 @@ Support capability-driven handling for:
 - Vanilla, Paper, Purpur, Spigot or Bukkit, Fabric, Quilt, Forge, NeoForge, supported hybrids, Bedrock Dedicated Server, and custom scripts.
 - Managed Java runtimes without changing system `PATH` or uninstalling system Java.
 - Official provider metadata and APIs only; never scrape websites.
-- Modrinth, approved application-level CurseForge access, GitHub Releases, Mojang, Paper, Purpur, official loader metadata, direct manifests, local packages, and future provider adapters. Never ask an ordinary user for a CurseForge API key.
+- Modrinth, optional CurseForge access with the user's own approved API key entered only in native protected setup, GitHub Releases, Mojang, Paper, Purpur, official loader metadata, direct manifests, local packages, and future provider adapters. Never bundle or redistribute a shared developer key, pass credentials through React, or bypass provider distribution restrictions.
 - Exact version selection, release channels, hashes, dependency, loader, game-version, Java, and client/server environment checks.
 - Dynmap and BlueMap integration rather than building a costly map renderer. An optional lazy-loaded WebView2 map surface is allowed only for local detected map URLs, with browser fallback.
 - Connection methods as interchangeable adapters: LAN, direct port forwarding, public tunnel, private network, and future providers. ChunkPilot must remain useful without them.

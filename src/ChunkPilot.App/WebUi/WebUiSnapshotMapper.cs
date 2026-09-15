@@ -50,7 +50,8 @@ internal sealed class WebUiSnapshotMapper
             revision = Interlocked.Increment(ref revision),
             capturedAt = DateTimeOffset.UtcNow,
             agentConnected = viewModel.Dashboard.AgentConnected,
-            appVersion = Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "1.3.0",
+            appVersion = Assembly.GetExecutingAssembly().GetCustomAttribute<AssemblyInformationalVersionAttribute>()?
+                .InformationalVersion.Split('+')[0] ?? "1.0.0",
             build = new
             {
                 productVersion = BuildIdentity.Current.ProductVersion,

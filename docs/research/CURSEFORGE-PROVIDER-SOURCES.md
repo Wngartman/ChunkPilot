@@ -102,6 +102,13 @@ visiting any root, including optional entries that become required dependencies.
 file merely because the dependency was encountered before its manifest entry. A real no-official-pack
 preflight exposed this ordering defect; genuinely contradictory explicit pins still fail closed.
 
+The repaired generated preflight was retried against exact Fabulously Optimized `396246/8217274`
+(6.5.0). It proceeded beyond the manifest-pin conflict and then correctly blocked required
+`697845/5424446`: authenticated project metadata reports `allowModDistribution=false`. No restricted
+file was downloaded, omitted, or substituted. Two 170,643-byte client-archive attempts bring this
+milestone's completed payload ledger to 475,405,117 bytes. This is a verified safe failure, not a
+successful generated server or runtime certification. The focused CurseForge gate passed 236 tests.
+
 ## HTTP and failure policy
 
 - Only `https://api.curseforge.com` is accepted for metadata. Redirects are disabled for API calls.

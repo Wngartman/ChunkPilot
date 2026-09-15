@@ -1,3 +1,10 @@
+- Introduces native per-user CurseForge API-key setup, validation, replacement, and removal. Keys remain out of the renderer and release packages; existing credentials survive rejected or interrupted validation.
+- Resolves exact CurseForge client/server-pack relationships, preserves manifest-pinned dependency versions and gameplay scripts, and distinguishes resource packs from loader-specific mods. Restricted downloads remain blocked.
+- Adds native ordinary-start progress, stopped known-player access editing, repeatable icon editing, and an explicit reversible binding apply/restart action.
+- Hardens backup inventory verification, recovery retention, restore rollback and Windows path checks. Newest recovery points are not deleted to meet an impossible storage limit.
+- Keeps fresh managed server descendants in exact-owned process Jobs; status reads and previous-attempt cleanup are bounded and cancellable.
+- Requires fresh, exact player evidence before empty-server automation, and bounds output while continuing to drain approved external-program pipes.
+- Bounds large player rosters to 50 displayed rows with full-roster search and preserves fast server switching.
 - Prevents server-scoped settings, MOTD drafts, player lists, whitelist entries, and late native responses from crossing a server-selection boundary.
 - Keeps long sidebar names readable without shrinking their status indicator, restores capability-driven player controls for modpack servers, and adds locally cropped player-head fallbacks.
 - Adds a safe **Upload World** creation path for folders and ZIP archives with bounded inspection, one-time native authority, transactional copying, source revalidation, and source preservation.

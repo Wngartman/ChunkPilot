@@ -11,6 +11,9 @@ if ($env:GITHUB_ACTIONS -ne 'true') {
 }
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
+$versionProperties = [xml](Get-Content -LiteralPath (Join-Path $repoRoot 'Directory.Build.props') -Raw)
+$expectedInstallerVersion = [string]$versionProperties.Project.PropertyGroup.ApplicationVersion
+$expectedProductPrefix = [string]$versionProperties.Project.PropertyGroup.Version + '+'
 $installer = [IO.Path]::GetFullPath($InstallerPath)
 if (-not (Test-Path -LiteralPath $installer)) { throw "Installer was not found: $installer" }
 $installRoot = Join-Path $env:LOCALAPPDATA 'Programs\ChunkPilot'
@@ -91,8 +94,8 @@ foreach ($required in @($app, $agent, (Join-Path $installRoot 'WebUi\index.html'
 }
 $uninstallEntry = Get-ChunkPilotUninstallEntry
 if (-not $uninstallEntry) { throw 'ChunkPilot uninstall registration was not created.' }
-$displayNameMatches = $uninstallEntry.DisplayName -eq 'ChunkPilot 1.3.0'
-$displayVersionMatches = $uninstallEntry.DisplayVersion -eq '1.3.0'
+$displayNameMatches = $uninstallEntry.DisplayName -eq ('ChunkPilot v' + [string]$versionProperties.Project.PropertyGroup.Version)
+$displayVersionMatches = $uninstallEntry.DisplayVersion -eq $expectedInstallerVersion
 $registeredInstallRoot = [IO.Path]::GetFullPath([string]$uninstallEntry.InstallLocation).TrimEnd(
     [IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
 $expectedInstallRoot = [IO.Path]::GetFullPath($installRoot).TrimEnd(
@@ -228,8 +231,8 @@ if (-not [string]::IsNullOrWhiteSpace($PreviousInstallerPath)) {
     if (-not (Test-Path -LiteralPath $app)) { throw 'Previous prerelease did not install before upgrade.' }
     Invoke-Setup $installer $upgradeLog
     $upgradedVersion = [Diagnostics.FileVersionInfo]::GetVersionInfo($app).ProductVersion
-    if (-not $upgradedVersion.StartsWith('1.3.0-alpha.5+', [StringComparison]::OrdinalIgnoreCase)) {
-        throw "Prior-release upgrade did not install Alpha 5 binaries: $upgradedVersion"
+    if (-not $upgradedVersion.StartsWith($expectedProductPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Prior-release upgrade did not install the exact candidate product version: $upgradedVersion"
     }
     if (Test-Path -LiteralPath (Join-Path $startMenuRoot 'ChunkPilot WebUI Preview.lnk')) {
         throw 'Prior-release upgrade left the obsolete WebUI Preview shortcut behind.'

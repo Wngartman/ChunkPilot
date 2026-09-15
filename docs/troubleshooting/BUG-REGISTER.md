@@ -6,6 +6,67 @@ become the durable record and the entry can leave this active register.
 
 ---
 
+## CP-2026-076 — Implicit developer bootstrap could override personal CurseForge setup
+
+**High; corrected in the 1.0 candidate.** Startup previously probed a hardcoded developer credential
+file even without an explicit source. That could replace a personal key or restore a removed one.
+Bootstrap now requires an explicit path-only environment source; ordinary startup leaves protected
+personal credentials unchanged and performs no developer-file probe. The developer launcher supplies
+its source deliberately. Missing-source tests cover both previously configured and removed keys.
+
+## CP-2026-075 — Animated thumbnails could decode extra frames or fail metadata inspection
+
+**Medium; fixed, real encoded-image regression passed.** Both image identification and decoding now
+use a one-frame limit, retaining the existing byte/dimension/concurrency budgets. A valid two-frame
+PNG previously failed the metadata-only path; the corrected path returns one static preview frame.
+
+## CP-2026-074 — Native credential setup could finish after its dialog disconnected
+
+**High; fixed, 4 real-pipe regressions passed.** Agent lifetime was too broad for key validation and
+removal. These two requests now use originating-pipe cancellation and immediate connection/session
+checks before storage. Other long operations keep their Agent ownership. Tests cover validation,
+pre-commit and queued-removal disconnects, plus successful response cleanup; old credentials survive.
+
+## CP-2026-073 — Stale player observations could trigger empty-server automation
+
+**High; fixed in the 1.0 candidate.** Player transitions now require fresh counts from the same exact
+running attempt. Delayed empty shutdown continuously rechecks and checks again under the lifecycle
+gate. Automation children are Job-owned; bounded output continues draining to prevent blocked pipes.
+
+## CP-2026-072 — PID ancestry missed orphan descendants and status reads could stall
+
+**High; fixed, real fake-server regressions passed.** New server attempts start atomically in private
+Windows Jobs; cleanup includes orphan grandchildren after intermediate-parent exit. Legacy
+reattachment retains exact held-identity checks and fails closed on ambiguous ancestry. Status reads
+and previous monitor/pump drainage now have deadlines. Job/legacy recovery paths have separate tests.
+
+## CP-2026-071 — Backup verification and recovery boundaries were incomplete
+
+**High; fixed, 25 focused tests passed / 1 privilege unavailable.** Reproductions covered unlisted
+and duplicate archive entries, foreign-server restore, losing newest verified recovery, false
+verification, reparse redirection and an ancestor destination creating an empty backup. Closed
+inventories, held-archive extraction, staged rollback and retention fixes protect these boundaries.
+See [backup safety](../operations/BACKUP-SAFETY.md) for residual limits.
+
+## CP-2026-070 — Public-address classification accepted reserved ranges
+
+**High; fixed with synthetic regressions.** IPv4-mapped private/CGNAT and reserved IPv6 ranges could
+be described as globally routable. Explicit address classifications now cover these cases.
+Classification still does not establish a router route or outside-in reachability.
+
+## CP-2026-069 — Stale confirmations and renderer cancellation could target obsolete work
+
+**High; fixed with native and WebUI regressions.** Mutations recheck their session, server and
+operation after prompts and queue waits. Disconnected bridge requests settle cancellation. Shared
+path-lock reservations retain ownership across canceled and overlapping waiters.
+
+## CP-2026-068 — Exact CurseForge official files and generated content were routed incorrectly
+
+**High; fixed, authenticated archive/plan checks passed.** Nullable relationship fields were treated
+as mandatory and manifest entries as mods. Forward/reverse relationships now select one exact route;
+typed resource packs and explicit pins are preserved. Author-denied dependencies block generation
+rather than disappearing. [Current gate](../CURRENT-GATE.md) lists exact live IDs and runtime limits.
+
 ## CP-2026-067 — Connection summaries promoted a host LAN address to live server availability
 
 **High; fixed locally, packaged headless gate passed; visual acceptance pending.** A loopback-only

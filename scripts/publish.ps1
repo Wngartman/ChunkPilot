@@ -3,7 +3,7 @@ param(
     [ValidateSet("Release")]
     [string]$Configuration = "Release",
     [switch]$BuildInstaller,
-    [ValidatePattern('^$|^v1\.3\.0-alpha\.[1-9][0-9]*$')]
+    [ValidatePattern('\A(?:|v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(alpha|beta|rc)\.[1-9][0-9]*)?)\z')]
     [string]$ReleaseTag = ''
 )
 
@@ -22,7 +22,11 @@ $env:DOTNET_NOLOGO = "1"
 $sourceCommit = (& git -C $repoRoot rev-parse HEAD).Trim()
 if ($LASTEXITCODE -ne 0 -or $sourceCommit -notmatch '^[0-9a-f]{40}$') { throw 'Could not resolve the source commit.' }
 $buildTimestamp = [DateTimeOffset]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
-$effectiveReleaseTag = if ($ReleaseTag) { $ReleaseTag } else { 'v1.3.0-alpha.5' }
+$versionProperties = [xml](Get-Content -LiteralPath (Join-Path $repoRoot 'Directory.Build.props') -Raw)
+$sourceVersion = [string]$versionProperties.Project.PropertyGroup.Version
+$installerVersion = [string]$versionProperties.Project.PropertyGroup.ApplicationVersion
+$effectiveReleaseTag = if ($ReleaseTag) { $ReleaseTag } else { "v$sourceVersion" }
+if ($effectiveReleaseTag -cne "v$sourceVersion") { throw 'The requested release tag must exactly match the source Version.' }
 $identityProperties = @(
     "-p:ChunkPilotGitSha=$sourceCommit",
     "-p:ChunkPilotReleaseTag=$effectiveReleaseTag",
@@ -112,7 +116,7 @@ if ($BuildInstaller) {
     if (-not $iscc) {
         throw "Inno Setup 7 ISCC.exe was not found. Publish outputs were created, but the installer was not compiled."
     }
-    & $iscc "/DMyReleaseTag=$ReleaseTag" (Join-Path $repoRoot "installer\ChunkPilot.iss")
+    & $iscc "/DMyReleaseTag=$ReleaseTag" "/DMyAppVersion=$installerVersion" (Join-Path $repoRoot "installer\ChunkPilot.iss")
     if ($LASTEXITCODE -ne 0) { throw "Inno Setup compiler failed with exit code $LASTEXITCODE." }
     $installerPath = Join-Path $repoRoot "installer\output\ChunkPilot-Setup-$ReleaseTag.exe"
     if ($signingConfigured) {

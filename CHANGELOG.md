@@ -1,6 +1,25 @@
 # Changelog
 
-## Unreleased
+## 1.0.0 - 2026-09-14
+
+### Release hardening and everyday controls
+
+- Added native optional CurseForge setup for each user's own approved key, official validation before
+  replacement, Windows-account protection, cancellation on dialog/pipe closure, and removal without
+  altering installed servers. No shared developer credential is distributed.
+- Corrected official server-pack relationships and generated manifest content classification, preserving
+  exact file pins, author distribution restrictions, payload budgets, and verified recovery inputs.
+- Added deliberate session-fenced binding apply/restart, stopped-player access controls, repeatable
+  existing-icon editing, clearer ordinary startup progress, and installed-pack identity presentation.
+- Hardened backup closed inventories, restore identity and rollback, reparse-path protection, and
+  newest verified recovery retention. Unknown or unverified backups are never labelled verified.
+- Contained fresh managed server process trees in per-attempt Windows Jobs, preserved exact legacy
+  reattachment checks, bounded status reads and previous-process cleanup, and isolated automation children.
+- Stopped treating stale or unknown player counts as an empty server. Delayed empty-server shutdown
+  rechecks the same running attempt immediately before stopping.
+- Bounded large roster rendering, thumbnail decode and network concurrency, and stale UI confirmations.
+- Targeted product release 1.0.0 retains Windows numeric version 1.3.1 for in-place upgrades from the
+  earlier 1.3.0-alpha series. Database schema remains 6. Exact final package gates run in the release workflow.
 
 ### Instant server switching and native CurseForge lifecycle
 
@@ -9,7 +28,8 @@
   eight-server ready-workspace cache without permitting old-server data or provider work during switching.
 - Added a native-only CurseForge credential boundary using the one ignored local developer file and
   DPAPI-protected storage. The key never enters React, command-line arguments, logs, diagnostics, packages,
-  or normal user settings; public credential delivery remains gated by written provider authorization.
+  or renderer settings. Optional personal-key setup supersedes the earlier public credential-delivery gate;
+  shared application credentials still require a separately approved distribution arrangement.
 - Added official CurseForge discovery, pagination, exact project/file and link resolution, version/loader/
   category/channel filtering, bounded native images, typed provider failures, rate-limit handling, and
   demand-driven modpack and Mods provider tabs.

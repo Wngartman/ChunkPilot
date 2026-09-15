@@ -1,7 +1,9 @@
 #define MyAppName "ChunkPilot"
-#define MyAppVersion "1.3.0"
+#ifndef MyAppVersion
+  #define MyAppVersion "1.3.1"
+#endif
 #ifndef MyReleaseTag
-  #define MyReleaseTag "v1.3.0-alpha.5"
+  #define MyReleaseTag "v1.0.0"
 #endif
 #define MyAppPublisher "ChunkPilot"
 #define MyAppExeName "ChunkPilot.exe"
@@ -10,7 +12,7 @@
 AppId={{C609C59D-FD5A-4A18-91C8-2D04F7177A69}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
-AppVerName={#MyAppName} {#MyAppVersion}
+AppVerName={#MyAppName} {#MyReleaseTag}
 AppPublisher={#MyAppPublisher}
 DefaultDirName={localappdata}\Programs\ChunkPilot
 DefaultGroupName=ChunkPilot

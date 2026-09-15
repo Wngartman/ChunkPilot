@@ -314,7 +314,9 @@ if (Test-Path -LiteralPath $outputFull) {
 New-Item -ItemType Directory -Path (Join-Path $outputFull 'Agent') -Force | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $outputFull 'Certification') -Force | Out-Null
 $timestamp = [DateTimeOffset]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
-$identity = @("-p:ChunkPilotGitSha=$commit", '-p:ChunkPilotReleaseTag=v1.3.0-alpha.5-dev', "-p:ChunkPilotBuildTimestampUtc=$timestamp")
+$versionProperties = [xml](Get-Content -LiteralPath (Join-Path $buildRoot 'Directory.Build.props') -Raw)
+$developmentTag = 'v' + [string]$versionProperties.Project.PropertyGroup.Version + '-dev'
+$identity = @("-p:ChunkPilotGitSha=$commit", "-p:ChunkPilotReleaseTag=$developmentTag", "-p:ChunkPilotBuildTimestampUtc=$timestamp")
 $single = @('-p:PublishSingleFile=true', '-p:IncludeNativeLibrariesForSelfExtract=true', '-p:DebugType=None', '-p:DebugSymbols=false')
 $multi = @('-p:PublishSingleFile=false', '-p:DebugType=None', '-p:DebugSymbols=false')
 dotnet publish (Join-Path $buildRoot 'src\ChunkPilot.App\ChunkPilot.App.csproj') -c Release -r win-x64 --self-contained true --no-restore -o $outputFull @identity @single

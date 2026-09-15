@@ -1,10 +1,10 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)]
-    [ValidatePattern('^v?1\.3\.0-alpha\.[1-9][0-9]*$')]
+    [ValidatePattern('\Av?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(alpha|beta|rc)\.[1-9][0-9]*)?\z')]
     [string]$Version,
 
-    [ValidatePattern('^$|^v?1\.3\.0-alpha\.[1-9][0-9]*$')]
+    [ValidatePattern('\A(?:|v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(alpha|beta|rc)\.[1-9][0-9]*)?)\z')]
     [string]$Supersedes = '',
 
     [string]$Repository = 'Wngartman/ChunkPilot'
@@ -129,8 +129,8 @@ try {
 
     $release = & gh release view $tag --repo $Repository `
         --json name,url,isDraft,isPrerelease,tagName,assets | ConvertFrom-Json
-    if ($LASTEXITCODE -ne 0 -or $release.isDraft -or -not $release.isPrerelease) {
-        throw 'The GitHub release is not a visible prerelease.'
+    if ($LASTEXITCODE -ne 0 -or $release.isDraft -or $release.isPrerelease -ne $tag.Contains('-')) {
+        throw 'The GitHub release is not public or its channel does not match its exact tag.'
     }
 
     $verificationRoot = Join-Path $repoRoot "artifacts\release-verification\$tag-$runId"

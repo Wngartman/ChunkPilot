@@ -1,6 +1,15 @@
-# Public prerelease process
+# Public release process
 
-ChunkPilot prereleases are published from one exact clean public `main` commit. Pull requests run path-aware feature validation; an explicit Release workflow performs the one authoritative consumer build and hands the same tested bytes to its write-scoped publish job.
+ChunkPilot releases are published from one exact clean public `main` commit. Pull requests run path-aware feature validation; an explicit Release workflow performs the one authoritative consumer build and hands the same tested bytes to its write-scoped publish job.
+
+The supported identities are exact `major.minor.patch` versions, optionally followed by `-alpha.N`,
+`-beta.N`, or `-rc.N`. A suffix always produces a GitHub prerelease; an unsuffixed version produces a
+stable release. The source `Version`, requested tag, executable product identity and package manifest
+must agree. Never remove a prerelease suffix to conceal an unpassed acceptance gate.
+
+`ApplicationVersion` is the numeric Windows installer upgrade identity, while `Version` is the visible
+release identity. Keep the former monotonic when changing the public numbering scheme, preserve the
+installer AppId, and exercise an upgrade from the actual prior installer on the disposable CI runner.
 
 ## Prepare the release commit
 
@@ -19,7 +28,11 @@ From clean public `main`:
     -Supersedes v1.3.0-alpha.4
 ```
 
-The command rejects a dirty or non-main tree, stale public main, reused tag/release, or unknown superseded release. It dispatches `.github/workflows/release.yml` with the full public-main SHA, watches that exact run, then independently redownloads and verifies the public assets.
+The example above is the historical Alpha 5 publication. For a new release, first set the exact source
+version, then pass that new version and the actual prior release to test. The command rejects a dirty
+or non-main tree, stale public main, reused tag/release, or unknown superseded release. It dispatches
+`.github/workflows/release.yml` with the full public-main SHA, watches that exact run, then independently
+redownloads and verifies the public assets.
 
 ## Validation tiers
 

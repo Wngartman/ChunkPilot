@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: New prerelease tag, for example v1.3.0-alpha.5
+        description: New exact source-version tag, for example v1.0.0-rc.1 or v1.0.0
         required: true
         type: string
       release_commit:
@@ -39,15 +39,15 @@ jobs:
       - name: Validate release request
         shell: pwsh
         run: |
-          if ($env:RELEASE_TAG -notmatch '^v1\.3\.0-alpha\.[1-9][0-9]*$') {
-            throw 'Release tag must be a ChunkPilot 1.3.0 alpha tag.'
+          if ($env:RELEASE_TAG -notmatch '\Av(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(alpha|beta|rc)\.[1-9][0-9]*)?\z') {
+            throw 'Release tag must be an exact stable, alpha, beta, or release-candidate version.'
           }
           if ($env:RELEASE_COMMIT -notmatch '^[0-9a-f]{40}$') {
             throw 'release_commit must be a full lowercase Git commit SHA.'
           }
           if ($env:SUPERSEDES_TAG -and
-              $env:SUPERSEDES_TAG -notmatch '^v1\.3\.0-alpha\.[1-9][0-9]*$') {
-            throw 'supersedes must be empty or an existing ChunkPilot 1.3.0 alpha tag.'
+              $env:SUPERSEDES_TAG -notmatch '\Av(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(alpha|beta|rc)\.[1-9][0-9]*)?\z') {
+            throw 'supersedes must be empty or an existing exact ChunkPilot release tag.'
           }
           if ($env:SUPERSEDES_TAG -eq $env:RELEASE_TAG) {
             throw 'A release cannot supersede itself.'
@@ -266,15 +266,16 @@ jobs:
             }
           }
 
-      - name: Publish prerelease
+      - name: Publish prerelease or stable release from the exact tag
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if ($env:RELEASE_TAG -notmatch '^v(?<version>\d+\.\d+\.\d+)-alpha\.(?<alpha>[1-9][0-9]*)$') {
+          if ($env:RELEASE_TAG -notmatch '^v(?<version>\d+\.\d+\.\d+)(-(?<channel>alpha|beta|rc)\.(?<sequence>[1-9][0-9]*))?$') {
             throw 'Could not derive the public release title.'
           }
-          $title = "ChunkPilot $($matches.version) Alpha $($matches.alpha)"
+          $title = "ChunkPilot $($env:RELEASE_TAG.Substring(1))"
+          $channelArguments = if ($env:RELEASE_TAG.Contains('-')) { @('--prerelease') } else { @('--latest') }
           $assets = @(
             "release/ChunkPilot-Setup-$env:RELEASE_TAG.exe",
             "release/ChunkPilot-Portable-$env:RELEASE_TAG-win-x64.zip",
@@ -282,8 +283,8 @@ jobs:
             'release/SHA256SUMS.txt'
           )
           gh release create $env:RELEASE_TAG @assets --repo '${{ github.repository }}' --verify-tag `
-            --prerelease --title $title --notes-file release/RELEASE_NOTES.md
-          if ($LASTEXITCODE -ne 0) { throw 'GitHub prerelease publication failed.' }
+            @channelArguments --title $title --notes-file release/RELEASE_NOTES.md
+          if ($LASTEXITCODE -ne 0) { throw 'GitHub release publication failed.' }
 
       - name: Redownload and verify public assets
         shell: pwsh
@@ -291,8 +292,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $release = gh api "repos/${{ github.repository }}/releases/tags/$env:RELEASE_TAG" | ConvertFrom-Json
-          if (-not $release.prerelease -or $release.draft) {
-            throw 'Published release state is not a visible prerelease.'
+          if ($release.prerelease -ne $env:RELEASE_TAG.Contains('-') -or $release.draft) {
+            throw 'Published release channel does not match its exact tag, or the release is still a draft.'
           }
           $expected = @(
             "ChunkPilot-Setup-$env:RELEASE_TAG.exe", "ChunkPilot-Portable-$env:RELEASE_TAG-win-x64.zip",
@@ -319,7 +320,7 @@ jobs:
             throw 'Public release metadata does not identify the exact tested commit.'
           }
           "RELEASE_URL=$($release.html_url)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          Write-Host "Verified public prerelease: $($release.html_url)"
+          Write-Host "Verified public release assets: $($release.html_url)"
 
       - name: Mark the previous prerelease superseded
         if: inputs.supersedes != ''

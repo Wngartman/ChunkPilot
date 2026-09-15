@@ -116,7 +116,8 @@ public sealed class PublicDistributionContractTests
         Assert.Contains("Installer Fixture Server", source, StringComparison.Ordinal);
         Assert.Contains("chunkpilot.db", source, StringComparison.Ordinal);
         Assert.Contains("{C609C59D-FD5A-4A18-91C8-2D04F7177A69}_is1", source, StringComparison.Ordinal);
-        Assert.Contains("DisplayVersion -eq '1.3.0'", source, StringComparison.Ordinal);
+        Assert.Contains("DisplayVersion -eq $expectedInstallerVersion", source, StringComparison.Ordinal);
+        Assert.Contains("StartsWith($expectedProductPrefix", source, StringComparison.Ordinal);
         Assert.Contains("TrimEnd(", source, StringComparison.Ordinal);
         Assert.Contains("PersistentDataUnchanged", source, StringComparison.Ordinal);
         Assert.Contains("DefaultLaunch", source, StringComparison.Ordinal);
@@ -167,10 +168,12 @@ public sealed class PublicDistributionContractTests
     }
 
     [Fact]
-    public void Public_snapshot_declares_pre_alpha_unsigned_and_no_source_license()
+    public void Public_snapshot_declares_exact_version_unsigned_and_no_source_license()
     {
         var readme = File.ReadAllText(Path.Combine(Root, "README.md"));
-        Assert.Contains("alpha prerelease", readme, StringComparison.OrdinalIgnoreCase);
+        var properties = System.Xml.Linq.XDocument.Load(Path.Combine(Root, "Directory.Build.props"));
+        var version = properties.Descendants("Version").Single().Value;
+        Assert.Contains($"Download ChunkPilot {version}", readme, StringComparison.Ordinal);
         Assert.Contains("unsigned", readme, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("no required ChunkPilot account, no ads, and no telemetry", readme, StringComparison.OrdinalIgnoreCase);
         Assert.False(File.Exists(Path.Combine(Root, "LICENSE")));

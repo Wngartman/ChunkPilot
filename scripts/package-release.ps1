@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)]
-    [ValidatePattern('^v1\.3\.0-alpha\.[1-9][0-9]*$')]
+    [ValidatePattern('\Av(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(alpha|beta|rc)\.[1-9][0-9]*)?\z')]
     [string]$ReleaseTag
 )
 
@@ -120,6 +120,9 @@ $productVersion = [Diagnostics.FileVersionInfo]::GetVersionInfo((Join-Path $self
 if (-not $productVersion.EndsWith($commit, [StringComparison]::OrdinalIgnoreCase)) {
     throw "Packaged ProductVersion $productVersion is not bound to release commit $commit."
 }
+if (-not $productVersion.StartsWith($ReleaseTag.Substring(1) + '+', [StringComparison]::Ordinal)) {
+    throw "Packaged ProductVersion $productVersion does not match requested release tag $ReleaseTag."
+}
 $signatureFiles = @(
     (Join-Path $selfContained 'ChunkPilot.exe'),
     (Join-Path $selfContained 'ChunkPilot.FirewallHelper.exe'),
@@ -168,7 +171,7 @@ $hashLines = foreach ($path in $hashTargets) {
 $notes = Get-Content -LiteralPath (Join-Path $repoRoot 'release\RELEASE_NOTES.template.md') -Raw
 $hotfixNotes = Get-Content -LiteralPath (Join-Path $repoRoot 'release\HOTFIX_NOTES.md') -Raw
 if ([string]::IsNullOrWhiteSpace($hotfixNotes)) { throw 'release/HOTFIX_NOTES.md is empty.' }
-if ($ReleaseTag -notmatch '^v(?<version>\d+\.\d+\.\d+)-alpha\.(?<alpha>[1-9][0-9]*)$') {
+if ($ReleaseTag -notmatch '^v(?<version>\d+\.\d+\.\d+)(-(?<channel>alpha|beta|rc)\.(?<sequence>[1-9][0-9]*))?$') {
     throw "Could not derive release metadata from $ReleaseTag."
 }
 $notes = $notes.Replace('{{RELEASE_COMMIT}}', $commit)
