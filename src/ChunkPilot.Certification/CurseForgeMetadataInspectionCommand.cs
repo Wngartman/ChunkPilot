@@ -6,11 +6,18 @@ using ChunkPilot.Infrastructure;
 
 namespace ChunkPilot.Certification;
 
-/// <summary>Native, metadata-only inspection. Never downloads content or emits credentials/URLs.</summary>
+/// <summary>Native metadata inspection with explicit bounded archive-only checks; never emits credentials/URLs.</summary>
 internal static class CurseForgeMetadataInspectionCommand
 {
     public static async Task<int> RunAsync(string[] arguments)
     {
+        var verifyNativeSetup = arguments.Contains("--verify-native-credential-setup", StringComparer.Ordinal);
+        if (verifyNativeSetup && (arguments.Contains("--verify-generated-plan", StringComparer.Ordinal) ||
+                                  arguments.Contains("--verify-official-archives", StringComparer.Ordinal)))
+        {
+            Console.Error.WriteLine("Native credential verification cannot be combined with payload download options.");
+            return 64;
+        }
         var project = ReadId(arguments, "--project");
         var fileId = ReadId(arguments, "--file");
         var ledgerIndex = Array.IndexOf(arguments, "--ledger");
@@ -31,6 +38,22 @@ internal static class CurseForgeMetadataInspectionCommand
             var provisioned = await new CurseForgeCredentialProvisioner(secrets)
                 .ProvisionFromEnvironmentAsync(api, timeout.Token).ConfigureAwait(false);
             if (!provisioned.Imported) return 69;
+            if (verifyNativeSetup)
+            {
+                // A separate client makes the production setup service perform fresh official API
+                // validation; it cannot reuse the provisioner's authentication response cache.
+                using var setupApi = new CurseForgeApiClient(secrets);
+                var verification = await VerifyNativeCredentialSetupAsync(secrets, setupApi, timeout.Token)
+                    .ConfigureAwait(false);
+                Console.WriteLine(JsonSerializer.Serialize(new
+                {
+                    status = verification.Success ? "VERIFIED_NATIVE_CREDENTIAL_SERVICE_ONLY" : "BLOCKED_NATIVE_CREDENTIAL_SERVICE",
+                    verification.SessionChecks, verification.StoredCredentialReadable,
+                    validationOnly = true, payloadBytes = 0, javaLaunched = false,
+                    worldCreated = false, nativeDialogExercised = false
+                }));
+                if (!verification.Success) return 2;
+            }
             using var projectDocument = await api.GetJsonAsync($"/v1/mods/{project}", timeout.Token)
                 .ConfigureAwait(false);
             var projectData = projectDocument.RootElement.GetProperty("data");
@@ -130,6 +153,33 @@ internal static class CurseForgeMetadataInspectionCommand
         {
             if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
         }
+    }
+
+    internal sealed record NativeCredentialSetupVerification(bool Success, int SessionChecks, bool StoredCredentialReadable);
+
+    internal static async Task<NativeCredentialSetupVerification> VerifyNativeCredentialSetupAsync(
+        ISecretStore secrets, CurseForgeApiClient api, CancellationToken cancellationToken)
+    {
+        // This method is called only with the diagnostic's disposable protected store. Never emit
+        // the retrieved plaintext, protected transport value, HTTP header, or provider response.
+        var protectedValue = CurseForgeCredentialTransport.ProtectForCurrentUser(
+            secrets.GetSecret(CurseForgeUpdateProvider.ApiKeyName) ??
+            throw new InvalidOperationException("The disposable credential could not be read."));
+        secrets.Delete(CurseForgeUpdateProvider.ApiKeyName);
+        if (secrets.Contains(CurseForgeUpdateProvider.ApiKeyName))
+            throw new InvalidOperationException("The disposable credential was not cleared before setup verification.");
+        var sessionChecks = 0;
+        var sessionId = Guid.NewGuid();
+        var expectedSession = sessionId;
+        var result = await new CurseForgeCredentialSetupService(secrets, api).ConfigureAsync(protectedValue, () =>
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (sessionId != expectedSession) throw new UnauthorizedAccessException("The diagnostic session ended.");
+            sessionChecks++;
+        }, cancellationToken).ConfigureAwait(false);
+        var readable = secrets.Contains(CurseForgeUpdateProvider.ApiKeyName) &&
+                       !string.IsNullOrEmpty(secrets.GetSecret(CurseForgeUpdateProvider.ApiKeyName));
+        return new(result.Success && readable && sessionChecks == 2, sessionChecks, readable);
     }
 
     private static async Task<string> VerifyDownloadAsync(CurseForgeApiClient api, CatalogVersion release,
