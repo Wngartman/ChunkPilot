@@ -275,7 +275,8 @@ jobs:
             throw 'Could not derive the public release title.'
           }
           $title = "ChunkPilot $($env:RELEASE_TAG.Substring(1))"
-          $channelArguments = if ($env:RELEASE_TAG.Contains('-')) { @('--prerelease') } else { @('--latest') }
+          # A singleton if result becomes a string unless typed; splatting that string emits characters.
+          [string[]]$channelArguments = if ($env:RELEASE_TAG.Contains('-')) { @('--prerelease') } else { @('--latest') }
           $assets = @(
             "release/ChunkPilot-Setup-$env:RELEASE_TAG.exe",
             "release/ChunkPilot-Portable-$env:RELEASE_TAG-win-x64.zip",

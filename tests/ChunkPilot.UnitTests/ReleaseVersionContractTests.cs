@@ -44,6 +44,18 @@ public sealed class ReleaseVersionContractTests
         Assert.DoesNotContain("v1.3.0-alpha.5", targets, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void Publication_preserves_the_release_channel_as_one_splatted_argument()
+    {
+        var workflow = File.ReadAllText(Path.Combine(Root(), ".github", "workflows", "release.yml"));
+        Assert.Contains(
+            "[string[]]$channelArguments = if ($env:RELEASE_TAG.Contains('-')) { @('--prerelease') } else { @('--latest') }",
+            workflow, StringComparison.Ordinal);
+        Assert.Contains(
+            "@channelArguments --title $title --notes-file release/RELEASE_NOTES.md",
+            workflow, StringComparison.Ordinal);
+    }
+
     private static string Root()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
