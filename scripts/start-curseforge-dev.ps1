@@ -203,8 +203,8 @@ try {
     $appInfo.WorkingDirectory = Split-Path -Parent $appPath
     $appInfo.UseShellExecute = $false
     Set-IsolatedEnvironment $appInfo
-    # An explicit nonexistent source prevents the App's fallback Agent path from consulting the
-    # developer-machine default. The prestarted Agent already imported or reused the DPAPI value.
+    # The App's fallback Agent must not repeat this launcher's explicit credential provisioning.
+    # The prestarted Agent already imported or reused the DPAPI value.
     $appInfo.Environment['CHUNKPILOT_CURSEFORGE_KEY_FILE'] = $disabledSource
     $app = [Diagnostics.Process]::Start($appInfo)
     if ($null -eq $app) { throw 'The isolated ChunkPilot App could not start.' }

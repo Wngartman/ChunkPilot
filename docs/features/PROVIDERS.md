@@ -57,9 +57,9 @@ against the official API, and stored only after a successful response and a fres
 or validation failure preserves existing access. Setup also supports replacement and removal; React receives
 only configured/cancelled state. Public packages contain no developer key and no hosted credential broker.
 
-A local developer can still provision the repository-local
-`.secrets\curseforge-api-key.txt`, or places its absolute path in
-`CHUNKPILOT_CURSEFORGE_KEY_FILE`; the variable contains a path, never the key. The Agent imports the value
+A local developer can explicitly run `scripts/start-curseforge-dev.ps1` or set an absolute source path in
+`CHUNKPILOT_CURSEFORGE_KEY_FILE`; the variable contains a path, never the key. Ordinary startup does not
+search for a developer file or restore a removed personal key. The Agent imports an explicitly supplied value
 into its isolated DPAPI secret store and only native HTTP code can consume it. Distribution of a shared
 developer application key remains gated independently of personal setup. See
 [MODPACKS.md](MODPACKS.md) and the [credential decision](../architecture/CURSEFORGE-CREDENTIAL-DELIVERY.md).

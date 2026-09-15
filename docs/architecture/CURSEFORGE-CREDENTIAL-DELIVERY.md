@@ -61,9 +61,10 @@ to arbitrary end users or that persistent provider caching is allowed.
 - The native dialog can remove the saved personal key through an authenticated session request. Cancel,
   submit, and close clear its password field. Mutable transport buffers are cleared; unavoidable short-lived
   managed strings cannot be securely zeroed and are never logged, returned to React, or retained in a ViewModel.
-- Repository-local `.secrets\curseforge-api-key.txt` provisioning remains a development-only path;
-  native code binds that developer path exactly and the file is never tracked or packaged.
-- `CHUNKPILOT_CURSEFORGE_KEY_FILE` may contain one absolute file path. It never contains the key value.
+- Developer provisioning requires an explicit `CHUNKPILOT_CURSEFORGE_KEY_FILE` absolute file path, never
+  the key value. The development launcher sets it for its exact Agent child; the file is never tracked or packaged.
+  Ordinary startup never searches a repository-local credential file, replaces a personal key, or restores a
+  removed key when this opt-in environment value is absent.
 - The Agent reads a bounded single-value file directly and imports it into the existing DPAPI CurrentUser
   secret store. It decodes only the populated span and clears the complete originally allocated byte buffer in
   `finally`; it never resizes away from the allocation that held the file bytes.

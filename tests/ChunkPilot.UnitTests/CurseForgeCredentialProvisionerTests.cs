@@ -8,13 +8,62 @@ namespace ChunkPilot.UnitTests;
 
 public sealed class CurseForgeCredentialProvisionerTests
 {
-    [Fact]
-    public void Default_source_is_the_one_authorized_repository_local_file()
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("  ")]
+    public void Missing_bootstrap_environment_never_resolves_an_implicit_developer_source(string? configuredPath)
     {
-        Assert.Equal(@"D:\ChunkPilot\.secrets\curseforge-api-key.txt",
-            CurseForgeCredentialProvisioner.DefaultKeyFilePath);
+        Assert.False(CurseForgeCredentialProvisioner.TryResolveSourcePath(
+            configuredPath, out var sourcePath, out var detail));
+        Assert.Empty(sourcePath);
+        Assert.Contains("No explicit", detail, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Explicit_bootstrap_environment_resolves_only_the_requested_absolute_path()
+    {
+        const string requestedPath = @"D:\synthetic-fixture\credential-source.txt";
+        Assert.True(CurseForgeCredentialProvisioner.TryResolveSourcePath(
+            requestedPath, out var sourcePath, out var detail));
+        Assert.Equal(requestedPath, sourcePath);
+        Assert.Empty(detail);
         Assert.Equal("CHUNKPILOT_CURSEFORGE_KEY_FILE",
             CurseForgeCredentialProvisioner.KeyFileEnvironmentVariable);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Ordinary_startup_preserves_personal_configuration_or_removal_without_network_access(
+        bool hasPersonalCredential)
+    {
+        var variable = CurseForgeCredentialProvisioner.KeyFileEnvironmentVariable;
+        var previous = Environment.GetEnvironmentVariable(variable);
+        var secrets = new MemorySecrets();
+        secrets.SetSecret(CurseForgeUpdateProvider.ApiKeyName, "synthetic-personal-key");
+        if (!hasPersonalCredential)
+            secrets.Delete(CurseForgeUpdateProvider.ApiKeyName);
+        var handler = new Handler(_ => throw new InvalidOperationException("network must not run"));
+        using var api = new CurseForgeApiClient(secrets, handler);
+        try
+        {
+            Environment.SetEnvironmentVariable(variable, null);
+
+            var result = await new CurseForgeCredentialProvisioner(secrets)
+                .ProvisionFromEnvironmentAsync(api);
+
+            Assert.False(result.SourcePresent);
+            Assert.False(result.Imported);
+            Assert.Equal(hasPersonalCredential, result.ExistingCredentialPreserved);
+            Assert.Equal(hasPersonalCredential ? "synthetic-personal-key" : null,
+                secrets.GetSecret(CurseForgeUpdateProvider.ApiKeyName));
+            Assert.Equal(0, handler.Count);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(variable, previous);
+        }
     }
 
     [Fact]

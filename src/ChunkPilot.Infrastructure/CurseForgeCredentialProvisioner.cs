@@ -31,7 +31,6 @@ public static class CurseForgeCredentialEnvironment
 public sealed class CurseForgeCredentialProvisioner(ISecretStore secrets)
 {
     public const string KeyFileEnvironmentVariable = "CHUNKPILOT_CURSEFORGE_KEY_FILE";
-    public const string DefaultKeyFilePath = @"D:\ChunkPilot\.secrets\curseforge-api-key.txt";
     internal const int MaximumKeyFileBytes = 4 * 1024;
     private readonly Action<ReadOnlyMemory<byte>>? plaintextBufferClearedForTesting;
 
@@ -145,8 +144,9 @@ public sealed class CurseForgeCredentialProvisioner(ISecretStore secrets)
         error = "";
         if (string.IsNullOrWhiteSpace(configuredPath))
         {
-            sourcePath = DefaultKeyFilePath;
-            return true;
+            sourcePath = "";
+            error = "No explicit developer credential source is configured.";
+            return false;
         }
 
         var candidate = configuredPath.Trim();
