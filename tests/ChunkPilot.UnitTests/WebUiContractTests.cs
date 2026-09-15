@@ -293,6 +293,9 @@ public sealed class WebUiContractTests
         Assert.Equal("docs.papermc.io", WebUiWindow.RequireAllowedHelpSource("https://docs.papermc.io/paper/basic-troubleshooting/").Host);
         Assert.Throws<ArgumentException>(() => WebUiWindow.RequireAllowedHelpSource("http://docs.papermc.io/"));
         Assert.Throws<ArgumentException>(() => WebUiWindow.RequireAllowedHelpSource("https://example.com/help"));
+        Assert.Equal("starlink.com", WebUiWindow.RequireAllowedHelpSource("https://starlink.com/support/").Host);
+        Assert.Throws<ArgumentException>(() => WebUiWindow.RequireAllowedHelpSource("https://person:private@starlink.com/support/"));
+        Assert.Throws<ArgumentException>(() => WebUiWindow.RequireAllowedHelpSource("https://starlink.com:8443/support/"));
         Assert.False(WebUiWindow.RequiresFullPresentationRefresh("connectivity.setMode"));
         Assert.True(WebUiWindow.RequiresFullPresentationRefresh("servers.start"));
         Assert.True(WebUiWindow.RequiresFullPresentationRefresh("backups.create"));

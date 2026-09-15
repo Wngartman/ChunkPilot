@@ -85,6 +85,7 @@ public partial class WebUiWindow : Window
     private readonly CreationWorldSourceService creationWorldSources = new();
     private readonly ModpackImageLoader modpackImages;
     private readonly PlayerHeadImageService playerHeads = new();
+    private readonly WebUiIconEditStore iconEdits = new();
 
     public WebUiWindow(MainViewModel viewModel, AgentClient client)
     {
@@ -251,13 +252,14 @@ public partial class WebUiWindow : Window
 
     internal static Uri RequireAllowedHelpSource(string value)
     {
-        if (!Uri.TryCreate(value, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps)
+        if (!Uri.TryCreate(value, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps ||
+            !string.IsNullOrEmpty(uri.UserInfo) || !uri.IsDefaultPort)
             throw new ArgumentException("Help sources must use HTTPS.");
         var allowedHosts = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             "www.minecraft.net", "minecraft.net", "help.minecraft.net",
             "docs.papermc.io", "docs.fabricmc.net", "docs.neoforged.net", "docs.minecraftforge.net",
-            "support.modrinth.com", "learn.microsoft.com", "docs.oracle.com", "minecraft.wiki"
+            "support.modrinth.com", "learn.microsoft.com", "docs.oracle.com", "minecraft.wiki", "starlink.com"
         };
         if (!allowedHosts.Contains(uri.Host))
             throw new ArgumentException("That help source host is not allowed.");
@@ -738,7 +740,9 @@ public partial class WebUiWindow : Window
                 return Accepted(method);
             }
             case "appearance.chooseIcon":
-                return await ChooseAppearanceIconAsync().ConfigureAwait(true);
+                return await ChooseAppearanceIconAsync(RequireServer(parameters).Definition).ConfigureAwait(true);
+            case "appearance.editIcon":
+                return JsonSerializer.SerializeToNode(iconEdits.OpenExisting(RequireServer(parameters).Definition), WebUiProtocol.Json);
             case "modpacks.providers":
                 return JsonSerializer.SerializeToNode(
                     (await client.SendAsync<IReadOnlyList<CatalogProviderStatus>>(
@@ -959,11 +963,29 @@ public partial class WebUiWindow : Window
                             : "The memory allocation was not confirmed by the authoritative settings service.");
                 }
                 var iconBase64 = parameters["iconPngBase64"]?.GetValue<string>();
-                if (!string.IsNullOrWhiteSpace(iconBase64))
+                var iconEdit = parameters["iconEdit"] as JsonObject;
+                if (!string.IsNullOrWhiteSpace(iconBase64) || iconEdit is not null)
                 {
                     try
                     {
-                        await InstallAppearanceIconAsync(RequireServer(parameters), iconBase64).ConfigureAwait(true);
+                        var iconServer = RequireServer(parameters);
+                        WebUiPreparedIcon? prepared = null;
+                        if (iconEdit is not null)
+                        {
+                            var recipe = iconEdit["recipe"]?.Deserialize<WebUiIconRecipe>(WebUiProtocol.Json)
+                                ?? throw new InvalidDataException("An icon edit recipe is required.");
+                            prepared = iconEdits.Prepare(iconServer.Definition, RequiredString(iconEdit, "token", 64), recipe);
+                            iconBase64 = Convert.ToBase64String(prepared.Output);
+                        }
+                        await InstallAppearanceIconAsync(iconServer, iconBase64!, prepared?.ExpectedIconHash).ConfigureAwait(true);
+                        if (prepared is not null)
+                        {
+                            try { await iconEdits.SaveRecipeAsync(iconServer.Definition, prepared).ConfigureAwait(true); }
+                            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+                            {
+                                throw new IOException("The icon was saved, but its reusable source could not be recorded. Reopen the editor before editing again.", exception);
+                            }
+                        }
                     }
                     catch (Exception exception) when ((propertiesChanged || memoryChanged) &&
                         exception is IOException or InvalidDataException or InvalidOperationException or FormatException)
@@ -1039,11 +1061,26 @@ public partial class WebUiWindow : Window
             case "connectivity.setMode":
                 Select(parameters);
                 if (!Enum.TryParse<NetworkMode>(RequiredString(parameters, "mode", 40), true, out var networkMode) ||
-                    networkMode is not (NetworkMode.HomeNetwork or NetworkMode.PortForwarding))
-                    throw new ArgumentException("Choose LAN or Internet hosting.");
+                    networkMode is not (NetworkMode.ThisComputerOnly or NetworkMode.HomeNetwork or NetworkMode.PortForwarding))
+                    throw new ArgumentException("Choose Local only, LAN, or Internet hosting.");
                 viewModel.SelectedNetworkMode = networkMode;
                 await viewModel.SaveNetworkModeCommand.ExecuteAsync(null).ConfigureAwait(true);
                 break;
+            case "connectivity.applyBinding":
+            {
+                var target = RequireServer(parameters);
+                if (!Enum.TryParse<NetworkMode>(RequiredString(parameters, "mode", 40), true, out var bindingMode))
+                    throw new ArgumentException("Choose a supported connection preference.");
+                var result = await client.SendAsync<OperationResult>("ApplyServerBinding",
+                    new ApplyServerBindingRequest(target.Definition.Id, bindingMode,
+                        RequiredBool(parameters, "confirmed"), RequiredBool(parameters, "restartIfRunning"))
+                    {
+                        Session = new() { SessionId = sessionId, Capability = sessionCapability }
+                    }).ConfigureAwait(true);
+                await viewModel.RefreshCommand.ExecuteAsync(null).ConfigureAwait(true);
+                await bridge!.PublishSnapshotAsync().ConfigureAwait(true);
+                return JsonSerializer.SerializeToNode(result, WebUiProtocol.Json);
+            }
             case "connectivity.router.check":
                 Select(parameters);
                 await viewModel.CheckDirectInternetCommand.ExecuteAsync(null).ConfigureAwait(true);
@@ -2032,10 +2069,11 @@ public partial class WebUiWindow : Window
 
     private static object ToWebModpackRelease(CatalogItem item, CatalogVersion version)
     {
-        var official = version.HasServerPackage && version.Sha1.Length == 40 &&
+        var official = version.HasServerPackage &&
+                        (item.Provider != CatalogProvider.CurseForge || version.CurseForgeInstallRoute == CurseForgeInstallRoute.OfficialServerPack) && version.Sha1.Length == 40 &&
                         version.SizeBytes is > 0 &&
                         (item.Provider == CatalogProvider.CurseForge || version.Sha512.Length == 128);
-        var generated = item.Provider == CatalogProvider.CurseForge && version.CanGenerateServerCandidate &&
+        var generated = item.Provider == CatalogProvider.CurseForge && version.CurseForgeInstallRoute == CurseForgeInstallRoute.GeneratedCandidate && version.CanGenerateServerCandidate &&
                         version.ClientSha1.Length == 40 && version.ClientSizeBytes is > 0;
         var serverPathAvailable = official || generated;
         var preflightReady = item.Provider != CatalogProvider.CurseForge ||
@@ -2062,6 +2100,8 @@ public partial class WebUiWindow : Window
             version.RequiredJavaMajor,
             version.ClientFileId,
             version.ServerPackFileId,
+            installationRoute = item.Provider == CatalogProvider.CurseForge ? version.CurseForgeInstallRoute.ToString() : null,
+            installationRouteDetail = version.InstallationRouteDetail,
             hasIntegrity = generated ? version.ClientSha1.Length == 40 :
                 version.Sha1.Length == 40 &&
                 (item.Provider == CatalogProvider.CurseForge || version.Sha512.Length == 128),
@@ -3151,7 +3191,7 @@ public partial class WebUiWindow : Window
         viewModel.MaximumRamMb = RequiredInt(parameters, "maximumRamMb", 512, 24 * 1024);
     }
 
-    private async Task<JsonNode> ChooseAppearanceIconAsync()
+    private async Task<JsonNode> ChooseAppearanceIconAsync(ServerDefinition server)
     {
         var dialog = new OpenFileDialog
         {
@@ -3174,9 +3214,7 @@ public partial class WebUiWindow : Window
         if (info.Width <= 0 || info.Height <= 0 || (long)info.Width * info.Height > 40_000_000)
             throw new InvalidDataException("Choose an image with fewer than 40 million pixels.");
         source.Position = 0;
-        using var image = await ImageSharpImage.LoadAsync<Rgba32>(source).ConfigureAwait(true);
-        var sourceWidth = image.Width;
-        var sourceHeight = image.Height;
+        using var image = await ImageSharpImage.LoadAsync<Rgba32>(new SixLabors.ImageSharp.Formats.DecoderOptions { MaxFrames = 1 }, source).ConfigureAwait(true);
         image.Mutate(context =>
         {
             context.AutoOrient();
@@ -3190,17 +3228,12 @@ public partial class WebUiWindow : Window
         });
         await using var preview = new MemoryStream();
         await image.SaveAsync(preview, new PngEncoder()).ConfigureAwait(true);
-        return JsonSerializer.SerializeToNode(new
-        {
-            cancelled = false,
-            sourceUrl = $"data:image/png;base64,{Convert.ToBase64String(preview.ToArray())}",
-            width = sourceWidth,
-            height = sourceHeight,
-            fileName = Path.GetFileName(dialog.FileName)
-        }, WebUiProtocol.Json)!;
+        if (viewModel.SelectedServer?.Definition.Id != server.Id)
+            throw new InvalidOperationException("The selected server changed while the image was opening. The new server was not modified.");
+        return JsonSerializer.SerializeToNode(iconEdits.Select(server, preview.ToArray(), Path.GetFileName(dialog.FileName)), WebUiProtocol.Json)!;
     }
 
-    private async Task InstallAppearanceIconAsync(ServerSnapshot server, string base64)
+    private async Task InstallAppearanceIconAsync(ServerSnapshot server, string base64, string? expectedIconSha256 = null)
     {
         var bytes = WebUiIconPayload.Decode64Png(base64);
 
@@ -3215,7 +3248,7 @@ public partial class WebUiWindow : Window
         {
             await File.WriteAllBytesAsync(path, bytes).ConfigureAwait(true);
             var result = await client.SendAsync<OperationResult>("InstallServerIcon",
-                new IconInstallRequest(server.Definition.Id, path, SaveToLibrary: true)).ConfigureAwait(true);
+                new IconInstallRequest(server.Definition.Id, path, SaveToLibrary: true, ExpectedIconSha256: expectedIconSha256)).ConfigureAwait(true);
             if (!result.Success)
                 throw new InvalidOperationException(result.Message);
             snapshots.InvalidateServerIcon(server.Definition.Id);

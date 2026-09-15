@@ -78,7 +78,7 @@ public sealed class ServerCapabilityDetectionService
 public sealed class CanonicalPathLockManager
 {
     private readonly object sync = new();
-    private readonly Dictionary<string, SemaphoreSlim> locks =
+    private readonly Dictionary<string, LockEntry> locks =
         new(StringComparer.OrdinalIgnoreCase);
 
     public async Task<IAsyncDisposable> AcquireAsync(
@@ -86,37 +86,61 @@ public sealed class CanonicalPathLockManager
         CancellationToken cancellationToken = default)
     {
         var canonical = Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar);
-        SemaphoreSlim semaphore;
+        LockEntry entry;
         lock (sync)
         {
-            if (!locks.TryGetValue(canonical, out semaphore!))
+            if (!locks.TryGetValue(canonical, out entry!))
             {
-                semaphore = new SemaphoreSlim(1, 1);
-                locks[canonical] = semaphore;
+                entry = new LockEntry();
+                locks[canonical] = entry;
             }
+            // Reserve before leaving sync: a caller that has not entered WaitAsync yet still owns
+            // this entry. Semaphore.CurrentCount cannot represent those pending reservations.
+            entry.Reservations++;
         }
-        await semaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
-        return new Releaser(this, canonical, semaphore);
+        try
+        {
+            await entry.Semaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
+            return new Releaser(this, canonical, entry);
+        }
+        catch
+        {
+            ReleaseReservation(canonical, entry);
+            throw;
+        }
     }
 
-    private void Release(string canonical, SemaphoreSlim semaphore)
+    private void ReleaseReservation(string canonical, LockEntry entry)
     {
-        semaphore.Release();
         lock (sync)
         {
-            if (semaphore.CurrentCount == 1)
+            if (--entry.Reservations == 0)
+            {
                 locks.Remove(canonical);
+                entry.Semaphore.Dispose();
+            }
         }
+    }
+
+    private sealed class LockEntry
+    {
+        public SemaphoreSlim Semaphore { get; } = new(1, 1);
+        public int Reservations { get; set; }
     }
 
     private sealed class Releaser(
         CanonicalPathLockManager owner,
         string canonical,
-        SemaphoreSlim semaphore) : IAsyncDisposable
+        LockEntry entry) : IAsyncDisposable
     {
+        private int released;
         public ValueTask DisposeAsync()
         {
-            owner.Release(canonical, semaphore);
+            if (Interlocked.Exchange(ref released, 1) == 0)
+            {
+                entry.Semaphore.Release();
+                owner.ReleaseReservation(canonical, entry);
+            }
             return ValueTask.CompletedTask;
         }
     }
@@ -1312,11 +1336,23 @@ public sealed class CurseForgeCatalogProvider : IGuidedCatalogProvider, IPaginat
         foreach (var clientFile in files)
         {
             if (!FileAvailable(clientFile)) continue;
+            // Additional files are not separately selectable client releases.
+            if (Number(clientFile, "parentProjectFileId") is > 0) continue;
+            var parsed = ParseClientFile(clientFile, query);
+            var relatedServerId = await new CurseForgeServerPackRelationshipResolver(api)
+                .ResolveAsync(projectId, clientFile, cancellationToken).ConfigureAwait(false);
             var candidate = await ResolveClientPackFileAsync(
-                projectId, ParseClientFile(clientFile, query), clientFile, cancellationToken).ConfigureAwait(false);
+                projectId, parsed with { ServerPackFileId = relatedServerId }, clientFile, cancellationToken).ConfigureAwait(false);
             if (string.IsNullOrWhiteSpace(candidate.ServerPackFileId))
             {
-                versions.Add(candidate);
+                versions.Add(candidate with
+                {
+                    CurseForgeInstallRoute = candidate.CanGenerateServerCandidate
+                        ? CurseForgeInstallRoute.GeneratedCandidate : CurseForgeInstallRoute.Unavailable,
+                    InstallationRouteDetail = candidate.CanGenerateServerCandidate
+                        ? "No official server pack is linked to this exact release. Native preflight must review a generated candidate."
+                        : "This exact release has no available approved server installation path."
+                });
                 continue;
             }
             versions.Add(await ResolveServerPackFileAsync(
@@ -1429,7 +1465,13 @@ public sealed class CurseForgeCatalogProvider : IGuidedCatalogProvider, IPaginat
             $"/v1/mods/{Uri.EscapeDataString(projectId)}/files/{Uri.EscapeDataString(client.ServerPackFileId)}",
             cancellationToken).ConfigureAwait(false);
         var file = RequireObject(document.RootElement, "data", "server-pack file");
-        if (!FileAvailable(file)) return client with { Available = false };
+        CurseForgeServerPackRelationshipResolver.ValidateLinkedFile(projectId, client.ClientFileId, client.ServerPackFileId, file);
+        if (!FileAvailable(file)) return client with
+        {
+            Available = false, CanGenerateServerCandidate = false,
+            CurseForgeInstallRoute = CurseForgeInstallRoute.Unavailable,
+            InstallationRouteDetail = "The official server pack linked to this exact release is unavailable."
+        };
         var serverId = file.GetProperty("id").ToString();
         if (!serverId.Equals(client.ServerPackFileId, StringComparison.Ordinal))
             throw new InvalidDataException("CurseForge returned a contradictory server-pack relationship.");
@@ -1455,6 +1497,12 @@ public sealed class CurseForgeCatalogProvider : IGuidedCatalogProvider, IPaginat
             Sha1 = sha1,
             SizeBytes = Number(file, "fileLength"),
             HasServerPackage = available,
+            CanGenerateServerCandidate = false,
+            CurseForgeInstallRoute = available
+                ? CurseForgeInstallRoute.OfficialServerPack : CurseForgeInstallRoute.Unavailable,
+            InstallationRouteDetail = available
+                ? "Use the author's server pack linked to this exact client release."
+                : "The linked official server pack lacks approved download or integrity evidence. No generated fallback was substituted.",
             Available = FileAvailable(file),
             DistributionAllowed = approved
         };
@@ -1529,7 +1577,7 @@ public sealed class CurseForgeCatalogProvider : IGuidedCatalogProvider, IPaginat
 
     private static long? Number(JsonElement value, string property) =>
         value.ValueKind == JsonValueKind.Object && value.TryGetProperty(property, out var number) &&
-        number.TryGetInt64(out var result) ? result : null;
+        number.ValueKind == JsonValueKind.Number && number.TryGetInt64(out var result) ? result : null;
 
     private static DateTimeOffset? Date(JsonElement value, string property) =>
         value.ValueKind == JsonValueKind.Object && value.TryGetProperty(property, out var date) &&

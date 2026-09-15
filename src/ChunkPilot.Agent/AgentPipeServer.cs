@@ -809,12 +809,17 @@ public sealed class AgentPipeServer
             case "SetNetworkConfiguration":
             {
                 var input = Deserialize<NetworkConfiguration>(request);
-                _ = supervisor.Get(input.ServerId);
-                if (input.PublicAddressExternallyConfirmed)
-                    _ = NetworkPolicy.CopyPublicAddress(input);
-                await store.UpsertNetworkConfigurationAsync(input, cancellationToken).ConfigureAwait(false);
                 return JsonSerializer.SerializeToElement(
-                    OperationResult.Ok("Networking method saved; local, LAN, public, and tunnel addresses remain separate."),
+                    await supervisor.Get(input.ServerId).SaveNetworkConfigurationAsync(input, cancellationToken).ConfigureAwait(false),
+                    ProtocolJson.Options);
+            }
+            case "ApplyServerBinding":
+            {
+                var input = Deserialize<ApplyServerBindingRequest>(request);
+                uiSessions.Demand(input.Session, "Apply server binding");
+                return JsonSerializer.SerializeToElement(
+                    await supervisor.Get(input.ServerId).ApplyServerBindingAsync(input, files,
+                        () => uiSessions.Demand(input.Session, "Apply server binding"), cancellationToken).ConfigureAwait(false),
                     ProtocolJson.Options);
             }
             case "GetRouterMapping":
@@ -1398,8 +1403,8 @@ public sealed class AgentPipeServer
             {
                 var input = Deserialize<IconInstallRequest>(request);
                 var managed = supervisor.Get(input.ServerId);
-                var path = await icons.ConvertAndInstallAsync(
-                    managed.Definition, input.SourcePath, input.CropX, input.CropY, input.CropSize,
+                var path = await icons.ConvertAndInstallIfUnchangedAsync(
+                    managed.Definition, input.SourcePath, input.ExpectedIconSha256, input.CropX, input.CropY, input.CropSize,
                     input.SaveToLibrary, cancellationToken).ConfigureAwait(false);
                 await store.AddActivityAsync(new ActivityEntry
                 {
@@ -1464,6 +1469,11 @@ public sealed class AgentPipeServer
                 {
                     ServerId = input.ServerId,
                     ServerRunning = managed.State == ServerState.Running,
+                    CanManageAccessWhileStopped = managed.CanManageAccessWhileStopped,
+                    AccessAvailabilityDetail = managed.CanManageAccessWhileStopped
+                        ? "Known players can be managed while stopped. Changes are written safely and read on the next start; unknown names require server UUID resolution."
+                        : managed.State == ServerState.Running ? "Changes are confirmed by the running server."
+                        : "Access editing is unavailable until this supported server is proven stopped or running.",
                     WhitelistEnabled = await ReadWhitelistEnabledAsync(managed.Definition, cancellationToken)
                         .ConfigureAwait(false),
                     OnlineCount = online.Count,
@@ -1480,7 +1490,7 @@ public sealed class AgentPipeServer
                 var input = Deserialize<PlayerModerationRequest>(request);
                 var managed = supervisor.Get(input.ServerId);
                 return JsonSerializer.SerializeToElement(
-                    await managed.ModeratePlayerAsync(input.Action, input.PlayerName, input.Reason, cancellationToken)
+                    await managed.ModeratePlayerAsync(input.Action, input.PlayerName, input.Reason, files, cancellationToken)
                         .ConfigureAwait(false),
                     ProtocolJson.Options);
             }
@@ -1567,7 +1577,7 @@ public sealed class AgentPipeServer
                     ? PlayerModerationAction.AddToWhitelist
                     : PlayerModerationAction.RemoveFromWhitelist;
                 return JsonSerializer.SerializeToElement(
-                    await managed.ModeratePlayerAsync(action, input.PlayerName, cancellationToken: cancellationToken)
+                    await managed.ModeratePlayerAsync(action, input.PlayerName, cancellationToken: cancellationToken, offlineFiles: files)
                         .ConfigureAwait(false),
                     ProtocolJson.Options);
             }

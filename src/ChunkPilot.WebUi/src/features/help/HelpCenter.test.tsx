@@ -16,7 +16,7 @@ afterEach(cleanup);
 
 describe('offline Help Center', () => {
   it('covers every required symptom family with meaningful structured content', () => {
-    const allowedHosts = new Set(['www.minecraft.net', 'docs.papermc.io', 'docs.fabricmc.net', 'docs.neoforged.net', 'support.modrinth.com', 'learn.microsoft.com', 'docs.oracle.com']);
+    const allowedHosts = new Set(['www.minecraft.net', 'docs.papermc.io', 'docs.fabricmc.net', 'docs.neoforged.net', 'support.modrinth.com', 'learn.microsoft.com', 'docs.oracle.com', 'starlink.com']);
     const articleIds = new Set(helpArticles.map(article => article.id));
     const requiredCategories = new Set(['Getting started', 'Startup', 'Java', 'Networking', 'Players', 'Performance', 'Worlds', 'Plugins', 'Mods & modpacks', 'Backups & recovery']);
     expect(helpArticles.length).toBeGreaterThanOrEqual(25);
@@ -31,7 +31,7 @@ describe('offline Help Center', () => {
       expect(article.warnings.length).toBeGreaterThan(0);
       expect(article.whenToStop.length).toBeGreaterThan(10);
       expect(article.sources.length).toBeGreaterThan(0);
-      expect(article.lastReviewed).toBe('2026-08-21');
+      expect(article.lastReviewed).toBe(article.id === 'starlink-and-shared-internet' ? '2026-09-14' : '2026-08-21');
       for (const related of article.related) expect(articleIds.has(related)).toBe(true);
       for (const source of article.sources) { const url = new URL(source.url); expect(url.protocol).toBe('https:'); expect(allowedHosts.has(url.host)).toBe(true); }
     }
@@ -41,6 +41,7 @@ describe('offline Help Center', () => {
     expect(searchHelpArticles(helpArticles, 'allow list')[0].id).toBe('whitelist-denied');
     expect(searchHelpArticles(helpArticles, 'FAILED TO BIND TO PORT')[0].id).toBe('port-binding-failed');
     expect(searchHelpArticles(helpArticles, 'cgnat')[0].id).toBe('cgnat-or-double-nat');
+    expect(searchHelpArticles(helpArticles, 'starlink')[0].id).toBe('starlink-and-shared-internet');
   });
 
   it('shows no-results honestly and opens allowlisted sources through the native bridge', () => {

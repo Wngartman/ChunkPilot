@@ -356,8 +356,6 @@ internal sealed class WebUiSnapshotMapper
             item.ServerId == server.Definition.Id);
         var networkMode = network?.Mode ??
             VanillaNetworkingPreferencePolicy.ToNetworkMode(server.Definition.CreationNetworkingPreference);
-        if (router?.DirectInternetEnabled == true)
-            networkMode = NetworkMode.PortForwarding;
         var packSource = isSelected && selectedDetailsReady && viewModel.CurrentUpdateSource is
         {
             HasIdentifiedBaseline: true,
@@ -379,6 +377,7 @@ internal sealed class WebUiSnapshotMapper
             id = server.Definition.Id,
             name = server.Definition.Name,
             state = server.State.ToString(),
+            startupProgress = server.StartupProgress,
             gameKind = server.Definition.GameKind.ToString(),
             ecosystem = server.Definition.Ecosystem.ToString(),
             minecraftVersion = server.Definition.MinecraftVersion,
@@ -487,7 +486,9 @@ internal sealed class WebUiSnapshotMapper
         return new
         {
             serverId = selectedId,
-            serverRunning = viewModel.PlayerModerationAvailable,
+            serverRunning = viewModel.AccessServerRunning,
+            canManageWhileStopped = viewModel.PlayerAccessWhileStoppedAvailable,
+            accessAvailabilityDetail = viewModel.AccessAvailabilityDetail,
             whitelistEnabled = viewModel.WhitelistEnabled,
             supportsAllowlist = capabilities?.SupportsLiveWhitelistCommands ?? false,
             supportsOperators = capabilities?.SupportsOperators ?? false,
@@ -690,7 +691,7 @@ internal sealed class WebUiSnapshotMapper
         var network = viewModel.Dashboard.NetworkConfigurations.FirstOrDefault(item => item.ServerId == id);
         var router = viewModel.Dashboard.RouterMappings.FirstOrDefault(item => item.ServerId == id);
         var selected = viewModel.SelectedServer?.Definition.Id == id;
-        var mode = router?.DirectInternetEnabled == true ? NetworkMode.PortForwarding : network?.Mode ??
+        var mode = network?.Mode ??
             VanillaNetworkingPreferencePolicy.ToNetworkMode(server.Definition.CreationNetworkingPreference);
         return ServerConnectionSummaryPolicy.Build(server, mode, viewModel.Dashboard.Host.LanAddress, DateTimeOffset.UtcNow,
             firewallConfigured: selected && viewModel.FirewallAccess.ServerId == id && viewModel.FirewallAccess.Configured,

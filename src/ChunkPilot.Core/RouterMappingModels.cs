@@ -664,10 +664,17 @@ public static class RouterMappingPolicy
 
     private static (RoutableAddressClass Class, string Evidence) Classify(IPAddress address)
     {
+        // An IPv4 representation must retain its private/shared classification when mapped into IPv6.
+        if (address.IsIPv4MappedToIPv6)
+            return Classify(address.MapToIPv4());
         if (IPAddress.IsLoopback(address))
             return (RoutableAddressClass.Loopback, $"{address} is a loopback address.");
         if (address.AddressFamily == AddressFamily.InterNetworkV6)
         {
+            if (address.IsIPv6Multicast)
+                return (RoutableAddressClass.Reserved, $"{address} is an IPv6 multicast address, not a public server endpoint.");
+            if (address.IsIPv6SiteLocal)
+                return (RoutableAddressClass.PrivateUse, $"{address} is a deprecated IPv6 site-local address.");
             if (address.IsIPv6LinkLocal)
                 return (RoutableAddressClass.LinkLocal, $"{address} is an IPv6 link-local address.");
             var v6 = address.GetAddressBytes();
@@ -675,6 +682,13 @@ public static class RouterMappingPolicy
                 return (RoutableAddressClass.PrivateUse, $"{address} is an IPv6 unique local address (fc00::/7).");
             if (v6[0] == 0x20 && v6[1] == 0x01 && v6[2] == 0x0d && v6[3] == 0xb8)
                 return (RoutableAddressClass.Documentation, $"{address} is in the IPv6 documentation range 2001:db8::/32.");
+            // IANA IPv6 Special-Purpose Address Registry, reviewed 2026-09-14 (RFC 9637 / RFC 5180 / RFC 6666).
+            if (v6[0] == 0x3f && v6[1] == 0xff && (v6[2] & 0xf0) == 0)
+                return (RoutableAddressClass.Documentation, $"{address} is in the IPv6 documentation range 3fff::/20.");
+            if (v6[0] == 0x20 && v6[1] == 0x01 && v6[2] == 0 && v6[3] == 2 && v6[4] == 0 && v6[5] == 0 ||
+                v6[0] == 1 && v6[1] == 0 && v6.Skip(2).Take(5).All(value => value == 0) && v6[7] <= 1 ||
+                v6[0] == 0x5f && v6[1] == 0)
+                return (RoutableAddressClass.Reserved, $"{address} is in an IPv6 special-purpose range that is not a global server endpoint.");
             if (address.Equals(IPAddress.IPv6Any))
                 return (RoutableAddressClass.Reserved, "The router reported the unspecified IPv6 address.");
             return (RoutableAddressClass.GloballyRoutable, $"{address} is outside the IPv6 private and reserved ranges.");

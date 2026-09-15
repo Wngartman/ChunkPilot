@@ -49,6 +49,8 @@ public sealed record ServerConnectionSummary
     public string? ConfiguredLanAddress { get; init; }
     public bool PendingRestart { get; init; }
     public bool RequestedAudienceNotApplied { get; init; }
+    public bool CanApplyBinding { get; init; }
+    public string BindingApplyUnavailableReason { get; init; } = "";
     public bool ListenerVerified { get; init; }
     public bool FirewallConfigured { get; init; }
     public bool RouterConfigured { get; init; }
@@ -71,8 +73,14 @@ public static class ServerConnectionSummaryPolicy
         var configuredLocal = saved.Known && savedIp is not null && (IsLoopback(savedIp) || IsAny(savedIp))
             ? Endpoint(LocalBinding(savedIp), saved.Port) : null;
         var configuredLan = saved.Known && savedIp is not null ? LanEndpoint(savedIp, saved.Port, lanIp) : null;
-        var notApplied = saved.Known && savedIp is not null && IsLoopback(savedIp) &&
-            requested is NetworkMode.HomeNetwork or NetworkMode.PortForwarding;
+        var notApplied = saved.Known && savedIp is not null &&
+            (IsLoopback(savedIp) && requested is NetworkMode.HomeNetwork or NetworkMode.PortForwarding ||
+             !IsLoopback(savedIp) && requested == NetworkMode.ThisComputerOnly);
+        var applyUnavailable = ServerBindingApplyPolicy.UnavailableReason(server.Definition);
+        if (applyUnavailable.Length == 0 && (!saved.Known || saved.Port != server.Definition.Port))
+            applyUnavailable = "The saved binding and port need to be verified before applying access.";
+        if (applyUnavailable.Length == 0 && server.State is not (ServerState.Running or ServerState.Stopped))
+            applyUnavailable = "Wait until this server is running or fully stopped before applying its binding.";
         var pending = server.RootProcessId is not null && saved.Known && launched.Known &&
             (saved.Port != launched.Port || !Equals(ParseBinding(saved.BindAddress), ParseBinding(launched.BindAddress)));
         var result = new ServerConnectionSummary
@@ -80,11 +88,15 @@ public static class ServerConnectionSummaryPolicy
             ServerId = server.Definition.Id, RequestedAudience = requested, Evidence = evidence,
             ConfiguredLocalAddress = configuredLocal, ConfiguredLanAddress = configuredLan,
             PendingRestart = pending, RequestedAudienceNotApplied = notApplied,
+            CanApplyBinding = applyUnavailable.Length == 0,
+            BindingApplyUnavailableReason = applyUnavailable,
             FirewallConfigured = firewallConfigured, RouterConfigured = routerConfigured,
             RouterReportedAddress = routerAddress
         };
         var pendingDetail = pending ? " Saved binding or port changes require a restart." : "";
-        var audienceDetail = notApplied ? " LAN/Internet access is selected but not applied: the saved binding is local-only." : "";
+        var audienceDetail = !notApplied ? "" : requested == NetworkMode.ThisComputerOnly
+            ? " Local-only access is selected but not applied: the saved binding still allows other interfaces."
+            : " LAN/Internet access is selected but not applied: the saved binding is local-only.";
         if (server.State == ServerState.Stopped)
             return result with { Badge = "Server stopped", Label = "Configured address",
                 Audience = configuredLocal is null && configuredLan is not null ? "home" : "computer",
