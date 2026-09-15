@@ -2133,7 +2133,7 @@ public partial class WebUiWindow : Window
         if (!Uri.TryCreate(item.IconUrl, UriKind.Absolute, out var uri) ||
             !IsApprovedModpackImageUri(provider, uri))
             return JsonSerializer.SerializeToNode(new { dataUrl = (string?)null }, WebUiProtocol.Json);
-        var dataUrl = await modpackImages.LoadAsync(provider, uri, cancellationToken).ConfigureAwait(true);
+        var dataUrl = await modpackImages.LoadAsync(provider, item.ProjectId, uri, cancellationToken).ConfigureAwait(true);
         return JsonSerializer.SerializeToNode(new { dataUrl }, WebUiProtocol.Json);
     }
 

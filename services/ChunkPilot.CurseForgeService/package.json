@@ -1,0 +1,17 @@
+{
+  "name": "chunkpilot-curseforge-service",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Bounded application-key CurseForge gateway; secrets exist only in the Worker binding.",
+  "license": "SEE LICENSE IN ../../legal/THIRD-PARTY-NOTICES.md",
+  "scripts": {
+    "test": "node --test \"test/*.test.ts\"",
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.test.json"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "4.20260702.1",
+    "@types/node": "24.13.3",
+    "typescript": "5.9.3"
+  }
+}

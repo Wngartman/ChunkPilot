@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "lib": ["es2022", "dom", "dom.iterable"], "types": ["node"] },
+  "include": ["src/contract.ts", "src/routes.ts", "src/handler.ts", "src/budget.ts", "test/**/*.ts"]
+}

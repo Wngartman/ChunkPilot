@@ -1,6 +1,6 @@
 # CurseForge provider source record
 
-Research date: 2026-09-14
+Research date: 2026-09-15
 
 Only official CurseForge/Overwolf sources define the provider. ChunkPilot does not scrape CurseForge pages,
 infer unlisted files, synthesize CDN URLs, or treat a client manifest as proof of a dedicated-server package.
@@ -10,8 +10,8 @@ infer unlisted files, synthesize CDN URLs, or treat a client manifest as proof o
 | Topic | Official source | Provider consequence |
 |---|---|---|
 | Authentication, base URL, pagination | [REST API](https://docs.curseforge.com/rest-api/) | HTTPS `api.curseforge.com`, `x-api-key`, page size 1–50, total indexed results no greater than 10,000 |
-| Developer approval | [API key application](https://support.curseforge.com/support/solutions/articles/9000208346) | Missing or rejected credential is `AuthenticationRequired`; no network request is attempted without a native secret |
-| Credential and data restrictions | [Third-party API terms](https://support.curseforge.com/support/solutions/articles/9000207405-curseforge-3rd-party-api-terms-and-conditions) | No public key, no proxy workaround, no persistent CurseForge response cache under the general terms, bounded local development only |
+| Developer approval | [API key application](https://support.curseforge.com/support/solutions/articles/9000208346) | Approval is application-specific. The owner's approval email names ChunkPilot; it does not state a development-only limitation. Direct access needs a native credential; application-service access keeps its credential exclusively server-side. |
+| Credential and data restrictions | [Third-party API terms](https://support.curseforge.com/support/solutions/articles/9000207405-curseforge-3rd-party-api-terms-and-conditions) | No key in public desktop packages, no concealment or restriction bypass, no persistent API-response cache. These terms do not establish that every end user must obtain a personal key. Server-side delivery and quota requirements must be resolved before public activation. |
 | Author distribution consent | [Project Distribution Toggle](https://support.curseforge.com/en/support/solutions/articles/9000207877) | `allowModDistribution != true`, unavailable project/file, or missing authorized download URL is a hard unsupported/distribution result |
 | Direct download authentication | [CDN authentication announcement](https://blog.curseforge.com/introducing-api-key-authentication-for-curseforge-file-downloads/) | Download requests must use only official returned URLs and the approved authentication behavior; no guessed ForgeCDN path |
 

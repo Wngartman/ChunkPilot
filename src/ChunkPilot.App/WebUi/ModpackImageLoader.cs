@@ -1,5 +1,7 @@
 using System.Net.Http;
+using System.Globalization;
 using ChunkPilot.Core;
+using ChunkPilot.Infrastructure;
 using SixLabors.ImageSharp.Formats.Png;
 using SixLabors.ImageSharp.PixelFormats;
 using SixLabors.ImageSharp.Processing;
@@ -30,6 +32,7 @@ internal sealed class ModpackImageLoader : IDisposable
 
     private readonly HttpClient client;
     private readonly bool disposeClient;
+    private readonly Uri? curseForgeServiceEndpoint;
     private readonly SemaphoreSlim loadGate = new(MaximumConcurrentLoads, MaximumConcurrentLoads);
     private readonly object stateGate = new();
     private readonly Dictionary<string, string> cache = new(StringComparer.Ordinal);
@@ -37,19 +40,44 @@ internal sealed class ModpackImageLoader : IDisposable
     private bool disposed;
 
     public ModpackImageLoader(HttpClient client, bool disposeClient = false)
+        : this(client, CurseForgeServiceConfiguration.Endpoint, disposeClient)
+    {
+    }
+
+    internal ModpackImageLoader(HttpClient client, Uri? serviceEndpoint, bool disposeClient = false)
     {
         this.client = client ?? throw new ArgumentNullException(nameof(client));
         this.disposeClient = disposeClient;
+        curseForgeServiceEndpoint = CurseForgeServiceConfiguration.ValidateEndpoint(serviceEndpoint?.OriginalString);
     }
 
-    public Task<string?> LoadAsync(CatalogProvider provider, Uri uri, CancellationToken cancellationToken)
+    public Task<string?> LoadAsync(CatalogProvider provider, Uri uri, CancellationToken cancellationToken) =>
+        LoadAsync(provider, null, uri, cancellationToken);
+
+    public Task<string?> LoadAsync(
+        CatalogProvider provider, string? projectId, Uri uri, CancellationToken cancellationToken)
     {
         ObjectDisposedException.ThrowIf(disposed, this);
         cancellationToken.ThrowIfCancellationRequested();
         if (!IsApprovedUri(provider, uri))
             return Task.FromResult<string?>(null);
 
-        var key = uri.AbsoluteUri;
+        var throughService = provider == CatalogProvider.CurseForge && curseForgeServiceEndpoint is not null;
+        var requestUri = uri;
+        if (throughService)
+        {
+            // Only native catalog identity chooses a service route. The renderer never supplies a
+            // fetch URL, and even service artwork still requires an approved original provider URL.
+            if (!long.TryParse(projectId, NumberStyles.None, CultureInfo.InvariantCulture, out var id) ||
+                id <= 0 || projectId != id.ToString(CultureInfo.InvariantCulture))
+                return Task.FromResult<string?>(null);
+            requestUri = new Uri(curseForgeServiceEndpoint!, $"images/{projectId}");
+            if (client.DefaultRequestHeaders.Authorization is not null ||
+                client.DefaultRequestHeaders.Contains("x-api-key"))
+                throw new InvalidOperationException("Catalog image transport must not carry credentials.");
+        }
+
+        var key = $"{provider}:{projectId}:{uri.AbsoluteUri}:{requestUri.AbsoluteUri}";
         SharedLoad shared;
         lock (stateGate)
         {
@@ -61,7 +89,7 @@ internal sealed class ModpackImageLoader : IDisposable
             {
                 shared = new SharedLoad(new CancellationTokenSource());
                 activeLoads.Add(key, shared);
-                shared.Task = FetchAndDecodeAsync(key, provider, uri, shared.Cancellation.Token);
+                shared.Task = FetchAndDecodeAsync(key, provider, requestUri, throughService, shared.Cancellation.Token);
             }
             shared.Waiters++;
         }
@@ -126,6 +154,7 @@ internal sealed class ModpackImageLoader : IDisposable
         string key,
         CatalogProvider provider,
         Uri uri,
+        bool throughService,
         CancellationToken cancellationToken)
     {
         await loadGate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -136,7 +165,10 @@ internal sealed class ModpackImageLoader : IDisposable
             if ((int)response.StatusCode is >= 300 and < 400)
                 throw new InvalidDataException("Provider image redirects are not followed outside the approved boundary.");
             response.EnsureSuccessStatusCode();
-            if (response.RequestMessage?.RequestUri is not { } final || !IsApprovedUri(provider, final))
+            if (response.RequestMessage?.RequestUri is not { } final || !final.IsAbsoluteUri ||
+                (throughService
+                    ? final.Scheme != Uri.UriSchemeHttps || !string.Equals(final.AbsoluteUri, uri.AbsoluteUri, StringComparison.Ordinal)
+                    : !IsApprovedUri(provider, final)))
                 throw new InvalidDataException("The provider image left its approved HTTPS host boundary.");
             var mediaType = response.Content.Headers.ContentType?.MediaType?.ToLowerInvariant();
             if (mediaType is not ("image/png" or "image/jpeg" or "image/webp"))
@@ -198,7 +230,8 @@ internal sealed class ModpackImageLoader : IDisposable
 
     internal static bool IsApprovedUri(CatalogProvider provider, Uri? uri)
     {
-        if (uri is null || uri.Scheme != Uri.UriSchemeHttps || !uri.IsDefaultPort)
+        if (uri is null || !uri.IsAbsoluteUri || uri.Scheme != Uri.UriSchemeHttps || !uri.IsDefaultPort ||
+            uri.UserInfo.Length != 0 || uri.Fragment.Length != 0)
             return false;
         var host = uri.IdnHost.TrimEnd('.');
         return provider switch

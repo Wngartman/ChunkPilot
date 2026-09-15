@@ -1966,8 +1966,22 @@ public sealed class AgentPipeServer
                 var session = Deserialize<UiSessionCredential>(request);
                 uiSessions.Demand(session, "Checking CurseForge credential status");
                 cancellationToken.ThrowIfCancellationRequested();
-                var configured = secrets.Contains(CurseForgeUpdateProvider.ApiKeyName);
-                return JsonSerializer.SerializeToElement(new TextResponse(configured ? "configured" : ""), ProtocolJson.Options);
+                // Preserve the historical availability operation for older UI clients. The new
+                // status operation distinguishes application service access from a personal key.
+                using var api = new CurseForgeApiClient(secrets);
+                return JsonSerializer.SerializeToElement(new TextResponse(api.CanAccess ? "configured" : ""), ProtocolJson.Options);
+            }
+            case "GetCurseForgeAccess":
+            {
+                var session = Deserialize<UiSessionCredential>(request);
+                uiSessions.Demand(session, "Checking CurseForge access status");
+                cancellationToken.ThrowIfCancellationRequested();
+                using var api = new CurseForgeApiClient(secrets);
+                return JsonSerializer.SerializeToElement(new
+                {
+                    Mode = api.AccessMode.ToString(), api.CanAccess,
+                    HasPersonalCredential = api.HasCredential, Detail = api.AccessDetail
+                }, ProtocolJson.Options);
             }
             case "ConfigureCurseForgeCredential":
             {
@@ -2272,10 +2286,10 @@ public sealed class AgentPipeServer
         _ = await store.GetUpdatePreferencesAsync(Guid.Empty, cancellationToken).ConfigureAwait(false);
         results.Add(new("Update database migration", FindingSeverity.Pass,
             "Update source, check history, version snapshot, migration, rollback, and preference tables are readable."));
+        using var curseForgeAccess = new CurseForgeApiClient(secrets);
         results.Add(new("CurseForge API access",
-            secrets.Contains(CurseForgeUpdateProvider.ApiKeyName)
-                ? FindingSeverity.Pass : FindingSeverity.Unavailable,
-            "Optional API key is stored with current-user Windows data protection and is never returned by the agent."));
+            curseForgeAccess.CanAccess ? FindingSeverity.Pass : FindingSeverity.Unavailable,
+            curseForgeAccess.AccessDetail));
         return results;
     }
 

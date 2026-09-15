@@ -51,6 +51,10 @@ CurseForge is optional: use **Settings → Set up CurseForge**, or the setup act
 your own approved API key in the native Windows dialog; it is validated before Windows-protected storage
 is changed. Keys never enter the web renderer, logs, or distributed packages. This personal setup is not
 approval to redistribute a shared developer key. Author download restrictions remain enforced.
+The application-service integration on this development branch keeps the application key entirely on a
+separate backend, so a service-enabled build needs no personal key. **It is not activated in the published
+1.0.0 release.** Deployment, live acceptance, and a new release are required; see
+[CurseForge credential delivery](docs/architecture/CURSEFORGE-CREDENTIAL-DELIVERY.md).
 Terraria remains an engineering foundation and is not offered as a supported server type.
 
 ## Data and privacy

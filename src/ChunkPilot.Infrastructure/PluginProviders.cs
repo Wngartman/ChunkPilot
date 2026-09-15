@@ -59,16 +59,13 @@ public sealed class CurseForgePluginProvider : IPluginCatalogProvider
     public CurseForgePluginProvider(CurseForgeApiClient api) => this.api = api;
 
     public PluginProviderKind Provider => PluginProviderKind.CurseForge;
-    public PluginProviderStatus Status => new(Provider, api.HasCredential,
-        api.HasCredential
-            ? "Official CurseForge mod metadata is available on demand for this local native session."
-            : "CurseForge mods are unavailable because the approved local native credential is missing.");
+    public PluginProviderStatus Status => new(Provider, api.CanAccess, api.AccessDetail);
 
     public async Task<IReadOnlyList<PluginProject>> SearchAsync(
         PluginCatalogQuery query,
         CancellationToken cancellationToken = default)
     {
-        if (query.Kind != ManagedAddonKind.Mod || !api.HasCredential) return [];
+        if (query.Kind != ManagedAddonKind.Mod || !api.CanAccess) return [];
         var loaderType = LoaderType(query.Loader);
         if (loaderType == 0) return [];
         var path = $"/v1/mods/search?gameId={MinecraftGameId}&classId={ModClassId}" +
@@ -122,7 +119,7 @@ public sealed class CurseForgePluginProvider : IPluginCatalogProvider
         bool allowResourcePacks,
         CancellationToken cancellationToken = default)
     {
-        if (!api.HasCredential || !long.TryParse(projectId, out var numericProject) || numericProject <= 0)
+        if (!api.CanAccess || !long.TryParse(projectId, out var numericProject) || numericProject <= 0)
             return null;
         var loaderType = LoaderType(loader);
         if (loaderType == 0) return null;

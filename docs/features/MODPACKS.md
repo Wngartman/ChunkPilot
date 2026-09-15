@@ -10,7 +10,9 @@ not contain it.
 
 - Search, explicit submit, pagination, compatible Minecraft/loader/category/channel filters and project
   details use the selected provider's official API. Modrinth uses v2. CurseForge uses the official REST
-  API only when the native approved application credential is available; users are never asked for a key.
+  API through either the configured ChunkPilot application service or an approved native personal key.
+  Service-enabled builds need no end-user key; 1.0.0 public builds use personal setup. The service must be
+  separately deployed and validated before a new release enables it.
 - Search is cancellation-aware and superseded responses cannot replace a newer query or stale detail.
   Modrinth hydrates from bounded cache before refresh. CurseForge API responses are not persistently cached
   under the currently reviewed third-party terms; identical in-flight requests are still deduplicated.

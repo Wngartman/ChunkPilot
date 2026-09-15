@@ -28,6 +28,22 @@ placed in the URL or body.
 | `terraria.org` | Development-only `--experimental-terraria-preview` certification | No; not reachable from ordinary Create Server | Fixed Terraria release package path | Exact host/path, redirects constrained to the same origin, 20-minute streamed download, expected size/hash and local cache verification |
 | Allowlisted documentation and repair sites | User opens an EULA, Help source, issue/release link, or WebView2 repair page in the system browser | No | The selected documentation URL | External browser owns its network behavior; in-product Help uses a fixed HTTPS host allowlist |
 
+## Development branch: private CurseForge application service
+
+A service-enabled build contains only a public HTTPS address in the `CurseForgeServiceEndpoint` assembly
+metadata, never an application API key. The address is unset in ordinary builds and the published 1.0.0
+release. When configured, explicit CurseForge browse, image, download, and update operations contact that
+service. It sees the caller's public IP, selected search/filter fields and project/file IDs, and forwards
+bounded allowlisted requests to the official API/CDN with its server-side credential. It never receives
+worlds, server folders, logs, backup contents, or personal keys. Runtime behavior is otherwise unchanged.
+
+The service disables its own persistent request logging and API-response caches. The platform necessarily
+processes network traffic, and aggregate daily request/byte counters and expiring concurrency leases are
+stored to enforce a global budget; this is not a claim that the hosting platform retains no operational data.
+Rate limits use the request's public IP transiently. Official URLs/hashes remain the content authority; a
+service URL never becomes an allowed arbitrary artifact source. See the
+[credential-delivery and deployment boundary](../architecture/CURSEFORGE-CREDENTIAL-DELIVERY.md).
+
 ## Local-network traffic
 
 These paths do not contact an internet service, but they can send packets on the PC or home network:

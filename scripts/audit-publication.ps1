@@ -55,6 +55,7 @@ $prohibited = @($blobs | Where-Object {
     $_.Path -match '(^|/)(node_modules|bin|obj|artifacts|worlds?|backups?|logs?|dumps?|cache|\.secrets?|secrets?)(/|$)' -or
     $_.Path -match '(^|/)(secrets\.dat|chunkpilot\.db(?:-wal|-shm)?)(/|$)' -or
     $_.Path -match '(^|/)(WebView2|CurrentProfile)(/|$)' -or
+    $_.Path -match '(^|/)(\.wrangler(/|$)|\.dev\.vars(?:\.[^/]*)?$)' -or
     $_.Path -match '(^|/)curseforge-api-key[^/]*\.txt$' -or
     $_.Path -match '\.(jar|mrpack|zip|7z|rar|db|sqlite|sqlite3|dmp|pfx|p12|pem|key|exe|dll|msi|msix|nupkg)$'
 })

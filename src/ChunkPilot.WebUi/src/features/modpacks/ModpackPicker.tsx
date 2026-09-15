@@ -83,6 +83,7 @@ function BrowseModpackPicker({ value, onChange }: {
 }) {
   const bridge = useAppStore(state => state.bridge);
   const command = useAppStore(state => state.command);
+  const applicationService = useAppStore(state => state.snapshot?.build.curseForgeApplicationService === true);
   const [provider, setProvider] = useState<ModpackProvider>(initialFixtureProvider);
   const [sessions, setSessions] = useState<Record<ModpackProvider, ProviderSession>>(() => ({
     Modrinth: createProviderSession(), CurseForge: createProviderSession()
@@ -457,10 +458,10 @@ function BrowseModpackPicker({ value, onChange }: {
       {filtersActive && <Button type="button" onClick={clearFilters}>Clear filters</Button>}
     </form>
     <div className={styles.trendNote}><Info size={13} /><span>{status?.detail ?? `${provider} provider status is loading.`}</span></div>
-    {session.state === 'Authentication required' && <div className={styles.connectState} role="status"><Box size={22} /><div><strong>CurseForge unavailable</strong><span>Connect your approved CurseForge access in the native setup window. Modrinth and local pack import are also available.</span><CurseForgeSetupButton onConfigured={() => {
+    {session.state === 'Authentication required' && <div className={styles.connectState} role="status"><Box size={22} /><div><strong>CurseForge unavailable</strong><span>{applicationService ? 'The ChunkPilot CurseForge service could not authorize this request. No personal API key is required. Retry later; Modrinth and local pack import remain available.' : 'Connect your approved CurseForge access in the native setup window. Modrinth and local pack import are also available.'}</span>{applicationService ? <Button onClick={() => updateSession('CurseForge', current => ({ ...current, revision: current.revision + 1, loadedKey: '' }))}>Retry</Button> : <CurseForgeSetupButton onConfigured={() => {
       void bridge?.request<ModpackProviderStatus[]>('modpacks.providers').then(setProviderStatuses).catch(() => undefined);
       updateSession('CurseForge', current => ({ ...current, revision: current.revision + 1, loadedKey: '' }));
-    }} /></div></div>}
+    }} />}</div></div>}
     {(session.state === 'Failed' || session.state === 'Rate limited') && <div className={styles.error} role="alert"><strong>{session.state === 'Rate limited' ? `${provider} rate limit active` : `${provider} catalog unavailable`}</strong><span>{session.detail}</span><Button onClick={() => updateSession(provider, current => ({ ...current, revision: current.revision + 1, loadedKey: '' }))}>Retry</Button>{session.failedStage && <details><summary>Technical details</summary><code>Failed stage: {session.failedStage}</code></details>}</div>}
     {session.state === 'Offline cache' && <div className={styles.cacheNotice} role="status">{session.detail}</div>}
     {(session.projects.length > 0 || refreshing) && <div className={styles.resultsSummary} role="status" aria-live="polite"><strong>{resultSummary}</strong><span>{refreshing ? `Refreshing ${provider}…` : session.projects.length >= sessionResultLimit && session.canLoadMore === false ? 'Session limit reached — narrow the filters to continue.' : 'Exact server setup is checked when you open a pack.'}</span></div>}
@@ -522,6 +523,7 @@ function ProviderLinkPicker({ value, onChange }: {
     provider: ModpackSelectionChangeProvider) => void;
 }) {
   const bridge = useAppStore(state => state.bridge);
+  const applicationService = useAppStore(state => state.snapshot?.build.curseForgeApplicationService === true);
   const [url, setUrl] = useState('');
   const [pending, setPending] = useState(false);
   const [error, setError] = useState('');
@@ -566,7 +568,7 @@ function ProviderLinkPicker({ value, onChange }: {
       <Button type="button" icon={<Clipboard size={14} />} onClick={() => void paste()}>Paste</Button>
       <Button type="submit" variant="primary" icon={<Search size={14} />} disabled={!url.trim() || pending}>{pending ? 'Resolving…' : 'Resolve'}</Button>
     </form>
-    <p className={styles.supportedSources}>Supported: official Modrinth and CurseForge modpack project links and exact-release links. CurseForge resolution requires the approved native credential.</p>
+    <p className={styles.supportedSources}>Supported: official Modrinth and CurseForge modpack project links and exact-release links. {applicationService ? 'CurseForge uses the configured ChunkPilot service; no personal API key is required.' : 'CurseForge resolution requires the approved native credential.'}</p>
     {error && <div className={styles.error} role="alert"><strong>Could not resolve link</strong><span>{error}</span></div>}
     {remote && <article className={styles.resolvedLink} aria-label="Resolved modpack release">
       <PackImage project={remote.project} large />

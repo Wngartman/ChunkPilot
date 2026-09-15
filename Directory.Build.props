@@ -19,4 +19,9 @@
     <Product>ChunkPilot</Product>
     <Copyright>Copyright © 2026 ChunkPilot</Copyright>
   </PropertyGroup>
+  <!-- This is a public HTTPS service address, never a credential. Leave unset until that
+       separately deployed service has passed acceptance; ordinary builds retain direct access. -->
+  <ItemGroup Condition="'$(CurseForgeServiceEndpoint)' != ''">
+    <AssemblyMetadata Include="CurseForgeServiceEndpoint" Value="$(CurseForgeServiceEndpoint)" />
+  </ItemGroup>
 </Project>

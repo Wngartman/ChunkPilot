@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Private CurseForge application access
+
+- Added an optional server-side CurseForge service so service-enabled builds need no end-user API key.
+  The shared application key stays in the host's secret binding, never in desktop packages or responses.
+- Routed native discovery, exact-file downloads, artwork, installation, add-ons and updates through the
+  configured service while preserving official identity, hash verification and author restrictions.
+- Added bounded streaming, cancellation, secret-echo protection, per-client throttling and globally
+  coordinated quotas. Service configuration is not presented as proof of live availability.
+- Deployment and clean-install live acceptance remain pending. Published 1.0.0 is unchanged and still
+  uses optional personal-key setup; no public service endpoint is enabled by this source change.
+
 ## 1.0.0 - 2026-09-14
 
 ### Release hardening and everyday controls

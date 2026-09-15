@@ -453,7 +453,7 @@ public sealed class GuidedCatalogService
             };
             return await ProviderFailureAsync(provider, query, state,
                 state == CatalogLoadState.AuthenticationRequired
-                    ? "The provider rejected the configured credentials."
+                    ? "The provider did not authorize this request."
                     : state == CatalogLoadState.RateLimited
                         ? "The provider rate limit is active. Try again shortly."
                         : "The provider could not be reached.",
@@ -1138,10 +1138,8 @@ public sealed class CurseForgeCatalogProvider : IGuidedCatalogProvider, IPaginat
     }
 
     public CatalogProvider Provider => CatalogProvider.CurseForge;
-    public bool IsAvailable => api.HasCredential;
-    public string AvailabilityDetail => IsAvailable
-        ? "Approved CurseForge access is available for this local native session."
-        : "CurseForge is unavailable because the approved local native credential is missing.";
+    public bool IsAvailable => api.CanAccess;
+    public string AvailabilityDetail => api.AccessDetail;
 
     public async Task<IReadOnlyList<CatalogGameVersion>> GetGameVersionsAsync(
         CancellationToken cancellationToken = default)

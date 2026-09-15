@@ -457,8 +457,8 @@ public sealed class CurseForgeUpdateProvider : IUpdateProviderAdapter, IDisposab
         UpdatePreferences preferences,
         CancellationToken cancellationToken = default)
     {
-        if (!api.HasCredential)
-            throw new InvalidOperationException("CurseForge update checking is unavailable until an API key is configured.");
+        if (!api.CanAccess)
+            throw new InvalidOperationException("CurseForge update checking requires configured application access or an approved personal API key.");
         if (!long.TryParse(source.ProjectId, out _))
             throw new InvalidOperationException("CurseForge requires the numeric project ID.");
         using var document = await api.GetJsonAsync(

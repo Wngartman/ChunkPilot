@@ -4,7 +4,10 @@ param(
     [string]$Configuration = "Release",
     [switch]$BuildInstaller,
     [ValidatePattern('\A(?:|v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(alpha|beta|rc)\.[1-9][0-9]*)?)\z')]
-    [string]$ReleaseTag = ''
+    [string]$ReleaseTag = '',
+    # Public deployment address only. API credentials must remain in server-side secret bindings.
+    [ValidatePattern('\A(?:|https://[a-z0-9-]+(?:\.[a-z0-9-]+)+(?::443)?/?)\z')]
+    [string]$CurseForgeServiceEndpoint = ''
 )
 
 $ErrorActionPreference = "Stop"
@@ -32,6 +35,13 @@ $identityProperties = @(
     "-p:ChunkPilotReleaseTag=$effectiveReleaseTag",
     "-p:ChunkPilotBuildTimestampUtc=$buildTimestamp"
 )
+if ($CurseForgeServiceEndpoint) {
+    $serviceUri = [Uri]$CurseForgeServiceEndpoint
+    if ($serviceUri.IsLoopback -or $serviceUri.HostNameType -ne [UriHostNameType]::Dns) {
+        throw 'CurseForgeServiceEndpoint must be a public HTTPS DNS address, never a key or local service.'
+    }
+    $identityProperties += "-p:CurseForgeServiceEndpoint=$($serviceUri.AbsoluteUri.TrimEnd('/'))"
+}
 $singleFileProperties = @(
     '-p:PublishSingleFile=true',
     '-p:IncludeNativeLibrariesForSelfExtract=true',

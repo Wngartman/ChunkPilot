@@ -253,6 +253,40 @@ describe('modpack provider browser', () => {
     expect(screen.queryByText('CurseForge unavailable')).toBeNull();
   });
 
+  it.each(['AuthenticationRequired', 'Failed'] as const)('offers retry, not a personal key, for application-service %s', async state => {
+    const snapshot = structuredClone(fixtures.running);
+    snapshot.build.curseForgeApplicationService = true;
+    const fixture = new FixtureBridge('running');
+    useAppStore.setState({ snapshot, bridge: {
+      request: async <T,>(method: BridgeMethod, params: Record<string, unknown> = {}) => {
+        calls.push({ method, params });
+        if (method === 'modpacks.search' && params.provider === 'CurseForge') return {
+          provider: 'CurseForge', state, items: [], detail: 'Application service is temporarily unavailable.',
+          failedStage: 'application service', retrievedAt: null, fromCache: false, stale: false
+        } as T;
+        return fixture.request<T>(method, params);
+      }, subscribe: listener => fixture.subscribe(listener), dispose: () => fixture.dispose()
+    } });
+    const view = render(<ModpackPicker value={null} onChange={() => undefined} />);
+    fireEvent.click(await screen.findByRole('tab', { name: /CurseForge/ }));
+    const retry = await screen.findByRole('button', { name: 'Retry' });
+    expect(screen.queryByRole('button', { name: 'Set up CurseForge' })).toBeNull();
+    expect(view.container.querySelector('input[type="password"]')).toBeNull();
+    if (state === 'AuthenticationRequired') expect(screen.getByText(/No personal API key is required/)).toBeTruthy();
+    fireEvent.click(retry);
+    await waitFor(() => expect(calls.filter(call => call.method === 'modpacks.search' && call.params.provider === 'CurseForge').length).toBe(2));
+    expect(calls.some(call => call.method === 'providers.configureCurseForge')).toBe(false);
+  });
+
+  it('explains application-service link access without a native-credential requirement', () => {
+    const snapshot = structuredClone(fixtures.running);
+    snapshot.build.curseForgeApplicationService = true;
+    useAppStore.setState({ snapshot });
+    render(<ModpackPicker initialMode="Link" value={null} onChange={() => undefined} />);
+    expect(screen.getByText(/CurseForge uses the configured ChunkPilot service/)).toBeTruthy();
+    expect(screen.queryByText(/requires the approved native credential/)).toBeNull();
+  });
+
   it('resolves a pasted Modrinth project link in place and preserves the exact reviewed release', async () => {
     let selected: ModpackSelection | null = null;
     const { rerender } = render(<ModpackPicker initialMode="Link" value={selected} onChange={value => {

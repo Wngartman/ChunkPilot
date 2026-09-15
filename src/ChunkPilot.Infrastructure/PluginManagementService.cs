@@ -362,10 +362,10 @@ public sealed class PluginManagementService
                 : await http.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
                     .ConfigureAwait(false);
             response.EnsureSuccessStatusCode();
-            if (response.RequestMessage?.RequestUri is not { } finalUri || finalUri.Scheme != Uri.UriSchemeHttps ||
-                (release.Provider == PluginProviderKind.Modrinth
-                    ? !finalUri.Host.Equals("cdn.modrinth.com", StringComparison.OrdinalIgnoreCase)
-                    : !CurseForgeApiClient.IsApprovedDownloadUri(finalUri)))
+            if (release.Provider == PluginProviderKind.CurseForge
+                ? curseForge?.IsApprovedDownloadResponse(response, uri) != true
+                : response.RequestMessage?.RequestUri is not { } finalUri || finalUri.Scheme != Uri.UriSchemeHttps ||
+                  !finalUri.Host.Equals("cdn.modrinth.com", StringComparison.OrdinalIgnoreCase))
                 throw new InvalidDataException("The add-on download left its trusted provider CDN.");
             if (response.Content.Headers.ContentLength is { } length && length != release.SizeBytes)
                 throw new InvalidDataException("The add-on download size does not match provider metadata.");

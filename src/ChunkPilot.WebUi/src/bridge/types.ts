@@ -384,6 +384,8 @@ export interface WebUiSnapshot {
     schemaVersion: string;
     architecture: string;
     defaultUi: string;
+    /** Build configuration only; does not assert that the remote service is online. */
+    curseForgeApplicationService?: boolean;
   };
   selectedServerId: string | null;
   workspace: {

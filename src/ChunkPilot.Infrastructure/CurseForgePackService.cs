@@ -251,8 +251,8 @@ public sealed class CurseForgePackService
         CurseForgeGeneratedPackPlan? reviewedPlan,
         CancellationToken cancellationToken)
     {
-        if (!api.HasCredential)
-            throw new InvalidOperationException("CurseForge is unavailable because the approved local native credential is missing.");
+        if (!api.CanAccess)
+            throw new InvalidOperationException("CurseForge requires configured application access or an approved personal API key.");
         var destination = Path.TrimEndingDirectorySeparator(Path.GetFullPath(destinationRoot));
         if (!Directory.Exists(destination))
             throw new DirectoryNotFoundException(destination);

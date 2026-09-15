@@ -54,9 +54,9 @@ public sealed class CurseForgeModpackPreflightService : ICurseForgeModpackPrefli
         if (!PositiveId(request.ProjectId) || !PositiveId(request.ClientFileId) ||
             request.ExpectedServerPackFileId.Length > 0 && !PositiveId(request.ExpectedServerPackFileId))
             throw new ArgumentException("CurseForge preflight requires exact positive project and file identities.", nameof(request));
-        if (!api.HasCredential)
+        if (!api.CanAccess)
             throw new InvalidOperationException(
-                "CurseForge is unavailable because the approved local native credential is missing.");
+                "CurseForge requires configured application access or an approved personal API key.");
 
         var stagingParent = Path.GetFullPath(paths.Staging);
         Directory.CreateDirectory(stagingParent);

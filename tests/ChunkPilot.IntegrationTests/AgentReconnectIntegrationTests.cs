@@ -40,6 +40,14 @@ public sealed class AgentReconnectIntegrationTests
             Assert.False(probe.Success);
             Assert.Contains("UI session capability", probe.Error, StringComparison.OrdinalIgnoreCase);
 
+            var access = await SendRawAsync(pipeName, JsonSerializer.Serialize(new AgentRequest
+            {
+                Operation = "GetCurseForgeAccess",
+                Payload = JsonSerializer.SerializeToElement(new UiSessionCredential(), ProtocolJson.Options)
+            }, ProtocolJson.Options));
+            Assert.False(access.Success);
+            Assert.Contains("UI session capability", access.Error, StringComparison.OrdinalIgnoreCase);
+
             Assert.True((await SendAsync<OperationResult>(pipeName, "Ping")).Success);
             Assert.True((await SendAsync<OperationResult>(pipeName, "ShutdownAgent")).Success);
             await agent.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));

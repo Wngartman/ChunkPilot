@@ -61,5 +61,7 @@ A local developer can explicitly run `scripts/start-curseforge-dev.ps1` or set a
 `CHUNKPILOT_CURSEFORGE_KEY_FILE`; the variable contains a path, never the key. Ordinary startup does not
 search for a developer file or restore a removed personal key. The Agent imports an explicitly supplied value
 into its isolated DPAPI secret store and only native HTTP code can consume it. Distribution of a shared
-developer application key remains gated independently of personal setup. See
+developer application key is never part of the desktop payload. A service-enabled build routes access to
+the separately deployed ChunkPilot application backend and needs no local key; direct personal setup is a
+fallback for unconfigured builds. No service endpoint is activated until deployment acceptance. See
 [MODPACKS.md](MODPACKS.md) and the [credential decision](../architecture/CURSEFORGE-CREDENTIAL-DELIVERY.md).

@@ -483,8 +483,10 @@ public sealed class PluginManagementTests : IDisposable
         Assert.Single(Directory.EnumerateFiles(paths.Recovery, "Library.jar", SearchOption.AllDirectories));
     }
 
-    [Fact]
-    public async Task Authorized_CurseForge_plan_installs_exact_review_without_a_second_provider_resolution()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Authorized_CurseForge_plan_installs_exact_review_without_a_second_provider_resolution(bool applicationService)
     {
         var server = ModServer("authorized-curseforge-plan", ServerEcosystem.NeoForge) with
         {
@@ -497,19 +499,30 @@ public sealed class PluginManagementTests : IDisposable
         {
             Dependencies = [new PluginDependency { ProjectId = "20", Type = "required" }]
         };
+        if (applicationService)
+        {
+            dependency = dependency with { DownloadUrl = "https://mediafilez.forgecdn.net/files/0/200/library.jar" };
+            rootRelease = rootRelease with { DownloadUrl = "https://mediafilez.forgecdn.net/files/0/100/root.jar" };
+        }
         var paths = new AppDataPaths(Path.Combine(root, "authorized-curseforge-plan-data"),
             Path.Combine(root, "managed"));
         paths.EnsureCreated();
         var jars = new JarInventoryService(new SafeFileService(paths), paths);
         var provider = new PlanProvider([dependency, rootRelease], PluginProviderKind.CurseForge);
-        var downloads = new StubHandler(request => new HttpResponseMessage(HttpStatusCode.OK)
+        var downloads = new StubHandler(request =>
         {
-            Content = new ByteArrayContent(request.RequestUri!.AbsolutePath.EndsWith("library.jar", StringComparison.Ordinal)
-                ? dependencyBytes : rootBytes)
+            Assert.Equal(applicationService ? "curseforge.fixture.example" : "mediafilez.forgecdn.net", request.RequestUri!.Host);
+            Assert.Equal(!applicationService, request.Headers.Contains("x-api-key"));
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new ByteArrayContent(request.RequestUri.AbsolutePath.EndsWith(
+                    applicationService ? "/200" : "library.jar", StringComparison.Ordinal) ? dependencyBytes : rootBytes)
+            };
         });
         var secrets = new MemorySecrets();
-        secrets.SetSecret(CurseForgeUpdateProvider.ApiKeyName, "fixture-approved-key");
-        using var api = new CurseForgeApiClient(secrets, downloads);
+        if (!applicationService) secrets.SetSecret(CurseForgeUpdateProvider.ApiKeyName, "fixture-approved-key");
+        using var api = new CurseForgeApiClient(secrets, downloads,
+            applicationService ? new Uri("https://curseforge.fixture.example/") : null);
         var service = new PluginManagementService(
             new PluginProviderRegistry([provider]), jars, paths, curseForge: api);
 

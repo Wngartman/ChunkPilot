@@ -10,6 +10,162 @@ namespace ChunkPilot.UnitTests;
 
 public sealed class ModpackImageLoaderTests
 {
+    private static readonly string[] ExpectedServiceRequests = [
+        "https://service.example/cf/v1/images/1172292",
+        "https://service.example/cf/v1/images/1172293",
+        "https://service.example/cf/v1/images/1172292"
+    ];
+    private static readonly string[] ExpectedDirectRequests = [
+        "https://media.forgecdn.net/icon.png", "https://cdn.modrinth.com/icon.png"
+    ];
+
+    [Fact]
+    public async Task Service_artwork_uses_only_exact_catalog_identity_without_credentials()
+    {
+        var requests = new List<string>();
+        using var client = new HttpClient(new AsyncHandler((request, _) =>
+        {
+            requests.Add(request.RequestUri!.AbsoluteUri);
+            Assert.Null(request.Headers.Authorization);
+            Assert.False(request.Headers.Contains("x-api-key"));
+            Assert.Null(request.Content);
+            return Task.FromResult(Response(Png(16, 16)));
+        }));
+        using var loader = new ModpackImageLoader(client, new Uri("https://service.example/cf/v1/"));
+        var original = new Uri("https://media.forgecdn.net/avatars/123/456/icon.png");
+
+        var result = await loader.LoadAsync(CatalogProvider.CurseForge, "1172292", original, CancellationToken.None);
+        Assert.StartsWith("data:image/png;base64,", result, StringComparison.Ordinal);
+        Assert.Equal(result, await loader.LoadAsync(CatalogProvider.CurseForge, "1172292", original, CancellationToken.None));
+        await loader.LoadAsync(CatalogProvider.CurseForge, "1172293", original, CancellationToken.None);
+        await loader.LoadAsync(CatalogProvider.CurseForge, "1172292",
+            new Uri("https://media.forgecdn.net/avatars/123/456/new.png"), CancellationToken.None);
+
+        Assert.Equal(ExpectedServiceRequests, requests);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("0")]
+    [InlineData("-1")]
+    [InlineData("01")]
+    [InlineData("+1")]
+    [InlineData(" 1")]
+    [InlineData("1/../2")]
+    [InlineData("1?key=secret")]
+    public async Task Service_artwork_rejects_missing_or_noncanonical_project_identity(string? projectId)
+    {
+        var requests = 0;
+        using var client = new HttpClient(new AsyncHandler((_, _) =>
+        {
+            requests++;
+            return Task.FromResult(Response(Png(8, 8)));
+        }));
+        using var loader = new ModpackImageLoader(client, new Uri("https://service.example/"));
+
+        Assert.Null(await loader.LoadAsync(CatalogProvider.CurseForge, projectId,
+            new Uri("https://media.forgecdn.net/avatars/icon.png"), CancellationToken.None));
+        Assert.Equal(0, requests);
+    }
+
+    [Theory]
+    [InlineData("http://media.forgecdn.net/icon.png")]
+    [InlineData("https://media.forgecdn.net.evil.example/icon.png")]
+    [InlineData("https://service.example/images/1")]
+    [InlineData("https://user:password@media.forgecdn.net/icon.png")]
+    [InlineData("https://media.forgecdn.net/icon.png#fragment")]
+    public async Task Service_artwork_still_requires_approved_original_provider_provenance(string original)
+    {
+        var requests = 0;
+        using var client = new HttpClient(new AsyncHandler((_, _) =>
+        {
+            requests++;
+            return Task.FromResult(Response(Png(8, 8)));
+        }));
+        using var loader = new ModpackImageLoader(client, new Uri("https://service.example/"));
+
+        Assert.Null(await loader.LoadAsync(CatalogProvider.CurseForge, "1", new Uri(original), CancellationToken.None));
+        Assert.Equal(0, requests);
+    }
+
+    [Theory]
+    [InlineData("https://service.example/cf/images/2")]
+    [InlineData("https://service.example/other/images/1")]
+    [InlineData("https://service.example/cf/images/1?extra=1")]
+    [InlineData("https://service.example/cf/images/1#fragment")]
+    [InlineData("https://other.example/cf/images/1")]
+    [InlineData("http://service.example/cf/images/1")]
+    [InlineData("https://media.forgecdn.net/icon.png")]
+    [InlineData("cf/images/1")]
+    public async Task Service_artwork_rejects_changed_final_origin_path_identity_or_scheme(string final)
+    {
+        using var client = new HttpClient(new AsyncHandler((_, _) =>
+        {
+            var response = Response(Png(8, 8));
+            response.RequestMessage = new HttpRequestMessage(HttpMethod.Get, final);
+            return Task.FromResult(response);
+        }));
+        using var loader = new ModpackImageLoader(client, new Uri("https://service.example/cf/"));
+
+        await Assert.ThrowsAsync<InvalidDataException>(() => loader.LoadAsync(CatalogProvider.CurseForge, "1",
+            new Uri("https://media.forgecdn.net/icon.png"), CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task Service_artwork_refuses_redirect_and_never_falls_back_to_provider()
+    {
+        var requests = 0;
+        using var client = new HttpClient(new AsyncHandler((_, _) =>
+        {
+            requests++;
+            var response = new HttpResponseMessage(HttpStatusCode.Redirect);
+            response.Headers.Location = new Uri("https://media.forgecdn.net/icon.png");
+            return Task.FromResult(response);
+        }));
+        using var loader = new ModpackImageLoader(client, new Uri("https://service.example/"));
+
+        await Assert.ThrowsAsync<InvalidDataException>(() => loader.LoadAsync(CatalogProvider.CurseForge, "1",
+            new Uri("https://media.forgecdn.net/icon.png"), CancellationToken.None));
+        Assert.Equal(1, requests);
+    }
+
+    [Theory]
+    [InlineData("x-api-key")]
+    [InlineData("Authorization")]
+    public async Task Service_artwork_rejects_credential_bearing_transport_before_network(string header)
+    {
+        var requests = 0;
+        using var client = new HttpClient(new AsyncHandler((_, _) =>
+        {
+            requests++;
+            return Task.FromResult(Response(Png(8, 8)));
+        }));
+        client.DefaultRequestHeaders.TryAddWithoutValidation(header, "synthetic-forbidden-credential");
+        using var loader = new ModpackImageLoader(client, new Uri("https://service.example/"));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => loader.LoadAsync(CatalogProvider.CurseForge, "1",
+            new Uri("https://media.forgecdn.net/icon.png"), CancellationToken.None));
+        Assert.Equal(0, requests);
+    }
+
+    [Fact]
+    public async Task Unconfigured_service_keeps_direct_CurseForge_images_and_Modrinth_never_uses_service()
+    {
+        var requests = new List<string>();
+        using var client = new HttpClient(new AsyncHandler((request, _) =>
+        {
+            requests.Add(request.RequestUri!.AbsoluteUri);
+            return Task.FromResult(Response(Png(8, 8)));
+        }));
+        using var direct = new ModpackImageLoader(client, serviceEndpoint: null);
+        using var service = new ModpackImageLoader(client, new Uri("https://service.example/"));
+
+        await direct.LoadAsync(CatalogProvider.CurseForge, new Uri("https://media.forgecdn.net/icon.png"), CancellationToken.None);
+        await service.LoadAsync(CatalogProvider.Modrinth, "slug", new Uri("https://cdn.modrinth.com/icon.png"), CancellationToken.None);
+        Assert.Equal(ExpectedDirectRequests, requests);
+    }
+
     [Fact]
     public async Task Same_url_is_coalesced_and_one_waiter_cannot_cancel_another()
     {

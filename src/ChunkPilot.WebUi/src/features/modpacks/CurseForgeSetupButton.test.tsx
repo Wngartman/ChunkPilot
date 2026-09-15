@@ -16,6 +16,29 @@ function setup(result: unknown) {
   return request;
 }
 describe('native CurseForge setup entry', () => {
+  it('shows configured application access without requesting a key or claiming live availability', () => {
+    const request = setup({ configured: true });
+    const snapshot = structuredClone(fixtures.running);
+    snapshot.build.curseForgeApplicationService = true;
+    useAppStore.setState({ snapshot });
+    const view = render(<NavigationGuardProvider><SettingsPage /></NavigationGuardProvider>);
+
+    expect(screen.getByDisplayValue('No API key required')).toBeTruthy();
+    expect(screen.getByText(/availability is checked when you use a CurseForge feature/)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Set up CurseForge' })).toBeNull();
+    expect(view.container.querySelector('input[type="password"]')).toBeNull();
+    expect(request).not.toHaveBeenCalled();
+  });
+  it('discloses service request data without implying that worlds are uploaded', () => {
+    setup({ configured: true });
+    const snapshot = structuredClone(fixtures.running);
+    snapshot.build.curseForgeApplicationService = true;
+    useAppStore.setState({ snapshot });
+    render(<NavigationGuardProvider><SettingsPage initialCategory="Privacy & diagnostics" /></NavigationGuardProvider>);
+
+    expect(screen.getByText(/selected searches, project\/file IDs, artwork, and download requests pass through the ChunkPilot service/)).toBeTruthy();
+    expect(screen.getByText(/Your server files and worlds are never uploaded/)).toBeTruthy();
+  });
   it('is reachable in General settings and sends no credential or file path', async () => {
     const request = setup({ configured: true, cancelled: false });
     const view = render(<NavigationGuardProvider><SettingsPage /></NavigationGuardProvider>);

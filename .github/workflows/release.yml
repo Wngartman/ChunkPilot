@@ -117,6 +117,17 @@ jobs:
         shell: pwsh
         run: ./scripts/install-inno-setup.ps1
 
+      - name: Validate private CurseForge service without credentials
+        shell: pwsh
+        working-directory: services/ChunkPilot.CurseForgeService
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          if ($LASTEXITCODE -ne 0) { throw 'Service dependency restore failed.' }
+          npm run typecheck
+          if ($LASTEXITCODE -ne 0) { throw 'Service typecheck failed.' }
+          npm test
+          if ($LASTEXITCODE -ne 0) { throw 'Service security tests failed.' }
+
       - name: Build, test, publish, and compile installer once
         shell: pwsh
         run: ./scripts/publish.ps1 -BuildInstaller -ReleaseTag $env:RELEASE_TAG

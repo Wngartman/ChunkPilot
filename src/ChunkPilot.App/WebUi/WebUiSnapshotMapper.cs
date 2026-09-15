@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using ChunkPilot.Core;
+using ChunkPilot.Infrastructure;
 
 namespace ChunkPilot.App.WebUi;
 
@@ -60,7 +61,8 @@ internal sealed class WebUiSnapshotMapper
                 buildTimestampUtc = BuildIdentity.Current.BuildTimestampUtc,
                 schemaVersion = BuildIdentity.Current.SchemaVersion,
                 architecture = BuildIdentity.Current.Architecture,
-                defaultUi = BuildIdentity.Current.DefaultUi
+                defaultUi = BuildIdentity.Current.DefaultUi,
+                curseForgeApplicationService = CurseForgeServiceConfiguration.Endpoint is not null
             },
             selectedServerId = selectedId,
             workspace = selectedId is null ? null : new

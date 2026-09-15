@@ -50,6 +50,9 @@ curseforge-api-key*.txt
 .env
 .env.*
 !.env.example
+.dev.vars
+.dev.vars.*
+.wrangler/
 secrets.json
 appsettings.Local.json
 appsettings.*.Local.json
