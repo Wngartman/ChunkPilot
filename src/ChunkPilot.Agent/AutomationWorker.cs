@@ -1,6 +1,5 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
-using System.Text;
 using System.Text.Json;
 using ChunkPilot.Core;
 using ChunkPilot.Infrastructure;
@@ -69,10 +68,8 @@ public sealed class AutomationWorker
         }
     }
 
-    private bool ShouldRun(AutomationRecipe recipe, ServerSnapshot current, ServerSnapshot? prior)
+    internal bool ShouldRun(AutomationRecipe recipe, ServerSnapshot current, ServerSnapshot? prior)
     {
-        var priorPlayers = prior?.OnlinePlayers ?? 0;
-        var players = current.OnlinePlayers ?? 0;
         return recipe.Trigger switch
         {
             AutomationTriggerKind.ServerStarted =>
@@ -85,15 +82,12 @@ public sealed class AutomationWorker
                                                    current.State == ServerState.Stopped,
             AutomationTriggerKind.ServerCrashed => prior?.State != ServerState.Crashed &&
                                                    current.State == ServerState.Crashed,
-            AutomationTriggerKind.PlayerJoined => players > priorPlayers,
-            AutomationTriggerKind.FirstPlayerJoined => priorPlayers == 0 && players > 0,
-            AutomationTriggerKind.LastPlayerLeft => priorPlayers > 0 && players == 0,
-            AutomationTriggerKind.PlayerCountThreshold =>
-                int.TryParse(recipe.TriggerValue, out var threshold) &&
-                players >= threshold && priorPlayers < threshold,
+            AutomationTriggerKind.PlayerJoined or AutomationTriggerKind.FirstPlayerJoined or
+                AutomationTriggerKind.LastPlayerLeft or AutomationTriggerKind.PlayerCountThreshold =>
+                AutomationObservationPolicy.PlayerTransitionMatches(recipe, current, prior, DateTimeOffset.UtcNow),
             AutomationTriggerKind.ScheduledTime => ScheduledNow(recipe),
             AutomationTriggerKind.HighRam =>
-                long.TryParse(recipe.TriggerValue, out var ramMb) &&
+                long.TryParse(recipe.TriggerValue, out var ramMb) && ramMb is > 0 and <= 1_048_576 &&
                 (current.CurrentStatistics?.WorkingSetBytes ?? 0) >= ramMb * 1024 * 1024 &&
                 (prior?.CurrentStatistics?.WorkingSetBytes ?? 0) < ramMb * 1024 * 1024,
             AutomationTriggerKind.LowDiskSpace => IsLowDisk(recipe, current, prior),
@@ -110,9 +104,17 @@ public sealed class AutomationWorker
         var thresholdGb = long.TryParse(recipe.TriggerValue, out var configured)
             ? Math.Clamp(configured, 1, 1_024) : 10;
         var threshold = thresholdGb * 1024L * 1024 * 1024;
-        var drive = new DriveInfo(Path.GetPathRoot(current.Definition.RootPath)!);
-        if (drive.AvailableFreeSpace >= threshold)
+        try
+        {
+            var drive = new DriveInfo(Path.GetPathRoot(current.Definition.RootPath)!);
+            if (!drive.IsReady || drive.AvailableFreeSpace >= threshold) return false;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            // An unplugged or unavailable volume is unknown, not low-space evidence. One missing
+            // server volume must not terminate the automation loop for every other server.
             return false;
+        }
         var now = DateTimeOffset.UtcNow;
         if (lastScheduledRuns.TryGetValue(recipe.Id, out var last) &&
             now - last < TimeSpan.FromHours(1))
@@ -123,7 +125,7 @@ public sealed class AutomationWorker
 
     private bool ScheduledNow(AutomationRecipe recipe)
     {
-        if (!TimeSpan.TryParse(recipe.TriggerValue, out var time))
+        if (!TimeSpan.TryParse(recipe.TriggerValue, out var time) || time < TimeSpan.Zero || time >= TimeSpan.FromDays(1))
             return false;
         var now = DateTimeOffset.Now;
         if (now.Hour != time.Hours || now.Minute != time.Minutes)
@@ -198,9 +200,15 @@ public sealed class AutomationWorker
             case AutomationActionKind.StopAfterEmpty:
             {
                 var minutes = int.TryParse(step.Value, out var value) ? Math.Clamp(value, 1, 1_440) : 30;
-                await Task.Delay(TimeSpan.FromMinutes(minutes), cancellationToken).ConfigureAwait(false);
-                if ((server.Snapshot().OnlinePlayers ?? 0) == 0)
-                    Ensure(await server.StopAsync(true, "Automation", cancellationToken).ConfigureAwait(false));
+                var original = server.Snapshot(0);
+                var timer = Stopwatch.StartNew();
+                do
+                {
+                    if (!AutomationObservationPolicy.KnownEmpty(server.Snapshot(0), original, DateTimeOffset.UtcNow))
+                        throw new InvalidOperationException("Empty-server stop cancelled: the player count became unknown, players returned, or the server process changed.");
+                    await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken).ConfigureAwait(false);
+                } while (timer.Elapsed < TimeSpan.FromMinutes(minutes));
+                Ensure(await server.StopKnownEmptyAsync(original, cancellationToken).ConfigureAwait(false));
                 break;
             }
             case AutomationActionKind.StartAnotherServer:
@@ -262,49 +270,22 @@ public sealed class AutomationWorker
         };
         foreach (var argument in specification.Arguments)
             start.ArgumentList.Add(argument);
-        ChildProcessEnvironmentPolicy.Apply(start);
-        CurseForgeCredentialEnvironment.RemoveFromChild(start);
-        using var process = Process.Start(start)
-            ?? throw new InvalidOperationException("Windows did not start the approved external program.");
-        var outputTask = ReadBoundedAsync(process.StandardOutput, cancellationToken);
-        var errorTask = ReadBoundedAsync(process.StandardError, cancellationToken);
-        await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
-        var output = await outputTask.ConfigureAwait(false);
-        var error = await errorTask.ConfigureAwait(false);
+        var execution = await OwnedAutomationProgramRunner.RunAsync(start, cancellationToken).ConfigureAwait(false);
         await store.AddActivityAsync(new ActivityEntry
         {
             Timestamp = DateTimeOffset.UtcNow,
             ServerId = server.Definition.Id,
             ServerName = server.Definition.Name,
             Action = $"External program: {Path.GetFileName(specification.Executable)}",
-            Result = process.ExitCode == 0 ? "Success" : $"Exit {process.ExitCode}",
+            Result = execution.ExitCode == 0 ? "Success" : $"Exit {execution.ExitCode}",
             Error = SecretRedactor.Redact(
                 string.Join(Environment.NewLine,
-                    new[] { output, error }.Where(value => !string.IsNullOrWhiteSpace(value)))),
+                    new[] { execution.Output, execution.Error }.Where(value => !string.IsNullOrWhiteSpace(value)))),
             Source = "Automation"
         }, CancellationToken.None).ConfigureAwait(false);
-        if (process.ExitCode != 0)
+        if (execution.ExitCode != 0)
             throw new InvalidOperationException(
-                $"Approved external program exited with code {process.ExitCode}.");
-    }
-
-    private static async Task<string> ReadBoundedAsync(
-        StreamReader reader,
-        CancellationToken cancellationToken)
-    {
-        const int maximumCharacters = 65_536;
-        var buffer = new char[4_096];
-        var output = new StringBuilder();
-        while (output.Length < maximumCharacters)
-        {
-            var count = await reader.ReadAsync(
-                buffer.AsMemory(0, Math.Min(buffer.Length, maximumCharacters - output.Length)),
-                cancellationToken).ConfigureAwait(false);
-            if (count == 0)
-                break;
-            output.Append(buffer, 0, count);
-        }
-        return output.ToString();
+                $"Approved external program exited with code {execution.ExitCode}.");
     }
 
     private Task RecordAsync(AutomationRecipe recipe, ManagedServer server, string result, string error) =>

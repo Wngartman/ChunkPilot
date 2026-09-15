@@ -51,7 +51,7 @@ public static partial class SecretRedactor
             pair => SecretKeyRegex().IsMatch(pair.Key) ? "<redacted>" : Redact(pair.Value),
             StringComparer.OrdinalIgnoreCase);
 
-    [GeneratedRegex(@"(?i)\b(password|passwd|secret|token|access[_-]?token|refresh[_-]?token|client[_-]?secret|api[_-]?key|rcon[_-]?password|credential)([""']?)(\s*[:=]\s*)([""']?)[^""'\s;,}\]]+")]
+    [GeneratedRegex(@"(?i)\b(password|passwd|secret|token|access[_-]?token|refresh[_-]?token|client[_-]?secret|protected[_-]?api[_-]?key|api[_-]?key|rcon[_-]?password|credential)([""']?)(\s*[:=]\s*)([""']?)[^""'\s;,}\]]+")]
     private static partial Regex KeyValueSecretRegex();
 
     [GeneratedRegex(@"(?i)\b(x-api-key)\s*:\s*[^\s,;]+")]

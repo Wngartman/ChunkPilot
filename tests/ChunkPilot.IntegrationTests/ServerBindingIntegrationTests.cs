@@ -72,6 +72,23 @@ public sealed class ServerBindingIntegrationTests : IAsyncLifetime
         Assert.Equal(ServerState.Stopped, server.State);
     }
 
+    [Fact(Timeout = 45_000)]
+    public async Task Empty_stop_rechecks_current_process_and_roster_inside_the_lifecycle_gate()
+    {
+        var definition = Definition();
+        await using var server = new ManagedServer(definition, new ProcessStatisticsProvider(), new MinecraftStatusClient(),
+            store, paths, logging.CreateLogger<ManagedServer>());
+        Assert.True((await server.StartAsync()).Success);
+        var original = server.Snapshot(0);
+        Assert.False((await server.StopKnownEmptyAsync(original with { RootProcessCreationTicks = original.RootProcessCreationTicks + 1 })).Success);
+        Assert.Equal(ServerState.Running, server.State);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        while (!AutomationObservationPolicy.HasFreshCount(server.Snapshot(0), DateTimeOffset.UtcNow))
+            await Task.Delay(100, deadline.Token);
+        Assert.True((await server.StopKnownEmptyAsync(original)).Success);
+        Assert.Equal(ServerState.Stopped, server.State);
+    }
+
     private ServerDefinition Definition()
     {
         var repo = new DirectoryInfo(AppContext.BaseDirectory);

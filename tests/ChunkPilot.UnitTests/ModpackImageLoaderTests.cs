@@ -51,8 +51,14 @@ public sealed class ModpackImageLoaderTests
         using var client = new HttpClient(new AsyncHandler(async (_, cancellationToken) =>
         {
             entered.TrySetResult(true);
-            using var registration = cancellationToken.Register(() => cancelled.TrySetResult(true));
-            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            try { await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken); }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                // Observe cancellation of the actual HTTP operation, not a registration that its
+                // unwinding continuation can dispose before the cancellation callback is visited.
+                cancelled.TrySetResult(true);
+                throw;
+            }
             return Response(Png(8, 8));
         }));
         using var loader = new ModpackImageLoader(client);
@@ -129,6 +135,27 @@ public sealed class ModpackImageLoaderTests
 
     private static TaskCompletionSource<bool> NewSignal() =>
         new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    [Fact]
+    public async Task Animated_catalog_artwork_decodes_only_one_preview_frame()
+    {
+        using var animated = new Image<Rgba32>(24, 24, new Rgba32(45, 60, 90, 255));
+        using var second = new Image<Rgba32>(24, 24, new Rgba32(90, 60, 45, 255));
+        animated.Frames.AddFrame(second.Frames.RootFrame);
+        using var encoded = new MemoryStream();
+        animated.Save(encoded, new PngEncoder());
+        using var decodedInput = Image.Load(encoded.ToArray());
+        Assert.Equal(2, decodedInput.Frames.Count);
+        using var client = new HttpClient(new AsyncHandler((_, _) => Task.FromResult(Response(encoded.ToArray()))));
+        using var loader = new ModpackImageLoader(client);
+
+        var result = await loader.LoadAsync(CatalogProvider.Modrinth,
+            new Uri("https://cdn.modrinth.com/data/animated/icon.png"), CancellationToken.None);
+
+        Assert.NotNull(result);
+        using var preview = Image.Load(Convert.FromBase64String(result[(result.IndexOf(',') + 1)..]));
+        Assert.Single(preview.Frames);
+    }
 
     private static void UpdateMaximum(ref int maximum, int candidate)
     {

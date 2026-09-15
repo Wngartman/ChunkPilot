@@ -158,14 +158,16 @@ internal sealed class ModpackImageLoader : IDisposable
             }
 
             raw.Position = 0;
-            var info = await ImageSharpImage.IdentifyAsync(raw, cancellationToken).ConfigureAwait(false)
+            var decodeOptions = new SixLabors.ImageSharp.Formats.DecoderOptions { MaxFrames = 1 };
+            var info = await ImageSharpImage.IdentifyAsync(decodeOptions, raw, cancellationToken).ConfigureAwait(false)
                 ?? throw new InvalidDataException("The provider image could not be decoded.");
             if (info.Width is <= 0 or > MaximumDimension || info.Height is <= 0 or > MaximumDimension ||
                 (long)info.Width * info.Height > MaximumDecodedPixels)
                 throw new InvalidDataException("The provider image dimensions exceed ChunkPilot's safe preview limit.");
 
             raw.Position = 0;
-            using var image = await ImageSharpImage.LoadAsync<Rgba32>(raw, cancellationToken).ConfigureAwait(false);
+            using var image = await ImageSharpImage.LoadAsync<Rgba32>(
+                decodeOptions, raw, cancellationToken).ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
             image.Mutate(context => context.Resize(new ResizeOptions
             {
