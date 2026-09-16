@@ -16,6 +16,8 @@
   exact values, respect regional decimal separators, and match the server's 512 MB minimum.
 - Restored truthful backup summaries after Agent restarts. Dashboard and overview timestamps now come
   from persisted verified recovery records and reflect verification failures or deletion.
+- Fixed CurseForge update checks missing older Minecraft versions when newer releases filled the first
+  catalog page. The official request now filters the linked game version before paging.
 - Removed automatic recursive server-folder size scans from dashboard sampling.
 - Bounded Java discovery, cancelled exact-owned probe descendants, validated runtime architecture, and
   added Java 25 selection plus an official JDK fallback when no JRE is published.

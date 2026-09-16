@@ -6,6 +6,7 @@
 - Retains verified-backup status across Agent restarts and updates it when recovery points are deleted or fail verification.
 - Adds a private CurseForge application-service integration: configured builds use the hosted application key without distributing it to users. Exact release identity, author restrictions, size checks, and hashes remain enforced.
 - Removes repeated metadata requests within each CurseForge catalog operation and prevents dedicated server archives from appearing as client-pack releases.
+- Finds CurseForge updates for older Minecraft versions even when newer releases fill the first catalog page.
 - Selects Java 25 for calendar-year Minecraft releases, validates managed runtime architecture, and falls back from an unavailable official JRE to its matching JDK. Historical loader selections use exact official checksum metadata.
 - Hardens router setup and cleanup across UPnP, PCP, and NAT-PMP. Lost replies remain visible as uncertain state; they never become a false claim that a port is closed or permission to delete another application's mapping.
 - Preserves existing datapacks when an install is rejected, restores prior content after persistence failures, and refuses folder junctions during bounded inventory scans.
