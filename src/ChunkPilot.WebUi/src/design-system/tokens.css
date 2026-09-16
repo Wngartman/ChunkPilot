@@ -21,8 +21,8 @@
   --cp-border: #2b2d38;
   --cp-border-strong: #424556;
   --cp-text: #f4f4f1;
-  --cp-text-secondary: #b7bdba;
-  --cp-text-muted: #7f8987;
+  --cp-text-secondary: #bbc0ca;
+  --cp-text-muted: #9199a8;
   --cp-accent: #8d87f2;
   --cp-accent-strong: #aaa5ff;
   --cp-accent-muted: #292642;
@@ -62,6 +62,18 @@
   --cp-focus-ring: rgb(141 135 242 / .22);
   --cp-canvas-haze: rgb(77 72 132 / .10);
   --cp-surface-highlight: rgb(255 255 255 / .018);
+  --cp-selection: rgb(141 135 242 / .34);
+  --cp-scrollbar: #454958;
+  --cp-scrollbar-hover: #62697b;
+  --cp-font-body: 13px;
+  --cp-font-detail: 11px;
+  --cp-font-heading: 26px;
+  --cp-line-height: 1.5;
+  --cp-page-padding: 28px;
+  --cp-page-width: 1440px;
+  --cp-touch-target: 44px;
+  --cp-font-heading-compact: 20px;
+  --cp-console-min-log-height: 80px;
   --cp-space-1: 4px;
   --cp-space-2: 8px;
   --cp-space-3: 12px;
@@ -73,7 +85,7 @@
   --cp-radius-md: 6px;
   --cp-radius-lg: 8px;
   --cp-control-sm: 30px;
-  --cp-control: 35px;
+  --cp-control: 36px;
   --cp-control-lg: 40px;
   --cp-sidebar-width: 210px;
   --cp-titlebar-height: 44px;
@@ -88,19 +100,31 @@
 .sr-only { position: absolute !important; width: 1px !important; height: 1px !important; padding: 0 !important; margin: -1px !important; overflow: hidden !important; clip: rect(0, 0, 0, 0) !important; white-space: nowrap !important; border: 0 !important; }
 html, body, #root { width: 100%; height: 100%; margin: 0; overflow: hidden; background: var(--cp-canvas); color: var(--cp-text); }
 button, input, select, textarea { font: inherit; }
+button, input, select, textarea, summary { -webkit-tap-highlight-color: transparent; }
+button svg { flex-shrink: 0; }
+input, select, textarea { min-width: 0; }
+input:disabled, select:disabled, textarea:disabled { cursor: not-allowed; }
+button:disabled { cursor: not-allowed; }
+summary { cursor: pointer; }
 button { color: inherit; }
-::selection { background: rgb(141 135 242 / .34); }
+::selection { background: var(--cp-selection); }
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: #3d3f4f; border: 3px solid transparent; background-clip: padding-box; border-radius: 8px; }
-::-webkit-scrollbar-thumb:hover { background-color: #585a70; }
+::-webkit-scrollbar-thumb { background: var(--cp-scrollbar); border: 3px solid transparent; background-clip: padding-box; border-radius: var(--cp-radius-lg); }
+::-webkit-scrollbar-thumb:hover { background-color: var(--cp-scrollbar-hover); }
 :focus-visible { outline: 2px solid var(--cp-focus); outline-offset: 2px; }
+
+@media (max-width: 760px) { :root { --cp-page-padding: 16px; } }
+@media (pointer: coarse) {
+  :root { --cp-control: var(--cp-touch-target); }
+  input, select, textarea { font-size: 16px !important; }
+}
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; transition-duration: .01ms !important; }
 }
 
 @media (forced-colors: active) {
-  :root { --cp-border: CanvasText; --cp-border-strong: CanvasText; --cp-accent: Highlight; --cp-text: CanvasText; --cp-text-secondary: CanvasText; }
+  :root { --cp-canvas: Canvas; --cp-shell: Canvas; --cp-sidebar: Canvas; --cp-surface: Canvas; --cp-surface-raised: Canvas; --cp-input: Canvas; --cp-border: CanvasText; --cp-border-strong: CanvasText; --cp-accent: Highlight; --cp-accent-strong: Highlight; --cp-focus: Highlight; --cp-selected-surface: Highlight; --cp-selected-text: HighlightText; --cp-selected-border: Highlight; --cp-text: CanvasText; --cp-text-secondary: CanvasText; --cp-text-muted: CanvasText; --cp-on-accent: HighlightText; }
   * { forced-color-adjust: auto; }
 }

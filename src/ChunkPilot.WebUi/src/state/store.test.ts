@@ -5,6 +5,19 @@ import { fixtures } from '../fixtures/catalog';
 import { useAppStore } from './store';
 
 describe('authoritative WebUI store', () => {
+  it('preserves the displayed snapshot when a selection response is malformed', async () => {
+    const initial = structuredClone(fixtures.running);
+    const bridge: BridgeAdapter = {
+      request: async <T,>() => ({ accepted: true, operationId: 'not-a-snapshot' }) as T,
+      subscribe: () => () => undefined, dispose: () => undefined
+    };
+    useAppStore.setState({ snapshot: initial, bridge });
+    await expect(useAppStore.getState().command('snapshot.selectServer', { serverId: initial.selectedServerId }))
+      .rejects.toThrow('Server details could not be loaded');
+    expect(useAppStore.getState().snapshot).toBe(initial);
+    expect(useAppStore.getState().busy.size).toBe(0);
+  });
+
   beforeEach(() => useAppStore.setState({ snapshot: null, bridge: null, busy: new Set(), pendingOperations: new Map(), completedOperations: new Set(), serverSnapshots: new Map(), cachedPresentationServerId: null, error: null }));
 
   it('rejects a stale snapshot revision', () => {

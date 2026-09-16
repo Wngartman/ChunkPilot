@@ -115,7 +115,13 @@ export const useAppStore = create<AppStore>((set, get) => ({
     let keepPending = false;
     try {
       const result = await bridge.request<T>(method, params, signal);
-      if (method === 'snapshot.selectServer') get().applySnapshot(result as WebUiSnapshot);
+      if (method === 'snapshot.selectServer') {
+        const snapshot = result as Partial<WebUiSnapshot> | null;
+        if (!snapshot || !Array.isArray(snapshot.servers) || !Number.isFinite(snapshot.revision) ||
+            (snapshot.selectedServerId !== null && typeof snapshot.selectedServerId !== 'string'))
+          throw new Error('Server details could not be loaded. Try selecting the server again.');
+        get().applySnapshot(snapshot as WebUiSnapshot);
+      }
       if (method === 'servers.start' || method === 'servers.stop' || method === 'servers.restart' || method === 'servers.delete' || method === 'servers.createManagedCopy' || method === 'versions.install') {
         const accepted = result as { accepted?: boolean; operationId?: string };
         if (accepted?.accepted === true && accepted.operationId) {

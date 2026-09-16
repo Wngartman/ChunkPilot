@@ -1,4 +1,4 @@
-.pageWrap { width: min(100%, 1500px); margin: 0 auto; padding: 26px 30px 42px; }
+.pageWrap { width: min(100%, var(--cp-page-width)); margin: 0 auto; padding: var(--cp-space-6) var(--cp-page-padding) var(--cp-space-8); }
 .pageHeader { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; margin-bottom: 20px; }
 .pageHeader h1 { margin: 0; font-size: 26px; line-height: 1.2; font-weight: 680; letter-spacing: -.012em; }
 .pageHeader p { margin: 5px 0 0; color: var(--cp-text-secondary); font-size: 13px; }
@@ -64,6 +64,8 @@
 .identityText small { display: block; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--cp-text-muted); font-size: 11px; }
 .muted { color: var(--cp-text-muted); }
 .secondary { color: var(--cp-text-secondary); }
+.rosterMetric { min-width: 0; display: grid; gap: var(--cp-space-1); color: var(--cp-text-secondary); font-variant-numeric: tabular-nums; }
+.rosterMetric small { color: var(--cp-text-muted); font-size: 10px; }
 .attention { display: grid; grid-template-columns: 4px 1fr auto; gap: 13px; align-items: center; padding: 14px 16px; border-top: 1px solid var(--cp-border); }
 .attention:first-child { border-top: 0; }
 .attentionBar { align-self: stretch; border-radius: 4px; background: var(--cp-danger); }
@@ -77,7 +79,7 @@
 .progress > span { display: block; height: 100%; background: var(--cp-accent); border-radius: inherit; }
 .cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .serverCard { min-width: 0; border: 1px solid var(--cp-border); border-radius: var(--cp-radius-lg); background: var(--cp-surface); overflow: hidden; transition: border var(--cp-fast), transform var(--cp-fast); }
-.serverCard:hover { border-color: var(--cp-border-strong); transform: translateY(-1px); }
+.serverCard:hover { border-color: var(--cp-border-strong); }
 .serverCardTop { padding: 16px; display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .serverCardMeta { padding: 0 16px 14px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .serverCardMeta label { display: block; margin-bottom: 3px; color: var(--cp-text-muted); font-size: 10px; text-transform: uppercase; letter-spacing: .05em; }
@@ -93,7 +95,7 @@
 .toggle::after { content: ""; display: block; width: 16px; height: 16px; border-radius: 50%; background: var(--cp-text-secondary); transition: transform var(--cp-fast); }
 .toggle[data-checked="true"] { background: var(--cp-accent-muted); border-color: var(--cp-accent); }
 .toggle[data-checked="true"]::after { background: var(--cp-accent-strong); transform: translateX(16px); }
-.stickyBar { position: sticky; z-index: 5; bottom: 12px; display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 16px auto 0; padding: 10px 12px 10px 16px; border: 1px solid var(--cp-border-strong); border-radius: var(--cp-radius-lg); background: var(--cp-translucent-raised); box-shadow: var(--cp-shadow); backdrop-filter: blur(10px); }
+.stickyBar { position: sticky; z-index: 5; bottom: 12px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px; margin: 16px auto 0; padding: 10px 12px 10px 16px; border: 1px solid var(--cp-border-strong); border-radius: var(--cp-radius-lg); background: var(--cp-surface-raised); box-shadow: var(--cp-shadow-compact); }
 .scheduleForm { display: grid; gap: 14px; padding: 16px; }
 .scheduleForm label { display: grid; gap: 6px; color: var(--cp-text-secondary); font-size: 11px; font-weight: 650; }
 .scheduleForm select { min-height: var(--cp-control); border: 1px solid var(--cp-border); border-radius: var(--cp-radius-md); padding: 0 10px; background: var(--cp-input); color: var(--cp-text); font: inherit; }
@@ -102,3 +104,26 @@
 @media (max-width: 1180px) { .workbenchGrid { grid-template-columns: 1fr; } .workbenchRail { grid-template-columns: repeat(2, minmax(0, 1fr)); } .workbenchRail > :last-child { grid-column: 1 / -1; } }
 @media (max-width: 900px) { .onboardingGrid, .cards { grid-template-columns: 1fr; } .onboardingLead { border-right: 0; border-bottom: 1px solid var(--cp-border); } .readiness { display: none; } .serverRosterRow { grid-template-columns: minmax(170px, 1fr) 90px auto auto; } .serverRosterRow > :nth-child(3), .serverRosterRow > :nth-child(4) { display: none; } }
 @media (max-width: 760px) { .pageWrap { padding: 18px 16px 32px; } .pageHeader { align-items: stretch; flex-direction: column; } .toolbar { grid-template-columns: 1fr; } .row { grid-template-columns: minmax(160px, 1fr) auto; } .row > *:nth-child(n+3):not(:last-child), .rowHeader { display: none; } .settingsRow { grid-template-columns: 1fr; gap: 10px; } .toggle { justify-self: start; } }
+.pageHeader > div { min-width: 0; }
+.pageHeader h1 { font-size: var(--cp-font-heading); }
+.pageHeader p { max-width: 70ch; line-height: var(--cp-line-height); }
+.featureIdentity h2 { overflow-wrap: anywhere; }
+.featureIdentity p { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.featureActions, .serverCardActions { flex-wrap: wrap; }
+.serverCardActions { padding-block: var(--cp-space-2); }
+.serverCardTop > .identity { flex: 1; }
+.serverCardMeta > div, .row > *, .serverRosterRow > * { min-width: 0; }
+.serverCardMeta span, .row > span { overflow-wrap: anywhere; }
+.row { padding-block: var(--cp-space-2); }
+.scheduleForm { min-width: 0; }
+.onboardingLead p { max-width: 52ch; }
+@media (max-width: 760px) {
+  .workbenchRail, .featureFacts { grid-template-columns: 1fr; }
+  .featureIdentity { grid-template-columns: 44px minmax(0, 1fr); }
+  .featureIdentity > :last-child { grid-column: 2; justify-self: start; }
+  .featureIcon { width: 44px; height: 44px; }
+  .row, .serverRosterRow { grid-template-columns: minmax(0, 1fr) auto; gap: var(--cp-space-3); padding: var(--cp-space-3); }
+  .serverRosterRow > :nth-last-child(-n+2) { justify-self: start; }
+  .serverCardTop { flex-wrap: wrap; }
+  .onboardingLead { padding: var(--cp-space-6); }
+}

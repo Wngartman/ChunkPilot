@@ -4,11 +4,11 @@
 .search p { color: var(--cp-text-secondary); }
 .filters { display: flex; flex-wrap: wrap; gap: 6px; }
 .filters button { min-height: 30px; padding: 0 10px; border: 1px solid var(--cp-border); background: var(--cp-input); color: var(--cp-text-secondary); cursor: pointer; }
-.filters button[data-selected="true"] { border-color: var(--cp-selected-border); background: var(--cp-selected-surface); color: var(--cp-text-primary); }
+.filters button[data-selected="true"] { border-color: var(--cp-selected-border); background: var(--cp-selected-surface); color: var(--cp-selected-text); }
 .layout { display: grid; grid-template-columns: minmax(240px, .8fr) minmax(0, 1.8fr); gap: 14px; }
 .results, .article { border: 1px solid var(--cp-border); background: var(--cp-surface); }
 .results { min-height: 360px; }
-.results button { display: grid; width: 100%; gap: 4px; padding: 11px 12px; border: 0; border-bottom: 1px solid var(--cp-border); background: transparent; color: var(--cp-text-primary); text-align: left; cursor: pointer; }
+.results button { display: grid; width: 100%; gap: 4px; padding: 11px 12px; border: 0; border-bottom: 1px solid var(--cp-border); background: transparent; color: var(--cp-text); text-align: left; cursor: pointer; }
 .results button[data-selected="true"] { background: var(--cp-selected-surface); }
 .results small, .article p, .article li { color: var(--cp-text-secondary); line-height: 1.5; }
 .article { padding: 18px; }

@@ -57,7 +57,7 @@ export function Shell({ route, activeServerId, onRoute, onOpenServer, onOpenLibr
         <div className={`${styles.navList} ${styles.serverList}`}>{snapshot.servers.map(server => <button key={server.id} className={styles.navItem} data-selected={activeServerId === server.id && route === 'servers'} aria-current={activeServerId === server.id && route === 'servers' ? 'page' : undefined} title={server.name} onClick={() => onOpenServer(server)}><Server size={16} aria-hidden="true" /><span>{server.name}</span><i className={styles.serverDot} data-state={server.state} aria-label={server.state} /></button>)}</div>
       </>}
       <button className={styles.navItem} data-selected={route === 'create'} title="Create server" onClick={() => onRoute('create')}><Plus size={17} aria-hidden="true" /><span>Create server</span></button>
-      <div className={styles.sidebarFooter}><span className={styles.agentState} data-connected={snapshot?.agentConnected}><i />{snapshot?.agentConnected ? 'ChunkPilot ready' : 'Service unavailable'}</span><small>ChunkPilot {snapshot?.appVersion ?? '1.3.0'}</small></div>
+      <div className={styles.sidebarFooter}><span className={styles.agentState} data-connected={snapshot?.agentConnected}><i />{snapshot?.agentConnected ? 'Ready' : 'Service unavailable'}</span><small>ChunkPilot{snapshot?.appVersion ? ` ${snapshot.appVersion}` : ''}</small></div>
     </aside>
     <main ref={workspace} className={styles.workspace}><div className={styles.page}>{children}</div></main>
     {error && <div className={styles.errorBar} role="alert"><span>{error}</span><button className={styles.windowControl} aria-label="Dismiss error" onClick={clearError}><X size={16} /></button></div>}

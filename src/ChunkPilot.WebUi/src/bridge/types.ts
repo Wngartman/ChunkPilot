@@ -477,6 +477,13 @@ export type BridgeMethod =
   | 'versions.check' | 'versions.install' | 'versions.markHealthy' | 'versions.rollback' | 'versions.verify' | 'versions.cancel'
   | 'creation.catalog' | 'creation.paperBuilds' | 'creation.loaderBuilds' | 'creation.previewDestination' | 'creation.chooseFolder' | 'creation.chooseWorld' | 'creation.chooseLegacyArtifact' | 'creation.begin' | 'creation.operations' | 'creation.progress' | 'creation.cancel' | 'creation.retry' | 'creation.discard';
 
+export interface CreationLoaderBuildParameters {
+  platform: string;
+  versionId: string;
+  /** Ask the native provider to verify this exact catalog build, not a guessed download URL. */
+  loaderVersion?: string;
+}
+
 export interface BridgeRequest {
   protocolVersion: typeof protocolVersion;
   id: string;

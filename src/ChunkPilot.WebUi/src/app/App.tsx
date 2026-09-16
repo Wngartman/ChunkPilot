@@ -10,6 +10,7 @@ import { DashboardPage, ServersPage, ActivityPage, AutomationPage, DesignGallery
 import styles from './App.module.css';
 import { NavigationGuardProvider, useGuardedNavigation } from './NavigationGuard';
 import { runMeasuredNavigation } from './performance';
+import { ViewErrorBoundary } from './ViewErrorBoundary';
 
 const ServerWorkspace = lazy(() => import('../features/ServerWorkspace').then(module => ({ default: module.ServerWorkspace })));
 const SettingsPage = lazy(() => import('../features/SettingsPage').then(module => ({ default: module.SettingsPage })));
@@ -52,7 +53,8 @@ function AppContent() {
   useEffect(() => {
     if (!initialized) return;
     const timer = window.setTimeout(() => {
-      void Promise.all([import('../features/ServerWorkspace'), import('../features/SettingsPage'), import('../features/CreateServer')]);
+      // Optional warming must not create an unhandled rejection if a bundled view cannot load.
+      void Promise.all([import('../features/ServerWorkspace'), import('../features/SettingsPage'), import('../features/CreateServer')]).catch(() => undefined);
     }, 50);
     return () => window.clearTimeout(timer);
   }, [initialized]);
@@ -116,5 +118,5 @@ function AppContent() {
     : route === 'settings' ? <SettingsPage initialCategory={settingsCategory} initialHelpArticleId={helpArticleId} onHelpDeepLink={followHelpDeepLink} />
     : route === 'gallery' ? <DesignGalleryPage />
     : <CreateServerPage onDone={() => { setServerRouteId(undefined); setRoute('servers'); }} onActivity={() => navigate(() => setRoute('activity'))} />;
-  return <Shell route={route} activeServerId={activeServerId} onRoute={next => navigate(() => runMeasuredNavigation(next, () => setRoute(next)))} onOpenServer={openServer} onOpenLibrary={openLibrary}><Suspense fallback={<div className={styles.routeLoading}>Loading view…</div>}>{content}</Suspense></Shell>;
+  return <Shell route={route} activeServerId={activeServerId} onRoute={next => navigate(() => runMeasuredNavigation(next, () => setRoute(next)))} onOpenServer={openServer} onOpenLibrary={openLibrary}><ViewErrorBoundary key={`${route}:${activeServerId ?? ''}`}><Suspense fallback={<div className={styles.routeLoading} role="status">Loading view…</div>}>{content}</Suspense></ViewErrorBoundary></Shell>;
 }

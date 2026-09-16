@@ -282,7 +282,7 @@ function BrowseModpackPicker({ value, onChange }: {
   const virtual = useVirtualizer({
     count: session.projects.length,
     getScrollElement: () => resultsRef.current,
-    estimateSize: () => 77,
+    estimateSize: () => 97,
     overscan: 8,
     initialRect: { width: 620, height: 390 }
   });
@@ -442,10 +442,15 @@ function BrowseModpackPicker({ value, onChange }: {
       <Button icon={<File size={14} />} onClick={chooseLocal}>Import pack</Button>
     </div>
     <form className={styles.toolbar} onSubmit={event => { event.preventDefault(); applySearch(); }}>
+      <div className={styles.searchRow}>
       <TextInput type="search" value={session.draft.search}
         onChange={event => updateSession(provider, current => ({ ...current, draft: { ...current.draft, search: event.target.value } }))}
         placeholder={`Search ${provider} modpacks`}
         aria-label={`Search ${provider} modpacks`} />
+      <Button variant="primary" icon={<Search size={14} />} type="submit">Search</Button>
+      {filtersActive && <Button type="button" onClick={clearFilters}>Clear filters</Button>}
+      </div>
+      <div className={styles.filterRow}>
       <Combobox value={session.draft.minecraftVersion} onChange={minecraftVersion => updateSession(provider, current => ({ ...current, draft: { ...current.draft, minecraftVersion } }))}
         options={[{ value: '', label: 'Any Minecraft version' }, ...versionOptions]} ariaLabel="Minecraft version filter" searchable />
       <Combobox value={session.draft.loader} onChange={loader => updateSession(provider, current => ({ ...current, draft: { ...current.draft, loader } }))} ariaLabel="Loader filter"
@@ -454,8 +459,7 @@ function BrowseModpackPicker({ value, onChange }: {
         options={[{ value: '', label: 'All categories' }, { value: 'adventure', label: 'Adventure' }, { value: 'magic', label: 'Magic' }, { value: 'technology', label: 'Technology' }, { value: 'optimization', label: 'Optimization' }, { value: 'multiplayer', label: 'Multiplayer' }]} />
       <Combobox value={session.draft.sort} onChange={sort => updateSession(provider, current => ({ ...current, draft: { ...current.draft, sort } }))} ariaLabel="Sort modpacks"
         options={[{ value: 'Downloads', label: 'Popular' }, { value: 'Updated', label: 'Recently updated' }, { value: 'Newest', label: 'Newest releases' }, { value: 'Name', label: 'Name' }, { value: 'Relevance', label: 'Relevance' }]} />
-      <Button variant="primary" icon={<Search size={14} />} type="submit">Search</Button>
-      {filtersActive && <Button type="button" onClick={clearFilters}>Clear filters</Button>}
+      </div>
     </form>
     <div className={styles.trendNote}><Info size={13} /><span>{status?.detail ?? `${provider} provider status is loading.`}</span></div>
     {session.state === 'Authentication required' && <div className={styles.connectState} role="status"><Box size={22} /><div><strong>CurseForge unavailable</strong><span>{applicationService ? 'The ChunkPilot CurseForge service could not authorize this request. No personal API key is required. Retry later; Modrinth and local pack import remain available.' : 'Connect your approved CurseForge access in the native setup window. Modrinth and local pack import are also available.'}</span>{applicationService ? <Button onClick={() => updateSession('CurseForge', current => ({ ...current, revision: current.revision + 1, loadedKey: '' }))}>Retry</Button> : <CurseForgeSetupButton onConfigured={() => {
@@ -506,7 +510,7 @@ function BrowseModpackPicker({ value, onChange }: {
           {releaseOptions.length > 0 && <label className={styles.releaseLabel}>Exact release<Combobox value={session.selection?.release.versionId ?? ''} onChange={versionId => {
             const release = releaseOptions.find(item => item.versionId === versionId);
             if (release) chooseRelease(release);
-          }} ariaLabel="Exact modpack release" options={releaseOptions.map(release => ({ value: release.versionId, label: `${release.versionName} · Minecraft ${release.minecraftVersion} · ${release.loader}` }))} /></label>}
+          }} ariaLabel="Exact modpack release" wrapLabels options={releaseOptions.map(release => ({ value: release.versionId, label: `${release.versionName} · Minecraft ${release.minecraftVersion} · ${release.loader}` }))} /></label>}
           {session.selection && <><dl><div><dt>Release</dt><dd>{session.selection.release.releaseChannel}</dd></div><div><dt>Server path</dt><dd>{modpackRouteLabel(session.selection.release)}</dd></div><div><dt>Integrity</dt><dd>{session.selection.release.hasIntegrity ? session.selection.project.provider === 'Modrinth' ? 'SHA-1 + SHA-512' : 'Provider SHA-1 + local SHA-256 after download' : 'Unavailable'}</dd></div><div><dt>Size</dt><dd>{session.selection.release.sizeBytes ? `${(session.selection.release.sizeBytes / 1024 / 1024).toFixed(1)} MB` : 'Unavailable'}</dd></div><div><dt>Published</dt><dd>{session.selection.release.publishedAt ? new Date(session.selection.release.publishedAt).toLocaleDateString() : 'Unavailable'}</dd></div></dl>{session.selection.release.installationRouteDetail && <p>{session.selection.release.installationRouteDetail}</p>}{session.selection.release.changelog && <details><summary>Release notes</summary><p>{session.selection.release.changelog}</p></details>}</>}
           {session.selection && !session.selection.release.canCreate && <div className={styles.releaseLimitation} role="status"><strong>Creation unavailable</strong><span>{session.selection.release.limitation || 'This exact release does not have a complete managed server path.'}</span></div>}
           {selectedProject.serverPathChecked === false && session.detailState !== 'failed' && <StatusBadge tone="neutral">Server setup not checked yet</StatusBadge>}

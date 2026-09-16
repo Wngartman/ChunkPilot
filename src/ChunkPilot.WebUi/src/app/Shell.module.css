@@ -28,8 +28,9 @@
 .agentState { display: flex; align-items: center; gap: 7px; color: var(--cp-text-secondary); font-size: 11px; }
 .agentState i { width: 7px; height: 7px; border-radius: 50%; background: var(--cp-danger); }
 .agentState[data-connected="true"] i { background: var(--cp-success); }
-.workspace { grid-column: 2; grid-row: 2; min-width: 0; min-height: 0; overflow-y: auto; overflow-x: hidden; background: radial-gradient(circle at 70% -15%, var(--cp-canvas-haze), transparent 34%), var(--cp-canvas); }
+.workspace { grid-column: 2; grid-row: 2; min-width: 0; min-height: 0; overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable; scroll-padding-block: var(--cp-space-5); background: var(--cp-canvas); }
 .page { min-width: 0; min-height: 100%; animation: pageIn var(--cp-page) ease-out; }
+.page:has(> [data-console="true"]) { height: 100%; }
 .errorBar { position: fixed; z-index: 80; left: calc(var(--cp-sidebar-width) + 22px); right: 22px; bottom: 18px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 14px; border: 1px solid var(--cp-danger-border); border-radius: var(--cp-radius-md); background: var(--cp-danger-surface-deep); box-shadow: var(--cp-shadow); font-size: 13px; }
 @keyframes pageIn { from { opacity: .72; } }
 @media (max-width: 1240px) and (min-width: 981px) {
@@ -44,3 +45,17 @@
   .serverDot { position: absolute; right: 7px; bottom: 7px; width: 6px; height: 6px; }
 }
 @media (forced-colors: active) { .navItem[data-selected="true"] { border-color: Highlight; } }
+.sidebar > .navList:first-child, .sidebar > .navItem, .sidebarFooter { flex-shrink: 0; }
+.sidebar > .navItem { margin-block: var(--cp-space-2); }
+.serverList { scrollbar-gutter: stable; }
+.navItem:focus-visible { outline-offset: -2px; }
+.errorBar > span { min-width: 0; max-height: 30vh; overflow-y: auto; overflow-wrap: anywhere; line-height: var(--cp-line-height); }
+.errorBar > button { flex: 0 0 var(--cp-control); min-height: var(--cp-control); }
+.sidebarFooter small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 560px) {
+  .shell { --cp-sidebar-width: 56px; }
+  .sidebar { padding-inline: var(--cp-space-1); }
+  .windowControls { grid-template-columns: repeat(3, 38px); }
+  .navItem { min-height: var(--cp-touch-target); }
+  .errorBar { left: calc(var(--cp-sidebar-width) + 8px); right: 8px; bottom: 8px; }
+}

@@ -17,6 +17,19 @@ beforeEach(() => { calls.length = 0; window.history.replaceState({}, '', '/?tab=
 afterEach(() => { cleanup(); vi.restoreAllMocks(); window.localStorage.clear(); Reflect.deleteProperty(HTMLElement.prototype, 'scrollTo'); });
 
 describe('bounded workspace rendering', () => {
+  it('keeps an unavailable player count separate from an old positive status hint', () => {
+    window.history.replaceState({}, '', '/?tab=overview');
+    const current = structuredClone(fixtures.stopped);
+    current.servers[0].playerStatus = { online: 4, maximum: 12, source: 'ModernStatus', exact: true, checkedAt: '2026-08-14T16:42:00-06:00', detail: 'Exact count from the modern Minecraft status protocol.' };
+    useAppStore.setState({ snapshot: current, bridge, busy: new Set(), error: null });
+    render(<NavigationGuardProvider><ServerWorkspace serverId={current.servers[0].id} /></NavigationGuardProvider>);
+    expect(screen.getByText('Unknown')).toBeTruthy();
+    expect(screen.getByText('Live count unavailable while stopped.')).toBeTruthy();
+    expect(screen.queryByText(/Exact count from/)).toBeNull();
+    expect(screen.getByText('See How to join for current access.')).toBeTruthy();
+    expect(screen.queryByText('Joinability')).toBeNull();
+  });
+
   it.each([
     ['Starting', 'Server starting', 'Waiting for the server to become ready and report real samples.'],
     ['Stopped', 'Server stopped', 'Start the server to collect performance data.'],

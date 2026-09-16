@@ -24,7 +24,7 @@
 .menuItemIcon { width: 18px; display: inline-grid; place-items: center; color: var(--cp-text-muted); }
 .menuItemDanger .menuItemIcon { color: currentColor; }
 @keyframes menu-in { from { opacity: 0; transform: translateY(-3px); } }
-.badge { display: inline-flex; align-items: center; gap: 6px; min-height: 23px; padding: 0 8px; border-radius: 999px; border: 1px solid var(--cp-border); color: var(--cp-text-secondary); font-size: 11px; font-weight: 700; letter-spacing: .02em; white-space: nowrap; }
+.badge { justify-self: start; display: inline-flex; align-items: center; gap: 6px; min-height: 23px; padding: 0 8px; border-radius: 999px; border: 1px solid var(--cp-border); color: var(--cp-text-secondary); font-size: 11px; font-weight: 700; letter-spacing: .02em; white-space: nowrap; }
 .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; box-shadow: 0 0 0 2px color-mix(in srgb, currentColor 17%, transparent); }
 .success { color: var(--cp-success); border-color: color-mix(in srgb, var(--cp-success) 34%, var(--cp-border)); background: color-mix(in srgb, var(--cp-success) 8%, transparent); }
 .warning { color: var(--cp-warning); border-color: color-mix(in srgb, var(--cp-warning) 34%, var(--cp-border)); background: color-mix(in srgb, var(--cp-warning) 8%, transparent); }
@@ -48,13 +48,15 @@
 .comboboxList { min-height: 0; overflow: auto; }
 .comboboxOption { width: 100%; min-height: 34px; display: grid; grid-template-columns: minmax(0, 1fr) 18px; align-items: center; gap: 8px; border: 0; border-radius: var(--cp-radius-sm); padding: 6px 9px; background: transparent; color: var(--cp-text); font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
 .comboboxOption > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.comboboxTrigger[data-wrap="true"] { padding-block: var(--cp-space-2); }
+.comboboxTrigger[data-wrap="true"] > span:first-child, .comboboxPopover[data-wrap="true"] .comboboxOption > span:first-child { white-space: normal; overflow: visible; overflow-wrap: anywhere; line-height: var(--cp-line-height); }
 .comboboxOption:hover, .comboboxOption[data-active="true"] { background: var(--cp-surface-hover); }
 .comboboxOption:focus-visible { outline: 2px solid var(--cp-focus); outline-offset: -2px; }
-.comboboxOption[aria-selected="true"] { color: var(--cp-accent-text); background: var(--cp-accent-soft); }
+.comboboxOption[aria-selected="true"] { color: var(--cp-selected-text); background: var(--cp-selected-surface); box-shadow: inset 2px 0 var(--cp-accent); }
 .comboboxOption:disabled { color: var(--cp-text-muted); cursor: default; opacity: .58; }
 .comboboxCheck { justify-self: end; font-weight: 700; }
 .comboboxEmpty { padding: 14px 9px; color: var(--cp-text-muted); font-size: 12px; text-align: center; }
-.empty { min-height: 240px; display: grid; place-items: center; text-align: center; padding: 36px; color: var(--cp-text-secondary); }
+.empty { min-height: 180px; display: grid; place-items: center; text-align: center; padding: var(--cp-space-6); color: var(--cp-text-secondary); }
 .emptyIcon { display: grid; place-items: center; width: 54px; height: 54px; margin: 0 auto 16px; border: 1px solid var(--cp-border); border-radius: 50%; color: var(--cp-accent); background: var(--cp-surface-raised); }
 .empty h2 { margin: 0 0 8px; color: var(--cp-text); font-size: 20px; }
 .empty p { max-width: 440px; margin: 0 0 20px; line-height: 1.5; font-size: 13px; }
@@ -70,9 +72,31 @@
 .skeleton { background: linear-gradient(90deg, var(--cp-surface) 30%, var(--cp-surface-hover) 50%, var(--cp-surface) 70%); background-size: 240% 100%; animation: pulse 1.4s ease infinite; border-radius: 4px; }
 @keyframes pulse { to { background-position: -240% 0; } }
 .dialogBackdrop { position: fixed; z-index: 1000; inset: 0; display: grid; place-items: center; padding: 24px; background: color-mix(in srgb, var(--cp-canvas) 76%, transparent); }
-.dialog { width: min(440px, 100%); border: 1px solid var(--cp-border-strong); border-radius: var(--cp-radius-lg); padding: 20px; background: var(--cp-surface-raised); box-shadow: var(--cp-shadow); }
+.dialog { width: min(440px, 100%); max-height: calc(100dvh - 48px); min-height: 0; display: flex; flex-direction: column; border: 1px solid var(--cp-border-strong); border-radius: var(--cp-radius-lg); padding: var(--cp-space-5); background: var(--cp-surface-raised); box-shadow: var(--cp-shadow); overflow-wrap: anywhere; }
 .dialogWide { width: min(680px, 100%); }
 .dialog h2 { margin: 0; font-size: 18px; }
 .dialog p { margin: 9px 0 20px; color: var(--cp-text-secondary); font-size: 13px; line-height: 1.55; }
-.dialogBody { margin-top: 14px; }
-.dialogActions { display: flex; justify-content: flex-end; gap: 8px; }
+.dialogBody { min-height: 0; overflow-y: auto; overscroll-behavior: contain; margin-top: 14px; padding: 2px; }
+.dialogActions { flex-shrink: 0; display: flex; justify-content: flex-end; flex-wrap: wrap; gap: var(--cp-space-2); margin-top: var(--cp-space-4); }
+.button { max-width: 100%; line-height: 1.3; }
+.button svg, .dot { flex-shrink: 0; }
+.input { min-width: 0; }
+.input:disabled { color: var(--cp-text-muted); opacity: .65; }
+.input[readonly] { color: var(--cp-text-secondary); background: var(--cp-surface); }
+.badge { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.panelTitle { flex-wrap: wrap; padding-block: var(--cp-space-2); }
+.panelTitle h2 { min-width: 0; overflow-wrap: anywhere; }
+.empty p { margin-inline: auto; }
+.empty h2 { font-size: 18px; }
+.dialog > h2 { flex-shrink: 0; }
+.dialog > p { min-height: 0; overflow-y: auto; }
+@media (max-width: 520px) {
+  .dialogBackdrop { padding: var(--cp-space-3); }
+  .dialog { max-height: calc(100dvh - 24px); padding: var(--cp-space-4); }
+  .empty { padding: var(--cp-space-5); }
+}
+@media (forced-colors: active) {
+  .primary, .comboboxOption[aria-selected="true"] { forced-color-adjust: none; color: HighlightText; background: Highlight; }
+  .switch[data-checked="true"] { border-color: Highlight; }
+  .switch[data-checked="true"] span { background: Highlight; }
+}

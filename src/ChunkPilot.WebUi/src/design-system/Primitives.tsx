@@ -1,6 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes } from 'react';
 import { createPortal } from 'react-dom';
-import { Search, ServerOff } from './Icons';
+import { Check, Search, ServerOff } from './Icons';
 import styles from './Primitives.module.css';
 
 export function Button({ variant = 'secondary', icon, className = '', children, ...props }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: 'primary' | 'secondary' | 'danger' | 'subtle'; icon?: ReactNode }) {
@@ -31,9 +31,9 @@ export function Switch({ checked, label, ...props }: Omit<ButtonHTMLAttributes<H
 export interface ComboboxOption { value: string; label: string; disabled?: boolean; }
 
 /** Select-only, portal-hosted combobox for WebView-safe provider/version/filter menus. */
-export function Combobox({ value, options, onChange, ariaLabel, placeholder = 'Select', disabled = false, searchable = false, className = '' }: {
+export function Combobox({ value, options, onChange, ariaLabel, placeholder = 'Select', disabled = false, searchable = false, wrapLabels = false, className = '' }: {
   value: string; options: ComboboxOption[]; onChange: (value: string) => void; ariaLabel: string;
-  placeholder?: string; disabled?: boolean; searchable?: boolean; className?: string;
+  placeholder?: string; disabled?: boolean; searchable?: boolean; wrapLabels?: boolean; className?: string;
 }) {
   const id = useId();
   const trigger = useRef<HTMLButtonElement>(null);
@@ -54,7 +54,7 @@ export function Combobox({ value, options, onChange, ariaLabel, placeholder = 'S
     const updatePosition = () => {
       const rect = trigger.current?.getBoundingClientRect();
       if (!rect) return;
-      const margin = 8; const gap = 5; const desired = Math.min(320, Math.max(rect.width, 180));
+      const margin = 8; const gap = 5; const desired = wrapLabels ? Math.max(rect.width, 380) : Math.min(320, Math.max(rect.width, 180));
       const width = Math.min(desired, window.innerWidth - margin * 2);
       const below = window.innerHeight - rect.bottom - margin - gap;
       const above = rect.top - margin - gap;
@@ -80,23 +80,24 @@ export function Combobox({ value, options, onChange, ariaLabel, placeholder = 'S
       window.removeEventListener('scroll', updatePosition, true);
       document.removeEventListener('pointerdown', close);
     };
-  }, [open]);
+  }, [open, wrapLabels]);
 
   useEffect(() => {
     if (!open) return;
     setQuery('');
     const index = filtered.findIndex(option => option.value === value && !option.disabled);
     setActive(index >= 0 ? index : Math.max(0, filtered.findIndex(option => !option.disabled)));
-    window.setTimeout(() => searchable
+    const timer = window.setTimeout(() => searchable
       ? search.current?.focus()
       : list.current?.querySelector<HTMLElement>('[data-active="true"]')?.focus(), 0);
+    return () => window.clearTimeout(timer);
   }, [open, searchable, value]);
 
   useEffect(() => {
     if (!open) return;
-    const index = Math.max(0, filtered.findIndex(option => !option.disabled));
-    setActive(index);
-  }, [filtered, open]);
+    const selectedIndex = query ? -1 : filtered.findIndex(option => option.value === value && !option.disabled);
+    setActive(selectedIndex >= 0 ? selectedIndex : Math.max(0, filtered.findIndex(option => !option.disabled)));
+  }, [filtered, open, query, value]);
 
   const move = (direction: 1 | -1) => {
     if (!filtered.length) return;
@@ -111,9 +112,24 @@ export function Combobox({ value, options, onChange, ariaLabel, placeholder = 'S
     onChange(option.value); setOpen(false); trigger.current?.focus();
   };
   const onKeyDown = (event: React.KeyboardEvent) => {
+    const editingSearch = event.target === search.current;
     if (event.key === 'Escape') { event.preventDefault(); setOpen(false); trigger.current?.focus(); return; }
+    if (open && event.key === 'Tab') { setOpen(false); trigger.current?.focus(); return; }
+    // Spaces and caret navigation belong to the search field, not option selection.
+    if (editingSearch && [' ', 'Home', 'End'].includes(event.key)) return;
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-      event.preventDefault(); if (!open) setOpen(true); else move(event.key === 'ArrowDown' ? 1 : -1); return;
+      event.preventDefault();
+      if (!open) setOpen(true);
+      else if (editingSearch) list.current?.querySelector<HTMLElement>(`[data-index="${active}"]`)?.focus();
+      else move(event.key === 'ArrowDown' ? 1 : -1);
+      return;
+    }
+    if (open && (event.key === 'Home' || event.key === 'End')) {
+      event.preventDefault();
+      const enabled = filtered.map((option, index) => option.disabled ? -1 : index).filter(index => index >= 0);
+      const index = event.key === 'Home' ? enabled[0] ?? -1 : enabled[enabled.length - 1] ?? -1;
+      if (index >= 0) { setActive(index); list.current?.querySelector<HTMLElement>(`[data-index="${index}"]`)?.focus(); }
+      return;
     }
     if (open && (event.key === 'Enter' || event.key === ' ')) {
       event.preventDefault(); const option = filtered[active]; if (option) choose(option);
@@ -122,11 +138,11 @@ export function Combobox({ value, options, onChange, ariaLabel, placeholder = 'S
 
   return <>
     <button ref={trigger} type="button" className={`${styles.input} ${styles.comboboxTrigger} ${className}`}
-      role="combobox" aria-label={ariaLabel} aria-controls={`${id}-listbox`} aria-expanded={open}
+      role="combobox" data-wrap={wrapLabels || undefined} aria-label={ariaLabel} aria-controls={`${id}-listbox`} aria-expanded={open}
       aria-haspopup="listbox" disabled={disabled} onKeyDown={onKeyDown} onClick={() => setOpen(current => !current)}>
-      <span>{selected?.label ?? placeholder}</span><span className={styles.comboboxChevron} aria-hidden="true" />
+      <span title={selected?.label}>{selected?.label ?? placeholder}</span><span className={styles.comboboxChevron} aria-hidden="true" />
     </button>
-    {open && createPortal(<div ref={list} className={styles.comboboxPopover}
+    {open && createPortal(<div ref={list} className={styles.comboboxPopover} data-wrap={wrapLabels || undefined}
       style={{ left: position.left, top: position.top, width: position.width, maxHeight: position.maxHeight }} onKeyDown={onKeyDown}>
       {searchable && <input ref={search} type="search" className={`${styles.input} ${styles.comboboxSearch}`}
         value={query} onChange={event => setQuery(event.target.value)} aria-label={`Search ${ariaLabel.toLowerCase()}`} />}
@@ -135,7 +151,7 @@ export function Combobox({ value, options, onChange, ariaLabel, placeholder = 'S
         aria-selected={option.value === value} aria-disabled={option.disabled || undefined} tabIndex={index === active ? 0 : -1}
         data-active={index === active} data-index={index} disabled={option.disabled}
         className={styles.comboboxOption} onMouseMove={() => !option.disabled && setActive(index)} onClick={() => choose(option)}>
-        <span>{option.label}</span>{option.value === value && <span className={styles.comboboxCheck} aria-hidden="true">✓</span>}
+        <span title={option.label}>{option.label}</span>{option.value === value && <Check className={styles.comboboxCheck} size={14} aria-hidden="true" />}
       </button>)}
       {!filtered.length && <div className={styles.comboboxEmpty}>No matching options</div>}
       </div>
@@ -162,30 +178,47 @@ export function Sparkline({ values, color = 'var(--cp-accent)' }: { values: numb
   return <svg className={styles.spark} viewBox="0 0 100 58" preserveAspectRatio="none" role="img" aria-label={`Trend from ${values[0].toFixed(1)} to ${values.at(-1)?.toFixed(1)}`}><polyline fill="none" stroke={color} strokeWidth="1.4" vectorEffect="non-scaling-stroke" points={points} /></svg>;
 }
 
+const dialogControls = (element: HTMLElement | null) => Array.from(element?.querySelectorAll<HTMLElement>(
+  'button:not(:disabled), [href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])'
+) ?? []).filter(control => !control.closest('[hidden], [aria-hidden="true"], [inert]'));
+
+function useDialogFocus(open: boolean, onClose: () => void) {
+  const ref = useRef<HTMLElement>(null);
+  const close = useRef(onClose);
+  close.current = onClose;
+  useEffect(() => {
+    if (!open) return;
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const timer = window.setTimeout(() => (dialogControls(ref.current)[0] ?? ref.current)?.focus(), 0);
+    const escape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return;
+      const dialogs = document.querySelectorAll('[aria-modal="true"]');
+      if (dialogs[dialogs.length - 1] !== ref.current) return;
+      event.preventDefault(); close.current();
+    };
+    window.addEventListener('keydown', escape);
+    return () => { window.clearTimeout(timer); window.removeEventListener('keydown', escape); if (previous?.isConnected) previous.focus(); };
+  }, [open]);
+  return ref;
+}
+
+function trapDialogFocus(event: React.KeyboardEvent<HTMLElement>) {
+  if (event.key !== 'Tab' || event.defaultPrevented) return;
+  const controls = dialogControls(event.currentTarget);
+  const first = controls[0]; const last = controls[controls.length - 1];
+  if (!first) { event.preventDefault(); event.currentTarget.focus(); }
+  else if (event.shiftKey && (document.activeElement === first || document.activeElement === event.currentTarget)) { event.preventDefault(); last.focus(); }
+  else if (!event.shiftKey && (document.activeElement === last || document.activeElement === event.currentTarget)) { event.preventDefault(); first.focus(); }
+}
+
 export function Dialog({ open, title, children, footer, wide = false, onClose }: {
   open: boolean; title: string; children: ReactNode; footer?: ReactNode; wide?: boolean; onClose: () => void;
 }) {
   const titleId = useId();
-  const dialogRef = useRef<HTMLElement>(null);
-  const previousFocus = useRef<HTMLElement | null>(null);
-  useEffect(() => {
-    if (!open) return;
-    previousFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const focusTimer = window.setTimeout(() => dialogRef.current?.querySelector<HTMLElement>('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')?.focus(), 0);
-    const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.preventDefault(); onClose(); } };
-    window.addEventListener('keydown', escape);
-    return () => { window.clearTimeout(focusTimer); window.removeEventListener('keydown', escape); previousFocus.current?.focus(); };
-  }, [open, onClose]);
+  const dialogRef = useDialogFocus(open, onClose);
   if (!open) return null;
   return createPortal(<div className={styles.dialogBackdrop} onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}>
-    <section ref={dialogRef} className={`${styles.dialog} ${wide ? styles.dialogWide : ''}`} role="dialog" aria-modal="true" aria-labelledby={titleId} onKeyDown={event => {
-      if (event.key !== 'Tab') return;
-      const controls = Array.from(dialogRef.current?.querySelectorAll<HTMLElement>('button:not(:disabled), [href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])') ?? []);
-      if (!controls.length) return;
-      const first = controls[0]; const last = controls[controls.length - 1];
-      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
-      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
-    }}>
+    <section ref={dialogRef} className={`${styles.dialog} ${wide ? styles.dialogWide : ''}`} role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1} onKeyDown={trapDialogFocus}>
       <h2 id={titleId}>{title}</h2><div className={styles.dialogBody}>{children}</div>
       {footer && <div className={styles.dialogActions}>{footer}</div>}
     </section>
@@ -195,25 +228,13 @@ export function Dialog({ open, title, children, footer, wide = false, onClose }:
 export function ConfirmDialog({ open, title, detail, confirmLabel, destructive = false, onConfirm, onCancel }: {
   open: boolean; title: string; detail: string; confirmLabel: string; destructive?: boolean; onConfirm: () => void; onCancel: () => void;
 }) {
-  const dialogRef = useRef<HTMLElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.preventDefault(); onCancel(); } };
-    window.addEventListener('keydown', escape);
-    return () => window.removeEventListener('keydown', escape);
-  }, [open, onCancel]);
+  const dialogRef = useDialogFocus(open, onCancel);
+  const titleId = useId(); const detailId = useId();
   if (!open) return null;
-  return <div className={styles.dialogBackdrop} onMouseDown={event => { if (event.target === event.currentTarget) onCancel(); }}>
-    <section ref={dialogRef} className={styles.dialog} role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-detail" onKeyDown={event => {
-      if (event.key !== 'Tab') return;
-      const controls = Array.from(dialogRef.current?.querySelectorAll<HTMLElement>('button:not(:disabled), [href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled)') ?? []);
-      if (!controls.length) return;
-      const first = controls[0]; const last = controls[controls.length - 1];
-      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
-      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
-    }}>
-      <h2 id="confirm-title">{title}</h2><p id="confirm-detail">{detail}</p>
-      <div className={styles.dialogActions}><Button autoFocus onClick={onCancel}>Cancel</Button><Button variant={destructive ? 'danger' : 'primary'} onClick={onConfirm}>{confirmLabel}</Button></div>
+  return createPortal(<div className={styles.dialogBackdrop} onMouseDown={event => { if (event.target === event.currentTarget) onCancel(); }}>
+    <section ref={dialogRef} className={styles.dialog} role="alertdialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={detailId} tabIndex={-1} onKeyDown={trapDialogFocus}>
+      <h2 id={titleId}>{title}</h2><p id={detailId}>{detail}</p>
+      <div className={styles.dialogActions}><Button onClick={onCancel}>Cancel</Button><Button variant={destructive ? 'danger' : 'primary'} onClick={onConfirm}>{confirmLabel}</Button></div>
     </section>
-  </div>;
+  </div>, document.body);
 }

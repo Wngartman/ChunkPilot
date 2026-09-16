@@ -65,6 +65,8 @@
   .pluginInstalledTable td:nth-child(3)::before { content: "JAR state"; }
   .pluginInstalledTable td:nth-child(4)::before { content: "Load health"; }
   .pluginInstalledTable td:nth-child(5)::before { content: "Compatibility"; }
+  .pluginInstalledTable[data-readonly="true"] td:last-child { justify-content: space-between; }
+  .pluginInstalledTable[data-readonly="true"] td:last-child::before { display: block; }
   .pluginUpdatesTable td:nth-child(2)::before { content: "Installed"; }
   .pluginUpdatesTable td:nth-child(3)::before { content: "Compatible release"; }
   .pluginUpdatesTable td:nth-child(4)::before { content: "Status"; }

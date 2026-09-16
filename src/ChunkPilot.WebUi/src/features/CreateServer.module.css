@@ -1,6 +1,6 @@
 .wrap { min-height: 100%; width: min(100%, 1180px); margin: 0 auto; padding: 24px 28px 40px; }
 .header { margin-bottom: 18px; }
-.header h1 { margin: 0; font-size: 26px; font-weight: 680; letter-spacing: -.012em; }
+.header h1 { margin: 0; font-size: var(--cp-font-heading); font-weight: 680; letter-spacing: -.012em; }
 .header p { margin: 5px 0 0; color: var(--cp-text-secondary); font-size: 13px; }
 .layout { display: grid; grid-template-columns: 210px minmax(0, 1fr); gap: 14px; align-items: start; }
 .steps { display: grid; gap: 3px; padding: 8px; border: 1px solid var(--cp-border); border-radius: var(--cp-radius-lg); background: var(--cp-surface); }
@@ -14,9 +14,9 @@
 .eyebrow { color: var(--cp-accent-strong); font-size: 10px; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
 .stageHead h2 { margin: 6px 0 4px; font-size: 20px; font-weight: 690; }
 .stageHead p { margin: 0; color: var(--cp-text-secondary); font-size: 12px; }
-.body { min-height: 0; padding: 20px 22px; overflow: auto; }
-.footer { min-height: 62px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 14px 0 22px; border-top: 1px solid var(--cp-border); background: var(--cp-input); }
-.footer > div { display: flex; align-items: center; gap: 10px; }
+.body { min-width: 0; min-height: 0; padding: var(--cp-space-5); }
+.footer { min-height: 62px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--cp-space-3); padding: var(--cp-space-3) var(--cp-space-5); border-top: 1px solid var(--cp-border); background: var(--cp-input); }
+.footer > div { min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: var(--cp-space-2); }
 .choices { display: grid; gap: 8px; }
 .gameSelection { display: grid; gap: 18px; }
 .primaryChoices { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; }
@@ -121,6 +121,8 @@
 .buildList button small { overflow: hidden; color: var(--cp-text-muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 .buildList button[data-selected="true"] .radio { border: 4px solid var(--cp-accent); background: white; }
 .memoryIntro { margin-bottom: 12px; }
+.buildPagination { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: var(--cp-space-2); margin-top: var(--cp-space-2); }
+.buildPagination > span { margin-right: auto; color: var(--cp-text-muted); font-size: var(--cp-font-detail); }
 .memoryIntro strong { font-size: 13px; }
 .memoryIntro p { margin: 4px 0 0; color: var(--cp-text-muted); font-size: 11px; }
 .advanced { margin-top: 12px; border-top: 1px solid var(--cp-border); padding-top: 10px; color: var(--cp-text-secondary); font-size: 11px; }
@@ -132,3 +134,18 @@
 @media (prefers-reduced-motion: reduce) { .disclosure, .operationTrack[data-indeterminate="true"] > span { animation: none; } .operationTrack > span { transition: none; } }
 @media (max-width: 850px) { .primaryChoices { grid-template-columns: 1fr; } }
 @media (max-width: 650px) { .wrap { padding: 18px 16px 32px; } .disclosure, .buildList, .worldChoices { grid-template-columns: 1fr; } .disclosureIntro, .loaderDisclosure { grid-column: 1; } .loaderDisclosure { grid-template-columns: 1fr; } .presetGrid { grid-template-columns: repeat(2, 1fr); } .reviewRow { grid-template-columns: 110px 1fr; } .readinessFacts { grid-template-columns: 1fr; } .inline, .worldResult { grid-template-columns: 1fr; } }
+.wrap { padding-inline: var(--cp-page-padding); }
+.step:focus-visible { outline-offset: -3px; }
+.reviewRow, .notice, .error { overflow-wrap: anywhere; }
+.stageHead p { line-height: var(--cp-line-height); }
+.notice > svg { flex-shrink: 0; }
+.choice p, .field small, .worldUpload > p { font-size: var(--cp-font-detail); line-height: var(--cp-line-height); }
+.choice[data-selected="true"] .radio, .worldChoices > button[data-selected="true"] .radio, .buildList button[data-selected="true"] .radio { background: var(--cp-on-accent); }
+@media (max-width: 520px) {
+  .body, .stageHead { padding: var(--cp-space-4); }
+  .steps { gap: 0; padding: var(--cp-space-1); }
+  .step { min-height: var(--cp-touch-target); }
+  .reviewRow { grid-template-columns: 1fr; gap: var(--cp-space-1); }
+  .footer { padding: var(--cp-space-3); }
+  .legacyArtifactResult { grid-template-columns: 1fr; }
+}

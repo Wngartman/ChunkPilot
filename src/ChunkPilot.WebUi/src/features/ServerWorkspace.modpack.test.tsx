@@ -27,6 +27,20 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 describe('installed modpack workspace', () => {
+  it('exposes read-only installed mods without individual mutations or provider lookups', async () => {
+    const current = useAppStore.getState().snapshot!;
+    render(<NavigationGuardProvider><ServerWorkspace serverId={current.servers[0].id} /></NavigationGuardProvider>);
+    const summary = screen.getByText('Installed mods · 2');
+    expect(screen.queryByText('Lithium')).toBeNull();
+    fireEvent.click(summary);
+    expect(await screen.findByText('Lithium')).toBeTruthy();
+    expect(screen.getByText(/Per-file pack ownership is not available/)).toBeTruthy();
+    for (const name of ['Configure', 'Enable', 'Disable', 'Remove', 'Browse', 'Check updates'])
+      expect(screen.queryByRole('button', { name })).toBeNull();
+    expect(calls.some(call => call.method.startsWith('mods.'))).toBe(false);
+    expect(screen.queryByText(/shows pack-managed and user-added/)).toBeNull();
+  });
+
   it('does not present an unchecked provider as up to date or invent a pack name from the server alias', () => {
     const snapshot = structuredClone(fixtures.modpack);
     const server = snapshot.servers[0];
