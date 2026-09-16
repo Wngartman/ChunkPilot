@@ -19,10 +19,10 @@ user data outside this extracted folder:
 
 Deleting the extracted application folder does not delete those locations.
 
-CurseForge is optional. Open Settings > Set up CurseForge and enter your own approved
-API key in the native Windows dialog. The key is protected for your Windows user;
-no shared developer key is included. Removing it does not remove installed servers.
-Author download restrictions still apply.
+CurseForge is optional. Application-service builds need no personal API key: the
+application credential stays on the backend. Other builds offer Settings > Set up
+CurseForge for your own approved key, protected for your Windows user. No shared
+key is included in either package. Author download restrictions still apply.
 
 When updating portable binaries, close ChunkPilot and let its servers finish saving
 and stopping, then extract the complete new ZIP to a new folder. Do not move or
