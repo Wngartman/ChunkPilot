@@ -6,14 +6,25 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+function Assert-ReleaseSignaturePolicy(
+    [string]$Status, [bool]$HasSigner, [bool]$HasTimestamp, [bool]$RequireSigned) {
+    # An intentionally unsigned release is not permission to ship a broken or untrusted signature.
+    if ($Status -cnotin @('Valid', 'NotSigned') -or ($Status -ceq 'Valid' -and -not $HasSigner)) {
+        throw "The release signature is invalid or untrusted; status was $Status."
+    }
+    if ($RequireSigned -and ($Status -cne 'Valid' -or -not $HasSigner -or -not $HasTimestamp)) {
+        throw "A valid trusted and timestamped release signature was required; status was $Status."
+    }
+}
+
 $results = foreach ($itemPath in $Path) {
     $full = [IO.Path]::GetFullPath($itemPath)
     if (-not (Test-Path -LiteralPath $full -PathType Leaf)) { throw "Signature input is missing: $full" }
     $signature = Get-AuthenticodeSignature -LiteralPath $full
+    Assert-ReleaseSignaturePolicy -Status ([string]$signature.Status) `
+        -HasSigner ($null -ne $signature.SignerCertificate) `
+        -HasTimestamp ($null -ne $signature.TimeStamperCertificate) -RequireSigned ([bool]$RequireSigned)
     $signed = $signature.Status -eq 'Valid' -and $null -ne $signature.SignerCertificate
-    if ($RequireSigned -and (-not $signed -or -not $signature.TimeStamperCertificate)) {
-        throw "A valid trusted and timestamped signature was required for $full; status was $($signature.Status)."
-    }
     [PSCustomObject]@{
         Path = $full
         Status = [string]$signature.Status

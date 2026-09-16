@@ -7,6 +7,13 @@ param(
     [ValidatePattern('\A(?:|v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(alpha|beta|rc)\.[1-9][0-9]*)?)\z')]
     [string]$Supersedes = '',
 
+    [ValidatePattern('\A(?:|v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(alpha|beta|rc)\.[1-9][0-9]*)?)\z')]
+    [string]$PreviousRelease = '',
+
+    # Public deployment origin only. Never pass an API key to a build or workflow.
+    [ValidatePattern('\A(?:|https://[a-z0-9-]+(?:\.[a-z0-9-]+)+(?::443)?/?)\z')]
+    [string]$CurseForgeServiceEndpoint = '',
+
     [string]$Repository = 'Wngartman/ChunkPilot'
 )
 
@@ -16,6 +23,18 @@ $tag = if ($Version.StartsWith('v', [StringComparison]::Ordinal)) { $Version } e
 $supersedesTag = if (-not $Supersedes) { '' }
     elseif ($Supersedes.StartsWith('v', [StringComparison]::Ordinal)) { $Supersedes }
     else { "v$Supersedes" }
+$previousReleaseTag = if (-not $PreviousRelease) { '' }
+    elseif ($PreviousRelease.StartsWith('v', [StringComparison]::Ordinal)) { $PreviousRelease }
+    else { "v$PreviousRelease" }
+if ($CurseForgeServiceEndpoint) {
+    $serviceUri = [Uri]$CurseForgeServiceEndpoint
+    if ($serviceUri.IsLoopback -or $serviceUri.HostNameType -ne [UriHostNameType]::Dns -or
+        $serviceUri.IdnHost.EndsWith('.localhost', [StringComparison]::OrdinalIgnoreCase) -or
+        $serviceUri.IdnHost.EndsWith('.local', [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'CurseForgeServiceEndpoint must be a public HTTPS DNS origin, not a local service.'
+    }
+    $CurseForgeServiceEndpoint = $serviceUri.AbsoluteUri.TrimEnd('/') + '/'
+}
 
 function Invoke-Git([Parameter(ValueFromRemainingArguments)][string[]]$Arguments) {
     $output = @(& git -C $repoRoot @Arguments)
@@ -51,6 +70,7 @@ function Assert-GitHubReleaseUnused([string]$ReleaseTag) {
 }
 
 if ($tag -eq $supersedesTag) { throw 'A release cannot supersede itself.' }
+if ($tag -eq $previousReleaseTag) { throw 'A release cannot be its own previous-version upgrade test.' }
 if (-not (Get-Command gh -ErrorAction SilentlyContinue)) { throw 'GitHub CLI (gh) is required.' }
 
 Push-Location $repoRoot
@@ -77,8 +97,16 @@ try {
     Assert-GitHubReleaseUnused $tag
 
     if ($supersedesTag) {
-        & gh release view $supersedesTag --repo $Repository --json tagName,isDraft,isPrerelease | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw "Superseded release $supersedesTag does not exist." }
+        $previous = & gh release view $supersedesTag --repo $Repository --json tagName,isDraft,isPrerelease | ConvertFrom-Json
+        if ($LASTEXITCODE -ne 0 -or -not $previous -or $previous.isDraft -or -not $previous.isPrerelease) {
+            throw 'Supersedes may edit only a public prerelease; use PreviousRelease for stable upgrade tests.'
+        }
+    }
+    if ($previousReleaseTag) {
+        $previous = & gh release view $previousReleaseTag --repo $Repository --json tagName,isDraft | ConvertFrom-Json
+        if ($LASTEXITCODE -ne 0 -or -not $previous -or $previous.isDraft) {
+            throw "Previous release $previousReleaseTag is not public."
+        }
     }
 
     $template = Get-Content -LiteralPath (Join-Path $repoRoot 'release\RELEASE_NOTES.template.md') -Raw
@@ -92,7 +120,8 @@ try {
 
     $dispatchStarted = [DateTimeOffset]::UtcNow.AddSeconds(-5)
     $dispatch = @(& gh workflow run release.yml --repo $Repository --ref main `
-        -f "tag=$tag" -f "release_commit=$head" -f "supersedes=$supersedesTag")
+        -f "tag=$tag" -f "release_commit=$head" -f "supersedes=$supersedesTag" `
+        -f "previous_release=$previousReleaseTag" -f "curseforge_service_endpoint=$CurseForgeServiceEndpoint")
     if ($LASTEXITCODE -ne 0) { throw 'Release workflow dispatch failed.' }
     $dispatchText = $dispatch -join "`n"
     $runId = if ($dispatchText -match '/actions/runs/(?<id>[0-9]+)') { $matches.id } else { $null }
@@ -161,6 +190,8 @@ try {
         Release = $release.url
         Workflow = $runUrl
         Superseded = $supersedesTag
+        PreviousRelease = $previousReleaseTag
+        CurseForgeServiceEndpoint = $CurseForgeServiceEndpoint
         Installer = "ChunkPilot-Setup-$tag.exe"
         ProductVersion = $manifest.ProductVersion
     }

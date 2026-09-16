@@ -6,6 +6,11 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
+# Match only paths relative to the extracted consumer package, never the containing user/temp path.
+# Certification and development tooling are intentionally not consumer entry points.
+$prohibitedConsumerDirectoryPattern = '(^|[\\/])(node_modules|\.secrets?|secrets?|WebView2|CurrentProfile|Certification|dev-current|dev-tools|dev-helpers|development|private|\.private|\.wrangler|scripts|tests?|TestResults)([\\/]|$)'
+$prohibitedConsumerFilePattern = '(^|[\\/])(secrets\.dat|chunkpilot\.db(?:-wal|-shm)?|curseforge-api-key[^\\/]*\.txt|ChunkPilot\.(Certification|FakeServer)(\.[^\\/]*)?|\.chunkpilot-build-manifest\.json|\.dev\.vars(\.[^\\/]*)?)$'
+$prohibitedConsumerExtensionPattern = '\.(pdb|cs|csproj|jar|mrpack|ps1|psm1|psd1|sln|slnx|pfx|p12|pem|key)$'
 $zip = [IO.Path]::GetFullPath($PortableZip)
 if (-not (Test-Path -LiteralPath $zip)) { throw "Portable ZIP was not found: $zip" }
 $testRoot = Join-Path ([IO.Path]::GetTempPath()) ("ChunkPilot-portable-release-" + [Guid]::NewGuid().ToString('N'))
@@ -16,11 +21,10 @@ try {
         if (-not (Test-Path -LiteralPath (Join-Path $testRoot $required))) { throw "Portable package is missing $required." }
     }
     $prohibited = @(Get-ChildItem -LiteralPath $testRoot -File -Recurse | Where-Object {
-        $_.Extension -in @('.pdb', '.cs', '.csproj', '.jar', '.mrpack') -or
-        $_.FullName -match '[\\/](node_modules|\.secrets?|secrets?)[\\/]' -or
-        $_.FullName -match '[\\/](WebView2|CurrentProfile)[\\/]' -or
-        $_.Name -match '^(secrets\.dat|chunkpilot\.db(?:-wal|-shm)?)$' -or
-        $_.Name -match '^curseforge-api-key.*\.txt$'
+        $relative = [IO.Path]::GetRelativePath($testRoot, $_.FullName)
+        $relative -match $prohibitedConsumerDirectoryPattern -or
+        $relative -match $prohibitedConsumerFilePattern -or
+        $relative -match $prohibitedConsumerExtensionPattern
     })
     if ($prohibited.Count -ne 0) { throw "Portable package contains prohibited development/server files: $($prohibited.Name -join ', ')" }
 

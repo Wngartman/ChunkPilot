@@ -16,6 +16,16 @@ on:
         required: false
         default: ''
         type: string
+      previous_release:
+        description: Optional previous release installer to upgrade from without changing that release
+        required: false
+        default: ''
+        type: string
+      curseforge_service_endpoint:
+        description: Accepted public HTTPS service origin only; empty disables application-service access
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: read
@@ -33,6 +43,9 @@ jobs:
       RELEASE_TAG: ${{ inputs.tag }}
       RELEASE_COMMIT: ${{ inputs.release_commit }}
       SUPERSEDES_TAG: ${{ inputs.supersedes }}
+      PREVIOUS_RELEASE_TAG: ${{ inputs.previous_release }}
+      UPGRADE_FROM_TAG: ${{ inputs.previous_release || inputs.supersedes }}
+      CURSEFORGE_SERVICE_ENDPOINT: ${{ inputs.curseforge_service_endpoint }}
       CHUNKPILOT_SIGNING_CERT_THUMBPRINT: ${{ secrets.CHUNKPILOT_SIGNING_CERT_THUMBPRINT }}
 
     steps:
@@ -51,6 +64,16 @@ jobs:
           }
           if ($env:SUPERSEDES_TAG -eq $env:RELEASE_TAG) {
             throw 'A release cannot supersede itself.'
+          }
+          if ($env:PREVIOUS_RELEASE_TAG -and
+              $env:PREVIOUS_RELEASE_TAG -notmatch '\Av(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(alpha|beta|rc)\.[1-9][0-9]*)?\z') {
+            throw 'previous_release must be empty or an existing exact ChunkPilot release tag.'
+          }
+          if ($env:PREVIOUS_RELEASE_TAG -eq $env:RELEASE_TAG) {
+            throw 'A release cannot be its own previous-version upgrade test.'
+          }
+          if ($env:CURSEFORGE_SERVICE_ENDPOINT -cnotmatch '\A(?:|https://[a-z0-9-]+(?:\.[a-z0-9-]+)+(?::443)?/?)\z') {
+            throw 'The service endpoint must be empty or a public HTTPS origin, never a credential or arbitrary build property.'
           }
 
       - name: Check out exact release commit
@@ -86,6 +109,13 @@ jobs:
             throw "Could not prove that the release is unused: $($releaseResult -join ' ')"
           }
           $global:LASTEXITCODE = 0
+
+          if ($env:SUPERSEDES_TAG) {
+            $previous = gh api "repos/${{ github.repository }}/releases/tags/$env:SUPERSEDES_TAG" | ConvertFrom-Json
+            if ($LASTEXITCODE -ne 0 -or -not $previous -or $previous.draft -or -not $previous.prerelease) {
+              throw 'supersedes may edit only an existing public prerelease; use previous_release for stable upgrade tests.'
+            }
+          }
 
           $tagRows = @(git ls-remote --tags origin "refs/tags/$env:RELEASE_TAG" "refs/tags/$env:RELEASE_TAG^{}")
           if ($LASTEXITCODE -ne 0) { throw 'Could not inspect the remote release tag.' }
@@ -130,7 +160,7 @@ jobs:
 
       - name: Build, test, publish, and compile installer once
         shell: pwsh
-        run: ./scripts/publish.ps1 -BuildInstaller -ReleaseTag $env:RELEASE_TAG
+        run: ./scripts/publish.ps1 -BuildInstaller -ReleaseTag $env:RELEASE_TAG -CurseForgeServiceEndpoint $env:CURSEFORGE_SERVICE_ENDPOINT
 
       - name: Test packaged Agent
         shell: pwsh
@@ -148,16 +178,16 @@ jobs:
         shell: pwsh
         run: ./scripts/test-portable-package.ps1 -PortableZip "./artifacts/release/$env:RELEASE_TAG/ChunkPilot-Portable-$env:RELEASE_TAG-win-x64.zip"
 
-      - name: Download previous prerelease installer for upgrade testing
-        if: inputs.supersedes != ''
+      - name: Download previous release installer for upgrade testing
+        if: inputs.previous_release != '' || inputs.supersedes != ''
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           New-Item -ItemType Directory -Path artifacts/previous-release | Out-Null
-          gh release download $env:SUPERSEDES_TAG --repo '${{ github.repository }}' `
-            --pattern "ChunkPilot-Setup-$env:SUPERSEDES_TAG.exe" --dir artifacts/previous-release
-          if ($LASTEXITCODE -ne 0) { throw 'Could not download the previous prerelease installer.' }
+          gh release download $env:UPGRADE_FROM_TAG --repo '${{ github.repository }}' `
+            --pattern "ChunkPilot-Setup-$env:UPGRADE_FROM_TAG.exe" --dir artifacts/previous-release
+          if ($LASTEXITCODE -ne 0) { throw 'Could not download the previous release installer.' }
 
       - name: Test clean install, prior-release upgrade, reinstall, uninstall, and data preservation
         shell: pwsh
@@ -165,8 +195,11 @@ jobs:
           $arguments = @{
             InstallerPath = "./artifacts/release/$env:RELEASE_TAG/ChunkPilot-Setup-$env:RELEASE_TAG.exe"
           }
-          $previous = "./artifacts/previous-release/ChunkPilot-Setup-$env:SUPERSEDES_TAG.exe"
-          if ($env:SUPERSEDES_TAG -and (Test-Path -LiteralPath $previous)) {
+          $previous = "./artifacts/previous-release/ChunkPilot-Setup-$env:UPGRADE_FROM_TAG.exe"
+          if ($env:UPGRADE_FROM_TAG) {
+            if (-not (Test-Path -LiteralPath $previous -PathType Leaf)) {
+              throw 'The explicitly requested previous release installer is missing.'
+            }
             $arguments.PreviousInstallerPath = $previous
           }
           ./scripts/test-installer.ps1 @arguments
@@ -341,7 +374,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $previous = gh api "repos/${{ github.repository }}/releases/tags/$env:SUPERSEDES_TAG" | ConvertFrom-Json
-          if (-not $previous -or $previous.draft) { throw 'The superseded release is missing or not public.' }
+          if (-not $previous -or $previous.draft -or -not $previous.prerelease) {
+            throw 'The superseded release is missing or not a public prerelease.'
+          }
           $notice = "**Superseded by $env:RELEASE_TAG.**`n`nThis prerelease has been superseded by [$env:RELEASE_TAG]($env:RELEASE_URL). New users should install $env:RELEASE_TAG instead."
           $oldBody = [string]$previous.body
           if (-not $oldBody.StartsWith($notice, [StringComparison]::Ordinal)) {

@@ -40,8 +40,15 @@ if ($CurseForgeServiceEndpoint) {
     if ($serviceUri.IsLoopback -or $serviceUri.HostNameType -ne [UriHostNameType]::Dns) {
         throw 'CurseForgeServiceEndpoint must be a public HTTPS DNS address, never a key or local service.'
     }
-    $identityProperties += "-p:CurseForgeServiceEndpoint=$($serviceUri.AbsoluteUri.TrimEnd('/'))"
+    if ($serviceUri.IdnHost.EndsWith('.localhost', [StringComparison]::OrdinalIgnoreCase) -or
+        $serviceUri.IdnHost.EndsWith('.local', [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'CurseForgeServiceEndpoint cannot name a local service.'
+    }
+    $CurseForgeServiceEndpoint = $serviceUri.AbsoluteUri.TrimEnd('/') + '/'
 }
+# Explicitly empty means disabled, even if a build-host environment property is set.
+$configurationProperties = @("-p:CurseForgeServiceEndpoint=$CurseForgeServiceEndpoint")
+$identityProperties += $configurationProperties
 $singleFileProperties = @(
     '-p:PublishSingleFile=true',
     '-p:IncludeNativeLibrariesForSelfExtract=true',
@@ -65,11 +72,11 @@ function Reset-OutputDirectory([string]$Path) {
     New-Item -ItemType Directory -Path (Join-Path $fullPath "Agent") -Force | Out-Null
 }
 
-& $dotnet restore (Join-Path $repoRoot "ChunkPilot.sln")
+& $dotnet restore (Join-Path $repoRoot "ChunkPilot.sln") @configurationProperties
 if ($LASTEXITCODE -ne 0) { throw "dotnet restore failed with exit code $LASTEXITCODE." }
 # Keep the unit and integration projects sequential here. Running both test hosts concurrently can
 # exhaust the integration fixtures' short-lived loopback-port pool and makes the publish gate flaky.
-& $dotnet test (Join-Path $repoRoot "ChunkPilot.sln") -c $Configuration --no-restore -m:1 --logger "console;verbosity=minimal"
+& $dotnet test (Join-Path $repoRoot "ChunkPilot.sln") -c $Configuration --no-restore -m:1 --logger "console;verbosity=minimal" @configurationProperties
 if ($LASTEXITCODE -ne 0) { throw "Tests failed; publish was stopped." }
 
 Reset-OutputDirectory $frameworkOutput
