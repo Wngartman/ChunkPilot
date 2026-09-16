@@ -1,6 +1,6 @@
 - Refines the dark interface throughout creation, server pages, settings, sharing, and content browsing. Compact layouts keep long names, release choices, player actions, and console controls readable.
 - Separates installed-pack details, runtime requirements, recovery, and a read-only mod inventory. File editing keeps unsaved drafts and ignores late responses after navigation.
-- Uses themed native confirmations with a safe Cancel default, keeps backup controls consistent during operations, and lets console scrolling stay on older output until Resume is selected.
+- Uses themed native confirmations with a safe Cancel default, readable update and health labels, consistent backup controls during operations, and console scrolling that stays on older output until Resume is selected.
 - Preserves UTF-8 and UTF-16 configuration encoding, rejects malformed text without altering it, and bounds reads of growing logs.
 - Validates custom memory before Continue, Create, or Save; regional decimals and exact memory amounts no longer silently change the requested allocation.
 - Retains verified-backup status across Agent restarts and updates it when recovery points are deleted or fail verification.

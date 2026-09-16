@@ -5,9 +5,9 @@
 Branch: `codex/1.0-readiness-20260915`. Tested candidate:
 `b3483022ef7b805693aded1eaafd6ef4f17e0870`. Product **1.0.1**, Windows numeric version
 **1.3.2**, database schema **6**, creation journal shape **2**. This candidate was built from a
-clean tree with the explicit public CurseForge service endpoint. The public release decision is
-instead an **empty endpoint with personal-key setup**, unless explicit paid-capacity approval
-changes that decision before the final freeze. Candidate service evidence is not proof of the
+clean tree with the explicit public CurseForge service endpoint. The selected public build uses
+an **empty endpoint with personal-key setup**; paid service capacity remains a separate open gate.
+Candidate service evidence is not proof of the
 final public build, publication or public keyless-service activation.
 
 ### Completed checks
@@ -48,8 +48,9 @@ automated packaged UI-close checks remain hosted-runner gates, not local checks 
   port 25585 cleanup passed.
 - Both earlier failed update-audit reports remain retained: the first exposed the missing exact
   game-version filter, fixed before candidate B; the second stopped after a successful update
-  because the harness rejected a legitimate canonical managed-Java path change. The corrected
-  harness continued from the verified applied state and completed the runtime/rollback checks.
+  because the harness rejected an equivalent working directory ending in `\.`. The corrected
+  harness accepted its canonical root, separately verified the selected managed Java runtime,
+  and continued from the verified applied state to complete runtime and rollback checks.
 - Physical candidate B inspection with a fresh Agent showed the persisted last-backup date and
   verified recovery point before opening Backups, then showed both verified backup records.
   After rollback, **Check pack release** resolved provider names and offered client release
@@ -59,7 +60,13 @@ automated packaged UI-close checks remain hosted-runner gates, not local checks 
   public build still needs its own final build and release gates. Small-pack success is not blanket
   large-pack, loader, router, Windows-version or low-end-hardware certification.
 
-Current build evidence: `logs/readiness-candidate-b-publish.log`,
+The last physical review also exposed raw machine names in update and version-health labels.
+The shared update label now uses the existing human-readable formatter without changing its status
+or evidence. Unidentified imported loader versions are distinguished from known versions missing
+from the catalog. The corrected frontend passed **356 tests**, typecheck, lint and build; native
+presentation tests passed **101/101**. The final Release workflow must rebuild and test that source.
+
+Current candidate build evidence: `logs/readiness-candidate-b-publish.log`,
 `logs/readiness-candidate-b-package.log`, and `logs/readiness-candidate-b-agent-smoke.json`.
 Runtime evidence is retained under `artifacts/readiness-small-runtime/evidence` and
 `artifacts/readiness-backup-review/evidence`, including the successful

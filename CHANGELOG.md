@@ -8,6 +8,8 @@
   Hardened navigation against malformed snapshot replies without discarding the app shell.
 - Replaced shared native confirmations and error windows with themed dialogs. Cancel remains the safe
   default; closing a confirmation never approves it.
+- Removed internal enum names from update and version-health labels, and distinguished unidentified
+  imported loader versions from known versions missing from the catalog.
 - Fixed UTF-16 configuration files being mistaken for binary data. Invalid text is rejected without
   replacement characters, and live-log reads remain bounded when files grow.
 - Kept backup controls consistent during create, verify, and restore operations, and fixed console
