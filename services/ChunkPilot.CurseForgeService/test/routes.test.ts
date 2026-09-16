@@ -4,7 +4,7 @@ import { approvedCdn, parseRoute, sourceIdentityText } from "../src/routes.ts";
 
 const request = (path: string) => new Request("https://gateway.example" + path);
 for (const path of [
-  "/health", "/v1/games/432", "/v1/minecraft/version?sortDescending=true",
+  "/health", "/v1/games/432", "/v1/minecraft/version?sortDescending=true", "/v1/minecraft/modloader",
   "/v1/categories?gameId=432&classId=4471",
   "/v1/mods/search?gameId=432&classId=4471&pageSize=50&index=50&searchFilter=All%20the%20Mods&sortField=6&sortOrder=desc&gameVersion=1.21.1&modLoaderType=6&categoryId=4472",
   "/v1/mods/search?gameId=432&classId=6&slug=example-mod", "/v1/mods/123",

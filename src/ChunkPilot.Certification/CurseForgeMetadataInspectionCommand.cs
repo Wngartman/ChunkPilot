@@ -35,9 +35,19 @@ internal static class CurseForgeMetadataInspectionCommand
             var secrets = new DpapiSecretStore(paths);
             using var api = new CurseForgeApiClient(secrets);
             using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(10));
-            var provisioned = await new CurseForgeCredentialProvisioner(secrets)
-                .ProvisionFromEnvironmentAsync(api, timeout.Token).ConfigureAwait(false);
-            if (!provisioned.Imported) return 69;
+            if (arguments.Contains("--require-application-service", StringComparer.Ordinal))
+            {
+                if (verifyNativeSetup)
+                    throw new ArgumentException("A no-key service check cannot also verify personal credential setup.");
+                CurseForgeCredentialEnvironment.ClearFromCurrentProcess();
+                await KeylessCurseForgeCertification.VerifyAsync(api, timeout.Token).ConfigureAwait(false);
+            }
+            else
+            {
+                var provisioned = await new CurseForgeCredentialProvisioner(secrets)
+                    .ProvisionFromEnvironmentAsync(api, timeout.Token).ConfigureAwait(false);
+                if (!provisioned.Imported) return 69;
+            }
             if (verifyNativeSetup)
             {
                 // A separate client makes the production setup service perform fresh official API

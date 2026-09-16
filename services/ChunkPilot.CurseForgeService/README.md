@@ -15,7 +15,7 @@ test or package creation. There are no runtime npm dependencies.
 
 - `GET /health` returns only service identity, `protocolVersion: 1` and `configured`. This means
   secret/binding configuration is present, not that live upstream authentication succeeded.
-- `GET /v1/games/432`, `GET /v1/minecraft/version?sortDescending=true`, Minecraft category/search,
+- `GET /v1/games/432`, `GET /v1/minecraft/version?sortDescending=true`, `GET /v1/minecraft/modloader`, Minecraft category/search,
   exact project, file-list, exact file and exact download-URL metadata routes support the current
   native client's allowlisted parameters. No arbitrary methods, body, upstream URL or headers are
   forwarded. Search/file pages are at most 50, and indexes at most 10,000. Project/file response
@@ -61,6 +61,9 @@ Every successful JSON value/property is checked for accidental key echo. Raster 
 before response, and file streams use a linear-time rolling scanner retaining at most key-length
 minus one trailing bytes. An upstream key echo, including one split across chunks, therefore cannot
 be completed downstream. Neither tests nor failures log the real key; all tests use a synthetic key.
+Native byte search skips nonmatching candidates without allocating text copies of file chunks.
+Short chunks that cannot yet be emitted continue within the same pull; excessive empty chunks fail
+with bounded work instead of leaving the consumer waiting indefinitely.
 
 ## Capacity and privacy
 
@@ -77,6 +80,14 @@ are deliberately **not refunded**, even after failure, so a dead Worker cannot r
 capacity. These are conservative reservation-day bounds, not a claim to measure exact delivered
 bytes or calendar-day ingress for a download spanning midnight. Costs/caps must be reviewed before
 any deployment or broad release. Exhaustion fails closed; it is not silently routed around.
+
+Large archives require **Workers Paid**. Live ATM10 checks on Workers Free were terminated with
+`exceededCpu` before the official file length was reached. The checked-in configuration requests a
+60-second CPU limit per request; Cloudflare rejects that limit on a Free account. This is a ceiling,
+not a prediction of CPU use or a monthly spending cap. Paid starts at $5/month with additional usage
+charges possible; the account owner must enable it deliberately. Check current
+[Cloudflare pricing](https://developers.cloudflare.com/workers/platform/pricing/) and keep the
+application's aggregate request, byte and concurrency caps enabled.
 
 The singleton persists only aggregate day/count/byte counters and random expiring operation IDs.
 It never persists IPs, search terms, metadata, project/file IDs, file data or credentials. Old daily

@@ -115,7 +115,15 @@ class SecretMatcher {
     }
   }
   inspect(bytes: Uint8Array): void {
-    for (const value of bytes) {
+    for (let index = 0; index < bytes.length; index++) {
+      // Native typed-array search skips ordinary archive bytes without a JavaScript callback per
+      // byte. Keep KMP state for actual candidates and boundary prefixes: adversarial repeated
+      // prefixes are still linear, and a key split across chunks is never missed.
+      if (this.matched === 0) {
+        index = bytes.indexOf(this.needle[0]!, index);
+        if (index < 0) return;
+      }
+      const value = bytes[index]!;
       while (this.matched && value !== this.needle[this.matched]) this.matched = this.prefix[this.matched - 1]!;
       if (value === this.needle[this.matched]) this.matched++;
       if (this.matched === this.needle.length) throw new ServiceError(502, "invalid_upstream_response");
@@ -260,21 +268,29 @@ function streamFile(response: Response, expected: number, signal: AbortSignal, k
     const stream = new ReadableStream<Uint8Array>({
       async pull(controller) {
         try {
-          const next = await bounded(reader.read(), signal, STREAM_IDLE_TIMEOUT_MS);
-          if (next.done) {
-            if (count !== expected) throw new ServiceError(502, "upstream_truncated");
-            if (held.byteLength) controller.enqueue(held);
-            end(); controller.close(); return;
+          let emptyChunks = 0;
+          // Keeping a secret prefix can yield no output. Continue reading in this pull until
+          // there is something to enqueue; otherwise a pending consumer may never trigger
+          // another pull and a perfectly valid short first chunk can stall the download.
+          for (;;) {
+            const next = await bounded(reader.read(), signal, STREAM_IDLE_TIMEOUT_MS);
+            if (next.done) {
+              if (count !== expected) throw new ServiceError(502, "upstream_truncated");
+              if (held.byteLength) controller.enqueue(held);
+              end(); controller.close(); return;
+            }
+            count += next.value.byteLength;
+            if (count > expected) throw new ServiceError(502, "upstream_too_large");
+            if (next.value.byteLength === 0 && ++emptyChunks > 128)
+              throw new ServiceError(502, "invalid_upstream_response");
+            matcher.inspect(next.value);
+            // A key prefix must not reach a caller before a later chunk reveals a full key match.
+            const joined = new Uint8Array(held.byteLength + next.value.byteLength);
+            joined.set(held); joined.set(next.value, held.byteLength);
+            const emit = Math.max(0, joined.byteLength - (matcher.needle.byteLength - 1));
+            held = joined.slice(emit);
+            if (emit) { controller.enqueue(joined.slice(0, emit)); return; }
           }
-          count += next.value.byteLength;
-          if (count > expected) throw new ServiceError(502, "upstream_too_large");
-          matcher.inspect(next.value);
-          // A key prefix must not reach a caller before a later chunk reveals a full key match.
-          const joined = new Uint8Array(held.byteLength + next.value.byteLength);
-          joined.set(held); joined.set(next.value, held.byteLength);
-          const emit = Math.max(0, joined.byteLength - (matcher.needle.byteLength - 1));
-          held = joined.slice(emit);
-          if (emit) controller.enqueue(joined.slice(0, emit));
         } catch { end(); controller.error(new Error("CurseForge download interrupted; verification required.")); }
       },
       cancel() { end(); },

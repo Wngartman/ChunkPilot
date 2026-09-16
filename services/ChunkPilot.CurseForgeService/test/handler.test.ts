@@ -16,6 +16,55 @@ const json = (value: unknown, headers: Record<string, string> = {}) => new Respo
 const request = (path: string, init: RequestInit = {}) => new Request("https://gateway.example" + path, { ...init,
   headers: { "cf-connecting-ip": "203.0.113.7", "x-api-key": "untrusted-caller-key", "authorization": "untrusted", "cookie": "untrusted", ...(init.headers as Record<string, string>) } });
 
+for (const key of ["~", "aaab", "ababaca", KEY]) {
+  test("optimized scanner blocks overlapping and late split matches: " + key.length, { timeout: 5000 }, async () => {
+    const encoder = new TextEncoder();
+    const prefix = new Uint8Array(512 * 1024).fill(120);
+    const body = encoder.encode(key.slice(0, -1));
+    const suffix = encoder.encode(key.slice(-1) + "trailer");
+    const total = prefix.length + body.length + suffix.length;
+    const context = fixture({ file: { ...FILE, fileLength: total }, cdn: () => new Response(new ReadableStream({
+      start(controller) { controller.enqueue(prefix); controller.enqueue(body); controller.enqueue(suffix); controller.close(); },
+    })) });
+    context.deps.key = key;
+    const response = await handleCurseForge(request(downloadPath()), context.deps);
+    assert.equal(response.status, 200);
+    const reader = response.body!.getReader();
+    let visible = "";
+    await assert.rejects(async () => {
+      for (;;) { const chunk = await reader.read(); if (chunk.done) break; visible += new TextDecoder().decode(chunk.value); }
+    });
+    assert.equal(visible.includes(key), false);
+    assert.equal(context.releases.length, 1);
+  });
+}
+
+test("short and empty upstream chunks complete without stalling a waiting reader", { timeout: 5000 }, async () => {
+  const chunks = ["", "Z", "", "I", "P", ""];
+  let index = 0;
+  const f = fixture({ cdn: () => new Response(new ReadableStream({
+    pull(controller) {
+      if (index < chunks.length) controller.enqueue(new TextEncoder().encode(chunks[index++]));
+      else controller.close();
+    },
+  })) });
+  const response = await handleCurseForge(request(downloadPath()), f.deps);
+  assert.equal(response.status, 200);
+  assert.equal(await response.text(), "ZIP");
+  await Promise.all(f.lifetimes);
+  assert.equal(f.releases.length, 1);
+});
+
+test("excessive empty upstream chunks fail with bounded work and release their lease", { timeout: 5000 }, async () => {
+  const f = fixture({ cdn: () => new Response(new ReadableStream({
+    pull(controller) { controller.enqueue(new Uint8Array()); },
+  })) });
+  const response = await handleCurseForge(request(downloadPath()), f.deps);
+  await assert.rejects(response.arrayBuffer(), /interrupted/);
+  await Promise.all(f.lifetimes);
+  assert.equal(f.releases.length, 1);
+});
+
 function fixture(options: { project?: unknown; file?: unknown; image?: Response; cdn?: () => Response; respond?: (url: string, init: RequestInit) => Promise<Response> | Response } = {}) {
   const calls: Array<{ url: string; init: RequestInit }> = [];
   const reserves: number[] = [];

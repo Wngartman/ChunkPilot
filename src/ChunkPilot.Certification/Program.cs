@@ -29,7 +29,8 @@ if (args.Length == 0 || !args[0].Equals("certify-vanilla", StringComparison.Ordi
     Console.Error.WriteLine("       ChunkPilot.Certification certify-paper [--all-stable | --version <id>] [--build <id>] [options]");
     Console.Error.WriteLine("       ChunkPilot.Certification certify-loader --platform <Fabric|Quilt|Forge|NeoForge|LegacyFabric|Ornithe> [--all-stable | --version <id>] [--loader <id>] [options]");
     Console.Error.WriteLine("       ChunkPilot.Certification certify-terraria [--cache <path>] [--timeout-seconds <seconds>]");
-    Console.Error.WriteLine("       ChunkPilot.Certification smoke-curseforge [--report <path>]");
+    Console.Error.WriteLine("       ChunkPilot.Certification smoke-curseforge [--require-application-service] [--report <path>]");
+    Console.Error.WriteLine("       ChunkPilot.Certification inspect-curseforge-metadata --project <id> --file <id> [--require-application-service] [--verify-official-archives]");
     CurseForgeRuntimeCertificationCommand.WriteUsage();
     Console.Error.WriteLine("Runtime execution additionally requires --accept-minecraft-eula-for-certification.");
     return 64;
@@ -172,23 +173,33 @@ static async Task<int> SmokeCurseForgeAsync(string[] values)
         var secrets = new DpapiSecretStore(paths);
         using var cancellation = new CancellationTokenSource(TimeSpan.FromMinutes(5));
         using var api = new CurseForgeApiClient(secrets);
-        var authenticationTimer = Stopwatch.StartNew();
-        var provisioned = await new CurseForgeCredentialProvisioner(secrets)
-            .ProvisionFromEnvironmentAsync(api, cancellation.Token);
-        authenticationTimer.Stop();
-        results.Add(new
+        if (Has(values, "--require-application-service"))
         {
-            category = "credential authentication",
-            status = provisioned.Imported ? "PASSED" : "UNAVAILABLE",
-            failureKind = provisioned.FailureKind?.ToString(),
-            existingCredentialPreserved = provisioned.ExistingCredentialPreserved,
-            elapsedMilliseconds = authenticationTimer.Elapsed.TotalMilliseconds
-        });
-        Console.WriteLine($"credential authentication: {(provisioned.Imported ? "PASSED" : "UNAVAILABLE")}");
-        if (!provisioned.Imported)
+            CurseForgeCredentialEnvironment.ClearFromCurrentProcess();
+            await KeylessCurseForgeCertification.VerifyAsync(api, cancellation.Token);
+            results.Add(new { category = "application service without a personal key", status = "PASSED" });
+            Console.WriteLine("application service without a personal key: PASSED");
+        }
+        else
         {
-            await WriteCurseForgeSmokeReportAsync(reportPath, results);
-            return 3;
+            var authenticationTimer = Stopwatch.StartNew();
+            var provisioned = await new CurseForgeCredentialProvisioner(secrets)
+                .ProvisionFromEnvironmentAsync(api, cancellation.Token);
+            authenticationTimer.Stop();
+            results.Add(new
+            {
+                category = "credential authentication",
+                status = provisioned.Imported ? "PASSED" : "UNAVAILABLE",
+                failureKind = provisioned.FailureKind?.ToString(),
+                existingCredentialPreserved = provisioned.ExistingCredentialPreserved,
+                elapsedMilliseconds = authenticationTimer.Elapsed.TotalMilliseconds
+            });
+            Console.WriteLine($"credential authentication: {(provisioned.Imported ? "PASSED" : "UNAVAILABLE")}");
+            if (!provisioned.Imported)
+            {
+                await WriteCurseForgeSmokeReportAsync(reportPath, results);
+                return 3;
+            }
         }
 
         using (await api.GetJsonAsync("/v1/games/432", cancellation.Token))

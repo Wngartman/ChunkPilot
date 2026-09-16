@@ -3,6 +3,7 @@
   "main": "src/worker.ts",
   "compatibility_date": "2026-08-01",
   "workers_dev": true,
+  "limits": { "cpu_ms": 60000 },
   "observability": { "enabled": false },
   "vars": {
     "DAILY_UPSTREAM_REQUESTS": "20000",

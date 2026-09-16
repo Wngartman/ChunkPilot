@@ -61,6 +61,10 @@ export function parseRoute(request: Request): Route {
     query(url, ["sortDescending"]);
     return { kind: "metadata", path: path + url.search, shape: "versions" };
   }
+  if (path === "/v1/minecraft/modloader") {
+    query(url, []);
+    return { kind: "metadata", path, shape: "versions" };
+  }
   if (path === "/v1/categories" || path === "/v1/mods/search") {
     query(url, path.endsWith("categories") ? ["gameId", "classId"] :
       ["gameId", "classId", "pageSize", "index", "searchFilter", "sortField", "sortOrder", "gameVersion", "modLoaderType", "categoryId", "slug"]);
