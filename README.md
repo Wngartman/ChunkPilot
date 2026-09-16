@@ -6,7 +6,7 @@
 
 Create a Minecraft server, bring an existing world, and play with friends. ChunkPilot manages Java, server files, backups, updates, and connections from one Windows app.
 
-![ChunkPilot dashboard](docs/images/dashboard.png)
+![ChunkPilot dashboard with sample servers](docs/images/dashboard.png)
 
 ## Download ChunkPilot 1.0.1
 
