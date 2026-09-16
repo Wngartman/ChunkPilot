@@ -38,10 +38,22 @@ if (args.FirstOrDefault()?.Equals("ui-session-owner", StringComparison.OrdinalIg
 if (args.Contains("-XshowSettings:properties", StringComparer.OrdinalIgnoreCase) &&
     args.Contains("-version", StringComparer.OrdinalIgnoreCase))
 {
+    var majorVersion = 21;
+    var fixtureVersion = new FileInfo(Path.Combine(AppContext.BaseDirectory, "fixture-java-major.txt"));
+    if (fixtureVersion.Exists &&
+        (fixtureVersion.Length is <= 0 or > 16 ||
+         fixtureVersion.Attributes.HasFlag(FileAttributes.ReparsePoint) ||
+         !int.TryParse(File.ReadAllText(fixtureVersion.FullName).Trim(),
+             System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture,
+             out majorVersion) || majorVersion is < 8 or > 25))
+    {
+        Console.Error.WriteLine("Invalid isolated fake-Java major-version fixture.");
+        return 64;
+    }
     Console.Error.WriteLine("Property settings:");
     Console.Error.WriteLine("    java.vendor = Eclipse Adoptium");
     Console.Error.WriteLine("    sun.arch.data.model = 64");
-    Console.Error.WriteLine("openjdk version \"21.0.8\" 2026-07-15");
+    Console.Error.WriteLine($"openjdk version \"{majorVersion}.0.8\" 2026-07-15");
     return 0;
 }
 

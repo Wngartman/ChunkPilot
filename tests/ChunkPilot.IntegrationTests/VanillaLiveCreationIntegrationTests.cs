@@ -110,12 +110,13 @@ public sealed class VanillaLiveCreationIntegrationTests : IDisposable
         Assert.Empty(await agent.Store.GetFirewallAccessRecordsAsync());
 
         // Exactly one managed runtime was obtained, it is the one the server launches with, and it
-        // lives inside ChunkPilot's own folder rather than anywhere on the system. Its reported major
-        // version is whatever the fixture binary says, so that is not asserted here; the requirement
-        // that drove the request is asserted above, from the metadata.
+        // lives inside ChunkPilot's own folder rather than anywhere on the system. The downloaded
+        // fixture must actually report the exact major selected by the official metadata.
         var runtimes = await agent.Store.GetManagedJavaRuntimesAsync();
         var runtime = Assert.Single(runtimes);
         Assert.True(runtime.IsManaged);
+        Assert.Equal(25, runtime.MajorVersion);
+        Assert.Equal(RuntimeHealth.Healthy, runtime.Health);
         Assert.Equal(Path.GetFullPath(runtime.JavaPath), created.Executable);
         Assert.StartsWith(Path.GetFullPath(Path.Combine(root, "data", "ManagedJava")), runtime.JavaPath,
             StringComparison.OrdinalIgnoreCase);
@@ -637,6 +638,9 @@ public sealed class VanillaLiveCreationIntegrationTests : IDisposable
                     using var target = entry.Open();
                     input.CopyTo(target);
                 }
+                var versionEntry = archive.CreateEntry("temurin/bin/fixture-java-major.txt");
+                using var versionWriter = new StreamWriter(versionEntry.Open(), new UTF8Encoding(false));
+                versionWriter.Write("25");
             }
             return buffer.ToArray();
         }
