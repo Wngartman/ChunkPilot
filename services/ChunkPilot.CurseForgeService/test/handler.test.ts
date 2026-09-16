@@ -71,14 +71,14 @@ function fixture(options: { project?: unknown; file?: unknown; image?: Response;
   const releases: string[] = [];
   const lifetimes: Promise<unknown>[] = [];
   const clients: string[] = [];
-  const leases: Array<{ id: string; expires: number }> = [];
+  const leases: Array<{ id: string; durationMs: number }> = [];
   const budget: Budget = {
-    acquire: async (id, expires) => { leases.push({ id, expires }); return true; },
+    acquire: async (id, durationMs) => { leases.push({ id, durationMs }); return true; },
     reserve: async (_id, bytes) => { reserves.push(bytes); return true; },
     release: async id => { releases.push(id); },
   };
   const deps: Dependencies = {
-    key: KEY, budget, now: () => 1000,
+    key: KEY, budget,
     limiter: { limit: async ({ key }) => { clients.push(key); return { success: true }; } },
     waitUntil: promise => { lifetimes.push(promise); },
     fetch: async (url, init) => {
@@ -123,7 +123,7 @@ test("metadata preserves official sources but forwards only fixed headers and re
   }
   await Promise.all(f.lifetimes);
   assert.equal(f.releases.length, 1);
-  assert.equal(f.leases[0]!.expires, 1000 + METADATA_TIMEOUT_MS + 60_000);
+  assert.equal(f.leases[0]!.durationMs, METADATA_TIMEOUT_MS + 60_000);
 });
 
 test("health is secret-free and does no API/quota work", async () => {

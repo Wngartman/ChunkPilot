@@ -143,12 +143,15 @@ internal sealed record HeadlessAgentLaunchOptions(
     string CredentialSourcePath,
     string InstanceId,
     string? CertificationUpdateFaultToken = null,
-    string? CertificationRuntimeRoot = null);
+    string? CertificationRuntimeRoot = null,
+    bool RequireApplicationService = false);
 
 internal static class HeadlessAgentLaunch
 {
     internal static ProcessStartInfo CreateStartInfo(HeadlessAgentLaunchOptions options)
     {
+        CurseForgeRuntimeCertificationCommand.ValidateAccessSelection(
+            options.RequireApplicationService, options.CredentialSourcePath, null);
         var executable = Path.GetFullPath(options.AgentExecutablePath);
         if (!Path.GetFileName(executable).Equals("ChunkPilot.Agent.exe", StringComparison.OrdinalIgnoreCase))
             throw new ArgumentException("The headless controller only starts ChunkPilot.Agent.exe.");
@@ -182,8 +185,11 @@ internal static class HeadlessAgentLaunch
             Directory.CreateDirectory(scoped);
             startInfo.Environment[variable] = scoped;
         }
-        startInfo.Environment[CurseForgeCredentialProvisioner.KeyFileEnvironmentVariable] =
-            Path.GetFullPath(options.CredentialSourcePath);
+        if (options.RequireApplicationService)
+            CurseForgeCredentialEnvironment.RemoveFromChild(startInfo);
+        else
+            startInfo.Environment[CurseForgeCredentialProvisioner.KeyFileEnvironmentVariable] =
+                Path.GetFullPath(options.CredentialSourcePath);
         startInfo.Environment.Remove(ExternalReachabilityProbeOptions.EnvironmentVariable);
         startInfo.Environment.Remove(CertificationUpdateFaultInjector.TokenEnvironmentVariable);
         startInfo.Environment.Remove(CertificationUpdateFaultInjector.RuntimeRootEnvironmentVariable);

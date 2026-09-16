@@ -330,8 +330,9 @@ export async function handleCurseForge(request: Request, deps: Dependencies): Pr
       }
     };
     if (!(await bounded(deps.limiter!.limit({ key: caller }), operation.signal)).success) throw new ServiceError(429, "client_rate_limited");
-    const now = deps.now?.() ?? Date.now();
-    const acquisition = deps.budget!.acquire(lease, now + Math.min(MAX_LEASE_MS, duration + 60_000)).then(allowed => {
+    // The Durable Object owns the lease clock. Absolute timestamps from another Worker can
+    // exceed its maximum by clock skew and falsely reject an otherwise empty download slot.
+    const acquisition = deps.budget!.acquire(lease, Math.min(MAX_LEASE_MS, duration + 60_000)).then(allowed => {
       // Record ownership independently of the cancellable await. A same-turn abort can reject that
       // await before this callback runs, while finish has not yet run; either ordering must release.
       acquired = allowed;

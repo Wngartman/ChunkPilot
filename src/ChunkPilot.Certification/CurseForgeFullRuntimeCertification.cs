@@ -292,7 +292,8 @@ internal sealed partial class CurseForgeRuntimeCertificationSession
             options, report, olderSelection, olderProject, olderRelease,
             "official older", cancellationToken).ConfigureAwait(false);
         campaign.OfficialOlder = older.Evidence;
-        report.DpapiRelaunchAuthenticatedCatalogResolve = true;
+        report.RelaunchAuthenticatedCatalogResolve = true;
+        report.DpapiRelaunchAuthenticatedCatalogResolve = !options.RequireApplicationService;
         report.ProjectId = older.Evidence.ProjectId;
         report.ClientFileId = older.Evidence.ClientFileId;
         report.ServerPackFileId = older.Evidence.ServerPackFileId;

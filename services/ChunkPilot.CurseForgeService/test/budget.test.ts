@@ -82,3 +82,25 @@ test("invalid or unbounded quota configuration fails closed", () => {
     { dailyRequests: NaN, dailyBytes: 1000, concurrent: 1 },
   ]) assert.throws(() => fixture(limits));
 });
+
+test("maximum download lease uses only the Durable Object clock", () => {
+  const f = fixture();
+  // A Worker clock ahead by even 1ms used to reject this full-duration lease.
+  assert.equal(f.ledger.acquire(ID, NOW + MAX_LEASE_MS + 1, NOW), false);
+  assert.equal(f.ledger.acquireDuration(ID, MAX_LEASE_MS, NOW), true);
+  assert.equal(f.ledger.reserve(ID, 1, NOW + MAX_LEASE_MS - 1), true);
+  assert.equal(f.ledger.reserve(ID, 1, NOW + MAX_LEASE_MS), false);
+  f.db.close();
+});
+
+test("relative lease duration remains bounded and cannot accept absolute timestamps", () => {
+  const f = fixture();
+  for (const duration of [0, -1, NaN, Infinity, 0.5, MAX_LEASE_MS + 1, NOW + MAX_LEASE_MS])
+    assert.equal(f.ledger.acquireDuration(ID, duration, NOW), false);
+  assert.equal(f.ledger.acquireDuration(ID, 1, Number.MAX_SAFE_INTEGER), false);
+  assert.equal(f.ledger.acquireDuration(ID, MAX_LEASE_MS, NOW), true);
+  assert.equal(f.ledger.acquireDuration(ID2, MAX_LEASE_MS, NOW), false);
+  f.ledger.release(ID);
+  assert.equal(f.ledger.acquireDuration(ID2, MAX_LEASE_MS, NOW), true);
+  f.db.close();
+});

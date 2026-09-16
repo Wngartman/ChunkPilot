@@ -1008,9 +1008,11 @@ public sealed class CurseForgeRuntimeCertificationTests
             RunGit(root, "init", "--quiet");
             Directory.CreateDirectory(Path.Combine(root, "scripts"));
             File.WriteAllText(Path.Combine(root, "scripts", "dev-build.ps1"), "# build\n");
+            File.WriteAllText(Path.Combine(root, "scripts", "certification-build-configuration.ps1"), "# config\n");
             var wrapper = Path.Combine(root, "scripts", "certify-curseforge-runtime.ps1");
             File.WriteAllText(wrapper, "# credential wrapper\n");
-            RunGit(root, "add", "scripts/dev-build.ps1", "scripts/certify-curseforge-runtime.ps1");
+            RunGit(root, "add", "scripts/dev-build.ps1", "scripts/certify-curseforge-runtime.ps1",
+                "scripts/certification-build-configuration.ps1");
             RunGit(root, "-c", "user.name=ChunkPilot Tests",
                 "-c", "user.email=chunkpilot-tests@example.invalid",
                 "commit", "--quiet", "-m", "fixture");
@@ -1049,8 +1051,10 @@ public sealed class CurseForgeRuntimeCertificationTests
         }
     }
 
-    [Fact]
-    public void PackageIntegrityManifestBindsEveryFileAndDetectsTampering()
+    [Theory]
+    [InlineData("")]
+    [InlineData("https://service.example/")]
+    public void PackageIntegrityManifestBindsEveryFileAndDetectsTampering(string endpoint)
     {
         var root = NewRoot();
         try
@@ -1074,7 +1078,9 @@ public sealed class CurseForgeRuntimeCertificationTests
                 Path.Combine(root, CertificationPackageFreshness.IntegrityManifestFileName),
                 JsonSerializer.Serialize(new
                 {
-                    schemaVersion = 3,
+                    schemaVersion = 4,
+                    curseForgeServiceEndpoint = endpoint,
+                    buildConfigurationSha256 = CertificationPackageFreshness.ComputeBuildConfigurationSha256(endpoint),
                     gitSha = head,
                     packageSourceKind = "isolated-head-archive",
                     packageInputsMatchHead = true,
@@ -1085,10 +1091,15 @@ public sealed class CurseForgeRuntimeCertificationTests
                     files
                 }));
 
-            CertificationPackageFreshness.ValidateIntegrityManifest(root, head);
+            CertificationPackageFreshness.ValidateIntegrityManifest(root, head,
+                compiledServiceEndpoint: endpoint);
+            Assert.Throws<InvalidDataException>(() =>
+                CertificationPackageFreshness.ValidateIntegrityManifest(root, head,
+                    compiledServiceEndpoint: endpoint.Length == 0 ? "https://service.example/" : ""));
             File.AppendAllText(webUi, "tampered");
             Assert.Throws<InvalidDataException>(() =>
-                CertificationPackageFreshness.ValidateIntegrityManifest(root, head));
+                CertificationPackageFreshness.ValidateIntegrityManifest(root, head,
+                    compiledServiceEndpoint: endpoint));
         }
         finally
         {
@@ -1132,7 +1143,9 @@ public sealed class CurseForgeRuntimeCertificationTests
                 Path.Combine(package, CertificationPackageFreshness.IntegrityManifestFileName),
                 JsonSerializer.Serialize(new
                 {
-                    schemaVersion = 3,
+                    schemaVersion = 4,
+                    curseForgeServiceEndpoint = "",
+                    buildConfigurationSha256 = CertificationPackageFreshness.ComputeBuildConfigurationSha256(""),
                     gitSha = head,
                     packageSourceKind = "worktree",
                     packageInputsMatchHead = dirtyBuildProof.MatchesHead,
@@ -2628,6 +2641,12 @@ public sealed class CurseForgeRuntimeCertificationTests
             {
                 "RegisterUiSession" => Registration((UiSessionRegistrationRequest)payload!),
                 "HasCurseForgeApiKey" => new TextResponse("configured"),
+                "GetCurseForgeAccess" => new CertificationCurseForgeAccessStatus
+                {
+                    Mode = CurseForgeAccessMode.PersonalKey.ToString(),
+                    CanAccess = true,
+                    HasPersonalCredential = true
+                },
                 "CatalogProviderStatuses" => new[]
                 {
                     new CatalogProviderStatus(CatalogProvider.CurseForge, true, "available")

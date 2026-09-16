@@ -21,6 +21,12 @@ export class BudgetLedger {
     storage.sql.exec("CREATE TABLE IF NOT EXISTS active_operation (id TEXT PRIMARY KEY, expires INTEGER NOT NULL)");
   }
 
+  acquireDuration(id: string, durationMs: number, now: number): boolean {
+    if (!Number.isSafeInteger(durationMs) || durationMs < 1 || durationMs > MAX_LEASE_MS ||
+        !Number.isSafeInteger(now + durationMs)) return false;
+    return this.acquire(id, now + durationMs, now);
+  }
+
   acquire(id: string, expiresAt: number, now: number): boolean {
     if (!ID.test(id) || !Number.isSafeInteger(now) || !Number.isSafeInteger(expiresAt) || expiresAt <= now || expiresAt > now + MAX_LEASE_MS) return false;
     return this.storage.transactionSync(() => {

@@ -4,11 +4,17 @@ param(
     [string]$Tier = 'Feature',
     [string]$FrontendTest = '',
     [string]$DotNetFilter = '',
+    # Public deployment origin only; API credentials stay in the separately deployed service.
+    [string]$CurseForgeServiceEndpoint = '',
     [switch]$PackageInputProofOnly
 )
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
+. (Join-Path $PSScriptRoot 'certification-build-configuration.ps1')
+$buildConfiguration = Get-CertificationBuildConfiguration $CurseForgeServiceEndpoint
+# An explicit empty value also overrides an inherited MSBuild environment property.
+$configurationProperties = @("-p:CurseForgeServiceEndpoint=$($buildConfiguration.curseForgeServiceEndpoint)")
 $packagePaths = @(
     'src',
     'assets',
@@ -23,6 +29,7 @@ $packagePaths = @(
     'nuget.config',
     'scripts/build-webui.ps1',
     'scripts/dev-build.ps1',
+    'scripts/certification-build-configuration.ps1',
     'scripts/certify-curseforge-runtime.ps1'
 )
 
@@ -279,29 +286,29 @@ try {
 finally { Pop-Location }
 
 if ($Tier -eq 'Feature' -and $DotNetFilter) {
-    dotnet restore (Join-Path $buildRoot 'tests\ChunkPilot.UnitTests\ChunkPilot.UnitTests.csproj')
+    dotnet restore (Join-Path $buildRoot 'tests\ChunkPilot.UnitTests\ChunkPilot.UnitTests.csproj') @configurationProperties
     if ($LASTEXITCODE -ne 0) { throw 'Feature-test restore failed.' }
-    dotnet test (Join-Path $buildRoot 'tests\ChunkPilot.UnitTests\ChunkPilot.UnitTests.csproj') -c Release --no-restore --filter $DotNetFilter
+    dotnet test (Join-Path $buildRoot 'tests\ChunkPilot.UnitTests\ChunkPilot.UnitTests.csproj') -c Release --no-restore --filter $DotNetFilter @configurationProperties
     if ($LASTEXITCODE -ne 0) { throw 'Targeted feature tests failed.' }
 } elseif ($Tier -eq 'HighRisk') {
-    dotnet restore (Join-Path $buildRoot 'ChunkPilot.sln')
+    dotnet restore (Join-Path $buildRoot 'ChunkPilot.sln') @configurationProperties
     if ($LASTEXITCODE -ne 0) { throw 'High-risk test restore failed.' }
     $testArguments = @('test', (Join-Path $buildRoot 'ChunkPilot.sln'), '-c', 'Release', '--no-restore', '-m:1')
     if ($DotNetFilter) {
         Write-Host "High-risk test selection (excluded tests are not certified): $DotNetFilter"
         $testArguments += @('--filter', $DotNetFilter)
     }
-    dotnet @testArguments
+    dotnet @testArguments @configurationProperties
     if ($LASTEXITCODE -ne 0) { throw 'High-risk test suite failed.' }
 }
 
 # A test-project restore resolves App without a runtime identifier and rewrites its assets file. Restore
 # packaged targets after all test restores so the win-x64 publish can never consume that narrower graph.
-dotnet restore (Join-Path $buildRoot 'src\ChunkPilot.App\ChunkPilot.App.csproj') -r win-x64
+dotnet restore (Join-Path $buildRoot 'src\ChunkPilot.App\ChunkPilot.App.csproj') -r win-x64 @configurationProperties
 if ($LASTEXITCODE -ne 0) { throw 'App runtime restore failed.' }
-dotnet restore (Join-Path $buildRoot 'src\ChunkPilot.Agent\ChunkPilot.Agent.csproj') -r win-x64
+dotnet restore (Join-Path $buildRoot 'src\ChunkPilot.Agent\ChunkPilot.Agent.csproj') -r win-x64 @configurationProperties
 if ($LASTEXITCODE -ne 0) { throw 'Agent runtime restore failed.' }
-dotnet restore (Join-Path $buildRoot 'src\ChunkPilot.Certification\ChunkPilot.Certification.csproj') -r win-x64
+dotnet restore (Join-Path $buildRoot 'src\ChunkPilot.Certification\ChunkPilot.Certification.csproj') -r win-x64 @configurationProperties
 if ($LASTEXITCODE -ne 0) { throw 'Certification runtime restore failed.' }
 
 $outputFull = [IO.Path]::GetFullPath($output)
@@ -316,7 +323,7 @@ New-Item -ItemType Directory -Path (Join-Path $outputFull 'Certification') -Forc
 $timestamp = [DateTimeOffset]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
 $versionProperties = [xml](Get-Content -LiteralPath (Join-Path $buildRoot 'Directory.Build.props') -Raw)
 $developmentTag = 'v' + [string]$versionProperties.Project.PropertyGroup.Version + '-dev'
-$identity = @("-p:ChunkPilotGitSha=$commit", "-p:ChunkPilotReleaseTag=$developmentTag", "-p:ChunkPilotBuildTimestampUtc=$timestamp")
+$identity = @("-p:ChunkPilotGitSha=$commit", "-p:ChunkPilotReleaseTag=$developmentTag", "-p:ChunkPilotBuildTimestampUtc=$timestamp") + $configurationProperties
 $single = @('-p:PublishSingleFile=true', '-p:IncludeNativeLibrariesForSelfExtract=true', '-p:DebugType=None', '-p:DebugSymbols=false')
 $multi = @('-p:PublishSingleFile=false', '-p:DebugType=None', '-p:DebugSymbols=false')
 dotnet publish (Join-Path $buildRoot 'src\ChunkPilot.App\ChunkPilot.App.csproj') -c Release -r win-x64 --self-contained true --no-restore -o $outputFull @identity @single
@@ -353,8 +360,10 @@ $packageInputsMatchHead = $packageInputProofBefore.matchesHead -and
     $packageInputProofBefore.indexSha256 -ceq $packageInputProofAfter.indexSha256 -and
     $packageInputProofBefore.fileCount -eq $packageInputProofAfter.fileCount
 $integrityManifest = [ordered]@{
-    schemaVersion = 3
+    schemaVersion = 4
     gitSha = $commit.ToLowerInvariant()
+    curseForgeServiceEndpoint = $buildConfiguration.curseForgeServiceEndpoint
+    buildConfigurationSha256 = $buildConfiguration.buildConfigurationSha256
     packageSourceKind = $packageSourceKind
     packageInputsMatchHead = $packageInputsMatchHead
     packageInputFileCount = $packageInputProofBefore.fileCount

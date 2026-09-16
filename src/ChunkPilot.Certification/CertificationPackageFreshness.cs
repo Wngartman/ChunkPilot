@@ -2,6 +2,8 @@ using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
+using ChunkPilot.Infrastructure;
 
 namespace ChunkPilot.Certification;
 
@@ -26,6 +28,7 @@ internal static class CertificationPackageFreshness
         "nuget.config",
         "scripts/build-webui.ps1",
         "scripts/dev-build.ps1",
+        "scripts/certification-build-configuration.ps1",
         "scripts/certify-curseforge-runtime.ps1"
     ];
 
@@ -58,7 +61,8 @@ internal static class CertificationPackageFreshness
         }
         var inputProof = ComputePackageInputProof(repository);
         RequireCleanPackageInputProof(inputProof);
-        ValidateIntegrityManifest(Path.GetDirectoryName(app)!, currentHead, inputProof);
+        ValidateIntegrityManifest(Path.GetDirectoryName(app)!, currentHead, inputProof,
+            CurseForgeServiceConfiguration.Endpoint?.AbsoluteUri ?? "");
     }
 
     public static void ValidateRepositoryIdentity(string repositoryRoot, string expectedGitSha)
@@ -70,6 +74,7 @@ internal static class CertificationPackageFreshness
                 "The repository HEAD changed after the candidate was selected; certification was refused.");
         EnsurePackageSourcesClean(repository);
         EnsureTrackedHeadBlobMatches(repository, "scripts/dev-build.ps1");
+        EnsureTrackedHeadBlobMatches(repository, "scripts/certification-build-configuration.ps1");
         EnsureTrackedHeadBlobMatches(repository, "scripts/certify-curseforge-runtime.ps1");
     }
 
@@ -215,7 +220,8 @@ internal static class CertificationPackageFreshness
     internal static void ValidateIntegrityManifest(
         string packageRoot,
         string expectedGitSha,
-        CertificationPackageInputProof? expectedInputProof = null)
+        CertificationPackageInputProof? expectedInputProof = null,
+        string compiledServiceEndpoint = "")
     {
         var root = Path.GetFullPath(packageRoot);
         RejectReparsePoint(root);
@@ -241,7 +247,7 @@ internal static class CertificationPackageFreshness
             throw new InvalidDataException(
                 "The development package integrity manifest is malformed.", exception);
         }
-        if (manifest.SchemaVersion != 3 ||
+        if (manifest.SchemaVersion != 4 ||
             !manifest.GitSha.Equals(expectedGitSha, StringComparison.OrdinalIgnoreCase) ||
             !manifest.PackageSourceKind.Equals(
                 "isolated-head-archive", StringComparison.Ordinal) ||
@@ -257,6 +263,8 @@ internal static class CertificationPackageFreshness
             manifest.Files.Count is < 3 or > MaximumManifestFiles)
             throw new InvalidDataException(
                 "The development package integrity manifest is not bound to the current candidate.");
+        ValidateBuildConfiguration(manifest.CurseForgeServiceEndpoint,
+            manifest.BuildConfigurationSha256, compiledServiceEndpoint);
         if (expectedInputProof is not null &&
             (!expectedInputProof.MatchesHead ||
              manifest.PackageInputFileCount != expectedInputProof.FileCount ||
@@ -399,6 +407,44 @@ internal static class CertificationPackageFreshness
             .ToLowerInvariant();
     }
 
+    internal static string NormalizeServiceEndpoint(string? value)
+    {
+        value ??= "";
+        if (!Regex.IsMatch(value,
+                @"\A(?:|https://[a-z0-9-]+(?:\.[a-z0-9-]+)+(?::443)?/?)\z",
+                RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)))
+            throw new InvalidDataException(
+                "The development package service endpoint must be a public HTTPS origin.");
+        try
+        {
+            return CurseForgeServiceConfiguration.ValidateEndpoint(value)?.AbsoluteUri ?? "";
+        }
+        catch (InvalidOperationException exception)
+        {
+            throw new InvalidDataException(
+                "The development package service endpoint is invalid.", exception);
+        }
+    }
+
+    internal static string ComputeBuildConfigurationSha256(string canonicalEndpoint) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
+            "ChunkPilot development build configuration v1\nCurseForgeServiceEndpoint=" +
+            canonicalEndpoint + "\n"))).ToLowerInvariant();
+
+    internal static void ValidateBuildConfiguration(
+        string? manifestEndpoint, string? manifestHash, string compiledEndpoint)
+    {
+        if (manifestEndpoint is null || manifestHash is null)
+            throw new InvalidDataException(
+                "The development package has no explicit public service build configuration.");
+        var canonicalEndpoint = NormalizeServiceEndpoint(manifestEndpoint);
+        if (!manifestEndpoint.Equals(canonicalEndpoint, StringComparison.Ordinal) ||
+            !manifestHash.Equals(ComputeBuildConfigurationSha256(canonicalEndpoint), StringComparison.Ordinal) ||
+            !canonicalEndpoint.Equals(NormalizeServiceEndpoint(compiledEndpoint), StringComparison.Ordinal))
+            throw new InvalidDataException(
+                "The packaged service configuration does not match the running certification controller.");
+    }
+
     private static bool Sha256(string value) =>
         value.Length == 64 && value.All(Uri.IsHexDigit);
 
@@ -454,6 +500,8 @@ internal static class CertificationPackageFreshness
     {
         public int SchemaVersion { get; init; }
         public string GitSha { get; init; } = "";
+        public string? CurseForgeServiceEndpoint { get; init; }
+        public string? BuildConfigurationSha256 { get; init; }
         public string PackageSourceKind { get; init; } = "";
         public bool PackageInputsMatchHead { get; init; }
         public int PackageInputFileCount { get; init; }

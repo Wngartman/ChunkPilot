@@ -12,6 +12,63 @@ public sealed class CurseForgeServiceTransportTests
     private static readonly Uri Endpoint = new("https://curseforge.fixture.example/relay/");
     private static readonly Uri Source = new("https://mediafilez.forgecdn.net/files/8764/245/ATM10.zip");
 
+    [Theory]
+    [InlineData("client_rate_limited", "from this network")]
+    [InlineData("provider_rate_limited", "temporarily limiting")]
+    [InlineData("service_capacity_reached", "daily capacity")]
+    [InlineData("service_concurrency_reached", "slots are busy")]
+    public async Task Service_rate_limits_explain_the_actual_gate_without_remote_error_text(string code, string expected)
+    {
+        var handler = new Handler(_ =>
+        {
+            var response = Json($$"""{"protocolVersion":1,"error":"{{code}}","message":"untrusted-secret-detail"}""");
+            response.StatusCode = HttpStatusCode.TooManyRequests;
+            return response;
+        });
+        using var api = new CurseForgeApiClient(new Secrets { ThrowOnRead = true }, handler, Endpoint);
+        var metadata = await Assert.ThrowsAsync<CurseForgeApiException>(() => api.GetJsonAsync("/v1/games/432"));
+        var download = await Assert.ThrowsAsync<CurseForgeApiException>(() => api.SendDownloadAsync(Source));
+        foreach (var failure in new[] { metadata, download })
+        {
+            Assert.Equal(CurseForgeFailureKind.RateLimited, failure.Kind);
+            Assert.Contains(expected, failure.Message, StringComparison.Ordinal);
+            Assert.DoesNotContain("untrusted-secret-detail", failure.Message, StringComparison.Ordinal);
+        }
+    }
+
+    [Theory]
+    [InlineData("{\"protocolVersion\":2,\"error\":\"service_capacity_reached\"}")]
+    [InlineData("{\"protocolVersion\":1,\"error\":\"untrusted-secret-detail\"}")]
+    [InlineData("{\"protocolVersion\":\"untrusted-secret-detail\",\"error\":\"service_capacity_reached\"}")]
+    [InlineData("[\"untrusted-secret-detail\"]")]
+    [InlineData("not-json-untrusted-secret-detail")]
+    public async Task Invalid_service_error_documents_fall_back_without_echo(string body)
+    {
+        var handler = new Handler(_ =>
+        {
+            var response = Json(body);
+            response.StatusCode = HttpStatusCode.TooManyRequests;
+            return response;
+        });
+        using var api = new CurseForgeApiClient(new Secrets { ThrowOnRead = true }, handler, Endpoint);
+        var failure = await Assert.ThrowsAsync<CurseForgeApiException>(() => api.SendDownloadAsync(Source));
+        Assert.Equal("The CurseForge rate limit is active.", failure.Message);
+    }
+
+    [Fact]
+    public async Task Oversized_service_error_is_not_read_or_echoed()
+    {
+        var handler = new Handler(_ =>
+        {
+            var response = Json(new string('x', 4097));
+            response.StatusCode = HttpStatusCode.TooManyRequests;
+            return response;
+        });
+        using var api = new CurseForgeApiClient(new Secrets { ThrowOnRead = true }, handler, Endpoint);
+        var failure = await Assert.ThrowsAsync<CurseForgeApiException>(() => api.SendDownloadAsync(Source));
+        Assert.Equal("The CurseForge rate limit is active.", failure.Message);
+    }
+
     [Fact]
     public async Task Application_service_needs_no_local_key_and_preserves_metadata_query_and_shape()
     {

@@ -43,10 +43,10 @@ export class CurseForgeBudget {
         }
         text += decoder.decode();
       } finally { void reader.cancel().catch(() => {}); reader.releaseLock(); }
-      const body = JSON.parse(text) as { id?: unknown; expiresAt?: unknown; bytes?: unknown };
+      const body = JSON.parse(text) as { id?: unknown; durationMs?: unknown; bytes?: unknown };
       if (typeof body.id !== "string") return jsonResponse({ allowed: false }, 400);
       const route = new URL(request.url).pathname;
-      if (route === "/acquire" && typeof body.expiresAt === "number") return jsonResponse({ allowed: this.ledger.acquire(body.id, body.expiresAt, Date.now()) });
+      if (route === "/acquire" && typeof body.durationMs === "number") return jsonResponse({ allowed: this.ledger.acquireDuration(body.id, body.durationMs, Date.now()) });
       if (route === "/reserve" && typeof body.bytes === "number") return jsonResponse({ allowed: this.ledger.reserve(body.id, body.bytes, Date.now()) });
       if (route === "/release") { this.ledger.release(body.id); return jsonResponse({ allowed: true }); }
       return jsonResponse({ allowed: false }, 400);
@@ -65,7 +65,7 @@ function budgetAdapter(namespace: DurableObjectNamespace): Budget {
     return ((await response.json()) as { allowed?: unknown }).allowed === true;
   };
   return {
-    acquire: (id, expiresAt) => invoke("acquire", { id, expiresAt }),
+    acquire: (id, durationMs) => invoke("acquire", { id, durationMs }),
     reserve: (id, bytes) => invoke("reserve", { id, bytes }),
     release: async id => { await invoke("release", { id }); },
   };

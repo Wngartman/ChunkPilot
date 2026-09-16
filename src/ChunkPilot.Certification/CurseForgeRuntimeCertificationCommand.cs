@@ -17,9 +17,8 @@ internal static class CurseForgeRuntimeCertificationCommand
                 CurseForgeCredentialProvisioner.KeyFileEnvironmentVariable);
             CurseForgeCredentialEnvironment.ClearFromCurrentProcess();
             keySourceForRedaction = keyFile;
-            if (string.IsNullOrWhiteSpace(keyFile))
-                throw new ArgumentException(
-                    "The controller did not receive the approved path through its private environment boundary.");
+            var requireApplicationService = Has(arguments, "--require-application-service");
+            ValidateAccessSelection(requireApplicationService, keyFile, Read(arguments, "--resume-report"));
 
             var repository = FindRepositoryRoot();
             var phaseText = Has(arguments, "--dry-metadata")
@@ -132,7 +131,8 @@ internal static class CurseForgeRuntimeCertificationCommand
                 DataRoot = dataRoot,
                 ManagedServersRoot = serversRoot,
                 TemporaryRoot = temporaryRoot,
-                ApprovedKeyFilePath = Path.GetFullPath(keyFile),
+                ApprovedKeyFilePath = requireApplicationService ? "" : Path.GetFullPath(keyFile!),
+                RequireApplicationService = requireApplicationService,
                 PayloadLedgerPath = ledgerPath,
                 ProjectReference = Read(arguments, "--project") ??
                                    throw new ArgumentException("--project is required."),
@@ -213,9 +213,23 @@ internal static class CurseForgeRuntimeCertificationCommand
         Console.Error.WriteLine(
             "       ChunkPilot.Certification certify-curseforge-runtime --project <id-or-slug> --client-file-id <id> [--phase Metadata|Official|Full] [options]");
         Console.Error.WriteLine(
-            "       Use scripts\\certify-curseforge-runtime.ps1 for environment-only credential handoff. Official and Full require --accept-minecraft-eula-for-certification; Metadata performs no payload download.");
+            "       Use scripts\\certify-curseforge-runtime.ps1 with -KeyFile for environment-only credential handoff, or -RequireApplicationService for a fresh no-key run. Official and Full require --accept-minecraft-eula-for-certification; Metadata performs no payload download.");
         Console.Error.WriteLine(
             "       Full additionally requires exact official-new, generated, Forge Minecraft/loader, and CurseForge mod project/file selections; an optional exact generated fallback pair is supported.");
+    }
+
+    internal static void ValidateAccessSelection(bool requireApplicationService, string? keyFile, string? resumeReport)
+    {
+        if (requireApplicationService)
+        {
+            if (!string.IsNullOrWhiteSpace(keyFile))
+                throw new ArgumentException("Application-service certification and a credential source are mutually exclusive.");
+            if (!string.IsNullOrWhiteSpace(resumeReport))
+                throw new ArgumentException("Application-service certification requires a fresh run, not a retained resume.");
+        }
+        else if (string.IsNullOrWhiteSpace(keyFile))
+            throw new ArgumentException(
+                "The controller did not receive the approved path through its private environment boundary.");
     }
 
     internal static CertificationEvidencePaths ResolveEvidencePaths(

@@ -46,7 +46,7 @@ public sealed class CurseForgeApiException : HttpRequestException
 /// written permission before storing CurseForge API data. Identical in-flight reads are still
 /// coalesced so one deliberate UI action cannot create a request storm.
 /// </summary>
-public sealed class CurseForgeApiClient : IDisposable
+public sealed partial class CurseForgeApiClient : IDisposable
 {
     public const string ApiHost = "api.curseforge.com";
     public const int MaximumJsonBytes = 8 * 1024 * 1024;
@@ -321,7 +321,8 @@ public sealed class CurseForgeApiClient : IDisposable
                 if (final != transportUri)
                     throw new CurseForgeApiException(CurseForgeFailureKind.UnapprovedHost,
                         "The CurseForge download left its configured application-service route.");
-                if (!response.IsSuccessStatusCode) throw MapStatus(response.StatusCode, applicationService: true);
+                if (!response.IsSuccessStatusCode)
+                    throw await MapServiceFailureAsync(response, timeout.Token).ConfigureAwait(false);
                 response.RequestMessage ??= request;
                 downloadResponses.Add(response, new DownloadIdentity(source, transportUri));
                 return response;
@@ -392,7 +393,9 @@ public sealed class CurseForgeApiClient : IDisposable
                     continue;
                 }
                 if (!response.IsSuccessStatusCode)
-                    throw MapStatus(response.StatusCode, applicationService: credential is null);
+                    throw credential is null
+                        ? await MapServiceFailureAsync(response, timeout.Token).ConfigureAwait(false)
+                        : MapStatus(response.StatusCode);
                 var mediaType = response.Content.Headers.ContentType?.MediaType;
                 if (mediaType is null ||
                     !(mediaType.Equals("application/json", StringComparison.OrdinalIgnoreCase) ||

@@ -1,7 +1,9 @@
-[CmdletBinding()]
+[CmdletBinding(DefaultParameterSetName = 'PersonalKey')]
 param(
-    [Parameter(Mandatory)]
+    [Parameter(Mandatory, ParameterSetName = 'PersonalKey')]
     [string]$KeyFile,
+    [Parameter(Mandatory, ParameterSetName = 'ApplicationService')]
+    [switch]$RequireApplicationService,
     [Parameter(Mandatory)]
     [string]$Project,
     [Parameter(Mandatory)]
@@ -33,6 +35,12 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+if ($RequireApplicationService -and $ResumeReport) {
+    throw 'Application-service certification requires a fresh run, not a retained resume.'
+}
+if (-not $RequireApplicationService -and [string]::IsNullOrWhiteSpace($KeyFile)) {
+    throw 'Select -KeyFile or -RequireApplicationService explicitly.'
+}
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $artifactsRoot = [IO.Path]::GetFullPath((Join-Path $repoRoot 'artifacts'))
 $head = (& git -C $repoRoot rev-parse HEAD).Trim()
@@ -57,8 +65,11 @@ function Assert-TrackedHeadBlob([string]$RelativePath) {
 
 $wrapperRelative = 'scripts/certify-curseforge-runtime.ps1'
 $devBuildRelative = 'scripts/dev-build.ps1'
+$configurationRelative = 'scripts/certification-build-configuration.ps1'
 Assert-TrackedHeadBlob $wrapperRelative
 Assert-TrackedHeadBlob $devBuildRelative
+Assert-TrackedHeadBlob $configurationRelative
+. (Join-Path $repoRoot $configurationRelative)
 $devBuildScript = Join-Path $repoRoot $devBuildRelative
 $packageInputProofJson = (& $devBuildScript -PackageInputProofOnly | Out-String).Trim()
 if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($packageInputProofJson)) {
@@ -222,7 +233,7 @@ if ($integrityManifestInfo.Length -lt 1 -or $integrityManifestInfo.Length -gt 4M
 }
 $integrityManifest = Get-Content -LiteralPath $integrityManifestPath -Raw | ConvertFrom-Json
 $integrityEntries = @($integrityManifest.files)
-if ($integrityManifest.schemaVersion -ne 3 -or
+if ($integrityManifest.schemaVersion -ne 4 -or
     $integrityManifest.gitSha -ine $head -or
     [string]$integrityManifest.packageSourceKind -cne 'isolated-head-archive' -or
     -not [bool]$integrityManifest.packageInputsMatchHead -or
@@ -232,6 +243,16 @@ if ($integrityManifest.schemaVersion -ne 3 -or
     [string]$integrityManifest.packageInputIndexSha256 -ine [string]$packageInputProof.indexSha256 -or
     $integrityEntries.Count -lt 3 -or $integrityEntries.Count -gt 10000) {
     throw 'The development package integrity manifest is not bound to the current HEAD.'
+}
+if ($integrityManifest.curseForgeServiceEndpoint -isnot [string] -or
+    $integrityManifest.buildConfigurationSha256 -isnot [string]) {
+    throw 'The development package has no explicit public service build configuration.'
+}
+$buildConfiguration = Get-CertificationBuildConfiguration $integrityManifest.curseForgeServiceEndpoint
+if ($integrityManifest.curseForgeServiceEndpoint -cne $buildConfiguration.curseForgeServiceEndpoint -or
+    $integrityManifest.buildConfigurationSha256 -cne $buildConfiguration.buildConfigurationSha256 -or
+    ($RequireApplicationService -and $buildConfiguration.curseForgeServiceEndpoint.Length -eq 0)) {
+    throw 'The development package service configuration is invalid or unavailable for keyless certification.'
 }
 $manifestByPath = @{}
 foreach ($entry in $integrityEntries) {
@@ -268,13 +289,16 @@ foreach ($file in $actualPackageFiles) {
         throw 'A development package file does not match its HEAD-bound SHA-256 manifest.'
     }
 }
-$keyPath = [IO.Path]::GetFullPath($KeyFile)
-if (-not (Test-Path -LiteralPath $keyPath -PathType Leaf)) {
-    throw 'The approved CurseForge key file is unavailable.'
-}
-$keyItem = Get-Item -LiteralPath $keyPath -Force
-if (($keyItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
-    throw 'The approved CurseForge key source cannot be a reparse point.'
+$keyPath = $null
+if (-not $RequireApplicationService) {
+    $keyPath = [IO.Path]::GetFullPath($KeyFile)
+    if (-not (Test-Path -LiteralPath $keyPath -PathType Leaf)) {
+        throw 'The approved CurseForge key file is unavailable.'
+    }
+    $keyItem = Get-Item -LiteralPath $keyPath -Force
+    if (($keyItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw 'The approved CurseForge key source cannot be a reparse point.'
+    }
 }
 if ($Phase -in @('Official', 'Full') -and -not $AcceptMinecraftEulaForCertification) {
     throw 'Official and Full certification require -AcceptMinecraftEulaForCertification.'
@@ -364,6 +388,9 @@ if ($null -ne $reportFull) {
 if ($AcceptMinecraftEulaForCertification) {
     $controllerArguments += '--accept-minecraft-eula-for-certification'
 }
+if ($RequireApplicationService) {
+    $controllerArguments += '--require-application-service'
+}
 if ($RetainStoppedRun) {
     $controllerArguments += '--retain-stopped-run'
 }
@@ -401,7 +428,12 @@ foreach ($name in @('TEMP', 'TMP', 'DOTNET_BUNDLE_EXTRACT_BASE_DIR')) {
 }
 $controllerExitCode = 2
 try {
-    $env:CHUNKPILOT_CURSEFORGE_KEY_FILE = $keyPath
+    if ($RequireApplicationService) {
+        Remove-Item Env:\CHUNKPILOT_CURSEFORGE_KEY_FILE -ErrorAction SilentlyContinue
+    }
+    else {
+        $env:CHUNKPILOT_CURSEFORGE_KEY_FILE = $keyPath
+    }
     $env:TEMP = $taskTemp
     $env:TMP = $taskTemp
     $env:DOTNET_BUNDLE_EXTRACT_BASE_DIR = $taskTemp

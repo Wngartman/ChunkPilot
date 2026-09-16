@@ -28,6 +28,7 @@ internal sealed record CurseForgeRuntimeCertificationOptions
     public required string ManagedServersRoot { get; init; }
     public string TemporaryRoot { get; init; } = "";
     public required string ApprovedKeyFilePath { get; init; }
+    public bool RequireApplicationService { get; init; }
     public required string PayloadLedgerPath { get; init; }
     public required string ProjectReference { get; init; }
     public required string ClientFileId { get; init; }
@@ -49,6 +50,8 @@ internal sealed record CurseForgeRuntimeCertificationOptions
 
     public void Validate()
     {
+        CurseForgeRuntimeCertificationCommand.ValidateAccessSelection(
+            RequireApplicationService, ApprovedKeyFilePath, ResumeReportPath);
         var repository = Path.GetFullPath(RepositoryRoot);
         if (!Directory.Exists(repository) || !File.Exists(Path.Combine(repository, "ChunkPilot.sln")))
             throw new InvalidOperationException("The current ChunkPilot repository root could not be proven.");
@@ -63,7 +66,6 @@ internal sealed record CurseForgeRuntimeCertificationOptions
         _ = OwnedCertificationRuntime.RequireOwnedDescendant(runtime, servers, "managed-server root");
         _ = OwnedCertificationRuntime.RequireOwnedDescendant(runtime, temporary, "task temporary root");
         _ = OwnedCertificationRuntime.RequireOwnedDescendant(runtime, PayloadLedgerPath, "payload ledger");
-        var key = Path.GetFullPath(ApprovedKeyFilePath);
         var dataParent = Path.GetDirectoryName(data);
         var serversParent = Path.GetDirectoryName(servers);
         var temporaryParent = Path.GetDirectoryName(temporary);
@@ -107,11 +109,14 @@ internal sealed record CurseForgeRuntimeCertificationOptions
         if (!Path.GetFileName(agent).Equals("ChunkPilot.Agent.exe", StringComparison.OrdinalIgnoreCase))
             throw new FileNotFoundException("The packaged Agent path is invalid.");
         CertificationPackageFreshness.Validate(repository, ExpectedGitSha, agent);
-        if (!File.Exists(key))
-            throw new FileNotFoundException("The approved CurseForge key file is unavailable.");
-        if ((File.GetAttributes(key) & FileAttributes.ReparsePoint) != 0)
-            throw new InvalidOperationException(
-                "The approved CurseForge key source cannot be a reparse point.");
+        if (!RequireApplicationService)
+        {
+            var key = Path.GetFullPath(ApprovedKeyFilePath);
+            if (!File.Exists(key))
+                throw new FileNotFoundException("The approved CurseForge key file is unavailable.");
+            if ((File.GetAttributes(key) & FileAttributes.ReparsePoint) != 0)
+                throw new InvalidOperationException("The approved CurseForge key source cannot be a reparse point.");
+        }
         var evidenceRoot = Path.GetFullPath(Path.Combine(runtime, "evidence"));
         var ledger = Path.GetFullPath(PayloadLedgerPath);
         if (!Path.GetDirectoryName(ledger)!.Equals(
@@ -641,12 +646,28 @@ internal sealed record CertificationCleanupPostconditionsEvidence
     public string ListenerPidOwnershipDetail { get; init; } = "Not verified";
 }
 
+internal sealed record CertificationCurseForgeAccessStatus
+{
+    public string Mode { get; init; } = "";
+    public bool CanAccess { get; init; }
+    public bool HasPersonalCredential { get; init; }
+}
+
 internal sealed class CurseForgeRuntimeCertificationReport
 {
     public string DocumentType { get; init; } =
         "ChunkPilot.CurseForgeRuntimeCertificationReport";
     public int SchemaVersion { get; init; } = 1;
     public string Phase { get; init; } = "";
+    public string AccessMode { get; set; } = "";
+    public string BootstrapAccessMode { get; set; } = "";
+    public string RelaunchAccessMode { get; set; } = "";
+    public bool FreshSecretStoreVerified { get; set; }
+    public bool BootstrapPersonalCredentialAbsent { get; set; }
+    public bool RelaunchPersonalCredentialAbsent { get; set; }
+    public bool CredentialStoreRemainedEmpty { get; set; }
+    public bool RelaunchAuthenticatedCatalogResolve { get; set; }
+    public bool RelaunchProviderConfigured { get; set; }
     public string RunId { get; init; } = "";
     public DateTimeOffset StartedAtUtc { get; init; } = DateTimeOffset.UtcNow;
     public DateTimeOffset? CompletedAtUtc { get; set; }
@@ -793,16 +814,26 @@ internal sealed class CurseForgeRuntimeCertificationController
             }
             else
             {
+                if (options.RequireApplicationService)
+                {
+                    RequireNoProtectedCredentialFile(options.DataRoot);
+                    using var api = new CurseForgeApiClient(new DpapiSecretStore(
+                        new AppDataPaths(options.DataRoot, options.ManagedServersRoot)));
+                    await KeylessCurseForgeCertification.VerifyAsync(api, cancellationToken).ConfigureAwait(false);
+                    report.FreshSecretStoreVerified = true;
+                }
                 await RunAgentLifetimeAsync(
                     options, report, budget, options.ApprovedKeyFilePath, bootstrap: true,
                     static (_, _) => Task.CompletedTask,
                     controllerCreationTicks, cancellationToken).ConfigureAwait(false);
-                if (!report.BootstrapProtectedCredentialConfigured || !report.BootstrapProviderConfigured ||
+                if ((options.RequireApplicationService
+                        ? !report.BootstrapPersonalCredentialAbsent
+                        : !report.BootstrapProtectedCredentialConfigured) || !report.BootstrapProviderConfigured ||
                     !report.BootstrapCleanupSucceeded)
                     throw new InvalidOperationException(
-                        "The credential-bootstrap Agent lifetime did not authenticate, persist, and exit cleanly.");
+                        "The initial Agent lifetime did not verify the required access mode and exit cleanly.");
 
-                var missingSentinel = OwnedCertificationRuntime.RequireOwnedDescendant(
+                var missingSentinel = options.RequireApplicationService ? "" : OwnedCertificationRuntime.RequireOwnedDescendant(
                     options.RuntimeRoot,
                     Path.Combine(Path.GetDirectoryName(Path.GetFullPath(options.DataRoot))!,
                         ".missing-curseforge-key-source"),
@@ -810,11 +841,20 @@ internal sealed class CurseForgeRuntimeCertificationController
                 if (File.Exists(missingSentinel) || Directory.Exists(missingSentinel))
                     throw new InvalidOperationException(
                         "The explicit DPAPI relaunch sentinel must remain nonexistent.");
+                if (options.RequireApplicationService)
+                    RequireNoProtectedCredentialFile(options.DataRoot);
 
                 await RunAgentLifetimeAsync(
                     options, report, budget, missingSentinel, bootstrap: false,
                     (session, token) => session.ExecuteCertifiedWorkAsync(options, report, token),
                     controllerCreationTicks, cancellationToken).ConfigureAwait(false);
+                if (options.RequireApplicationService)
+                {
+                    RequireNoProtectedCredentialFile(options.DataRoot);
+                    if (!report.RelaunchPersonalCredentialAbsent)
+                        throw new InvalidOperationException("The relaunched Agent did not prove credential-free application access.");
+                    report.CredentialStoreRemainedEmpty = true;
+                }
             }
             if (!report.BootstrapCleanupSucceeded || !report.CertifiedCleanupSucceeded ||
                 report.CertifiedTaskServerCleanupApplicable &&
@@ -905,7 +945,7 @@ internal sealed class CurseForgeRuntimeCertificationController
                 report.Success = workflowCompletedThroughFinalFreshness &&
                                  string.IsNullOrWhiteSpace(report.Error) &&
                                  report.Success &&
-                                 report.DpapiRelaunchAuthenticatedCatalogResolve &&
+                                 HasRequiredAccessEvidence(report, options.RequireApplicationService) &&
                                  report.CleanupSucceeded &&
                                  (!report.CertifiedTaskServerCleanupApplicable ||
                                   report.CertifiedTaskServerCleanupSucceeded);
@@ -928,6 +968,27 @@ internal sealed class CurseForgeRuntimeCertificationController
         selectedPortAbsent &&
         (report.BootstrapAgentProcessId is null || report.BootstrapAgentExited) &&
         (report.AgentProcessId is null || report.AgentExited);
+
+    internal static bool HasRequiredAccessEvidence(
+        CurseForgeRuntimeCertificationReport report, bool requireApplicationService) =>
+        !requireApplicationService
+            ? report.DpapiRelaunchAuthenticatedCatalogResolve
+            : report.AccessMode == CurseForgeAccessMode.ApplicationService.ToString() &&
+              report.BootstrapAccessMode == report.AccessMode && report.RelaunchAccessMode == report.AccessMode &&
+              report.FreshSecretStoreVerified && report.CredentialStoreRemainedEmpty &&
+              report.BootstrapPersonalCredentialAbsent && report.RelaunchPersonalCredentialAbsent &&
+              !report.BootstrapProtectedCredentialConfigured && !report.DpapiRelaunchProtectedCredentialConfigured &&
+              report.BootstrapProviderConfigured && report.RelaunchProviderConfigured &&
+              report.RelaunchAuthenticatedCatalogResolve;
+
+    internal static void RequireNoProtectedCredentialFile(string dataRoot)
+    {
+        // Inspect only the exact disposable store name, never its contents or any user profile.
+        // Directory enumeration also detects a dangling reparse entry that File.Exists can miss.
+        if (Directory.EnumerateFileSystemEntries(Path.GetFullPath(dataRoot), "secrets.dat",
+                SearchOption.TopDirectoryOnly).Any())
+            throw new InvalidOperationException("Application-service certification requires an absent protected secret store.");
+    }
 
     private async Task RunAgentLifetimeAsync(
         CurseForgeRuntimeCertificationOptions options,
@@ -959,7 +1020,8 @@ internal sealed class CurseForgeRuntimeCertificationController
                 credentialSourcePath,
                 instanceId,
                 updateFaultToken,
-                bootstrap ? null : options.RuntimeRoot));
+                bootstrap ? null : options.RuntimeRoot,
+                options.RequireApplicationService));
             if (bootstrap)
             {
                 report.BootstrapAgentProcessId = agent.ProcessId;
@@ -1221,7 +1283,9 @@ internal sealed partial class CurseForgeRuntimeCertificationSession(
         bool bootstrap,
         CancellationToken cancellationToken)
     {
-        var prefix = bootstrap ? "bootstrap " : "DPAPI relaunch ";
+        var prefix = options.RequireApplicationService
+            ? bootstrap ? "keyless initial " : "keyless relaunch "
+            : bootstrap ? "bootstrap " : "DPAPI relaunch ";
         var registration = await StepAsync(
             report, options, prefix + "exact session authority",
             () => transport.SendAsync<UiSessionRegistrationResult>(
@@ -1241,20 +1305,31 @@ internal sealed partial class CurseForgeRuntimeCertificationSession(
         else
             report.SessionRegistered = true;
 
-        var credentialStatus = await StepAsync(
-            report, options, prefix + "credential status",
-            () => transport.SendAsync<TextResponse>("HasCurseForgeApiKey", session, cancellationToken))
+        var access = await StepAsync(
+            report, options, prefix + "access status",
+            () => transport.SendAsync<CertificationCurseForgeAccessStatus>(
+                "GetCurseForgeAccess", session, cancellationToken))
             .ConfigureAwait(false);
-        var credentialAvailable = credentialStatus.Value.Equals("configured", StringComparison.Ordinal);
+        var credentialAvailable = access.HasPersonalCredential;
+        report.AccessMode = access.Mode;
         if (bootstrap)
+        {
+            report.BootstrapAccessMode = access.Mode;
+            report.BootstrapPersonalCredentialAbsent = !credentialAvailable;
             report.BootstrapProtectedCredentialConfigured = credentialAvailable;
+        }
         else
+        {
+            report.RelaunchAccessMode = access.Mode;
+            report.RelaunchPersonalCredentialAbsent = !credentialAvailable;
             report.DpapiRelaunchProtectedCredentialConfigured = credentialAvailable;
-        if (!credentialAvailable)
+        }
+        var requiredMode = options.RequireApplicationService
+            ? CurseForgeAccessMode.ApplicationService : CurseForgeAccessMode.PersonalKey;
+        if (access.Mode != requiredMode.ToString() || !access.CanAccess ||
+            credentialAvailable == options.RequireApplicationService)
             throw new InvalidOperationException(
-                bootstrap
-                    ? "The packaged Agent did not authenticate and protect the approved CurseForge credential."
-                    : "The fresh packaged Agent did not recover the Windows-protected CurseForge credential.");
+                "The packaged Agent did not prove the required CurseForge access mode and personal-credential boundary.");
 
         var statuses = await StepAsync(
             report, options, prefix + "provider status",
@@ -1265,10 +1340,13 @@ internal sealed partial class CurseForgeRuntimeCertificationSession(
         if (bootstrap)
             report.BootstrapProviderConfigured = providerAvailable;
         else
-            report.DpapiRelaunchProviderConfigured = providerAvailable;
+        {
+            report.RelaunchProviderConfigured = providerAvailable;
+            report.DpapiRelaunchProviderConfigured = !options.RequireApplicationService && providerAvailable;
+        }
         if (!providerAvailable)
             throw new InvalidOperationException(
-                "CurseForge is unavailable after native credential authentication.");
+                "CurseForge is unavailable after the required native access check.");
     }
 
     public async Task ExecuteCertifiedWorkAsync(
@@ -1282,7 +1360,8 @@ internal sealed partial class CurseForgeRuntimeCertificationSession(
             return;
         }
         var project = await ResolveExactAsync(options, report, cancellationToken).ConfigureAwait(false);
-        report.DpapiRelaunchAuthenticatedCatalogResolve = true;
+        report.RelaunchAuthenticatedCatalogResolve = true;
+        report.DpapiRelaunchAuthenticatedCatalogResolve = !options.RequireApplicationService;
         if (options.ClientFileId == CurseForgeRuntimeCertificationOptions.LatestOfficialSelection)
         {
             var selected = SelectLatestOfficial(project);

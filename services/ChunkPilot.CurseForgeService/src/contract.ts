@@ -11,7 +11,7 @@ export const MAX_LEASE_MS = DOWNLOAD_TIMEOUT_MS + 60_000;
 
 export interface RateLimiter { limit(input: { key: string }): Promise<{ success: boolean }> }
 export interface Budget {
-  acquire(id: string, expiresAt: number): Promise<boolean>;
+  acquire(id: string, durationMs: number): Promise<boolean>;
   reserve(id: string, bytes: number): Promise<boolean>;
   release(id: string): Promise<void>;
 }
@@ -21,7 +21,6 @@ export interface Dependencies {
   limiter?: RateLimiter | null;
   budget?: Budget | null;
   fetch: Fetcher;
-  now?: () => number;
   waitUntil?: (promise: Promise<unknown>) => void;
 }
 
