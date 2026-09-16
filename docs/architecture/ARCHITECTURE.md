@@ -1,8 +1,8 @@
 # Architecture
 
-ChunkPilot 1.3 keeps the original four-project architecture:
+ChunkPilot keeps the original native authority layers, with a locally bundled WebUI:
 
-- `ChunkPilot.App` is the WPF MVVM shell. It renders snapshots and streamed operation state, collects explicit user decisions, and sends typed requests. It never owns Minecraft processes or provider implementations.
+- `ChunkPilot.App` is the native WPF/WebView2 host and typed bridge. The bundled `ChunkPilot.WebUi` React interface renders snapshots and operation state; native dialogs collect sensitive or explicit decisions. Neither UI layer owns Minecraft processes or provider implementations.
 - `ChunkPilot.Agent` is the hidden per-user control process. It owns process trees, stdin/stdout/stderr, lifecycle serialization, installation/update coordination, data-operation locks, schedules, backups, recovery, and live commands.
 - `ChunkPilot.Core` contains protocol records, immutable domain/update models, launch and update policy, validation, scheduling, redaction, quoting, and bounded console state.
 - `ChunkPilot.Infrastructure` contains SQLite, official install/update providers, transactional installation and server-pack activation, source detection, snapshot/migration services, safe files, backups, world/icon/whitelist/RAM services, statistics, status queries, jar metadata, and diagnostics.
@@ -52,9 +52,12 @@ Fabric, Quilt, Forge, and NeoForge use `LoaderMetadataService` and `LoaderInstal
 
 Managed Java uses an `IManagedJavaPackageProvider`. The Temurin adapter requires official SHA-256, extracts through traversal-safe code, health-checks x64/version evidence, and persists per-server absolute paths under app data without changing the Windows Java environment.
 
-CurseForge authentication stays inside Infrastructure. `CurseForgeCredentialProvisioner` reads only the
-approved local developer file (or its path-only override), imports it into the DPAPI secret store, and never
-returns credential material to App, Agent protocol models, or React. `CurseForgeApiClient` is the single
+CurseForge transport authentication stays inside Infrastructure. Optional personal setup validates a key
+entered in the native password dialog and protects it with Windows DPAPI. Development provisioning reads
+a local file only when `CHUNKPILOT_CURSEFORGE_KEY_FILE` explicitly supplies its path; normal startup never
+searches for a developer credential. Service-enabled builds instead call the configured private backend,
+whose application key stays in its host secret binding. No credential is returned in Agent protocol
+models or React state. `CurseForgeApiClient` is the single
 official API/CDN HTTP boundary: HTTPS/host allowlists, no cookies or redirects, connect/total timeouts,
 bounded JSON, typed status mapping, cancellation, and in-flight request coalescing are enforced there.
 Persistent CurseForge API-response caching is disabled under the currently reviewed provider terms.
