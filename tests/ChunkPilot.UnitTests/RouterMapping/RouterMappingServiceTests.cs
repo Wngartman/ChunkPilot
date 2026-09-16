@@ -168,6 +168,32 @@ public sealed class RouterMappingServiceTests
             CancellationToken.None));
     }
 
+    [Fact]
+    public async Task An_ownership_query_deadline_reports_uncertainty_instead_of_absence()
+    {
+        var service = RouterFixtures.Service(RouterFixtures.Loopback(),
+            new RouterMappingOptions { OperationBudget = TimeSpan.FromMilliseconds(100) },
+            new SlowProvider(RouterMappingMechanism.UpnpIgd));
+
+        var error = await Assert.ThrowsAsync<RouterMappingQueryException>(() => service.QueryAsync(Binding(),
+            new RouterDiscoveryResult { Mechanism = RouterMappingMechanism.UpnpIgd, Supported = true },
+            MappingTransport.Tcp, 25565, CancellationToken.None));
+
+        Assert.Equal(RouterMappingFailure.GatewayDidNotRespond, error.Failure);
+    }
+
+    [Fact]
+    public async Task An_ownership_query_preserves_caller_cancellation()
+    {
+        var service = RouterFixtures.Service(RouterFixtures.Loopback(), new RouterMappingOptions(),
+            new SlowProvider(RouterMappingMechanism.UpnpIgd));
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => service.QueryAsync(Binding(),
+            new RouterDiscoveryResult { Mechanism = RouterMappingMechanism.UpnpIgd, Supported = true },
+            MappingTransport.Tcp, 25565, cancellation.Token));
+    }
+
     private static RouterLanBinding Binding() =>
         new("eth", "Ethernet", IPAddress.Parse("192.168.1.50"), 24, IPAddress.Parse("192.168.1.1"));
 
@@ -224,7 +250,7 @@ public sealed class RouterMappingServiceTests
     private sealed class SlowProvider(RouterMappingMechanism mechanism) : IRouterMappingProvider
     {
         public RouterMappingMechanism Mechanism => mechanism;
-        public bool CanQueryExistingMappings => false;
+        public bool CanQueryExistingMappings => mechanism == RouterMappingMechanism.UpnpIgd;
 
         public async Task<RouterDiscoveryResult> DiscoverAsync(
             RouterLanBinding binding, CancellationToken cancellationToken)
@@ -233,10 +259,13 @@ public sealed class RouterMappingServiceTests
             return new RouterDiscoveryResult { Mechanism = mechanism, Supported = true };
         }
 
-        public Task<ExistingRouterMapping?> QueryAsync(
+        public async Task<ExistingRouterMapping?> QueryAsync(
             RouterLanBinding binding, RouterDiscoveryResult discovery, MappingTransport transport,
-            int externalPort, CancellationToken cancellationToken) =>
-            Task.FromResult<ExistingRouterMapping?>(null);
+            int externalPort, CancellationToken cancellationToken)
+        {
+            await Task.Delay(TimeSpan.FromSeconds(30), cancellationToken).ConfigureAwait(false);
+            return null;
+        }
 
         public async Task<RouterMappingOutcome> CreateAsync(
             RouterLanBinding binding, RouterDiscoveryResult discovery, RouterMappingRequest request,

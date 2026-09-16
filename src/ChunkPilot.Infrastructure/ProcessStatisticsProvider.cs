@@ -22,9 +22,6 @@ public sealed class ProcessStatisticsProvider
     private long lastNetworkReceived;
     private long lastNetworkSent;
     private string lastNetworkAdapterId = "";
-    private DateTimeOffset lastStorageSample;
-    private long managedStorageBytes;
-    private long backupStorageBytes;
 
     public StatisticsSample SampleProcessTree(int rootProcessId)
     {
@@ -90,12 +87,8 @@ public sealed class ProcessStatisticsProvider
         var drive = new DriveInfo(Path.GetPathRoot(paths.Root)!);
         var cpu = SampleHostCpu();
         var network = SampleNetwork();
-        if (DateTimeOffset.UtcNow - lastStorageSample > TimeSpan.FromMinutes(5))
-        {
-            lastStorageSample = DateTimeOffset.UtcNow;
-            managedStorageBytes = SumDirectory(paths.ManagedServers);
-            backupStorageBytes = SumDirectory(paths.Backups);
-        }
+        // Dashboard sampling never traverses managed servers or backups. Folder usage remains
+        // unmeasured; volume free space is independent and inexpensive to query.
         if (OperatingSystem.IsWindows() && GetPerformanceInfo(out var info, Marshal.SizeOf<PerformanceInformation>()))
         {
             var total = checked((long)(info.PhysicalTotal.ToUInt64() * info.PageSize.ToUInt64()));
@@ -116,9 +109,7 @@ public sealed class ProcessStatisticsProvider
                 LanAddress = network.Address,
                 ActiveNetworkAdapter = network.Adapter,
                 NetworkReceiveBytesPerSecond = network.ReceivePerSecond,
-                NetworkSendBytesPerSecond = network.SendPerSecond,
-                ManagedServerStorageBytes = managedStorageBytes,
-                BackupStorageBytes = backupStorageBytes
+                NetworkSendBytesPerSecond = network.SendPerSecond
             };
         }
         return new HostSnapshot
@@ -134,9 +125,7 @@ public sealed class ProcessStatisticsProvider
             LanAddress = network.Address,
             ActiveNetworkAdapter = network.Adapter,
             NetworkReceiveBytesPerSecond = network.ReceivePerSecond,
-            NetworkSendBytesPerSecond = network.SendPerSecond,
-            ManagedServerStorageBytes = managedStorageBytes,
-            BackupStorageBytes = backupStorageBytes
+            NetworkSendBytesPerSecond = network.SendPerSecond
         };
     }
 
@@ -243,27 +232,6 @@ public sealed class ProcessStatisticsProvider
         {
             Marshal.FreeHGlobal(buffer);
         }
-    }
-
-    private static long SumDirectory(string path)
-    {
-        if (!Directory.Exists(path))
-            return 0;
-        long total = 0;
-        try
-        {
-            foreach (var file in Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories))
-            {
-                try
-                {
-                    if (!File.GetAttributes(file).HasFlag(FileAttributes.ReparsePoint))
-                        total += new FileInfo(file).Length;
-                }
-                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
-            }
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
-        return total;
     }
 
     private double SampleHostCpu()

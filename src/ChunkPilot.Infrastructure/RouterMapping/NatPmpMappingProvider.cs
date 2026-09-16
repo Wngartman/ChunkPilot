@@ -150,6 +150,17 @@ public sealed class NatPmpMappingProvider : IRouterMappingProvider
                 var assigned = outcome.ExternalPort;
                 var withdrawal = await MapAsync(binding, request, 0, 0, dispatch, CancellationToken.None)
                     .ConfigureAwait(false);
+                if (!withdrawal.Success)
+                    return outcome with
+                    {
+                        Success = false,
+                        CleanupPending = true,
+                        Failure = RouterMappingFailure.RemovalFailed,
+                        ExternalAddress = discovery.ExternalAddress,
+                        Detail = $"The gateway assigned public port {assigned} instead of {request.ExternalPort}. " +
+                                 "Its removal could not be confirmed; exact-owned cleanup remains pending. " + withdrawal.Detail,
+                        Continuity = GatewayContinuityEvidence.Stronger(outcome.Continuity, withdrawal.Continuity)
+                    };
                 // Both exchanges were validated NAT-PMP responses, so both carried an authoritative
                 // Seconds Since Start of Epoch. What this operation concludes about the port is a
                 // separate matter: a gateway that proved it had rebooted has rebooted, and that must
@@ -186,6 +197,9 @@ public sealed class NatPmpMappingProvider : IRouterMappingProvider
         NatPmpRebootRecovery.Dispatch? dispatch,
         CancellationToken cancellationToken)
     {
+        if (request.InternalPort is <= 0 or > 65535)
+            return RouterMappingOutcome.Failed(Mechanism, RouterMappingFailure.RequestRejected,
+                "NAT-PMP reserves internal port zero for deleting all client mappings; it must never be sent.");
         var opcode = request.Transport == MappingTransport.Tcp ? OpcodeMapTcp : OpcodeMapUdp;
         var payload = new byte[12];
         payload[0] = Version;
@@ -223,6 +237,14 @@ public sealed class NatPmpMappingProvider : IRouterMappingProvider
 
         var assignedExternalPort = BinaryPrimitives.ReadUInt16BigEndian(reply.AsSpan(10, 2));
         var lifetime = BinaryPrimitives.ReadUInt32BigEndian(reply.AsSpan(12, 4));
+        if (lifetimeSeconds == 0 && lifetime != 0)
+            return RouterMappingOutcome.Failed(Mechanism, RouterMappingFailure.RemovalFailed,
+                $"NAT-PMP retained a {lifetime}-second lifetime after deletion; closure was not confirmed.")
+                with { Continuity = continuity };
+        if (lifetimeSeconds > 0 && lifetime == 0)
+            return RouterMappingOutcome.Failed(Mechanism, RouterMappingFailure.RequestRejected,
+                "NAT-PMP granted no mapping lifetime; no active mapping was established.")
+                with { Continuity = continuity };
         return new RouterMappingOutcome
         {
             Success = true,

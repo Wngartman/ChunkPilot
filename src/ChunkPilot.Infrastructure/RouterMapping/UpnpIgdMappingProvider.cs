@@ -142,7 +142,8 @@ public sealed class UpnpIgdMappingProvider : IRouterMappingProvider
     {
         ArgumentNullException.ThrowIfNull(discovery);
         if (!Uri.TryCreate(discovery.ControlUrl, UriKind.Absolute, out var controlUrl))
-            return null;
+            throw new RouterMappingQueryException(RouterMappingFailure.MechanismUnsupported,
+                "No UPnP control endpoint is known, so the mapping's presence could not be checked.");
         var response = await control.InvokeAsync(controlUrl, discovery.ServiceType,
             "GetSpecificPortMappingEntry",
             [
@@ -151,14 +152,28 @@ public sealed class UpnpIgdMappingProvider : IRouterMappingProvider
                 new KeyValuePair<string, string>("NewProtocol", ProtocolName(transport))
             ], cancellationToken).ConfigureAwait(false);
         if (!response.Success)
-            return null; // 714 NoSuchEntryInArray, or any refusal: nothing is proven to exist.
+        {
+            // Only the protocol's explicit NoSuchEntryInArray proves absence. A timeout, refusal or
+            // unreadable answer must retain ownership evidence and must never authorize overwrite.
+            if (response.ErrorCode == 714)
+                return null;
+            throw new RouterMappingQueryException(TranslateError(response.ErrorCode),
+                $"UPnP GetSpecificPortMappingEntry could not confirm public port {externalPort}: " +
+                $"{response.ErrorCode} ({UpnpErrorName(response.ErrorCode)}). {response.ErrorDescription}");
+        }
+
+        if (string.IsNullOrWhiteSpace(Value(response, "NewInternalClient")) ||
+            !int.TryParse(Value(response, "NewInternalPort"), NumberStyles.Integer,
+                CultureInfo.InvariantCulture, out var internalPort) || internalPort is <= 0 or > 65535)
+            throw new RouterMappingQueryException(RouterMappingFailure.MalformedReply,
+                "The UPnP mapping query did not return a usable internal endpoint; ownership remains unknown.");
 
         return new ExistingRouterMapping
         {
             ExternalPort = externalPort,
             Transport = transport,
             InternalClient = Value(response, "NewInternalClient"),
-            InternalPort = ParseInt(Value(response, "NewInternalPort")),
+            InternalPort = internalPort,
             Description = Value(response, "NewPortMappingDescription"),
             Enabled = Value(response, "NewEnabled") != "0",
             LeaseSeconds = ParseInt(Value(response, "NewLeaseDuration"))
@@ -277,21 +292,23 @@ public sealed class UpnpIgdMappingProvider : IRouterMappingProvider
 
     private RouterMappingOutcome Translate(UpnpSoapResponse response, RouterMappingRequest request)
     {
-        var failure = response.ErrorCode switch
-        {
-            718 => RouterMappingFailure.ForeignMappingPresent,
-            401 or 606 => RouterMappingFailure.NotAuthorized,
-            402 or 715 or 716 or 724 or 727 => RouterMappingFailure.RequestRejected,
-            501 => RouterMappingFailure.RequestRejected,
-            0 => RouterMappingFailure.NetworkFailure,
-            _ => RouterMappingFailure.Unknown
-        };
+        var failure = TranslateError(response.ErrorCode);
         var detail = response.ErrorCode == 0
             ? $"The gateway did not complete AddPortMapping: {response.ErrorDescription}"
             : $"UPnP AddPortMapping failed for {ProtocolName(request.Transport)} {request.ExternalPort} with " +
               $"error {response.ErrorCode} ({UpnpErrorName(response.ErrorCode)}).";
         return RouterMappingOutcome.Failed(Mechanism, failure, detail);
     }
+
+    private static RouterMappingFailure TranslateError(int code) => code switch
+    {
+        718 => RouterMappingFailure.ForeignMappingPresent,
+        401 => RouterMappingFailure.MechanismUnsupported,
+        606 => RouterMappingFailure.NotAuthorized,
+        402 or 501 or 715 or 716 or 724 or 727 => RouterMappingFailure.RequestRejected,
+        0 => RouterMappingFailure.NetworkFailure,
+        _ => RouterMappingFailure.Unknown
+    };
 
     private async Task<(XDocument Document, Uri BaseUri)?> ReadDescriptionAsync(
         Uri location, CancellationToken cancellationToken)
@@ -301,8 +318,10 @@ public sealed class UpnpIgdMappingProvider : IRouterMappingProvider
             var xml = await control.GetDescriptionAsync(location, cancellationToken).ConfigureAwait(false);
             return (XDocument.Parse(xml), location);
         }
-        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or
-                                          System.Xml.XmlException or InvalidOperationException)
+        catch (Exception exception) when (exception is HttpRequestException or
+                                          System.Xml.XmlException or InvalidOperationException ||
+                                          exception is OperationCanceledException &&
+                                          !cancellationToken.IsCancellationRequested)
         {
             return null;
         }

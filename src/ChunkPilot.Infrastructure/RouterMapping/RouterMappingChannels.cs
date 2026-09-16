@@ -154,24 +154,30 @@ public sealed class SsdpSearchChannel : ISsdpSearchChannel
 /// </summary>
 public sealed class UpnpControlChannel : IUpnpControlChannel, IDisposable
 {
+    internal const int MaximumResponseBytes = 1024 * 1024;
     private static readonly XNamespace Soap = "http://schemas.xmlsoap.org/soap/envelope/";
     private static readonly XNamespace Control = "urn:schemas-upnp-org:control-1-0";
 
     private readonly HttpClient http;
     private readonly bool ownsHttpClient;
+    private readonly TimeSpan timeout;
 
     public UpnpControlChannel(RouterMappingOptions options, HttpClient? httpClient = null)
     {
         ArgumentNullException.ThrowIfNull(options);
+        timeout = options.HttpTimeout;
         ownsHttpClient = httpClient is null;
         http = httpClient ?? new HttpClient { Timeout = options.HttpTimeout };
     }
 
     public async Task<string> GetDescriptionAsync(Uri url, CancellationToken cancellationToken)
     {
-        using var response = await http.GetAsync(url, cancellationToken).ConfigureAwait(false);
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(timeout);
+        using var response = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, deadline.Token)
+            .ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
-        return await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+        return await ReadBoundedAsync(response.Content, deadline.Token).ConfigureAwait(false);
     }
 
     public async Task<UpnpSoapResponse> InvokeAsync(
@@ -189,17 +195,30 @@ public sealed class UpnpControlChannel : IUpnpControlChannel, IDisposable
         };
         request.Content.Headers.ContentType!.CharSet = "utf-8";
         request.Headers.TryAddWithoutValidation("SOAPACTION", $"\"{serviceType}#{action}\"");
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(timeout);
         try
         {
-            using var response = await http.SendAsync(request, cancellationToken).ConfigureAwait(false);
-            var text = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-            return ParseResponse(action, response.IsSuccessStatusCode, text);
+            using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead,
+                deadline.Token).ConfigureAwait(false);
+            var text = await ReadBoundedAsync(response.Content, deadline.Token).ConfigureAwait(false);
+            return ParseResponse(action, response.IsSuccessStatusCode, text, serviceType);
         }
-        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
+        catch (Exception exception) when (exception is HttpRequestException ||
+                                          exception is OperationCanceledException &&
+                                          !cancellationToken.IsCancellationRequested)
         {
             return new UpnpSoapResponse(false, new Dictionary<string, string>(StringComparer.Ordinal), 0,
                 exception.Message);
         }
+    }
+
+    private static async Task<string> ReadBoundedAsync(HttpContent content, CancellationToken cancellationToken)
+    {
+        // HeadersRead avoids HttpClient's otherwise unbounded eager buffering. This limit covers
+        // declared and chunked lengths, and the same deadline covers headers and the entire body.
+        await content.LoadIntoBufferAsync(MaximumResponseBytes, cancellationToken).ConfigureAwait(false);
+        return await content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
     }
 
     internal static string BuildEnvelope(
@@ -217,7 +236,8 @@ public sealed class UpnpControlChannel : IUpnpControlChannel, IDisposable
         return builder.ToString();
     }
 
-    internal static UpnpSoapResponse ParseResponse(string action, bool httpSuccess, string body)
+    internal static UpnpSoapResponse ParseResponse(
+        string action, bool httpSuccess, string body, string? serviceType = null)
     {
         XDocument document;
         try
@@ -244,11 +264,20 @@ public sealed class UpnpControlChannel : IUpnpControlChannel, IDisposable
             return new UpnpSoapResponse(false, new Dictionary<string, string>(StringComparer.Ordinal), 0,
                 $"The gateway rejected {action} without a UPnPError body.");
 
-        var response = document.Descendants(Soap + "Body").Elements().FirstOrDefault();
+        var responses = document.Root?.Name == Soap + "Envelope"
+            ? document.Root.Elements(Soap + "Body").Elements()
+                .Where(element => element.Name.LocalName == action + "Response" &&
+                    (serviceType is null || element.Name.NamespaceName == serviceType)).ToArray()
+            : [];
+        if (responses.Length != 1)
+            return new UpnpSoapResponse(false, new Dictionary<string, string>(StringComparer.Ordinal), 0,
+                $"The gateway did not return the expected {action} SOAP response.");
+        var response = responses[0];
         var values = new Dictionary<string, string>(StringComparer.Ordinal);
-        if (response is not null)
-            foreach (var element in response.Elements())
-                values[element.Name.LocalName] = element.Value;
+        foreach (var element in response.Elements())
+            if (!values.TryAdd(element.Name.LocalName, element.Value))
+                return new UpnpSoapResponse(false, values, 0,
+                    $"The gateway returned duplicate arguments for {action}.");
         return new UpnpSoapResponse(true, values, 0, "");
     }
 

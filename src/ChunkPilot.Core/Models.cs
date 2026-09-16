@@ -295,8 +295,9 @@ public sealed record HostSnapshot
     public string ActiveNetworkAdapter { get; init; } = "";
     public long NetworkReceiveBytesPerSecond { get; init; }
     public long NetworkSendBytesPerSecond { get; init; }
-    public long ManagedServerStorageBytes { get; init; }
-    public long BackupStorageBytes { get; init; }
+    // Null means unmeasured, not an empty server or backup folder. Dashboard sampling does not scan either tree.
+    public long? ManagedServerStorageBytes { get; init; }
+    public long? BackupStorageBytes { get; init; }
 }
 
 public sealed record DashboardSnapshot

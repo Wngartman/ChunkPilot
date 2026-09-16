@@ -141,6 +141,16 @@ public sealed class PcpMappingProvider : IRouterMappingProvider
         // ChunkPilot — its nonce proves that — so withdrawing it cannot affect anyone else's mapping.
         var assigned = outcome.ExternalPort;
         var withdrawal = await MapAsync(binding, request, nonce, 0, CancellationToken.None).ConfigureAwait(false);
+        if (!withdrawal.Success)
+            return outcome with
+            {
+                Success = false,
+                CleanupPending = true,
+                Failure = RouterMappingFailure.RemovalFailed,
+                Detail = $"PCP assigned public port {assigned} instead of {request.ExternalPort}. " +
+                         "Its removal could not be confirmed; exact-owned cleanup remains pending. " + withdrawal.Detail,
+                Continuity = GatewayContinuityEvidence.Stronger(outcome.Continuity, withdrawal.Continuity)
+            };
         // Both exchanges were validated PCP responses, so both carried an authoritative Epoch Time. The
         // conclusion this operation reaches about the port is a separate matter entirely: a gateway that
         // proved it had restarted has restarted, and that must survive being reclassified as a conflict.
@@ -199,6 +209,10 @@ public sealed class PcpMappingProvider : IRouterMappingProvider
         if (!reply.AsSpan(HeaderLength, NonceLength).SequenceEqual(nonce))
             return RouterMappingOutcome.Failed(Mechanism, RouterMappingFailure.MalformedReply,
                 "The PCP MAP reply carried a different mapping nonce, so it does not describe ChunkPilot's request.");
+        if (reply[HeaderLength + 12] != payload[HeaderLength + 12] ||
+            BinaryPrimitives.ReadUInt16BigEndian(reply.AsSpan(HeaderLength + 16, 2)) != request.InternalPort)
+            return RouterMappingOutcome.Failed(Mechanism, RouterMappingFailure.MalformedReply,
+                "The PCP MAP reply carried a different protocol or internal port; it does not describe this mapping.");
 
         // Read before the result code, and carried on every outcome from here down. A gateway that has
         // restarted may still refuse the request it has just been sent, and the restart is the more
@@ -211,6 +225,14 @@ public sealed class PcpMappingProvider : IRouterMappingProvider
                 with { Continuity = continuity };
 
         var lifetime = BinaryPrimitives.ReadUInt32BigEndian(reply.AsSpan(4, 4));
+        if (lifetimeSeconds == 0 && lifetime != 0)
+            return RouterMappingOutcome.Failed(Mechanism, RouterMappingFailure.RemovalFailed,
+                $"PCP retained a {lifetime}-second lifetime after deletion; the mapping is not confirmed closed.")
+                with { Continuity = continuity };
+        if (lifetimeSeconds > 0 && lifetime == 0)
+            return RouterMappingOutcome.Failed(Mechanism, RouterMappingFailure.RequestRejected,
+                "PCP granted no mapping lifetime; no active mapping was established.")
+                with { Continuity = continuity };
         var assignedExternalPort = BinaryPrimitives.ReadUInt16BigEndian(reply.AsSpan(HeaderLength + 18, 2));
         var assignedAddress = ReadMappedAddress(reply.AsSpan(HeaderLength + 20, 16));
         var external = assignedAddress is null || assignedAddress.Equals(IPAddress.Any)

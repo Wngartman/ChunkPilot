@@ -218,6 +218,121 @@ public sealed class RouterMappingRealRouterSequenceIntegrationTests : IAsyncLife
 
     // ═══ Preconditions inside ChunkPilot ═══
 
+    [Fact]
+    public async Task An_inconclusive_query_blocks_creation_without_overwriting_an_existing_entry()
+    {
+        gateway.QueryFailure = RouterMappingFailure.NotAuthorized;
+
+        var state = await coordinator.EnableAsync(serverId, true, CancellationToken.None);
+
+        Assert.Equal(RouterMappingFailure.NotAuthorized, state.Failure);
+        Assert.Equal(0, gateway.Creates);
+        Assert.Equal(0, gateway.Removes);
+    }
+
+    [Fact]
+    public async Task An_inconclusive_cleanup_query_preserves_ownership_and_can_be_retried()
+    {
+        _ = await coordinator.EnableAsync(serverId, true, CancellationToken.None);
+        var before = await store.GetRouterMappingAsync(serverId, CancellationToken.None);
+        gateway.QueryFailure = RouterMappingFailure.NetworkFailure;
+
+        var state = await coordinator.DisableAsync(serverId, CancellationToken.None);
+        var pending = await store.GetRouterMappingAsync(serverId, CancellationToken.None);
+
+        Assert.True(state.RemovalPending);
+        Assert.Equal(RouterMappingPhase.NeedsAttention, state.Phase);
+        Assert.Equal(RouterMappingFailure.RemovalFailed, state.Failure);
+        Assert.False(state.Enabled);
+        Assert.False(state.ConsentGranted);
+        Assert.NotNull(pending);
+        Assert.True(pending.HasActiveMapping);
+        Assert.Equal(before!.OwnedBinding, pending.OwnedBinding);
+        Assert.Equal(before.LeaseExpiresAt, pending.LeaseExpiresAt);
+        Assert.Single(gateway.Table);
+        Assert.Equal(0, gateway.Removes);
+
+        gateway.QueryFailure = RouterMappingFailure.None;
+        var retried = await coordinator.DisableAsync(serverId, CancellationToken.None);
+        Assert.False(retried.RemovalPending);
+        Assert.Empty(gateway.Table);
+        Assert.Equal(1, gateway.Removes);
+    }
+
+    [Theory]
+    [InlineData(RouterMappingMechanism.Pcp)]
+    [InlineData(RouterMappingMechanism.NatPmp)]
+    public async Task A_failed_substitute_withdrawal_survives_reload_and_blocks_replacement(
+        RouterMappingMechanism mechanism)
+    {
+        gateway.Mechanism = mechanism;
+        gateway.SubstitutePort = 51000;
+        gateway.RemoveFailure = true;
+
+        var failed = await coordinator.EnableAsync(serverId, true, CancellationToken.None);
+        var stored = await store.GetRouterMappingAsync(serverId, CancellationToken.None);
+
+        Assert.True(failed.RemovalPending);
+        Assert.False(failed.Enabled);
+        Assert.False(failed.ConsentGranted);
+        Assert.Equal(RouterMappingPhase.NeedsAttention, failed.Phase);
+        Assert.NotNull(stored);
+        Assert.False(stored.HasActiveMapping);
+        Assert.Equal(51000, stored.ExternalPort);
+        Assert.Equal(25565, stored.InternalPort);
+        Assert.True(stored.OwnedBinding.IsKnown);
+        Assert.Equal(mechanism, stored.Mechanism);
+        Assert.Equal("0123456789ABCDEF01234567", stored.OwnershipToken);
+
+        await coordinator.DisposeAsync();
+        coordinator = new RouterMappingCoordinator(store, supervisor,
+            new RouterMappingService(view, [gateway], new RouterMappingOptions(),
+                NullLogger<RouterMappingService>.Instance), NullLogger<RouterMappingCoordinator>.Instance);
+        var blocked = await coordinator.EnableAsync(serverId, true, CancellationToken.None);
+        Assert.True(blocked.RemovalPending);
+        Assert.Equal(1, gateway.Creates);
+        Assert.Equal(51000, gateway.LastRemoveExternalPort);
+
+        gateway.RemoveFailure = false;
+        var cleaned = await coordinator.DisableAsync(serverId, CancellationToken.None);
+        Assert.False(cleaned.RemovalPending);
+        Assert.Empty(gateway.Table);
+        Assert.Equal(51000, gateway.LastRemoveExternalPort);
+        Assert.Equal(1, gateway.Creates);
+    }
+
+    [Fact]
+    public async Task A_substitute_completion_after_lease_revocation_is_retained_only_for_exact_cleanup()
+    {
+        gateway.Mechanism = RouterMappingMechanism.Pcp;
+        gateway.SubstitutePort = 51000;
+        var live = true;
+        gateway.AfterCreate = () => live = false;
+        var lease = new PublicConnectivityLeaseIdentity
+        {
+            ServerId = serverId,
+            LeaseId = Guid.NewGuid(),
+            Generation = 7,
+            LifecycleEpoch = 11
+        };
+        var authority = RouterOperationAuthority.Exposure(lease, () => live, () => true);
+
+        var state = await coordinator.EnableAsync(serverId, true, authority, CancellationToken.None);
+        var stored = await store.GetRouterMappingAsync(serverId, CancellationToken.None);
+
+        Assert.True(state.RemovalPending);
+        Assert.False(state.Enabled);
+        Assert.False(state.ConsentGranted);
+        Assert.Equal(RouterMappingPhase.NeedsAttention, state.Phase);
+        Assert.Empty(state.MappingInstanceId);
+        Assert.NotNull(stored);
+        Assert.False(stored.HasActiveMapping);
+        Assert.Equal(lease.LeaseId, stored.PublicLeaseId);
+        Assert.Equal(lease.Generation, stored.PublicLeaseGeneration);
+        Assert.Equal(51000, stored.ExternalPort);
+        Assert.Single(gateway.Table);
+    }
+
     /// <summary>
     /// No trustworthy LAN address means no safe destination, and that must be said rather than shown
     /// as a bare "Not set up". The router is never asked to create anything in this state.
@@ -387,9 +502,14 @@ public sealed class RouterMappingRealRouterSequenceIntegrationTests : IAsyncLife
         public RouterMappingFailure CreateFailure { get; set; } = RouterMappingFailure.None;
         public string CreateDetail { get; set; } = "";
         public TimeSpan OperationDelay { get; set; }
+        public RouterMappingFailure QueryFailure { get; set; }
+        public int SubstitutePort { get; set; }
+        public bool RemoveFailure { get; set; }
+        public int LastRemoveExternalPort { get; private set; }
+        public Action? AfterCreate { get; set; }
 
-        public RouterMappingMechanism Mechanism => RouterMappingMechanism.UpnpIgd;
-        public bool CanQueryExistingMappings => true;
+        public RouterMappingMechanism Mechanism { get; set; } = RouterMappingMechanism.UpnpIgd;
+        public bool CanQueryExistingMappings => Mechanism == RouterMappingMechanism.UpnpIgd;
 
         public Task<RouterDiscoveryResult> DiscoverAsync(
             RouterLanBinding binding, CancellationToken cancellationToken)
@@ -414,7 +534,10 @@ public sealed class RouterMappingRealRouterSequenceIntegrationTests : IAsyncLife
         public Task<ExistingRouterMapping?> QueryAsync(
             RouterLanBinding binding, RouterDiscoveryResult discovery, MappingTransport transport,
             int externalPort, CancellationToken cancellationToken) =>
-            Task.FromResult(Table.GetValueOrDefault(Key(transport, externalPort)));
+            QueryFailure != RouterMappingFailure.None
+                ? Task.FromException<ExistingRouterMapping?>(new RouterMappingQueryException(QueryFailure,
+                    "Fixture ownership query did not prove presence or absence."))
+                : Task.FromResult(Table.GetValueOrDefault(Key(transport, externalPort)));
 
         public async Task<RouterMappingOutcome> CreateAsync(
             RouterLanBinding binding, RouterDiscoveryResult discovery, RouterMappingRequest request,
@@ -425,20 +548,25 @@ public sealed class RouterMappingRealRouterSequenceIntegrationTests : IAsyncLife
             if (CreateFailure != RouterMappingFailure.None)
                 return RouterMappingOutcome.Failed(Mechanism, CreateFailure, CreateDetail);
             Creates++;
-            Table[Key(request.Transport, request.ExternalPort)] = new ExistingRouterMapping
+            var assigned = SubstitutePort > 0 ? SubstitutePort : request.ExternalPort;
+            Table[Key(request.Transport, assigned)] = new ExistingRouterMapping
             {
-                ExternalPort = request.ExternalPort,
+                ExternalPort = assigned,
                 Transport = request.Transport,
                 InternalClient = binding.LocalAddress.ToString(),
                 InternalPort = request.InternalPort,
                 Description = request.Description,
                 LeaseSeconds = request.LeaseSeconds
             };
+            AfterCreate?.Invoke();
             return new RouterMappingOutcome
             {
-                Success = true,
+                Success = SubstitutePort == 0,
+                CleanupPending = SubstitutePort > 0,
+                Failure = SubstitutePort > 0 ? RouterMappingFailure.RemovalFailed : RouterMappingFailure.None,
                 Mechanism = Mechanism,
-                ExternalPort = request.ExternalPort,
+                ExternalPort = assigned,
+                OwnershipToken = "0123456789ABCDEF01234567",
                 LeaseSeconds = request.LeaseSeconds,
                 LeaseIsFinite = true,
                 ExternalAddress = discovery.ExternalAddress,
@@ -453,6 +581,10 @@ public sealed class RouterMappingRealRouterSequenceIntegrationTests : IAsyncLife
             CancellationToken cancellationToken)
         {
             Removes++;
+            LastRemoveExternalPort = request.ExternalPort;
+            if (RemoveFailure)
+                return Task.FromResult(RouterMappingOutcome.Failed(Mechanism,
+                    RouterMappingFailure.RemovalFailed, "Fixture router did not acknowledge deletion."));
             Table.TryRemove(Key(request.Transport, request.ExternalPort), out _);
             return Task.FromResult(new RouterMappingOutcome
             {

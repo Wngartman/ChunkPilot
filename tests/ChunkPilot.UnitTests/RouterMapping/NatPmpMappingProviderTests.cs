@@ -199,6 +199,59 @@ public sealed class NatPmpMappingProviderTests
             MappingTransport.Tcp, 25565, CancellationToken.None));
     }
 
+    [Fact]
+    public async Task A_failed_substitute_withdrawal_keeps_exact_cleanup_evidence()
+    {
+        await using var gateway = FakeDatagramGateway.Start(request =>
+            NatPmp.Lifetime(request) == 0 ? null :
+                NatPmp.MapReply(NatPmp.Opcode(request), 0, NatPmp.InternalPort(request), 40001, 3600));
+        var provider = new NatPmpMappingProvider(new UdpGatewayDatagramChannel(), gateway.Options(attempts: 1));
+
+        var result = await provider.CreateAsync(gateway.Binding(),
+            new RouterDiscoveryResult { Mechanism = RouterMappingMechanism.NatPmp, Supported = true,
+                ExternalAddress = "198.51.100.7" }, Request(), CancellationToken.None);
+
+        Assert.False(result.Success);
+        Assert.Equal(RouterMappingFailure.RemovalFailed, result.Failure);
+        Assert.Equal(40001, result.ExternalPort);
+        Assert.Equal(3600, result.LeaseSeconds);
+        Assert.Equal("198.51.100.7", result.ExternalAddress);
+        Assert.DoesNotContain("was withdrawn", result.Detail, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task A_delete_reply_with_remaining_lifetime_does_not_prove_closure()
+    {
+        await using var gateway = FakeDatagramGateway.Start(request =>
+            NatPmp.MapReply(NatPmp.Opcode(request), 0, NatPmp.InternalPort(request), 0, 120));
+        var provider = new NatPmpMappingProvider(new UdpGatewayDatagramChannel(), gateway.Options(attempts: 1));
+
+        var result = await provider.RemoveAsync(gateway.Binding(),
+            new RouterDiscoveryResult { Mechanism = RouterMappingMechanism.NatPmp, Supported = true },
+            Request(), CancellationToken.None);
+
+        Assert.False(result.Success);
+        Assert.Equal(RouterMappingFailure.RemovalFailed, result.Failure);
+        Assert.Contains("120", result.Detail, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    [InlineData(65536)]
+    public async Task Removal_never_sends_a_wildcard_or_wrapped_internal_port(int internalPort)
+    {
+        await using var gateway = FakeDatagramGateway.Silent();
+        var provider = new NatPmpMappingProvider(new UdpGatewayDatagramChannel(), gateway.Options(attempts: 1));
+
+        var result = await provider.RemoveAsync(gateway.Binding(),
+            new RouterDiscoveryResult { Mechanism = RouterMappingMechanism.NatPmp, Supported = true },
+            Request() with { InternalPort = internalPort }, CancellationToken.None);
+
+        Assert.False(result.Success);
+        Assert.Empty(gateway.Received);
+    }
+
     private static RouterMappingRequest Request() => new()
     {
         Transport = MappingTransport.Tcp,

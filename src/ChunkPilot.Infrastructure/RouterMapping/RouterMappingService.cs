@@ -203,12 +203,23 @@ public sealed class RouterMappingService
     {
         ArgumentNullException.ThrowIfNull(discovery);
         var provider = Find(discovery.Mechanism);
-        if (provider is null || !provider.CanQueryExistingMappings)
+        if (provider is null)
+            throw new RouterMappingQueryException(RouterMappingFailure.MechanismUnsupported,
+                $"No provider is registered to check {discovery.Mechanism} mapping ownership.");
+        if (!provider.CanQueryExistingMappings)
             return null;
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         budget.CancelAfter(options.OperationBudget);
-        return await provider.QueryAsync(binding, discovery, transport, externalPort, budget.Token)
-            .ConfigureAwait(false);
+        try
+        {
+            return await provider.QueryAsync(binding, discovery, transport, externalPort, budget.Token)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new RouterMappingQueryException(RouterMappingFailure.GatewayDidNotRespond,
+                "The router ownership query reached its bounded deadline; mapping presence remains unknown.");
+        }
     }
 
     public Task<RouterMappingOutcome> CreateAsync(

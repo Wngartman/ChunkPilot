@@ -227,6 +227,61 @@ public sealed class PcpMappingProviderTests
         Assert.Equal(first.OwnershipToken, renewal.OwnershipToken);
     }
 
+    [Theory]
+    [InlineData(36)] // MAP protocol
+    [InlineData(40)] // MAP internal port
+    public async Task A_reply_for_another_mapping_tuple_is_rejected(int changedOffset)
+    {
+        await using var gateway = FakeDatagramGateway.Start(request =>
+        {
+            var reply = Pcp.MapReply(request, 0, 3600, 25565, "203.0.113.9");
+            reply[changedOffset] ^= 1;
+            return reply;
+        });
+        var provider = new PcpMappingProvider(new UdpGatewayDatagramChannel(), gateway.Options(attempts: 1));
+
+        var result = await provider.CreateAsync(gateway.Binding(),
+            new RouterDiscoveryResult { Mechanism = RouterMappingMechanism.Pcp, Supported = true },
+            Request(), CancellationToken.None);
+
+        Assert.False(result.Success);
+        Assert.Equal(RouterMappingFailure.MalformedReply, result.Failure);
+    }
+
+    [Fact]
+    public async Task A_failed_substitute_withdrawal_keeps_exact_cleanup_evidence()
+    {
+        await using var gateway = FakeDatagramGateway.Start(request =>
+            Pcp.RequestedLifetime(request) == 0 ? null : Pcp.MapReply(request, 0, 3600, 51000, "203.0.113.9"));
+        var provider = new PcpMappingProvider(new UdpGatewayDatagramChannel(), gateway.Options(attempts: 1));
+
+        var result = await provider.CreateAsync(gateway.Binding(),
+            new RouterDiscoveryResult { Mechanism = RouterMappingMechanism.Pcp, Supported = true },
+            Request(), CancellationToken.None);
+
+        Assert.False(result.Success);
+        Assert.Equal(RouterMappingFailure.RemovalFailed, result.Failure);
+        Assert.Equal(51000, result.ExternalPort);
+        Assert.Equal(3600, result.LeaseSeconds);
+        Assert.Equal(Pcp.Nonce(gateway.Received[0]), result.OwnershipToken);
+        Assert.DoesNotContain("was withdrawn", result.Detail, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task A_delete_reply_with_remaining_lifetime_does_not_prove_closure()
+    {
+        await using var gateway = FakeDatagramGateway.Start(request => Pcp.MapReply(request, 0, 120, 0, "0.0.0.0"));
+        var provider = new PcpMappingProvider(new UdpGatewayDatagramChannel(), gateway.Options(attempts: 1));
+
+        var result = await provider.RemoveAsync(gateway.Binding(),
+            new RouterDiscoveryResult { Mechanism = RouterMappingMechanism.Pcp, Supported = true },
+            Request() with { OwnershipToken = "0123456789ABCDEF01234567" }, CancellationToken.None);
+
+        Assert.False(result.Success);
+        Assert.Equal(RouterMappingFailure.RemovalFailed, result.Failure);
+        Assert.Contains("120", result.Detail, StringComparison.Ordinal);
+    }
+
     private static RouterMappingRequest Request() => new()
     {
         Transport = MappingTransport.Tcp,

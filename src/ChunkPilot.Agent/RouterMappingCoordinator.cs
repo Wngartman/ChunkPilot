@@ -294,6 +294,14 @@ public sealed class RouterMappingCoordinator : IAsyncDisposable
         CancellationToken cancellationToken)
     {
         authority.Demand(record, "router establishment");
+        if (record.RemovalPending)
+        {
+            // A failed compensation may own a different public port. Settle that exact exposure
+            // before another create can replace its sole durable cleanup record.
+            record = await ReleaseAsync(record, authority, cancellationToken).ConfigureAwait(false);
+            if (record.RemovalPending)
+                return record;
+        }
         var port = ServerPortOf(record.ServerId);
         if (port is <= 0 or > 65535)
             return record with
@@ -354,8 +362,21 @@ public sealed class RouterMappingCoordinator : IAsyncDisposable
         // Read the port first where the mechanism can. Something ChunkPilot cannot prove it owns is
         // never overwritten, whatever the user asked for.
         authority.Demand(record, "router ownership query");
-        var existing = await mappings
-            .QueryAsync(binding, discovery, request.Transport, port, cancellationToken).ConfigureAwait(false);
+        ExistingRouterMapping? existing;
+        try
+        {
+            existing = await mappings.QueryAsync(binding, discovery, request.Transport, port, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (RouterMappingQueryException exception)
+        {
+            return record with
+            {
+                LastCheckedAt = clock.GetUtcNow(),
+                LastFailure = exception.Failure,
+                LastOperationDetail = exception.Message
+            };
+        }
         // What the attempt learned, kept separate from what it owns. Only the success path below may
         // write ownership evidence; an attempt that created nothing must never leave any behind.
         var attempted = record with
@@ -407,7 +428,7 @@ public sealed class RouterMappingCoordinator : IAsyncDisposable
         {
             authority.Demand(record, "accepting router create or renewal result");
         }
-        catch (OperationCanceledException) when (outcome.Success &&
+        catch (OperationCanceledException) when ((outcome.Success || outcome.CleanupPending) &&
                                                   authority.CanRetainRevokedCleanupEvidence(record))
         {
             revokedAfterWireSuccess = true;
@@ -424,6 +445,30 @@ public sealed class RouterMappingCoordinator : IAsyncDisposable
             record = Withdrawn(record);
             attempted = Withdrawn(attempted);
         }
+
+        if (outcome.CleanupPending)
+            return candidate with
+            {
+                // The requested address was never established. This exact substitute is cleanup
+                // evidence only: it must not be shared, renewed or accepted as hosting intent.
+                DirectInternetEnabled = false,
+                ConsentGranted = false,
+                ConsentGrantedAt = null,
+                OwnedBinding = discovered,
+                ExternalPort = outcome.ExternalPort,
+                OwnershipToken = outcome.OwnershipToken,
+                HasActiveMapping = false,
+                RemovalPending = true,
+                LeaseIsFinite = outcome.LeaseIsFinite,
+                LeaseSeconds = outcome.LeaseSeconds,
+                LeaseExpiresAt = outcome.LeaseIsFinite ? now.AddSeconds(outcome.LeaseSeconds) : null,
+                EstablishedAt = now,
+                RouterReportedExternalAddress = outcome.ExternalAddress,
+                RouterReportedAddressClass = RouterMappingPolicy.ClassifyExternalAddress(outcome.ExternalAddress).Class,
+                LastCheckedAt = now,
+                LastFailure = RouterMappingFailure.RemovalFailed,
+                LastOperationDetail = outcome.Detail
+            };
 
         if (!outcome.Success)
             return attempted with
@@ -541,9 +586,16 @@ public sealed class RouterMappingCoordinator : IAsyncDisposable
 
         // Where the router can be read, confirm ownership once more before deleting anything.
         authority.Demand(record, "router cleanup ownership query");
-        var existing = await mappings
-            .QueryAsync(binding, discovery, record.Transport, record.ExternalPort, cancellationToken)
-            .ConfigureAwait(false);
+        ExistingRouterMapping? existing;
+        try
+        {
+            existing = await mappings.QueryAsync(binding, discovery, record.Transport, record.ExternalPort,
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (RouterMappingQueryException exception)
+        {
+            return Retain(record, exception.Message);
+        }
         if (existing is null && MechanismCanRead(record.Mechanism))
             return record with
             {

@@ -247,6 +247,8 @@ internal sealed class FakeUpnpGateway : IAsyncDisposable
     /// <summary>Forces a specific UPnP error from DeletePortMapping. 0 means accept.</summary>
     public int DeleteErrorCode { get; set; }
 
+    public int QueryErrorCode { get; set; }
+
     /// <summary>Answers AddPortMapping with an HTTP failure that carries no UPnPError body.</summary>
     public bool AddReturnsBodylessHttpFailure { get; set; }
 
@@ -316,6 +318,8 @@ internal sealed class FakeUpnpGateway : IAsyncDisposable
 
     private (int, string) Specific(string body)
     {
+        if (QueryErrorCode != 0)
+            return (500, Fault(QueryErrorCode, UpnpIgdMappingProvider.UpnpErrorName(QueryErrorCode)));
         var key = $"{Argument(body, "NewProtocol")}:{Argument(body, "NewExternalPort")}";
         if (!Mappings.TryGetValue(key, out var existing))
             return (500, Fault(714, "NoSuchEntryInArray"));

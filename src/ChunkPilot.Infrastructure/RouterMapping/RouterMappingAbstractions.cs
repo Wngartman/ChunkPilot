@@ -64,6 +64,8 @@ public sealed record RouterMappingRequest
 public sealed record RouterMappingOutcome
 {
     public required bool Success { get; init; }
+    /// <summary>An exact mapping was created, but compensating removal was not confirmed.</summary>
+    public bool CleanupPending { get; init; }
     public RouterMappingFailure Failure { get; init; } = RouterMappingFailure.None;
     public RouterMappingMechanism Mechanism { get; init; } = RouterMappingMechanism.None;
     public int ExternalPort { get; init; }
@@ -109,7 +111,8 @@ public interface IRouterMappingProvider
     /// <summary>
     /// Reads what the router reports for one public port. Returns <c>null</c> when the port is free, and
     /// throws nothing for "not supported": mechanisms that cannot read report through
-    /// <see cref="CanQueryExistingMappings"/> instead.
+    /// <see cref="CanQueryExistingMappings"/> instead. An inconclusive query throws
+    /// <see cref="RouterMappingQueryException"/>; it must never be confused with a free port.
     /// </summary>
     Task<ExistingRouterMapping?> QueryAsync(
         RouterLanBinding binding,
@@ -136,6 +139,13 @@ public interface IRouterMappingProvider
         RouterDiscoveryResult discovery,
         RouterMappingRequest request,
         CancellationToken cancellationToken);
+}
+
+/// <summary>The router did not supply evidence that a mapping exists or is absent.</summary>
+public sealed class RouterMappingQueryException(RouterMappingFailure failure, string message)
+    : IOException(message)
+{
+    public RouterMappingFailure Failure { get; } = failure;
 }
 
 /// <summary>Sends one datagram to a gateway and waits for that gateway's reply. Bounded and cancellable.</summary>

@@ -348,6 +348,57 @@ public sealed class UpnpIgdMappingProviderTests
         Assert.Equal(0, parsed.ErrorCode);
     }
 
+    [Theory]
+    [InlineData(401)]
+    [InlineData(501)]
+    [InlineData(606)]
+    public async Task A_refused_ownership_query_is_unknown_not_proven_absent(int error)
+    {
+        await using var gateway = new FakeUpnpGateway { QueryErrorCode = error };
+        var provider = gateway.Provider();
+        var discovery = await provider.DiscoverAsync(gateway.Binding(), CancellationToken.None);
+
+        await Assert.ThrowsAnyAsync<IOException>(() => provider.QueryAsync(gateway.Binding(), discovery,
+            MappingTransport.Tcp, 25565, CancellationToken.None));
+
+        Assert.DoesNotContain("DeletePortMapping", gateway.Actions, StringComparer.Ordinal);
+        Assert.DoesNotContain("AddPortMapping", gateway.Actions, StringComparer.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("<html><body>Router login</body></html>")]
+    [InlineData("<s:Envelope xmlns:s='http://schemas.xmlsoap.org/soap/envelope/'><s:Body /></s:Envelope>")]
+    [InlineData("<s:Envelope xmlns:s='http://schemas.xmlsoap.org/soap/envelope/'><s:Body><u:GetExternalIPAddressResponse xmlns:u='urn:schemas-upnp-org:service:WANIPConnection:1' /></s:Body></s:Envelope>")]
+    public void Unrelated_successful_http_xml_does_not_prove_a_mapping_was_deleted(string body)
+    {
+        var response = UpnpControlChannel.ParseResponse("DeletePortMapping", true, body);
+
+        Assert.False(response.Success);
+    }
+
+    [Fact]
+    public async Task Caller_cancellation_during_a_description_is_not_reported_as_unsupported()
+    {
+        await using var gateway = new FakeUpnpGateway { ResponseDelay = TimeSpan.FromSeconds(5) };
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(150));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            gateway.Provider().DiscoverAsync(gateway.Binding(), cancellation.Token));
+    }
+
+    [Fact]
+    public async Task Caller_cancellation_during_soap_is_not_reported_as_a_network_failure()
+    {
+        await using var gateway = new FakeUpnpGateway();
+        var provider = gateway.Provider();
+        var discovery = await provider.DiscoverAsync(gateway.Binding(), CancellationToken.None);
+        gateway.ResponseDelay = TimeSpan.FromSeconds(5);
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(150));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            provider.CreateAsync(gateway.Binding(), discovery, Request(), cancellation.Token));
+    }
+
     private static RouterMappingRequest Request() => new()
     {
         Transport = MappingTransport.Tcp,
