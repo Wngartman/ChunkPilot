@@ -6,6 +6,7 @@ import { Button, ConfirmDialog, Dialog, EmptyState, PanelTitle, SearchInput, Sel
 import { ActionMenu } from '../design-system/ActionMenu';
 import { useAppStore } from '../state/store';
 import { lifecycleAction } from './lifecycle';
+import { useConsoleFollow } from './consoleFollow';
 import { IconCropEditor } from './server-appearance/IconCropEditor';
 import type { IconEdit } from './server-appearance/iconCrop';
 import { MotdEditor } from './server-appearance/MotdEditor';
@@ -410,25 +411,33 @@ function CrashAnalysisPanel({ server, onConsole }: { server: ServerSummary; onCo
 
 function ConsolePage({ server }: { server: ServerSummary }) {
   const snapshot = useAppStore(state => state.snapshot)!; const command = useAppStore(state => state.command);
-  const [search, setSearch] = useState(''); const [entry, setEntry] = useState(''); const [follow, setFollow] = useState(true);
+  const [search, setSearch] = useState(''); const [entry, setEntry] = useState('');
   const [wrap, setWrap] = useState(() => new URLSearchParams(window.location.search).get('mode') !== 'console-unwrapped' && window.localStorage.getItem('chunkpilot.console.wrap') !== 'false');
   const lines = useMemo(() => snapshot.console.filter(line => line.text.toLowerCase().includes(search.toLowerCase())), [snapshot.console, search]);
   const parentRef = useRef<HTMLDivElement>(null); const virtual = useVirtualizer({ count: lines.length, getScrollElement: () => parentRef.current, estimateSize: () => wrap ? 36 : 24, measureElement: measureConsoleRow, overscan: 18 });
+  const { following: follow, scheduleFollow, toggleFollow, observeScroll, pauseForUser } = useConsoleFollow(() => {
+    if (lines.length) virtual.scrollToIndex(lines.length - 1, { align: 'end' });
+  });
+  const touchY = useRef<number | null>(null);
+  const totalSize = virtual.getTotalSize();
+  const latestSequence = lines.at(-1)?.sequence;
   const measureRow = useCallback((element: HTMLDivElement | null) => {
     if (!element || !wrap) return;
+    scheduleFollow();
     virtual.measureElement(element);
     const index = Number(element.dataset.index);
     if (!Number.isInteger(index)) return;
     requestAnimationFrame(() => {
-      if (element.isConnected) virtual.resizeItem(index, measureConsoleRow(element));
+      if (element.isConnected) { scheduleFollow(); virtual.resizeItem(index, measureConsoleRow(element)); }
     });
-  }, [virtual, wrap]);
+  }, [virtual, wrap, scheduleFollow]);
   useEffect(() => { window.localStorage.setItem('chunkpilot.console.wrap', String(wrap)); virtual.measure(); }, [wrap, virtual]);
   useEffect(() => {
     const viewport = parentRef.current;
     if (!wrap || !viewport || typeof ResizeObserver === 'undefined') return;
     let frame = 0;
     const resizeVisibleRows = () => {
+      scheduleFollow();
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(() => viewport.querySelectorAll<HTMLDivElement>('[data-index][data-wrap="true"]').forEach(element => {
         const index = Number(element.dataset.index);
@@ -439,10 +448,10 @@ function ConsolePage({ server }: { server: ServerSummary }) {
     observer.observe(viewport);
     resizeVisibleRows();
     return () => { observer.disconnect(); cancelAnimationFrame(frame); };
-  }, [wrap, virtual]);
-  useEffect(() => { if (follow && lines.length) virtual.scrollToIndex(lines.length - 1, { align: 'end' }); }, [lines.length, follow]);
+  }, [wrap, virtual, scheduleFollow]);
+  useEffect(scheduleFollow, [lines.length, latestSequence, totalSize, follow, wrap, scheduleFollow]);
   const send = () => { const value = entry.trim(); if (!value) return; setEntry(''); void command('console.send', { serverId: server.id, command: value }); };
-  return <section className={styles.consolePage}><div className={styles.consoleToolbar}><SearchInput value={search} onChange={event => setSearch(event.target.value)} placeholder="Search console" aria-label="Search console" /><StatusBadge tone={server.state === 'Running' ? 'success' : 'neutral'}>{server.state}</StatusBadge><span /><label className={styles.wrapToggle}><input type="checkbox" checked={wrap} onChange={event => setWrap(event.target.checked)} />Wrap long lines</label><Button variant="subtle" aria-label={follow ? 'Pause following console' : 'Resume following console'} aria-pressed={follow} onClick={() => setFollow(value => !value)}>{follow ? 'Following' : 'Paused'}</Button></div><div className={styles.consoleViewport} data-wrap={wrap} ref={parentRef} onScroll={() => { const el = parentRef.current; if (el) setFollow(el.scrollHeight - el.scrollTop - el.clientHeight < 24); }}><div style={{ height: virtual.getTotalSize(), position: 'relative' }}>{virtual.getVirtualItems().map(row => { const line = lines[row.index]; const level = line.stream.toUpperCase(); return <div key={line.sequence} ref={wrap ? measureRow : undefined} data-index={row.index} data-wrap={wrap} className={styles.consoleLine} style={{ ...(wrap ? {} : { height: row.size }), transform: `translateY(${row.start}px)` }}><span className={styles.consoleTime}>{new Date(line.timestamp).toLocaleTimeString()}</span><span className={styles.consoleLevel} data-level={level}>{level}</span><span className={styles.consoleText}>{line.text}</span></div>; })}</div></div><form className={styles.commandBar} onSubmit={event => { event.preventDefault(); send(); }}><TextInput value={entry} onChange={event => setEntry(event.target.value)} placeholder={server.state === 'Running' ? 'Enter a server command' : 'Start the server to send commands'} disabled={server.state !== 'Running'} aria-label="Server command" /><Button variant="primary" icon={<Send size={14} />} disabled={server.state !== 'Running' || !entry.trim()}>Send</Button></form></section>;
+  return <section className={styles.consolePage}><div className={styles.consoleToolbar}><SearchInput value={search} onChange={event => setSearch(event.target.value)} placeholder="Search console" aria-label="Search console" /><StatusBadge tone={server.state === 'Running' ? 'success' : 'neutral'}>{server.state}</StatusBadge><span /><label className={styles.wrapToggle}><input type="checkbox" checked={wrap} onChange={event => setWrap(event.target.checked)} />Wrap long lines</label><Button variant="subtle" aria-label={follow ? 'Pause following console' : 'Resume following console'} aria-pressed={follow} onClick={toggleFollow}>{follow ? 'Following' : 'Paused'}</Button></div><div className={styles.consoleViewport} data-wrap={wrap} ref={parentRef} role="region" aria-label="Console output" tabIndex={0} onScroll={event => observeScroll(event.currentTarget)} onWheel={event => { if (event.deltaY < 0) pauseForUser(); }} onKeyDown={event => { if (['ArrowUp', 'PageUp', 'Home'].includes(event.key) || event.key === ' ' && event.shiftKey) pauseForUser(); }} onTouchStart={event => { touchY.current = event.touches[0]?.clientY ?? null; }} onTouchMove={event => { const next = event.touches[0]?.clientY; if (next != null && touchY.current != null && next > touchY.current) pauseForUser(); touchY.current = next ?? null; }} onTouchEnd={() => { touchY.current = null; }}><div style={{ height: totalSize, position: 'relative' }}>{virtual.getVirtualItems().map(row => { const line = lines[row.index]; const level = line.stream.toUpperCase(); return <div key={line.sequence} ref={wrap ? measureRow : undefined} data-index={row.index} data-wrap={wrap} className={styles.consoleLine} style={{ ...(wrap ? {} : { height: row.size }), transform: `translateY(${row.start}px)` }}><span className={styles.consoleTime}>{new Date(line.timestamp).toLocaleTimeString()}</span><span className={styles.consoleLevel} data-level={level}>{level}</span><span className={styles.consoleText}>{line.text}</span></div>; })}</div></div><form className={styles.commandBar} onSubmit={event => { event.preventDefault(); send(); }}><TextInput value={entry} onChange={event => setEntry(event.target.value)} placeholder={server.state === 'Running' ? 'Enter a server command' : 'Start the server to send commands'} disabled={server.state !== 'Running'} aria-label="Server command" /><Button variant="primary" icon={<Send size={14} />} disabled={server.state !== 'Running' || !entry.trim()}>Send</Button></form></section>;
 }
 
 function PlayersPage({ server }: { server: ServerSummary }) {

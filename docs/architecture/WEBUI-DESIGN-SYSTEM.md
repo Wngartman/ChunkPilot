@@ -61,3 +61,9 @@ mod update controls and no inferred per-file ownership labels.
 Deterministic `curseforge-service`, `curseforge-service-unavailable`, and
 `curseforge-service-rate-limited` fixtures exercise application-service presentation without keys,
 provider calls, or an Agent. Fixture version labels remain explicitly `+fixture`, not build proof.
+
+Forced colors inherit from the root instead of resetting every descendant. Selected navigation and
+shared primary controls use paired system `Highlight`/`HighlightText` colors; their children inherit
+the same adjustment policy so selected labels cannot become white text on a white rectangle.
+The development-only fixture accepts widths down to 430px for compact-layout inspection without
+changing the production native window minimum.

@@ -126,5 +126,5 @@ button { color: inherit; }
 
 @media (forced-colors: active) {
   :root { --cp-canvas: Canvas; --cp-shell: Canvas; --cp-sidebar: Canvas; --cp-surface: Canvas; --cp-surface-raised: Canvas; --cp-input: Canvas; --cp-border: CanvasText; --cp-border-strong: CanvasText; --cp-accent: Highlight; --cp-accent-strong: Highlight; --cp-focus: Highlight; --cp-selected-surface: Highlight; --cp-selected-text: HighlightText; --cp-selected-border: Highlight; --cp-text: CanvasText; --cp-text-secondary: CanvasText; --cp-text-muted: CanvasText; --cp-on-accent: HighlightText; }
-  * { forced-color-adjust: auto; }
+  :root { forced-color-adjust: auto; }
 }

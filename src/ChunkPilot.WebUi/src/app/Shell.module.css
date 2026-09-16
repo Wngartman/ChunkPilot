@@ -44,7 +44,9 @@
   .navItem { justify-content: center; padding: 0; }
   .serverDot { position: absolute; right: 7px; bottom: 7px; width: 6px; height: 6px; }
 }
-@media (forced-colors: active) { .navItem[data-selected="true"] { border-color: Highlight; } }
+@media (forced-colors: active) {
+  .navItem[data-selected="true"] { forced-color-adjust: none; color: HighlightText; background: Highlight; border-color: Highlight; }
+}
 .sidebar > .navList:first-child, .sidebar > .navItem, .sidebarFooter { flex-shrink: 0; }
 .sidebar > .navItem { margin-block: var(--cp-space-2); }
 .serverList { scrollbar-gutter: stable; }
