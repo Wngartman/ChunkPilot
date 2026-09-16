@@ -55,7 +55,8 @@ CurseForge setup is available under Settings > General and in unavailable-provid
 own approved key is entered in a native password field, protected before App-to-Agent transport, validated
 against the official API, and stored only after a successful response and a fresh UI-session check. Cancel
 or validation failure preserves existing access. Setup also supports replacement and removal; React receives
-only configured/cancelled state. Public packages contain no developer key and no hosted credential broker.
+only configured/cancelled state. Public packages contain no developer key. Service-enabled builds instead
+use the separately deployed application backend described below; no credential is delivered to the client.
 
 A local developer can explicitly run `scripts/start-curseforge-dev.ps1` or set an absolute source path in
 `CHUNKPILOT_CURSEFORGE_KEY_FILE`; the variable contains a path, never the key. Ordinary startup does not

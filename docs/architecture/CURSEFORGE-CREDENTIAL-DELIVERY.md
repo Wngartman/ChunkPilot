@@ -9,12 +9,16 @@ Status date: 2026-09-15
 The service is live at `https://chunkpilot-curseforge-service.chunkpilot-reachability.workers.dev`.
 The owner's application key exists only in its encrypted Worker secret binding. Fresh native checks
 with an empty personal-key store resolve Minecraft identity and ATM10's exact official client/server
-file relationship successfully. This does not yet establish a complete large-pack installation.
+file relationship successfully. A fresh no-key package also completed an official small-pack install
+(project 1172292, client 6110282, server 6110285; Minecraft 1.21.1/Fabric 0.16.10), two start/status/save-first
+stop cycles across separate Agent lifetimes, and clean process/listener teardown. A disposable copy then
+passed live backup, independent archive verification, safety-backed restore, and restored-server startup.
+This does not establish a complete large-pack installation or whole-pack update acceptance.
 
 Workers Free terminated representative ATM10 downloads with `exceededCpu`; partial files were rejected
 by length/hash verification. The production configuration requests a 60-second CPU ceiling and needs
 Workers Paid, which starts at $5/month plus possible usage charges. No billing change was made by the
-development task. A temporary Free-plan deployment supports metadata acceptance while the owner
+development task. A temporary Free-plan deployment supports metadata and the verified small-pack case while the owner
 decides on hosting capacity. It must not be described as large-pack certified.
 
 The published 1.0.0 public-client model uses optional personal setup: the user enters their own approved

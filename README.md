@@ -65,8 +65,11 @@ Managed servers default to `%USERPROFILE%\ChunkPilot\Servers`; application state
 
 ## Requirements
 
-- 64-bit Windows 10 or Windows 11
+- 64-bit Windows 10 (1809 or later) or Windows 11
 - Internet access for provider metadata, downloads, and optional outside-in reachability checks
+
+Use a maintained Windows release. Microsoft's [.NET support policy](https://learn.microsoft.com/en-us/dotnet/core/install/windows#supported-versions)
+and WebView2 lifecycle still apply; compatibility is not a promise of security updates for an obsolete OS.
 
 ChunkPilot uses the shared WebView2 runtime, loads workspaces on demand, and bounds console history and
 background work. Server memory and CPU needs depend on the selected Minecraft version and pack; a large
