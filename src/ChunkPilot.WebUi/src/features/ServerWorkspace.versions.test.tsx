@@ -12,6 +12,7 @@ const calls: { method: BridgeMethod; params: Record<string, unknown> }[] = [];
 const bridge: BridgeAdapter = {
   request: async <T,>(method: BridgeMethod, params: Record<string, unknown> = {}) => {
     calls.push({ method, params });
+    if (method === 'creation.loaderBuilds' || method === 'creation.paperBuilds') return { available: false, builds: [], message: 'Synthetic catalog unavailable.' } as T;
     if (method === 'creation.catalog') return {
       available: false,
       message: 'Catalog not needed by this rollback test.',
@@ -64,6 +65,30 @@ function renderPendingValidation() {
 }
 
 describe('server version rollback', () => {
+  it('shows readable version health without changing its machine value', () => {
+    const snapshot = useAppStore.getState().snapshot!;
+    snapshot.versions[0].health = 'RolledBack';
+    snapshot.versions[1].health = 'PendingValidation';
+    renderVersions();
+    expect(screen.getByText('Rolled back')).toBeTruthy();
+    expect(screen.getByText('Pending validation')).toBeTruthy();
+    expect(screen.queryByText('RolledBack')).toBeNull();
+    expect(screen.queryByText('PendingValidation')).toBeNull();
+    expect(useAppStore.getState().snapshot!.versions[0].health).toBe('RolledBack');
+  });
+
+  it.each(['Fabric', 'Paper'])('describes missing %s identity without declaring an installed version unsupported', async platform => {
+    const snapshot = useAppStore.getState().snapshot!;
+    snapshot.servers[0].ecosystem = platform;
+    snapshot.servers[0].capabilities.versioning = platform === 'Paper' ? 'paper' : 'fabric';
+    snapshot.servers[0].loaderVersion = '';
+    renderVersions();
+    await waitFor(() => expect(calls.some(call => call.method === (platform === 'Paper' ? 'creation.paperBuilds' : 'creation.loaderBuilds'))).toBe(true));
+    expect(screen.getByRole('heading', { name: `${platform} version not identified` })).toBeTruthy();
+    expect(screen.getByText('The exact installed version was not recorded, so catalog support cannot be matched.')).toBeTruthy();
+    expect(screen.queryByText(/unknown is not in the current inventory/)).toBeNull();
+  });
+
   it('does not dispatch rollback until the in-product confirmation is accepted', () => {
     renderVersions();
 

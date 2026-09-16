@@ -124,9 +124,7 @@ public sealed partial class MainViewModel
                 operation.Progress.Percent,
                 operation.Progress.CurrentStep)
             : CurrentUpdateCheck is not null
-                ? ServerUpdateStatusPresentation.ToDetail(
-                    CurrentUpdateCheck.Status,
-                    CurrentUpdateCheck.Status.ToString())
+                ? ServerUpdateStatusPresentation.ToLabel(CurrentUpdateCheck.Status)
                 : (CurrentUpdateSource is null
                     ? "Not linked to an update source"
                     : "Not checked");

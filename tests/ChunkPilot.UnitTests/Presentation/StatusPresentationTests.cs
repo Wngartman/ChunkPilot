@@ -6,6 +6,22 @@ namespace ChunkPilot.App.Tests.Presentation;
 
 public sealed class StatusPresentationTests
 {
+    [Fact]
+    public void View_model_badge_uses_readable_labels_without_discarding_machine_status_or_evidence()
+    {
+        var model = new MainViewModel(null!, null!);
+        foreach (var status in Enum.GetValues<ServerUpdateStatus>())
+        {
+            var check = new UpdateCheckResult { Status = status, Message = "Exact provider evidence remains available." };
+            model.CurrentUpdateCheck = check;
+            Assert.Equal(ServerUpdateStatusPresentation.ToLabel(status), model.UpdateStatusText);
+            Assert.DoesNotContain($"({status})", model.UpdateStatusText);
+            Assert.Same(check, model.CurrentUpdateCheck);
+            Assert.Equal(status, model.CurrentUpdateCheck.Status);
+            Assert.Equal(check.Message, model.UpdateStatusDetail);
+        }
+    }
+
     // ── ServerUpdateStatus.ToLabel ──
 
     [Theory]
