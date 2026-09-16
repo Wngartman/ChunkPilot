@@ -54,6 +54,48 @@ function New-DeterministicZip([string]$Source, [string]$Destination, [DateTimeOf
     finally { $archive.Dispose() }
 }
 
+function ConvertTo-PublicSignatureReport([object[]]$Signatures, [string]$PayloadRoot, [string]$InstallerPath) {
+    # Signature verification uses local absolute paths. Public metadata names only
+    # the four expected shipped files; it must not expose the build machine layout.
+    $payloadPrefix = [IO.Path]::GetFullPath($PayloadRoot).TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+    $expected = [Collections.Generic.Dictionary[string,string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $publicNames = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($relative in @('ChunkPilot.exe', 'ChunkPilot.FirewallHelper.exe', 'Agent/ChunkPilot.Agent.exe')) {
+        $absolute = [IO.Path]::GetFullPath((Join-Path $PayloadRoot $relative))
+        if (-not $absolute.StartsWith($payloadPrefix, [StringComparison]::OrdinalIgnoreCase) -or
+            $expected.ContainsKey($absolute) -or -not $publicNames.Add($relative)) {
+            throw 'Signature payload identities are not distinct contained package paths.'
+        }
+        $expected.Add($absolute, $relative)
+    }
+    $installerFull = [IO.Path]::GetFullPath($InstallerPath)
+    $installerName = [IO.Path]::GetFileName($installerFull)
+    if ($expected.ContainsKey($installerFull) -or -not $publicNames.Add($installerName)) {
+        throw 'Installer signature identity collides with a payload file.'
+    }
+    $expected.Add($installerFull, $installerName)
+
+    $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $projected = @(
+        foreach ($signature in $Signatures) {
+            if ([string]::IsNullOrWhiteSpace([string]$signature.Path)) { throw 'Signature evidence is missing its file identity.' }
+            $absolute = [IO.Path]::GetFullPath([string]$signature.Path)
+            if (-not $expected.ContainsKey($absolute) -or -not $seen.Add($absolute)) {
+                throw 'Signature evidence contains an unexpected or duplicate file identity.'
+            }
+            [pscustomobject]@{
+                Path = $expected[$absolute]
+                Status = $signature.Status
+                Signed = $signature.Signed
+                Timestamped = $signature.Timestamped
+                Subject = $signature.Subject
+            }
+        }
+    )
+    if ($seen.Count -ne $expected.Count) { throw 'Signature evidence is incomplete for the shipped files.' }
+    return $projected
+}
+
 $required = @(
     (Join-Path $selfContained 'ChunkPilot.exe'),
     (Join-Path $selfContained 'ChunkPilot.FirewallHelper.exe'),
@@ -140,7 +182,8 @@ $signatureFiles = @(
     (Join-Path $selfContained 'Agent\ChunkPilot.Agent.exe'),
     $installer
 )
-$signatureReport = @(& (Join-Path $repoRoot 'scripts\verify-release-signatures.ps1') -Path $signatureFiles)
+$localSignatureReport = @(& (Join-Path $repoRoot 'scripts\verify-release-signatures.ps1') -Path $signatureFiles)
+$signatureReport = @(ConvertTo-PublicSignatureReport $localSignatureReport $selfContained $installer)
 $build = [PSCustomObject]@{
     SchemaVersion = 1
     ProductVersion = $productVersion
