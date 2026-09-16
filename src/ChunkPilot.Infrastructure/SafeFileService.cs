@@ -70,9 +70,10 @@ public sealed class SafeFileService
         await using (var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite,
                          64 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan))
         {
-            if (stream.Length > MaximumTextBytes)
+            var snapshotLength = stream.Length;
+            if (snapshotLength > MaximumTextBytes)
                 throw new IOException("Files larger than 10 MB are not opened in the integrated editor.");
-            bytes = new byte[checked((int)stream.Length)];
+            bytes = new byte[checked((int)snapshotLength)];
             await stream.ReadExactlyAsync(bytes, cancellationToken).ConfigureAwait(false);
         }
         var (encoding, bomLength, hasBom) = DetectEncoding(bytes);
