@@ -1,5 +1,7 @@
 - Refines the dark interface throughout creation, server pages, settings, sharing, and content browsing. Compact layouts keep long names, release choices, player actions, and console controls readable.
 - Separates installed-pack details, runtime requirements, recovery, and a read-only mod inventory. File editing keeps unsaved drafts and ignores late responses after navigation.
+- Uses themed native confirmations with a safe Cancel default, keeps backup controls consistent during operations, and lets console scrolling stay on older output until Resume is selected.
+- Preserves UTF-8 and UTF-16 configuration encoding, rejects malformed text without altering it, and bounds reads of growing logs.
 - Adds a private CurseForge application-service integration: configured builds use the hosted application key without distributing it to users. Exact release identity, author restrictions, size checks, and hashes remain enforced.
 - Removes repeated metadata requests within each CurseForge catalog operation and prevents dedicated server archives from appearing as client-pack releases.
 - Selects Java 25 for calendar-year Minecraft releases, validates managed runtime architecture, and falls back from an unavailable official JRE to its matching JDK. Historical loader selections use exact official checksum metadata.

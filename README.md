@@ -49,8 +49,8 @@ The binaries are currently unsigned, so Windows SmartScreen may show a warning. 
 
 Published 1.0.0 uses an optional personal CurseForge key, entered through **Settings → Set up CurseForge**
 and protected by Windows. The application-service integration on this branch keeps ChunkPilot's key on
-the backend and requires no key from users. It is deployed for acceptance testing, but large-download
-capacity and clean-install acceptance are still pending; it is not activated in the published release.
+the backend and requires no key from users. A fresh small-pack install, restart, backup, and restore
+passed acceptance. Large-download capacity remains pending; the service is not activated in the published release.
 Author download restrictions apply to both routes. See [CurseForge access](docs/architecture/CURSEFORGE-CREDENTIAL-DELIVERY.md).
 Terraria remains an engineering foundation and is not offered as a supported server type.
 

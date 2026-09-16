@@ -6,6 +6,12 @@
 
 - Refined shared controls, responsive layouts, dialogs, focus states, and server workspace presentation.
   Hardened navigation against malformed snapshot replies without discarding the app shell.
+- Replaced shared native confirmations and error windows with themed dialogs. Cancel remains the safe
+  default; closing a confirmation never approves it.
+- Fixed UTF-16 configuration files being mistaken for binary data. Invalid text is rejected without
+  replacement characters, and live-log reads remain bounded when files grow.
+- Kept backup controls consistent during create, verify, and restore operations, and fixed console
+  scrolling so viewing older output does not snap back to the newest line.
 - Removed automatic recursive server-folder size scans from dashboard sampling.
 - Bounded Java discovery, cancelled exact-owned probe descendants, validated runtime architecture, and
   added Java 25 selection plus an official JDK fallback when no JRE is published.
@@ -24,8 +30,10 @@
   configured service while preserving official identity, hash verification and author restrictions.
 - Added bounded streaming, cancellation, secret-echo protection, per-client throttling and globally
   coordinated quotas. Service configuration is not presented as proof of live availability.
-- Deployed the private service for acceptance testing. Live keyless exact metadata works; large-file
-  capacity and clean-install runtime acceptance remain pending. Published 1.0.0 is unchanged.
+- Deployed the private service for acceptance testing. A fresh keyless small-pack installation passed
+  two start/status/save-stop cycles across Agent lifetimes. A disposable copy passed verified live
+  backup, safety-backed restore, and restored-server startup. Large-file capacity and whole-pack
+  update acceptance remain pending. Published 1.0.0 is unchanged.
 
 ## 1.0.0 - 2026-09-14
 
