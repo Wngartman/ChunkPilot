@@ -154,7 +154,7 @@ internal static class CurseForgeMetadataInspectionCommand
             }
             return 0;
         }
-        catch (Exception exception) when (exception is HttpRequestException or IOException or InvalidOperationException or OperationCanceledException)
+        catch (Exception exception) when (IsReportableFailure(exception))
         {
             Console.Error.WriteLine($"Metadata inspection failed: {exception.GetType().Name}: {SecretRedactor.Redact(exception.Message)}");
             return 1;
@@ -164,6 +164,10 @@ internal static class CurseForgeMetadataInspectionCommand
             if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
         }
     }
+
+    internal static bool IsReportableFailure(Exception exception) =>
+        exception is HttpRequestException or IOException or InvalidDataException or JsonException or
+            InvalidOperationException or ArgumentException or OperationCanceledException;
 
     internal sealed record NativeCredentialSetupVerification(bool Success, int SessionChecks, bool StoredCredentialReadable);
 

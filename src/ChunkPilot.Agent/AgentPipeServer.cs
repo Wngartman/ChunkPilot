@@ -2297,7 +2297,8 @@ public sealed class AgentPipeServer
         return results;
     }
 
-    /// <summary>Reads <c>white-list</c> from server.properties, defaulting to off when it is absent.</summary>
+    /// <summary>Reads <c>white-list</c>, using the known Java release default only when the key is absent.
+    /// This legacy boolean snapshot still falls back to false for unavailable/unknown evidence.</summary>
     private async Task<bool> ReadWhitelistEnabledAsync(
         ServerDefinition definition,
         CancellationToken cancellationToken)
@@ -2310,7 +2311,8 @@ public sealed class AgentPipeServer
             var content = await files.ReadTextAsync(definition.RootPath, "server.properties", cancellationToken)
                 .ConfigureAwait(false);
             var document = ServerPropertiesDocument.Parse(content.Content);
-            return bool.TryParse(document.Get("white-list"), out var enabled) && enabled;
+            return MinecraftVersionClassification.ResolveWhitelistEnabled(
+                definition.MinecraftVersion, document.Get("white-list")) ?? false;
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {

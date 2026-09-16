@@ -547,6 +547,7 @@ public sealed class WebUiContractTests
         Assert.Equal("--webui-fixture", WebUiFixtureLauncher.FixtureArgument);
         Assert.Equal("--webui-provider", WebUiFixtureLauncher.ProviderArgument);
         Assert.Equal("--render", WebUiFixtureLauncher.RenderArgument);
+        Assert.Equal(430, WebUiFixtureLauncher.MinimumFixtureWidth);
         Assert.Equal("Modrinth", WebUiFixtureLauncher.NormalizeFixtureProvider(null));
         Assert.Equal("Modrinth", WebUiFixtureLauncher.NormalizeFixtureProvider("unexpected-provider"));
         Assert.Equal("CurseForge", WebUiFixtureLauncher.NormalizeFixtureProvider("curseforge"));

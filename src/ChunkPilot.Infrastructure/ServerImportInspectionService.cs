@@ -179,7 +179,9 @@ public sealed partial class ServerImportInspectionService
     {
         var names = entries.Where(item => !item.IsDirectory).Select(item => item.NormalizedPath).ToArray();
         var curseManifest = entries.FirstOrDefault(item =>
-            item.NormalizedPath.Equals("manifest.json", StringComparison.OrdinalIgnoreCase));
+            !item.IsDirectory && item.NormalizedPath.Equals("manifest.json", StringComparison.OrdinalIgnoreCase));
+        if (curseManifest is not null && !IsCurseForgeManifest(curseManifest.Entry, cancellationToken))
+            curseManifest = null;
         var sourceKind = curseManifest is null ? ServerImportSourceKind.ServerArchive : ServerImportSourceKind.CurseForgePack;
         var platform = DetectPlatform(names, info.Name);
         var (minecraft, loader) = DetectVersions(names.Append(info.Name));
@@ -226,6 +228,41 @@ public sealed partial class ServerImportInspectionService
             Limitation = canInstall ? "" : "No safe standalone server launcher was found. Import a provider server-pack ZIP or a complete server folder.",
             Warnings = warnings
         };
+    }
+
+    private static bool IsCurseForgeManifest(ZipArchiveEntry entry, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (entry.Length is <= 0 or > CurseForgePackManifestReader.MaximumManifestBytes)
+            throw new InvalidDataException("The root manifest is empty or exceeds the 1 MiB inspection limit.");
+        try
+        {
+            using var document = JsonDocument.Parse(
+                ReadSmallText(entry, CurseForgePackManifestReader.MaximumManifestBytes),
+                new JsonDocumentOptions { MaxDepth = 32 });
+            cancellationToken.ThrowIfCancellationRequested();
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object)
+                return false;
+
+            // ServerPackCreator and other tools also use manifest.json. The filename alone is
+            // not provider identity. CF-shaped but invalid documents still reach the strict reader.
+            if (root.TryGetProperty("manifestType", out var type) &&
+                (type.ValueKind != JsonValueKind.String ||
+                 string.Equals(type.GetString()?.Trim(), "minecraftModpack", StringComparison.OrdinalIgnoreCase)))
+                return true;
+            if (root.TryGetProperty("minecraft", out var minecraft) &&
+                (root.TryGetProperty("manifestVersion", out _) ||
+                 minecraft.ValueKind == JsonValueKind.Object && minecraft.TryGetProperty("modLoaders", out _)))
+                return true;
+            return root.TryGetProperty("files", out var files) && files.ValueKind == JsonValueKind.Array &&
+                   files.EnumerateArray().Any(file => file.ValueKind == JsonValueKind.Object &&
+                       (file.TryGetProperty("projectID", out _) || file.TryGetProperty("fileID", out _)));
+        }
+        catch (JsonException exception)
+        {
+            throw new InvalidDataException("The root manifest JSON is malformed; its package format cannot be established.", exception);
+        }
     }
 
     internal static ArchiveExpansionForecast ForecastArchiveExpansion(

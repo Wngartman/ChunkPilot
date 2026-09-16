@@ -10,6 +10,7 @@ internal static class WebUiFixtureLauncher
     internal const string FixtureArgument = "--webui-fixture";
     internal const string ProviderArgument = "--webui-provider";
     internal const string RenderArgument = "--render";
+    internal const double MinimumFixtureWidth = 430;
     private const string FixtureHost = "fixture.chunkpilot.local";
 
     internal static bool IsTrustedFixtureSource(string source) =>
@@ -34,7 +35,7 @@ internal static class WebUiFixtureLauncher
         var mode = ReadOption(arguments, "--webui-mode");
         var render = ReadOption(arguments, RenderArgument);
         var renderSet = ReadOption(arguments, "--render-set");
-        var width = ReadNumber(arguments, "--width", 1280, 920, 3840);
+        var width = ReadNumber(arguments, "--width", 1280, MinimumFixtureWidth, 3840);
         var height = ReadNumber(arguments, "--height", 820, 620, 2160);
         var scale = ReadNumber(arguments, "--scale", 1, 1, 2);
         var highContrast = arguments.Any(argument => string.Equals(argument, "--forced-colors", StringComparison.OrdinalIgnoreCase));
@@ -99,7 +100,7 @@ internal static class WebUiFixtureLauncher
             Title = $"ChunkPilot WebUI fixture - {page}";
             Width = width;
             Height = height;
-            MinWidth = 920;
+            MinWidth = MinimumFixtureWidth;
             MinHeight = 620;
             WindowStartupLocation = WindowStartupLocation.CenterScreen;
             WindowStyle = WindowStyle.None;

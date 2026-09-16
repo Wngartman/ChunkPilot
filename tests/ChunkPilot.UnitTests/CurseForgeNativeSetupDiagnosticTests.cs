@@ -7,6 +7,14 @@ namespace ChunkPilot.UnitTests;
 
 public sealed class CurseForgeNativeSetupDiagnosticTests
 {
+    [Fact]
+    public void Malformed_archive_and_provider_data_are_reported_without_an_unhandled_process_crash()
+    {
+        Assert.True(CurseForgeMetadataInspectionCommand.IsReportableFailure(new InvalidDataException("Invalid manifest")));
+        Assert.True(CurseForgeMetadataInspectionCommand.IsReportableFailure(new JsonException("Invalid JSON")));
+        Assert.False(CurseForgeMetadataInspectionCommand.IsReportableFailure(new NotSupportedException()));
+    }
+
     [Theory]
     [InlineData(HttpStatusCode.OK, true)]
     [InlineData(HttpStatusCode.Unauthorized, false)]

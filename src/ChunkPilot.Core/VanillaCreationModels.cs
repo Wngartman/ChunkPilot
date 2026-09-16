@@ -243,6 +243,21 @@ public sealed record VanillaVersionCatalog
 /// <summary>Classifies official ids without spreading release-name parsing through the product.</summary>
 public static class MinecraftVersionClassification
 {
+    /// <summary>Resolves Java Edition's configured whitelist value, including the official 26.3
+    /// default change. Unknown/snapshot defaults remain unknown rather than borrowing a release rule.</summary>
+    public static bool? ResolveWhitelistEnabled(string? versionId, string? configuredValue)
+    {
+        if (configuredValue is not null)
+            return bool.TryParse(configuredValue, out var enabled) && enabled;
+        if (!Version.TryParse(versionId, out var version))
+            return null;
+        if (version.Major == 1)
+            return false;
+        if (version.Major == 26 && version.Minor >= 1)
+            return version.Minor >= 3;
+        return null;
+    }
+
     public static MinecraftReleaseKind ReleaseKindFor(string versionId, string releaseType)
     {
         if (releaseType.Equals("release", StringComparison.OrdinalIgnoreCase))
