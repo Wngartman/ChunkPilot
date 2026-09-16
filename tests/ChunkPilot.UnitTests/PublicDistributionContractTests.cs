@@ -1,3 +1,5 @@
+using System.Xml.Linq;
+
 namespace ChunkPilot.UnitTests;
 
 public sealed class PublicDistributionContractTests
@@ -88,6 +90,8 @@ public sealed class PublicDistributionContractTests
     {
         var source = File.ReadAllText(Path.Combine(Root, "scripts", "publish-release.ps1"));
         var docs = File.ReadAllText(Path.Combine(Root, "docs", "release", "RELEASING.md"));
+        var sourceVersion = XDocument.Load(Path.Combine(Root, "Directory.Build.props"))
+            .Descendants("Version").Single().Value;
         Assert.Contains("git -C $repoRoot", source, StringComparison.Ordinal);
         Assert.Contains("function Invoke-GitSingleLine", source, StringComparison.Ordinal);
         Assert.DoesNotContain(")[0].Trim()", source, StringComparison.Ordinal);
@@ -102,7 +106,11 @@ public sealed class PublicDistributionContractTests
         Assert.Contains("gh workflow run release.yml", source, StringComparison.Ordinal);
         Assert.Contains("gh run watch $runId", source, StringComparison.Ordinal);
         Assert.Contains("build-manifest.json", source, StringComparison.Ordinal);
-        Assert.Contains("-Version 1.3.0-alpha.5", docs, StringComparison.Ordinal);
+        Assert.Contains($"-Version {sourceVersion}", docs, StringComparison.Ordinal);
+        Assert.Contains("-PreviousRelease v1.0.0", docs, StringComparison.Ordinal);
+        Assert.Contains("without changing that stable release's", docs, StringComparison.Ordinal);
+        Assert.Contains("notes, tag or assets.", docs, StringComparison.Ordinal);
+        Assert.Contains("Never use it for stable `v1.0.0`.", docs, StringComparison.Ordinal);
         Assert.Contains("builds once and tests the exact artifacts", docs, StringComparison.OrdinalIgnoreCase);
     }
 

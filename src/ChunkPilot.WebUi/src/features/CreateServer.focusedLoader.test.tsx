@@ -39,7 +39,9 @@ async function setup(canResolve = true) {
   return { view, request, catalog, resolve, signal: () => signal };
 }
 
-describe('focused official loader verification', () => {
+// Each case drives the full 48-row chooser through several async transitions. Hosted Windows
+// runners can exceed Vitest's five-second case budget; this is not a product response-time SLA.
+describe('focused official loader verification', { timeout: 20_000 }, () => {
   it('does not offer verification when the native provider did not authorize it', async () => {
     await setup(false);
     fireEvent.change(screen.getByRole('searchbox', { name: 'Search exact NeoForge versions' }), { target: { value: '21.1.59' } });

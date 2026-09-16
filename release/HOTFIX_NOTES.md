@@ -8,6 +8,7 @@
 - Removes repeated metadata requests within each CurseForge catalog operation and prevents dedicated server archives from appearing as client-pack releases.
 - Finds CurseForge updates for older Minecraft versions even when newer releases fill the first catalog page.
 - Selects Java 25 for calendar-year Minecraft releases, validates managed runtime architecture, and falls back from an unavailable official JRE to its matching JDK. Historical loader selections use exact official checksum metadata.
+- Handles long Windows paths in generated Java argument-file launches, including staged first-start validation and pack updates.
 - Hardens router setup and cleanup across UPnP, PCP, and NAT-PMP. Lost replies remain visible as uncertain state; they never become a false claim that a port is closed or permission to delete another application's mapping.
 - Preserves existing datapacks when an install is rejected, restores prior content after persistence failures, and refuses folder junctions during bounded inventory scans.
 - Removes repeated whole-server storage scans from dashboard refreshes and keeps console, file, and content work bounded.

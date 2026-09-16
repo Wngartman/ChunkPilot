@@ -66,6 +66,23 @@ or evidence. Unidentified imported loader versions are distinguished from known 
 from the catalog. The corrected frontend passed **356 tests**, typecheck, lint and build; native
 presentation tests passed **101/101**. The final Release workflow must rebuild and test that source.
 
+Before publication, a fresh personal-key ATM10 case verified both exact archives but failed safely
+when Java 21 could not open a 260-character argument-file path. A harmless real-Java probe reproduced
+the failure with both ordinary absolute and relative paths; the Windows extended-path form passed,
+including spaces and Unicode. The fix is limited to generated argument-file launch references in
+creation, staged validation and updates. Existing canonical path and ownership checks remain in place.
+The original failed report and verified retry archive are retained. Final large-pack runtime acceptance
+and publication are separate gates; this reproduction alone does not establish either.
+The targeted fix passed 67 unit tests (including 21 new argument-file and imported-profile cases).
+Before the final imported-profile guard refinement, 53 existing native loader, staged-validator and
+version-update integration tests passed. Both runs had no warnings, errors or skips; the complete
+suite still gates the final package.
+
+The first final gate also found a stale release-document test, corrected to derive the current source
+version while preserving stable-release immutability checks. A hosted UI run exceeded the five-second
+case limit in the full 48-row loader chooser; that suite now has a bounded 20-second case budget with
+the same assertions, and its seven focused tests pass locally. No product timeout was changed.
+
 Current candidate build evidence: `logs/readiness-candidate-b-publish.log`,
 `logs/readiness-candidate-b-package.log`, and `logs/readiness-candidate-b-agent-smoke.json`.
 Runtime evidence is retained under `artifacts/readiness-small-runtime/evidence` and

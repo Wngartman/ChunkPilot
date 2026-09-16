@@ -390,7 +390,7 @@ public sealed class ManagedServerInstaller
                 var relativeLaunchPath = Path.GetRelativePath(context.StagingPath, launchPath);
                 var launchArguments = payload.UsesArgumentFile
                     ? $"-Xms{request.MinimumRamMb}M -Xmx{request.MaximumRamMb}M " +
-                      $"@{CommandLineQuoter.QuoteWindowsArgument(Path.Combine(context.DestinationPath, relativeLaunchPath))}"
+                      $"@{CommandLineQuoter.QuoteWindowsArgument(JavaArgumentFilePath.ForLauncher(Path.Combine(context.DestinationPath, relativeLaunchPath)))}"
                     : $"-Xms{request.MinimumRamMb}M -Xmx{request.MaximumRamMb}M -jar " +
                       CommandLineQuoter.QuoteWindowsArgument(Path.Combine(context.DestinationPath, relativeLaunchPath));
                 var definition = new ServerDefinition

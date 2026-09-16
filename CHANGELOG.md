@@ -25,6 +25,8 @@
   added Java 25 selection plus an official JDK fallback when no JRE is published.
 - Added on-demand checksum verification for an exact older Forge or NeoForge installer rather than
   downloading integrity metadata for every historical build.
+- Fixed generated Java argument-file launches at Windows' long-path boundary during staged validation,
+  server creation and pack updates, while retaining the original path and ownership checks.
 - Fixed failed datapack installation cleanup deleting a pre-existing destination. Folder imports reject
   junction traversal; modern datapack format ranges preserve unknown-version compatibility honestly.
 - Kept uncertain router cleanup pending, validated PCP response identities, bounded UPnP responses,

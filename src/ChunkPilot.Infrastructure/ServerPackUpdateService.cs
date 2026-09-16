@@ -1832,7 +1832,7 @@ public sealed class ServerPackUpdateService
         await output.FlushAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    private static ServerDefinition BuildDefinition(
+    internal static ServerDefinition BuildDefinition(
         ServerDefinition current,
         string candidateRoot,
         LaunchCandidate launch,
@@ -1845,11 +1845,22 @@ public sealed class ServerPackUpdateService
             if (!Path.IsPathFullyQualified(path))
                 return path;
             var relative = Path.GetRelativePath(candidateRoot, path);
+            if (relative == ".")
+                return current.RootPath;
             return relative.StartsWith("..", StringComparison.Ordinal)
                 ? path : Path.Combine(current.RootPath, relative);
         }
 
         var arguments = launch.Arguments.Replace(candidateRoot, current.RootPath, StringComparison.OrdinalIgnoreCase);
+        // Re-evaluate the native launcher limit for the active destination, which can be
+        // longer or shorter than staging. Only the exact generated profile is rewritten.
+        if (launch.Arguments.StartsWith('@') &&
+            Path.GetFileName(launch.SourcePath).Equals("win_args.txt", StringComparison.OrdinalIgnoreCase) &&
+            Path.IsPathFullyQualified(launch.SourcePath) &&
+            !launch.SourcePath.StartsWith(@"\\?\", StringComparison.Ordinal) &&
+            !launch.SourcePath.StartsWith(@"\\.\", StringComparison.Ordinal) &&
+            launch.Arguments.Equals(JavaArgumentFilePath.LaunchArguments(launch.SourcePath), StringComparison.Ordinal))
+            arguments = JavaArgumentFilePath.LaunchArguments(Remap(launch.SourcePath));
         var ecosystem = Enum.TryParse<ServerEcosystem>(target.Loader, true, out var parsed)
             ? parsed : current.Ecosystem;
         return current with
@@ -2102,7 +2113,7 @@ public sealed class ServerPackUpdateService
         return null;
     }
 
-    private static LaunchCandidate SelectVerifiedMaterializedLaunch(
+    internal static LaunchCandidate SelectVerifiedMaterializedLaunch(
         string candidateRoot,
         string exactLaunchPath,
         bool usesArgumentFile)
@@ -2133,7 +2144,7 @@ public sealed class ServerPackUpdateService
             // non-runnable value with an absolute, exact-major managed java.exe before persistence.
             Executable = "",
             Arguments = usesArgumentFile
-                ? $"@{CommandLineQuoter.QuoteWindowsArgument(sourcePath)} nogui"
+                ? JavaArgumentFilePath.LaunchArguments(sourcePath)
                 : $"-jar {CommandLineQuoter.QuoteWindowsArgument(sourcePath)} nogui",
             WorkingDirectory = root,
             Recommendation = RecommendationLevel.Recommended,
@@ -2240,7 +2251,7 @@ public sealed class ServerPackUpdateService
         };
     }
 
-    private static void ValidateCandidate(
+    internal static void ValidateCandidate(
         string candidate,
         ServerDefinition definition,
         LaunchCandidate? providerNativeLaunch)
@@ -2253,7 +2264,14 @@ public sealed class ServerPackUpdateService
             var launchPath = ResolveContainedLaunchFile(candidate, providerNativeLaunch.SourcePath);
             var relative = Path.GetRelativePath(candidate, launchPath);
             var activeLaunchPath = Path.Combine(definition.RootPath, relative);
-            if (!definition.Arguments.Contains(activeLaunchPath, StringComparison.OrdinalIgnoreCase))
+            var expectedArguments = providerNativeLaunch.Arguments.StartsWith('@') &&
+                providerNativeLaunch.Arguments.Equals(
+                JavaArgumentFilePath.LaunchArguments(launchPath), StringComparison.Ordinal)
+                ? JavaArgumentFilePath.LaunchArguments(activeLaunchPath)
+                : $"-jar {CommandLineQuoter.QuoteWindowsArgument(activeLaunchPath)} nogui";
+            if (!definition.Arguments.Equals(expectedArguments, StringComparison.Ordinal) ||
+                !Path.TrimEndingDirectorySeparator(Path.GetFullPath(definition.WorkingDirectory)).Equals(
+                    Path.TrimEndingDirectorySeparator(Path.GetFullPath(definition.RootPath)), StringComparison.OrdinalIgnoreCase))
                 throw new InvalidDataException(
                     "The persisted provider launch arguments do not reference the exact validated native profile.");
         }

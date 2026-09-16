@@ -137,7 +137,7 @@ public sealed class StagedServerValidator : IStagedServerValidator
             start.ArgumentList.Add($"-Xms{minimumRamMb}M");
             start.ArgumentList.Add($"-Xmx{maximumRamMb}M");
             start.ArgumentList.Add("-Djava.io.tmpdir=" + temp);
-            if (usesArgumentFile) start.ArgumentList.Add("@" + launch);
+            if (usesArgumentFile) start.ArgumentList.Add("@" + JavaArgumentFilePath.ForLauncher(launch));
             else { start.ArgumentList.Add("-jar"); start.ArgumentList.Add(launch); }
             start.ArgumentList.Add("nogui");
             ChildProcessEnvironmentPolicy.Apply(start);
