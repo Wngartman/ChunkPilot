@@ -45,7 +45,7 @@ The binaries are currently unsigned, so Windows SmartScreen may show a warning. 
 | Fabric and Quilt | Official loader metadata and managed installation for supported versions. |
 | Forge and NeoForge | Official loader metadata, exact installer verification, and managed installation for supported versions. |
 | Modpacks | Modrinth and configured CurseForge browsing, exact provider links, `.mrpack`, server-pack ZIP, and generic archive import. |
-| Historical Minecraft | Automatic installation where an official server artifact exists; otherwise ChunkPilot explains that an original user-supplied ZIP or JAR is required. |
+| Historical Minecraft | Automatic setup requires an official server artifact, verifiable integrity, compatible Java, and a known managed launcher. Unsupported versions remain unavailable; supported original-file imports are offered separately. |
 
 Published 1.0.0 uses an optional personal CurseForge key, entered through **Settings → Set up CurseForge**
 and protected by Windows. The application-service integration on this branch keeps ChunkPilot's key on
