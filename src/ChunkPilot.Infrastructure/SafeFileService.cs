@@ -13,6 +13,7 @@ public sealed record TextWriteReceipt(
 
 public sealed class SafeFileService
 {
+    private const int MaximumTextBytes = 10 * 1024 * 1024;
     private static readonly HashSet<string> TextExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
         ".properties", ".txt", ".json", ".json5", ".toml", ".yaml", ".yml", ".cfg", ".conf",
@@ -59,16 +60,34 @@ public sealed class SafeFileService
         if (!File.Exists(path))
             throw new FileNotFoundException("File was not found.", path);
         var info = new FileInfo(path);
-        if (info.Length > 10 * 1024 * 1024)
+        if (info.Length > MaximumTextBytes)
             throw new IOException("Files larger than 10 MB are not opened in the integrated editor.");
         if (!TextExtensions.Contains(info.Extension))
             throw new IOException("This file type is not treated as editable text.");
 
-        var bytes = await File.ReadAllBytesAsync(path, cancellationToken).ConfigureAwait(false);
-        if (bytes.Take(Math.Min(bytes.Length, 4_096)).Any(value => value == 0))
-            throw new IOException("The file appears to be binary.");
+        // Capture a bounded snapshot even when a live log grows after the metadata check.
+        byte[] bytes;
+        await using (var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite,
+                         64 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan))
+        {
+            if (stream.Length > MaximumTextBytes)
+                throw new IOException("Files larger than 10 MB are not opened in the integrated editor.");
+            bytes = new byte[checked((int)stream.Length)];
+            await stream.ReadExactlyAsync(bytes, cancellationToken).ConfigureAwait(false);
+        }
         var (encoding, bomLength, hasBom) = DetectEncoding(bytes);
-        var content = encoding.GetString(bytes.AsSpan(bomLength));
+        string content;
+        try
+        {
+            content = encoding.GetString(bytes.AsSpan(bomLength));
+        }
+        catch (DecoderFallbackException exception)
+        {
+            throw new IOException("The file is not valid UTF-8 or BOM-marked UTF-16 text. Its contents were not changed.", exception);
+        }
+        // UTF-16 text contains zero bytes normally; only decoded NUL characters indicate binary data.
+        if (content.Contains('\0', StringComparison.Ordinal))
+            throw new IOException("The file appears to be binary.");
         var lineEnding = content.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" :
             content.Contains('\n', StringComparison.Ordinal) ? "\n" : Environment.NewLine;
         return new TextFileContent
@@ -303,11 +322,11 @@ public sealed class SafeFileService
     private static (Encoding Encoding, int BomLength, bool HasBom) DetectEncoding(byte[] bytes)
     {
         if (bytes.AsSpan().StartsWith(Encoding.UTF8.GetPreamble()))
-            return (new UTF8Encoding(encoderShouldEmitUTF8Identifier: true), 3, true);
+            return (new UTF8Encoding(encoderShouldEmitUTF8Identifier: true, throwOnInvalidBytes: true), 3, true);
         if (bytes.AsSpan().StartsWith(Encoding.Unicode.GetPreamble()))
-            return (Encoding.Unicode, 2, true);
+            return (new UnicodeEncoding(bigEndian: false, byteOrderMark: true, throwOnInvalidBytes: true), 2, true);
         if (bytes.AsSpan().StartsWith(Encoding.BigEndianUnicode.GetPreamble()))
-            return (Encoding.BigEndianUnicode, 2, true);
+            return (new UnicodeEncoding(bigEndian: true, byteOrderMark: true, throwOnInvalidBytes: true), 2, true);
         return (new UTF8Encoding(false, true), 0, false);
     }
 
