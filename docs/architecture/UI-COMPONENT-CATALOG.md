@@ -182,6 +182,14 @@ only the inside. Reinventing window chrome costs real behaviour.
 | `AppDialogFooter` | `Border` | Cancel first in tab order, committing action last | normal | `shown` |
 | `AppDialogSurface` | `Border` | In-window modal surface for reviewable destructive actions | normal | `shown` |
 
+`MessageDialogWindow` composes the existing native header/body/footer for the synchronous
+`IDialogService` confirmation, error and information calls. It retains owner-modal Windows chrome,
+wraps literal message text in one height-bounded scroller, and uses semantic warning/error/info icons.
+Confirmation starts on **Cancel** (also the Enter default); Escape, window close and Alt+F4 never
+confirm. Only the explicit action returns true. Error/information variants have a single **Close**
+action. The gallery's dialog-window composition shows the confirmation anatomy; STA tests exercise
+the actual modal results and accessibility resource overlays. No Agent or operation semantics change.
+
 `ServerIconCropControl` is the product-specific, keyboard-operable square crop surface used by the
 server-icon dialog. It consumes shared surface, stroke and accent resources; exposes normalized pan
 and zoom state; and shares `ServerIconPixelCrop` geometry with the Agent output path. The surrounding

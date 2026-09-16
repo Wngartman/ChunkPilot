@@ -768,7 +768,7 @@
 
             <components:AppSectionCard Header="Dialog window composition"
                                        Icon="Document"
-                                       Description="A separate dialog window keeps the native Windows frame and restyles only the inside: header, body, footer.">
+                                       Description="Shared confirmations and messages retain the native frame. Cancel or Close is the default; only an explicit action confirms.">
                 <Border BorderBrush="{DynamicResource AppStroke}"
                         BorderThickness="{StaticResource AppStrokeThickness}"
                         CornerRadius="{StaticResource AppCornerCard}"
@@ -777,24 +777,23 @@
                     <StackPanel>
                         <Border Style="{StaticResource AppDialogHeader}">
                             <StackPanel>
-                                <TextBlock Style="{StaticResource AppTitleText}" Text="Add an existing server" />
+                                <TextBlock Style="{StaticResource AppTitleText}" Text="Restore backup" />
                                 <TextBlock Style="{StaticResource AppSecondaryText}"
                                            Margin="{StaticResource AppStackGapTiny}"
-                                           Text="ChunkPilot reads the folder where it is. Nothing is moved or rewritten." />
+                                           Text="Review the recovery point before continuing." />
                             </StackPanel>
                         </Border>
                         <Border Style="{StaticResource AppDialogBody}">
                             <StackPanel>
-                                <TextBlock Style="{StaticResource AppLabelText}" Text="Server folder" />
-                                <TextBox Style="{StaticResource AppMonoTextBox}" IsReadOnly="True"
-                                         Text="D:\Servers\Sample Survival" />
+                                <TextBlock Style="{StaticResource AppBodyText}"
+                                           Text="Restore the selected verified backup? A recovery backup preserves the current state before replacement." />
                             </StackPanel>
                         </Border>
                         <Border Style="{StaticResource AppDialogFooter}">
                             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                                 <Button Content="Cancel" Margin="{StaticResource AppInlineGap}" />
-                                <Button Style="{StaticResource AppPrimaryButton}" Content="Add server"
-                                        ds:AppButton.Icon="Add" />
+                                <Button Style="{StaticResource AppPrimaryButton}" Content="Restore backup"
+                                        ds:AppButton.Icon="Restore" />
                             </StackPanel>
                         </Border>
                     </StackPanel>

@@ -31,7 +31,6 @@ internal static class DesignSystemFiles
     public static IReadOnlyList<string> LegacyMessageBoxSurfaces { get; } =
     [
         "App.xaml.cs",
-        "DialogService.cs",
         "ImportServerWindow.xaml.cs"
     ];
 

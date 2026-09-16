@@ -39,13 +39,33 @@ public sealed class DialogService : IDialogService
     }
 
     public bool Confirm(string title, string message) =>
-        MessageBox.Show(message, title, MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes;
+        ShowMessage(title, message, confirmation: true, AppIconKind.Warning);
 
     public void ShowError(string title, string message) =>
-        MessageBox.Show(message, title, MessageBoxButton.OK, MessageBoxImage.Error);
+        ShowMessage(title, message, confirmation: false, AppIconKind.Error);
 
     public void ShowInformation(string title, string message) =>
-        MessageBox.Show(message, title, MessageBoxButton.OK, MessageBoxImage.Information);
+        ShowMessage(title, message, confirmation: false, AppIconKind.Info);
+
+    private static bool ShowMessage(string title, string message, bool confirmation, AppIconKind icon)
+    {
+        var application = Application.Current;
+        if (application is null || application.Dispatcher.HasShutdownStarted || application.Dispatcher.HasShutdownFinished)
+            return false;
+
+        bool Show()
+        {
+            if (application.Dispatcher.HasShutdownStarted || application.Dispatcher.HasShutdownFinished) return false;
+            var window = new MessageDialogWindow(title, message, confirmation, icon);
+            var owner = application.Windows.OfType<Window>().FirstOrDefault(candidate => candidate.IsActive && candidate.IsVisible)
+                ?? (application.MainWindow?.IsVisible == true ? application.MainWindow : null);
+            if (owner is not null) window.Owner = owner;
+            AppTheme.Attach(window);
+            return window.ShowDialog() == true;
+        }
+
+        return application.Dispatcher.CheckAccess() ? Show() : application.Dispatcher.Invoke(Show);
+    }
 
     public ServerIconCropSelection? CropServerIcon(string sourcePath)
     {

@@ -1,0 +1,35 @@
+<Window x:Class="ChunkPilot.App.MessageDialogWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ds="clr-namespace:ChunkPilot.App.DesignSystem"
+        Style="{StaticResource AppDialogWindow}" WindowStartupLocation="CenterOwner"
+        PreviewKeyDown="Window_PreviewKeyDown">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <Border Style="{StaticResource AppDialogHeader}">
+            <DockPanel>
+                <ds:AppIcon x:Name="MessageIcon" Scale="Large" DockPanel.Dock="Left"
+                            VerticalAlignment="Top" Margin="{StaticResource AppInlineGapLarge}"/>
+                <TextBlock x:Name="Heading" Style="{StaticResource AppTitleText}" TextWrapping="Wrap"/>
+            </DockPanel>
+        </Border>
+        <Border Grid.Row="1" Style="{StaticResource AppDialogBody}">
+            <ScrollViewer x:Name="MessageScroller" Style="{StaticResource AppPageScrollViewer}"
+                          VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                <TextBlock x:Name="MessageText" Style="{StaticResource AppBodyText}" TextWrapping="Wrap"/>
+            </ScrollViewer>
+        </Border>
+        <Border Grid.Row="2" Style="{StaticResource AppDialogFooter}">
+            <WrapPanel HorizontalAlignment="Right">
+                <Button x:Name="CancelButton" Content="Cancel" IsCancel="True" IsDefault="True"
+                        Margin="{StaticResource AppInlineGap}" Click="Cancel_Click"/>
+                <Button x:Name="ConfirmButton" Content="Continue" Style="{StaticResource AppPrimaryButton}"
+                        Click="Confirm_Click"/>
+            </WrapPanel>
+        </Border>
+    </Grid>
+</Window>
