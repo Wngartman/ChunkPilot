@@ -31,6 +31,21 @@ public sealed class RouterMappingCoordinator : IAsyncDisposable
     private readonly ConcurrentDictionary<Guid, ServerRuntime> runtimes = new();
     private readonly TimeProvider clock;
 
+    private const string UnconfirmedDetail =
+        "A router setup request may have reached the router, but its result was not confirmed. " +
+        "A forwarding entry may still exist. Inspect the recorded router's port-forwarding settings; " +
+        "ChunkPilot cannot prove ownership, the assigned public port, or when it expires, so it will " +
+        "not delete an uncertain entry or retry setup automatically.";
+
+    private static RouterMappingRecord Unconfirmed(RouterMappingRecord record) => record with
+    {
+        DirectInternetEnabled = false,
+        ConsentGranted = false,
+        ConsentGrantedAt = null,
+        LastFailure = RouterMappingFailure.NetworkFailure,
+        LastOperationDetail = UnconfirmedDetail
+    };
+
     public RouterMappingCoordinator(
         ChunkPilotStore store,
         ServerSupervisor supervisor,
@@ -110,6 +125,8 @@ public sealed class RouterMappingCoordinator : IAsyncDisposable
         RunExclusiveAsync(serverId, RouterMappingPhase.Creating, async (runtime, record, token) =>
         {
             authority.Demand(record, "persisting Direct internet intent");
+            if (record.UnconfirmedCreate is not null)
+                return Unconfirmed(record);
             if (!consentGranted && !record.ConsentGranted)
                 // Refusing to act is not a failure of anything, so no failure is recorded: the surface
                 // stays exactly as the user left it and nothing on the router was touched.
@@ -134,7 +151,8 @@ public sealed class RouterMappingCoordinator : IAsyncDisposable
             try
             {
                 var established = await EstablishAsync(runtime, intent, authority, token).ConfigureAwait(false);
-                return established is { LastFailure: RouterMappingFailure.Cancelled, HasActiveMapping: false }
+                return established is { LastFailure: RouterMappingFailure.Cancelled, HasActiveMapping: false,
+                    UnconfirmedCreate: null }
                     ? record with { LastOperationDetail = established.LastOperationDetail }
                     : established;
             }
@@ -143,7 +161,10 @@ public sealed class RouterMappingCoordinator : IAsyncDisposable
                 try
                 {
                     authority.Demand(record, "rolling back cancelled Direct internet intent");
-                    await PersistBoundedAsync(record).ConfigureAwait(false);
+                    using var readTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                    var current = await store.GetRouterMappingAsync(serverId, readTimeout.Token).ConfigureAwait(false);
+                    if (current?.UnconfirmedCreate is null)
+                        await PersistBoundedAsync(record).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException)
                 {
@@ -179,9 +200,10 @@ public sealed class RouterMappingCoordinator : IAsyncDisposable
                 // Turning Direct internet off genuinely returns this server to "not set up", so the
                 // check result that kept the surface alive is cleared with it. A removal that failed
                 // still shows through RemovalPending and is never hidden by this.
-                LastCheckedAt = released.RemovalPending ? released.LastCheckedAt : null,
+                LastCheckedAt = released.RemovalPending || released.UnconfirmedCreate is not null
+                    ? released.LastCheckedAt : null,
                 AvailableMechanism = RouterMappingMechanism.None,
-                LastFailure = released.RemovalPending
+                LastFailure = released.RemovalPending || released.UnconfirmedCreate is not null
                     ? released.LastFailure
                     : RouterMappingFailure.None
             };
@@ -267,7 +289,7 @@ public sealed class RouterMappingCoordinator : IAsyncDisposable
     public async Task<string> PrepareForDeletionAsync(Guid serverId, CancellationToken cancellationToken)
     {
         var record = await store.GetRouterMappingAsync(serverId, cancellationToken).ConfigureAwait(false);
-        if (record is null || !record.HasActiveMapping && !record.RemovalPending)
+        if (record is null || !record.HasActiveMapping && !record.RemovalPending && record.UnconfirmedCreate is null)
         {
             if (record is not null)
                 await store.DeleteRouterMappingAsync(serverId, cancellationToken).ConfigureAwait(false);
@@ -277,11 +299,14 @@ public sealed class RouterMappingCoordinator : IAsyncDisposable
             (_, current, token) => ReleaseAsync(current,
                 RouterOperationAuthority.IsolatedFixture(serverId, mayEstablish: false), token),
             cancellationToken).ConfigureAwait(false);
-        if (!state.RemovalPending)
+        if (!state.RemovalPending && state.UnconfirmedCreate is null)
         {
             await store.DeleteRouterMappingAsync(serverId, cancellationToken).ConfigureAwait(false);
             return "";
         }
+        if (state.UnconfirmedCreate is not null)
+            return " A router setup request was not acknowledged. A possible forwarding entry is remembered; " +
+                   "inspect that router's settings because ChunkPilot cannot prove ownership or closure.";
         return " The router port ChunkPilot opened for this server could not be closed; it is remembered and " +
                "will be retried.";
     }
@@ -293,6 +318,8 @@ public sealed class RouterMappingCoordinator : IAsyncDisposable
         ServerRuntime runtime, RouterMappingRecord record, RouterOperationAuthority authority,
         CancellationToken cancellationToken)
     {
+        if (record.UnconfirmedCreate is not null)
+            return Unconfirmed(record);
         authority.Demand(record, "router establishment");
         if (record.RemovalPending)
         {
@@ -420,20 +447,68 @@ public sealed class RouterMappingCoordinator : IAsyncDisposable
                     "change it because it cannot prove that mapping is its own."
             };
 
-        authority.Demand(record, "router create or renewal request");
-        var outcome = await mappings.CreateAsync(binding, discovery, request, cancellationToken)
-            .ConfigureAwait(false);
-        var revokedAfterWireSuccess = false;
+        var dispatched = false;
+        request = request with { OnCreateDispatched = () => dispatched = true };
+        var journal = Unconfirmed(attempted with
+        {
+            UnconfirmedCreate = new UnconfirmedRouterCreate
+            {
+                Binding = discovered,
+                Mechanism = discovery.Mechanism,
+                Transport = request.Transport,
+                InternalClient = binding.LocalAddress.ToString(),
+                InternalPort = request.InternalPort,
+                RequestedExternalPort = request.ExternalPort,
+                AttemptedAt = clock.GetUtcNow()
+            }
+        });
+        // A crash after dispatch but before acknowledgment must leave possible exposure evidence,
+        // never actionable intent. This journal deliberately retains any prior confirmed owner tuple.
+        authority.Demand(record, "journaling a router create attempt");
+        await PersistBoundedAsync(journal).ConfigureAwait(false);
+        RouterMappingOutcome outcome;
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            authority.Demand(record, "router create or renewal request");
+            outcome = await mappings.CreateAsync(binding, discovery, request, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is OperationCanceledException or IOException or
+                                            System.Net.Sockets.SocketException or HttpRequestException or
+                                            InvalidOperationException)
+        {
+            outcome = RouterMappingOutcome.Failed(discovery.Mechanism,
+                exception is OperationCanceledException ? RouterMappingFailure.Cancelled : RouterMappingFailure.NetworkFailure,
+                "The router request did not complete with a confirmed response.");
+        }
+        var unconfirmed = dispatched && !outcome.Success && !outcome.CleanupPending &&
+                          !outcome.CreateConfirmedNotApplied;
+        if (!dispatched && !outcome.Success && !outcome.CleanupPending)
+        {
+            // No bytes left the datagram transport (or SOAP dispatch never began). Retire the
+            // provisional journal while the same serialized generation still owns this operation.
+            if (authority.CanRetainRevokedCleanupEvidence(record))
+                await PersistBoundedAsync(attempted with
+                {
+                    DirectInternetEnabled = false, ConsentGranted = false, ConsentGrantedAt = null
+                }).ConfigureAwait(false);
+        }
+        var revokedAfterWireSuccess = cancellationToken.IsCancellationRequested &&
+                                      (outcome.Success || outcome.CleanupPending);
         try
         {
             authority.Demand(record, "accepting router create or renewal result");
         }
-        catch (OperationCanceledException) when ((outcome.Success || outcome.CleanupPending) &&
+        catch (OperationCanceledException) when ((outcome.Success || outcome.CleanupPending || unconfirmed) &&
                                                   authority.CanRetainRevokedCleanupEvidence(record))
         {
             revokedAfterWireSuccess = true;
         }
         var now = clock.GetUtcNow();
+
+        if (unconfirmed)
+            return journal;
 
         // The gateway's own epoch, from this operation's discovery or from the request itself. A
         // restart ends the establishment ChunkPilot was holding whether or not the request that
@@ -539,7 +614,7 @@ public sealed class RouterMappingCoordinator : IAsyncDisposable
     {
         authority.Demand(record, "router cleanup");
         if (!record.HasActiveMapping && !record.RemovalPending)
-            return record with { RemovalPending = false };
+            return record.UnconfirmedCreate is not null ? Unconfirmed(record) : record with { RemovalPending = false };
 
         var binding = mappings.ResolveBinding();
         var discovery = RebuildDiscovery(record);
@@ -821,8 +896,8 @@ public sealed class RouterMappingCoordinator : IAsyncDisposable
         }
         catch (OperationCanceledException)
         {
-            // A cancelled operation created nothing, so the durable record is still the truth and the
-            // surface falls back to whatever it described before.
+            // Cancellation says nothing about a request already dispatched. Read the durable
+            // journal/confirmed ownership rather than manufacturing an Off state.
             ClearLivePhase(runtime, operationId);
             RouterMappingRecord? current = null;
             try
@@ -908,7 +983,8 @@ public sealed class RouterMappingCoordinator : IAsyncDisposable
             LeaseExpiresAt = record.LeaseExpiresAt,
             LastCheckedAt = record.LastCheckedAt,
             RemovalPending = record.RemovalPending,
-            LastOperationDetail = record.LastOperationDetail,
+            UnconfirmedCreate = record.UnconfirmedCreate,
+            LastOperationDetail = record.UnconfirmedCreate is not null ? UnconfirmedDetail : record.LastOperationDetail,
             Busy = runtime.LivePhase is not null,
             OperationId = runtime.OperationId
         };
@@ -938,7 +1014,7 @@ public sealed class RouterMappingCoordinator : IAsyncDisposable
     {
         if (runtime.LivePhase is { } live)
             return live;
-        if (record.RemovalPending)
+        if (record.RemovalPending || record.UnconfirmedCreate is not null)
             return RouterMappingPhase.NeedsAttention;
         // The mapping is on the router it was made on, and this computer either is somewhere else or
         // cannot show it is not — the second being every row written before ownership recorded a

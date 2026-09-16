@@ -117,7 +117,11 @@ public static class DirectInternetPresentation
         "ChunkPilot can't confirm from here that the connection reaches the wider internet — " +
         "the surest test is a friend joining.";
 
-    private static string AttentionSummary(RouterMappingState state) => state.OwnedNetworkUnknown
+    private static string AttentionSummary(RouterMappingState state) => state.UnconfirmedCreate is { } attempt
+        ? $"Your router may have opened a port for {attempt.InternalClient}:{attempt.InternalPort}, but its reply " +
+          $"was not confirmed. Check port-forwarding settings on router {attempt.Binding.GatewayAddress}. " +
+          "ChunkPilot cannot safely identify or close that possible entry, and will not retry setup automatically."
+        : state.OwnedNetworkUnknown
         ? "An earlier version of ChunkPilot opened this port without recording which router it used, so " +
           "ChunkPilot won't send anything that might change the wrong one. That port may still be open " +
           "on that router, and you can close it there. Setting up again opens the port on the network " +

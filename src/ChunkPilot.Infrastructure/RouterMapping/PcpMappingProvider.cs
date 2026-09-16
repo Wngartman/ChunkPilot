@@ -158,6 +158,7 @@ public sealed class PcpMappingProvider : IRouterMappingProvider
             $"PCP offered public port {assigned} instead of {request.ExternalPort}, which means the requested " +
             "port is already mapped. The substitute mapping was withdrawn.") with
         {
+            CreateConfirmedNotApplied = true,
             Continuity = GatewayContinuityEvidence.Stronger(outcome.Continuity, withdrawal.Continuity)
         };
     }
@@ -196,7 +197,8 @@ public sealed class PcpMappingProvider : IRouterMappingProvider
             (ushort)(lifetimeSeconds == 0 ? 0 : request.ExternalPort));
         WriteMappedAddress(payload.AsSpan(HeaderLength + 20, 16), IPAddress.Any);
 
-        var reply = await ExchangeAsync(binding, payload, cancellationToken).ConfigureAwait(false);
+        var reply = await ExchangeAsync(binding, payload,
+            lifetimeSeconds > 0 ? request.OnCreateDispatched : null, cancellationToken).ConfigureAwait(false);
         if (reply is null)
             return RouterMappingOutcome.Failed(Mechanism, RouterMappingFailure.GatewayDidNotRespond,
                 "The gateway did not answer the PCP MAP request within the bounded retry window.");
@@ -222,7 +224,7 @@ public sealed class PcpMappingProvider : IRouterMappingProvider
         if (resultCode != 0)
             return RouterMappingOutcome.Failed(Mechanism, TranslateResult(resultCode),
                 $"The gateway answered PCP MAP with result code {resultCode} ({ResultName(resultCode)}).")
-                with { Continuity = continuity };
+                with { Continuity = continuity, CreateConfirmedNotApplied = true };
 
         var lifetime = BinaryPrimitives.ReadUInt32BigEndian(reply.AsSpan(4, 4));
         if (lifetimeSeconds == 0 && lifetime != 0)
@@ -232,7 +234,7 @@ public sealed class PcpMappingProvider : IRouterMappingProvider
         if (lifetimeSeconds > 0 && lifetime == 0)
             return RouterMappingOutcome.Failed(Mechanism, RouterMappingFailure.RequestRejected,
                 "PCP granted no mapping lifetime; no active mapping was established.")
-                with { Continuity = continuity };
+                with { Continuity = continuity, CreateConfirmedNotApplied = true };
         var assignedExternalPort = BinaryPrimitives.ReadUInt16BigEndian(reply.AsSpan(HeaderLength + 18, 2));
         var assignedAddress = ReadMappedAddress(reply.AsSpan(HeaderLength + 20, 16));
         var external = assignedAddress is null || assignedAddress.Equals(IPAddress.Any)
@@ -318,17 +320,20 @@ public sealed class PcpMappingProvider : IRouterMappingProvider
         }
     }
 
+    private Task<byte[]?> ExchangeAsync(
+        RouterLanBinding binding, byte[] payload, CancellationToken cancellationToken) =>
+        ExchangeAsync(binding, payload, null, cancellationToken);
+
     private async Task<byte[]?> ExchangeAsync(
-        RouterLanBinding binding, byte[] payload, CancellationToken cancellationToken)
+        RouterLanBinding binding, byte[] payload, Action? onSent, CancellationToken cancellationToken)
     {
         var gateway = new IPEndPoint(binding.GatewayAddress, options.GatewayControlPort);
         foreach (var timeout in options.DatagramAttemptTimeouts)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            // PCP has no reboot obligation of its own to serve — RFC 6887 section 14's rapid recovery is
-            // deliberately unimplemented — so nothing here is watching for the moment a datagram leaves.
+            // Dispatch observation is diagnostic only; it does not claim a mapping was created.
             var reply = await channel
-                .ExchangeAsync(binding.LocalAddress, gateway, payload, timeout, onSent: null, cancellationToken)
+                .ExchangeAsync(binding.LocalAddress, gateway, payload, timeout, onSent, cancellationToken)
                 .ConfigureAwait(false);
             if (reply is not null)
                 return reply;

@@ -83,6 +83,10 @@ public sealed class PublicConnectivityCoordinator
             var previousRecord = await store.GetRouterMappingAsync(request.ServerId, cancellationToken)
                 .ConfigureAwait(false);
             var previous = await router.GetStateAsync(request.ServerId, cancellationToken).ConfigureAwait(false);
+            if (previous.UnconfirmedCreate is not null)
+                throw new InvalidOperationException(
+                    "A previous router setup request was not acknowledged. Inspect the recorded router's " +
+                    "forwarding settings; ChunkPilot cannot safely replace or delete that uncertain entry.");
             if (previous.Enabled || previous.Phase == RouterMappingPhase.Active || previous.RemovalPending)
             {
                 var stale = previousRecord ?? new RouterMappingRecord { ServerId = request.ServerId };
@@ -280,7 +284,7 @@ public sealed class PublicConnectivityCoordinator
                         .ConfigureAwait(false)
                     : await router.DisableAsync(record.ServerId, StaleCleanupAuthority(record), cancellationToken)
                         .ConfigureAwait(false);
-                if (!known.Contains(record.ServerId) && !state.RemovalPending &&
+                if (!known.Contains(record.ServerId) && !state.RemovalPending && state.UnconfirmedCreate is null &&
                     state.Phase != RouterMappingPhase.Active)
                     await store.DeleteRouterMappingAsync(record.ServerId, cancellationToken).ConfigureAwait(false);
             }
@@ -351,7 +355,7 @@ public sealed class PublicConnectivityCoordinator
         }
         var staleServerIds = records
             .Where(record => record.DirectInternetEnabled || record.ConsentGranted ||
-                             record.HasActiveMapping || record.RemovalPending)
+                             record.HasActiveMapping || record.RemovalPending || record.UnconfirmedCreate is not null)
             .Select(record => record.ServerId)
             .Distinct()
             .ToArray();

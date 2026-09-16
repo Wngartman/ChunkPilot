@@ -454,6 +454,164 @@ public sealed class RouterMappingRealRouterSequenceIntegrationTests : IAsyncLife
         Assert.Equal(RouterMappingFailure.RequestRejected, state.Failure);
     }
 
+    [Theory]
+    [InlineData(RouterMappingMechanism.Pcp)]
+    [InlineData(RouterMappingMechanism.NatPmp)]
+    [InlineData(RouterMappingMechanism.UpnpIgd)]
+    public async Task A_lost_create_reply_survives_disable_reload_and_server_deletion_without_claiming_ownership(
+        RouterMappingMechanism mechanism)
+    {
+        gateway.Mechanism = mechanism;
+        gateway.LoseCreateReply = true;
+        var state = await coordinator.EnableAsync(serverId, true, CancellationToken.None);
+        Assert.Equal(RouterMappingPhase.NeedsAttention, state.Phase);
+        Assert.NotNull(state.UnconfirmedCreate);
+        Assert.False(state.Enabled);
+        Assert.False(state.RemovalPending);
+        Assert.Empty(state.MappingInstanceId);
+        var stored = await store.GetRouterMappingAsync(serverId);
+        Assert.False(stored!.HasActiveMapping);
+        Assert.Equal(RouterMappingMechanism.None, stored.Mechanism);
+        Assert.False(stored.OwnedBinding.IsKnown);
+        Assert.Null(stored.LeaseExpiresAt);
+        Assert.Single(gateway.Table);
+
+        _ = await coordinator.DisableAsync(serverId, CancellationToken.None);
+        _ = await coordinator.CheckAsync(serverId, CancellationToken.None);
+        _ = await coordinator.EnableAsync(serverId, true, CancellationToken.None);
+        Assert.Equal(1, gateway.Creates);
+        Assert.Equal(0, gateway.Removes);
+        Assert.Equal(RouterMappingPhase.NeedsAttention,
+            (await coordinator.GetStateAsync(serverId, CancellationToken.None)).Phase);
+        Assert.Contains("not acknowledged", await coordinator.PrepareForDeletionAsync(serverId, CancellationToken.None),
+            StringComparison.Ordinal);
+        await store.DeleteServerAsync(serverId);
+        var retained = await store.GetRouterMappingAsync(serverId);
+        Assert.NotNull(retained!.UnconfirmedCreate);
+        Assert.False(retained.DirectInternetEnabled);
+        Assert.False(retained.ConsentGranted);
+        var service = new RouterMappingService(view, [gateway], new RouterMappingOptions(),
+            NullLogger<RouterMappingService>.Instance);
+        await using var restarted = new RouterMappingCoordinator(store, supervisor, service,
+            NullLogger<RouterMappingCoordinator>.Instance);
+        Assert.Equal(RouterMappingPhase.NeedsAttention,
+            (await restarted.GetStateAsync(serverId, CancellationToken.None)).Phase);
+        Assert.False(RouterMappingPolicy.ProvesOwnership(retained, gateway.Table.Single().Value));
+    }
+
+    [Fact]
+    public async Task An_exception_after_dispatch_retains_the_pre_send_journal()
+    {
+        gateway.CreateException = new IOException("Synthetic receive failure after router mutation.");
+        gateway.AfterDispatch = async () =>
+        {
+            var persisted = await store.GetRouterMappingAsync(serverId);
+            Assert.NotNull(persisted!.UnconfirmedCreate);
+            Assert.False(persisted.DirectInternetEnabled);
+        };
+        var state = await coordinator.EnableAsync(serverId, true, CancellationToken.None);
+        Assert.NotNull(state.UnconfirmedCreate);
+        Assert.Equal(RouterMappingPhase.NeedsAttention, state.Phase);
+        Assert.Equal(0, gateway.Removes);
+    }
+
+    [Fact]
+    public async Task Cancellation_before_dispatch_clears_the_provisional_journal()
+    {
+        gateway.OperationDelay = TimeSpan.FromSeconds(5);
+        using var cancel = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
+        _ = await coordinator.EnableAsync(serverId, true, cancel.Token);
+        Assert.Null((await store.GetRouterMappingAsync(serverId))!.UnconfirmedCreate);
+        Assert.Equal(0, gateway.Creates);
+        Assert.Equal(0, gateway.Removes);
+    }
+
+    [Fact]
+    public async Task Cancellation_after_dispatch_never_reports_off_or_deletes_the_uncertain_entry()
+    {
+        using var cancel = new CancellationTokenSource();
+        gateway.AfterCreate = cancel.Cancel;
+        gateway.CreateException = new OperationCanceledException(cancel.Token);
+        var state = await coordinator.EnableAsync(serverId, true, cancel.Token);
+        Assert.NotNull(state.UnconfirmedCreate);
+        Assert.False(state.Enabled);
+        Assert.Equal(RouterMappingPhase.NeedsAttention, state.Phase);
+        _ = await coordinator.DisableAsync(serverId, CancellationToken.None);
+        Assert.Equal(0, gateway.Removes);
+        Assert.Single(gateway.Table);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Late_completion_after_lease_revocation_retains_only_cleanup_or_uncertainty(bool lostReply)
+    {
+        var live = true;
+        gateway.LoseCreateReply = lostReply;
+        gateway.AfterCreate = () => live = false;
+        var lease = new PublicConnectivityLeaseIdentity
+        {
+            ServerId = serverId, LeaseId = Guid.NewGuid(), Generation = 9, LifecycleEpoch = 13
+        };
+        var authority = RouterOperationAuthority.Exposure(lease, () => live, () => true);
+        var state = await coordinator.EnableAsync(serverId, true, authority, CancellationToken.None);
+        Assert.False(state.Enabled);
+        Assert.False(state.ConsentGranted);
+        Assert.Equal(RouterMappingPhase.NeedsAttention, state.Phase);
+        Assert.Equal(lostReply, state.UnconfirmedCreate is not null);
+        Assert.Equal(!lostReply, state.RemovalPending);
+        var record = await store.GetRouterMappingAsync(serverId);
+        Assert.Equal(lease.LeaseId, record!.PublicLeaseId);
+        Assert.Equal(lease.Generation, record.PublicLeaseGeneration);
+    }
+
+    [Fact]
+    public async Task Confirmed_create_after_caller_cancellation_is_cleanup_only()
+    {
+        using var cancel = new CancellationTokenSource();
+        gateway.AfterCreate = cancel.Cancel;
+        var state = await coordinator.EnableAsync(serverId, true, cancel.Token);
+        Assert.False(state.Enabled);
+        Assert.True(state.RemovalPending);
+        Assert.Null(state.UnconfirmedCreate);
+        Assert.Equal(RouterMappingPhase.NeedsAttention, state.Phase);
+    }
+
+    [Fact]
+    public async Task Lost_renewal_reply_preserves_original_confirmed_ownership_and_does_not_recreate()
+    {
+        _ = await coordinator.EnableAsync(serverId, true, CancellationToken.None);
+        var original = await store.GetRouterMappingAsync(serverId);
+        gateway.LoseCreateReply = true;
+        _ = await coordinator.EnableAsync(serverId, true, CancellationToken.None);
+        var uncertain = await store.GetRouterMappingAsync(serverId);
+        Assert.NotNull(uncertain!.UnconfirmedCreate);
+        Assert.True(uncertain.HasActiveMapping);
+        Assert.Equal(original!.OwnedBinding, uncertain.OwnedBinding);
+        Assert.Equal(original.OwnershipToken, uncertain.OwnershipToken);
+        Assert.Equal(original.LeaseExpiresAt, uncertain.LeaseExpiresAt);
+        _ = await coordinator.EnableAsync(serverId, true, CancellationToken.None);
+        Assert.Equal(2, gateway.Creates);
+        _ = await coordinator.DisableAsync(serverId, CancellationToken.None);
+        Assert.Equal(1, gateway.Removes); // Only the original proven owner authorizes removal.
+        Assert.NotNull((await store.GetRouterMappingAsync(serverId))!.UnconfirmedCreate);
+    }
+
+    [Fact]
+    public async Task Positive_protocol_rejection_retires_journal_but_a_network_failure_does_not()
+    {
+        gateway.DispatchedFailure = true;
+        gateway.CreateFailure = RouterMappingFailure.RequestRejected;
+        gateway.ConfirmedNotApplied = true;
+        var rejected = await coordinator.EnableAsync(serverId, true, CancellationToken.None);
+        Assert.Null(rejected.UnconfirmedCreate);
+        gateway.CreateFailure = RouterMappingFailure.NetworkFailure;
+        gateway.ConfirmedNotApplied = false;
+        var unknown = await coordinator.EnableAsync(serverId, true, CancellationToken.None);
+        Assert.NotNull(unknown.UnconfirmedCreate);
+        Assert.Equal(RouterMappingPhase.NeedsAttention, unknown.Phase);
+    }
+
     public async Task DisposeAsync()
     {
         await coordinator.DisposeAsync();
@@ -507,6 +665,11 @@ public sealed class RouterMappingRealRouterSequenceIntegrationTests : IAsyncLife
         public bool RemoveFailure { get; set; }
         public int LastRemoveExternalPort { get; private set; }
         public Action? AfterCreate { get; set; }
+        public Func<Task>? AfterDispatch { get; set; }
+        public bool LoseCreateReply { get; set; }
+        public Exception? CreateException { get; set; }
+        public bool DispatchedFailure { get; set; }
+        public bool ConfirmedNotApplied { get; set; }
 
         public RouterMappingMechanism Mechanism { get; set; } = RouterMappingMechanism.UpnpIgd;
         public bool CanQueryExistingMappings => Mechanism == RouterMappingMechanism.UpnpIgd;
@@ -546,7 +709,18 @@ public sealed class RouterMappingRealRouterSequenceIntegrationTests : IAsyncLife
             if (OperationDelay > TimeSpan.Zero)
                 await Task.Delay(OperationDelay, cancellationToken).ConfigureAwait(false);
             if (CreateFailure != RouterMappingFailure.None)
-                return RouterMappingOutcome.Failed(Mechanism, CreateFailure, CreateDetail);
+            {
+                if (DispatchedFailure)
+                    request.OnCreateDispatched?.Invoke();
+                return RouterMappingOutcome.Failed(Mechanism, CreateFailure, CreateDetail) with
+                {
+                    CreateConfirmedNotApplied = ConfirmedNotApplied
+                };
+            }
+            cancellationToken.ThrowIfCancellationRequested();
+            request.OnCreateDispatched?.Invoke();
+            if (AfterDispatch is not null)
+                await AfterDispatch().ConfigureAwait(false);
             Creates++;
             var assigned = SubstitutePort > 0 ? SubstitutePort : request.ExternalPort;
             Table[Key(request.Transport, assigned)] = new ExistingRouterMapping
@@ -559,6 +733,11 @@ public sealed class RouterMappingRealRouterSequenceIntegrationTests : IAsyncLife
                 LeaseSeconds = request.LeaseSeconds
             };
             AfterCreate?.Invoke();
+            if (CreateException is not null)
+                throw CreateException;
+            if (LoseCreateReply)
+                return RouterMappingOutcome.Failed(Mechanism, RouterMappingFailure.GatewayDidNotRespond,
+                    "The fixture applied the request but lost its reply.");
             return new RouterMappingOutcome
             {
                 Success = SubstitutePort == 0,

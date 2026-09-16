@@ -277,8 +277,11 @@ public sealed class UpnpIgdMappingProvider : IRouterMappingProvider
         RouterLanBinding binding,
         RouterMappingRequest request,
         int leaseSeconds,
-        CancellationToken cancellationToken) =>
-        await control.InvokeAsync(controlUrl, serviceType, "AddPortMapping",
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        request.OnCreateDispatched?.Invoke();
+        return await control.InvokeAsync(controlUrl, serviceType, "AddPortMapping",
             [
                 new KeyValuePair<string, string>("NewRemoteHost", ""),
                 new KeyValuePair<string, string>("NewExternalPort", request.ExternalPort.ToString(CultureInfo.InvariantCulture)),
@@ -289,6 +292,7 @@ public sealed class UpnpIgdMappingProvider : IRouterMappingProvider
                 new KeyValuePair<string, string>("NewPortMappingDescription", request.Description),
                 new KeyValuePair<string, string>("NewLeaseDuration", leaseSeconds.ToString(CultureInfo.InvariantCulture))
             ], cancellationToken).ConfigureAwait(false);
+    }
 
     private RouterMappingOutcome Translate(UpnpSoapResponse response, RouterMappingRequest request)
     {
@@ -297,7 +301,10 @@ public sealed class UpnpIgdMappingProvider : IRouterMappingProvider
             ? $"The gateway did not complete AddPortMapping: {response.ErrorDescription}"
             : $"UPnP AddPortMapping failed for {ProtocolName(request.Transport)} {request.ExternalPort} with " +
               $"error {response.ErrorCode} ({UpnpErrorName(response.ErrorCode)}).";
-        return RouterMappingOutcome.Failed(Mechanism, failure, detail);
+        return RouterMappingOutcome.Failed(Mechanism, failure, detail) with
+        {
+            CreateConfirmedNotApplied = response.ErrorCode > 0
+        };
     }
 
     private static RouterMappingFailure TranslateError(int code) => code switch

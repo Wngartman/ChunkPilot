@@ -232,9 +232,20 @@ public sealed record ExistingRouterMapping
 }
 
 /// <summary>
-/// Everything ChunkPilot durably remembers about one server's Direct internet setup: the user's intent,
-/// and the minimum evidence needed to prove later that a mapping on the router is ChunkPilot's own.
+/// Diagnostic evidence of an unacknowledged create, without any ownership or expiry assertion.
 /// </summary>
+public sealed record UnconfirmedRouterCreate
+{
+    public RouterBindingIdentity Binding { get; init; } = new();
+    public RouterMappingMechanism Mechanism { get; init; }
+    public MappingTransport Transport { get; init; }
+    public string InternalClient { get; init; } = "";
+    public int InternalPort { get; init; }
+    public int RequestedExternalPort { get; init; }
+    public DateTimeOffset AttemptedAt { get; init; }
+}
+
+/// <summary>Durable intent and the minimum evidence needed to prove an acknowledged mapping is owned.</summary>
 public sealed record RouterMappingRecord
 {
     public Guid ServerId { get; init; }
@@ -332,6 +343,10 @@ public sealed record RouterMappingRecord
     /// <summary>A removal that failed. Retained so recovery retries it instead of forgetting the exposure.</summary>
     public bool RemovalPending { get; init; }
 
+    /// <summary>A create may have reached the router without an acknowledgment. Diagnostic evidence
+    /// only: never ownership, an assigned port, a confirmed lifetime, or authority to delete/renew.</summary>
+    public UnconfirmedRouterCreate? UnconfirmedCreate { get; init; }
+
     public RouterMappingFailure LastFailure { get; init; } = RouterMappingFailure.None;
     public string LastOperationDetail { get; init; } = "";
     public DateTimeOffset? LastCheckedAt { get; init; }
@@ -421,6 +436,7 @@ public sealed record RouterMappingState
     public DateTimeOffset? LeaseExpiresAt { get; init; }
     public DateTimeOffset? LastCheckedAt { get; init; }
     public bool RemovalPending { get; init; }
+    public UnconfirmedRouterCreate? UnconfirmedCreate { get; init; }
 
     public string LastOperationDetail { get; init; } = "";
 

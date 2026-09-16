@@ -351,7 +351,7 @@ public sealed class ChunkPilotStore : IAsyncDisposable
                      "schedules", "backups", "statistics_hourly", "eula_acceptance", "instance_history",
                      "plugin_manifests", "update_sources", "update_checks", "version_snapshots",
                      "update_downloads", "update_preferences", "rollback_history", "capability_profiles",
-                     "java_assignments", "network_configurations", "router_mappings", "firewall_access",
+                     "java_assignments", "network_configurations", "firewall_access",
                      "tunnel_providers", "crossplay_configurations", "gamerule_profiles", "datapack_inventory",
                      "resource_pack_configurations", "automation_recipes", "share_settings", "diagnostics_history",
                      "process_identities", "server_running_state", "creation_journal"
@@ -362,6 +362,31 @@ public sealed class ChunkPilotStore : IAsyncDisposable
             command.CommandText = $"DELETE FROM {table} WHERE server_id=$id";
             command.Parameters.AddWithValue("$id", serverId.ToString("D"));
             await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        }
+        // Registration deletion cannot erase an unresolved router exposure. Retain a non-actionable
+        // cleanup tombstone in the same transaction; a later Agent can still report/reconcile it.
+        await using (var router = connection.CreateCommand())
+        {
+            router.Transaction = (SqliteTransaction)transaction;
+            router.CommandText = "SELECT json FROM router_mappings WHERE server_id=$id";
+            router.Parameters.AddWithValue("$id", serverId.ToString("D"));
+            var json = await router.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) as string;
+            var evidence = json is null ? null : JsonSerializer.Deserialize<RouterMappingRecord>(json, ProtocolJson.Options);
+            if (evidence is not null && (evidence.HasActiveMapping || evidence.RemovalPending ||
+                                        evidence.UnconfirmedCreate is not null))
+            {
+                router.CommandText = "UPDATE router_mappings SET json=$json WHERE server_id=$id";
+                router.Parameters.AddWithValue("$json", JsonSerializer.Serialize(evidence with
+                {
+                    DirectInternetEnabled = false,
+                    ConsentGranted = false,
+                    ConsentGrantedAt = null,
+                    RemovalPending = evidence.RemovalPending || evidence.HasActiveMapping
+                }, ProtocolJson.Options));
+            }
+            else
+                router.CommandText = "DELETE FROM router_mappings WHERE server_id=$id";
+            await router.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
         await using (var presets = connection.CreateCommand())
         {

@@ -58,6 +58,10 @@ public sealed record RouterMappingRequest
 
     /// <summary>PCP mapping nonce, hex encoded. Empty asks the provider to mint one.</summary>
     public string OwnershipToken { get; init; } = "";
+
+    /// <summary>Signals that create bytes were sent (datagrams), or SOAP dispatch began. Never used
+    /// for deletion or discovery. Called only after the pre-dispatch cancellation check.</summary>
+    public Action? OnCreateDispatched { get; init; }
 }
 
 /// <summary>The result of a create, renew or remove attempt.</summary>
@@ -66,6 +70,9 @@ public sealed record RouterMappingOutcome
     public required bool Success { get; init; }
     /// <summary>An exact mapping was created, but compensating removal was not confirmed.</summary>
     public bool CleanupPending { get; init; }
+    /// <summary>A valid protocol response positively rejected this create, or confirmed its
+    /// compensating removal. A transport failure never supplies this evidence.</summary>
+    public bool CreateConfirmedNotApplied { get; init; }
     public RouterMappingFailure Failure { get; init; } = RouterMappingFailure.None;
     public RouterMappingMechanism Mechanism { get; init; } = RouterMappingMechanism.None;
     public int ExternalPort { get; init; }

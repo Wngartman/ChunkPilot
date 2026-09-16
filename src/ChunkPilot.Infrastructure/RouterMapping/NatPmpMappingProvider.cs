@@ -169,6 +169,7 @@ public sealed class NatPmpMappingProvider : IRouterMappingProvider
                     $"The gateway offered public port {assigned} instead of {request.ExternalPort}, which means " +
                     "the requested port is already mapped. The substitute mapping was withdrawn.") with
                 {
+                    CreateConfirmedNotApplied = true,
                     ExternalAddress = discovery.ExternalAddress,
                     Continuity = GatewayContinuityEvidence.Stronger(outcome.Continuity, withdrawal.Continuity)
                 };
@@ -208,7 +209,8 @@ public sealed class NatPmpMappingProvider : IRouterMappingProvider
         BinaryPrimitives.WriteUInt16BigEndian(payload.AsSpan(6, 2), (ushort)suggestedExternalPort);
         BinaryPrimitives.WriteUInt32BigEndian(payload.AsSpan(8, 4), (uint)Math.Max(0, lifetimeSeconds));
 
-        var reply = await ExchangeAsync(binding, payload, dispatch, cancellationToken).ConfigureAwait(false);
+        var reply = await ExchangeAsync(binding, payload, dispatch,
+            lifetimeSeconds > 0 ? request.OnCreateDispatched : null, cancellationToken).ConfigureAwait(false);
         if (reply is null)
             return RouterMappingOutcome.Failed(Mechanism, RouterMappingFailure.GatewayDidNotRespond,
                 "The gateway did not answer the NAT-PMP mapping request within the bounded retry window.");
@@ -227,7 +229,7 @@ public sealed class NatPmpMappingProvider : IRouterMappingProvider
         if (resultCode != 0)
             return RouterMappingOutcome.Failed(Mechanism, TranslateResult(resultCode),
                 $"The gateway answered the NAT-PMP mapping request with result code {resultCode} ({ResultName(resultCode)}).")
-                with { Continuity = continuity };
+                with { Continuity = continuity, CreateConfirmedNotApplied = true };
 
         var echoedInternalPort = BinaryPrimitives.ReadUInt16BigEndian(reply.AsSpan(8, 2));
         if (echoedInternalPort != request.InternalPort)
@@ -244,7 +246,7 @@ public sealed class NatPmpMappingProvider : IRouterMappingProvider
         if (lifetimeSeconds > 0 && lifetime == 0)
             return RouterMappingOutcome.Failed(Mechanism, RouterMappingFailure.RequestRejected,
                 "NAT-PMP granted no mapping lifetime; no active mapping was established.")
-                with { Continuity = continuity };
+                with { Continuity = continuity, CreateConfirmedNotApplied = true };
         return new RouterMappingOutcome
         {
             Success = true,
@@ -289,10 +291,18 @@ public sealed class NatPmpMappingProvider : IRouterMappingProvider
     /// A <paramref name="dispatch"/> is supplied only for recreation. It owns the moment the datagram
     /// goes out, so that RFC 6886 section 3.7's obligation is served at the wire rather than beforehand.
     /// </remarks>
+    private Task<byte[]?> ExchangeAsync(
+        RouterLanBinding binding,
+        byte[] payload,
+        NatPmpRebootRecovery.Dispatch? dispatch,
+        CancellationToken cancellationToken) =>
+        ExchangeAsync(binding, payload, dispatch, null, cancellationToken);
+
     private async Task<byte[]?> ExchangeAsync(
         RouterLanBinding binding,
         byte[] payload,
         NatPmpRebootRecovery.Dispatch? dispatch,
+        Action? onCreateDispatched,
         CancellationToken cancellationToken)
     {
         var gateway = new IPEndPoint(binding.GatewayAddress, options.GatewayControlPort);
@@ -300,11 +310,11 @@ public sealed class NatPmpMappingProvider : IRouterMappingProvider
         {
             cancellationToken.ThrowIfCancellationRequested();
             var reply = await (dispatch is null
-                    ? channel.ExchangeAsync(binding.LocalAddress, gateway, payload, timeout, onSent: null,
+                    ? channel.ExchangeAsync(binding.LocalAddress, gateway, payload, timeout, onCreateDispatched,
                         cancellationToken)
                     : dispatch.SendAsync(
                         onSent => channel.ExchangeAsync(binding.LocalAddress, gateway, payload, timeout,
-                            onSent, cancellationToken),
+                            () => { onSent?.Invoke(); onCreateDispatched?.Invoke(); }, cancellationToken),
                         cancellationToken))
                 .ConfigureAwait(false);
             if (reply is not null)

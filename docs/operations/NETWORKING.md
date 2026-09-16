@@ -128,7 +128,10 @@ Bedrock support (UDP) cannot be confused with Java.
 The external port always equals the server's own authoritative port, which stays synchronised with
 `server.properties`. ChunkPilot never silently substitutes a different public port: if the router
 offers one — which both RFC 6886 and RFC 6887 allow when the requested port is taken — the substitute
-is withdrawn and the situation is reported as the port being in use.
+is withdrawn and the situation is reported as the port being in use. If that withdrawal is not
+acknowledged, the exact assigned port, internal endpoint, lease and PCP nonce (where applicable) are
+retained as pending cleanup. The substitute is never activated or renewed; no later creation may
+replace that cleanup record until withdrawal is confirmed.
 
 ### Mapping ownership
 
@@ -145,6 +148,23 @@ RFC 6886 to the requesting client's own internal port.
 
 The description written into a router's table is the constant string `ChunkPilot Minecraft`. It names
 the application and never the server, the user or the machine.
+
+For UPnP, only `GetSpecificPortMappingEntry` error 714 (`NoSuchEntryInArray`) proves absence.
+Authorization errors, timeouts and malformed answers are unknown: they block creation/renewal, and
+cleanup retains its ownership evidence as pending. An HTTP 200 alone is not success: the SOAP body
+must contain the requested action's response in the requested service namespace. Description and
+SOAP bodies are limited to 1 MiB, including chunked responses; one cancellable deadline covers both
+headers and body. PCP success replies must match the requested nonce, protocol and internal port.
+
+Before a create request is dispatched, ChunkPilot durably records the attempted router, protocol,
+and requested ports. A lost response leaves an **unconfirmed create**, not ownership evidence and
+not a claim that exposure is off. This warning survives cancellation, restart, disable, and server
+removal. It blocks another create and never authorizes deletion, renewal, or a guessed expiry.
+A positive rejection or proven pre-dispatch cancellation clears only that attempt. Confirmed mappings
+retain their exact-owned cleanup path. An unacknowledged first create requires router inspection;
+ChunkPilot must not guess at foreign entries. UI-death cleanup still stops the exact-owned Minecraft
+processes/listeners independently. Automated failure-injection coverage is not real-router or
+outside-in acceptance evidence.
 
 ### Leases and renewal
 
@@ -242,8 +262,9 @@ would forward to — none of which is ownership evidence, so none of it can make
 look like ChunkPilot's. Only a mapping that was actually created writes the fields that authorise a
 later removal.
 
-Cancelling an attempt is not a failure of the router. It creates nothing, records nothing, and leaves
-the surface on the last settled truth.
+Cancellation before dispatch creates no exposure. Once a request has been dispatched, cancellation
+cannot prove that the router ignored it: unconfirmed evidence remains, or a late confirmed mapping
+follows the exact-owned cleanup path. The surface reports that uncertainty rather than claiming Off.
 
 ### What ChunkPilot will and will not claim
 
@@ -265,6 +286,13 @@ caveat that ChunkPilot has not verified it from outside. That address is classif
 
 For the private and shared classes the interface says *your router appears to be behind another network
 layer* — never that CGNAT is certain. The evidence itself is available under **Technical details**.
+
+There is no blanket Starlink compatibility claim. Starlink's default IPv4 policy uses CGNAT and does
+not allow inbound traffic; its own WiFi routers do not provide port forwarding. Direct inbound IPv4
+requires an eligible public-IPv4 service configuration and suitable third-party router. ChunkPilot
+does not change those ISP/router settings; LAN remains usable, while optional private-network or
+tunnel alternatives must be selected and verified separately. See
+[Starlink's official IP policy](https://starlink.com/support/article/1192f3ef-2a17-31d9-261a-a59d215629f4).
 
 ### Windows Firewall
 

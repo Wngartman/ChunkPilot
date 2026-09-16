@@ -133,7 +133,8 @@ public sealed class RouterOperationAuthority
 
     public void DemandPersistence(RouterMappingRecord record, string checkpoint)
     {
-        if (!record.DirectInternetEnabled && !record.ConsentGranted && record.RemovalPending &&
+        if (!record.DirectInternetEnabled && !record.ConsentGranted &&
+            (record.RemovalPending || record.UnconfirmedCreate is not null) &&
             CanRetainRevokedCleanupEvidence(record))
             return;
         Demand(record, checkpoint);
