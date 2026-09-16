@@ -461,8 +461,12 @@ public sealed class CurseForgeUpdateProvider : IUpdateProviderAdapter, IDisposab
             throw new InvalidOperationException("CurseForge update checking requires configured application access or an approved personal API key.");
         if (!long.TryParse(source.ProjectId, out _))
             throw new InvalidOperationException("CurseForge requires the numeric project ID.");
+        // Filter at the provider before taking its bounded first page. Newer Minecraft releases
+        // can otherwise crowd every compatible historical release out of the first 50 files.
+        var gameVersionFilter = string.IsNullOrWhiteSpace(source.MinecraftVersion)
+            ? "" : "&gameVersion=" + Uri.EscapeDataString(source.MinecraftVersion);
         using var document = await api.GetJsonAsync(
-            $"/v1/mods/{Uri.EscapeDataString(source.ProjectId)}/files?pageSize=50&index=0",
+            $"/v1/mods/{Uri.EscapeDataString(source.ProjectId)}/files?pageSize=50&index=0{gameVersionFilter}",
             cancellationToken).ConfigureAwait(false);
         var parents = document.RootElement.GetProperty("data").EnumerateArray()
             .Where(item =>
