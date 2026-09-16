@@ -1,4 +1,4 @@
-ChunkPilot 1.0.0 — Portable Windows x64
+ChunkPilot 1.0.1 — Portable Windows x64
 ================================================
 
 1. Extract the entire ZIP to a normal writable folder.
@@ -28,7 +28,7 @@ When updating portable binaries, close ChunkPilot and let its servers finish sav
 and stopping, then extract the complete new ZIP to a new folder. Do not move or
 delete your server or user-data folders. To upgrade an installed alpha instead, run
 the new installer over the existing installation without uninstalling first.
-The visible product version is 1.0.0; Windows file/installer version 1.3.1 preserves
+The visible product version is 1.0.1; Windows file/installer version 1.3.2 preserves
 upgrade order from earlier 1.3.0-alpha installers. The database remains at schema 6.
 
 The binaries are unsigned. Windows SmartScreen may warn before launch. Verify the

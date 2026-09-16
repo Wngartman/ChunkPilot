@@ -97,6 +97,10 @@ retained with `ExecutionContext.waitUntil`. A process loss or unavailable Durabl
 conservatively holds capacity until expiry. Missing/malformed bindings fail closed. There is no
 completed response cache, analytics binding, queue, cron, console logging or request observability.
 
+Lease requests carry a bounded duration, not a Worker timestamp. The Durable Object calculates and
+checks expiry against its own clock, so cross-location clock skew cannot falsely exhaust download
+slots. Quota limits and failure-time reservations are unchanged.
+
 Cloudflare and CurseForge necessarily process network requests while this optional integration is
 used. This service is not a claim that Cloudflare keeps no platform security/access records. It does
 not change local-only server management, require a ChunkPilot account or open local server ports.

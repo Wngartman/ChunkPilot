@@ -21,12 +21,14 @@ Support is intentionally stricter than existence:
 - **Unavailable** remains searchable and names the missing artifact, integrity data, Java requirement, or
   launch profile.
 
-Metadata validation is not runtime certification. `ChunkPilot.Certification` now provides the isolated,
-resumable exact-version campaign documented in [Vanilla certification](VANILLA-CERTIFICATION.md), but
-this milestone did not silently accept the Minecraft EULA. It therefore records zero runtime-certified
-versions and makes no Recommended or Verified claims.
+Metadata validation is not runtime certification. The isolated, resumable campaign is documented in
+[Vanilla certification](VANILLA-CERTIFICATION.md). The retained, identity-bound evidence contains
+833 passed records and seven recorded failures from the August campaign. It includes representative
+1.2.5, 1.7.10, 1.12.2, 1.16.5, 1.20.1, 1.21.1, and 26.2 launches and clean stops. These are prior
+results, not a claim that every version was retested for this release. There is no retained exact
+26.3 runtime pass; current metadata or Java-policy support does not substitute for one.
 
-## Inventory snapshot
+## Historical pre-EULA inventory snapshot
 
 An official-source evidence probe on 2026-08-16 retrieved 906 entries: 102 releases, 743 entries typed
 as snapshots by Mojang (including 198 pre-releases and 59 release candidates), 26 Beta entries, and
@@ -40,13 +42,18 @@ reclassifies versions and are not hardcoded into the application.
 ## Java and launch policy
 
 Official per-version `javaVersion.majorVersion` wins. A centralized numeric-release fallback covers
-documented modern boundaries (Java 8, 16, 17, and 21) only when official metadata omits Java. Alpha,
+documented modern boundaries (Java 8, 16, 17, 21, and 25) only when official metadata omits Java. Alpha,
 Beta, and nonnumeric unresolved IDs are never guessed.
 
 The managed launch profile resolves modern EULA + `nogui` and legacy `nogui` groups from release
 timestamps. Alpha, Beta, pre-release-date, and unknown behavior stays unresolved. Capabilities such as
 server icons, modern properties, status query, datapacks, and managed version change live on that
 profile rather than in React version-string checks.
+
+Historical versions without official server artifacts require an original user-supplied artifact
+through the supported import route. ChunkPilot does not reconstruct proprietary server JARs or
+silently run a third-party build script. Spigot/Bukkit servers can be imported and managed; an
+automatic BuildTools source-build workflow is not implemented.
 
 ## Cache and failure behavior
 

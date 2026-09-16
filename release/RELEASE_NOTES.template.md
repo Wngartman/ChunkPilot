@@ -17,11 +17,11 @@ ChunkPilot is a local-first Windows x64 launcher and manager for Minecraft serve
 
 The default uninstall preserves settings, servers, worlds, backups, provider credentials, and history. Imported servers remain in their original folders.
 
-## Upgrading from an alpha
+## Upgrading
 
 Close ChunkPilot and let its servers finish saving and stopping, then run the installer normally over
 the existing installation. Do not uninstall or move your server folders first. The visible product
-version is **1.0.0**; Windows uses numeric installer version **1.3.1** to keep upgrades from the earlier
+version is **1.0.1**; Windows uses numeric installer version **1.3.2** to keep upgrades from the earlier
 1.3.0-alpha installers ordered correctly. The database remains at schema **6**.
 
 ## Current limitations

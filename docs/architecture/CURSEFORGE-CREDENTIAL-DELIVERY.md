@@ -4,7 +4,18 @@ Status date: 2026-09-15
 
 ## Production decision
 
-**1.0.0 USES PERSONAL SETUP; PRIVATE APPLICATION SERVICE IS NOT YET DEPLOYED**
+**Published 1.0.0 uses personal setup. The private application service is deployed for acceptance testing.**
+
+The service is live at `https://chunkpilot-curseforge-service.chunkpilot-reachability.workers.dev`.
+The owner's application key exists only in its encrypted Worker secret binding. Fresh native checks
+with an empty personal-key store resolve Minecraft identity and ATM10's exact official client/server
+file relationship successfully. This does not yet establish a complete large-pack installation.
+
+Workers Free terminated representative ATM10 downloads with `exceededCpu`; partial files were rejected
+by length/hash verification. The production configuration requests a 60-second CPU ceiling and needs
+Workers Paid, which starts at $5/month plus possible usage charges. No billing change was made by the
+development task. A temporary Free-plan deployment supports metadata acceptance while the owner
+decides on hosting capacity. It must not be described as large-pack certified.
 
 The published 1.0.0 public-client model uses optional personal setup: the user enters their own approved
 CurseForge API access in a native password window. ChunkPilot validates it against the official API and
@@ -82,7 +93,7 @@ fail closed. Conservative reservations are not refunded after an interrupted ope
 service is publicly callable: a hidden key does not authenticate the desktop app or eliminate quota abuse.
 Review limits and hosting capacity before activation, including large packs and simultaneous downloads.
 The streaming secret-echo check inspects every payload byte; a bounded-memory stream is not zero CPU.
-Cloudflare's free request CPU allowance has not been certified for large archives. Verify the actual plan
+Cloudflare's free request CPU allowance failed live large-archive checks. Verify the actual paid plan
 and representative archive CPU use before promising large-pack service support; do not silently enable
 paid capacity or change account billing.
 
@@ -145,12 +156,12 @@ key checked live. Passing synthetic tests does not claim a live key, account app
 
 Before enabling the endpoint in a public release:
 
-1. Restore authenticated access to the owner's hosting account; the existing session's refresh failed.
-   Verify the exact account, public service hostname, account limits and any cost before deploying.
+1. Hosting authentication and the distinct Worker deployment are complete. Confirm sufficient hosting
+   capacity with the owner; the Free plan failed ATM10 streaming. Verify costs before any plan change.
 2. Resolve provider delivery-model and quota requirements for the approved application. Do not treat the
    approval as either development-only or blanket permission for every distribution method.
-3. Deploy this distinctly named Worker and budget object without altering the existing reachability probe.
-   Provision the actual key through the host's encrypted secret binding, never Git or a desktop package.
+3. The distinct Worker, budget object, and secret binding are deployed; the reachability probe is unchanged.
+   Redeploy the production CPU limit after capacity is enabled, then record the exact deployed version.
 4. Verify HTTPS, authenticated official search/exact metadata/image/download paths, author denial,
    cancellation, rate limiting, global-budget denial, outage behavior and absence of secrets in every
    client-visible response. Synthetic tests are not live acceptance.

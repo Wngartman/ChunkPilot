@@ -1,13 +1,9 @@
-- Introduces native per-user CurseForge API-key setup, validation, replacement, and removal. Keys remain out of the renderer and release packages; existing credentials survive rejected or interrupted validation.
-- Resolves exact CurseForge client/server-pack relationships, preserves manifest-pinned dependency versions and gameplay scripts, and distinguishes resource packs from loader-specific mods. Restricted downloads remain blocked.
-- Adds native ordinary-start progress, stopped known-player access editing, repeatable icon editing, and an explicit reversible binding apply/restart action.
-- Hardens backup inventory verification, recovery retention, restore rollback and Windows path checks. Newest recovery points are not deleted to meet an impossible storage limit.
-- Keeps fresh managed server descendants in exact-owned process Jobs; status reads and previous-attempt cleanup are bounded and cancellable.
-- Requires fresh, exact player evidence before empty-server automation, and bounds output while continuing to drain approved external-program pipes.
-- Bounds large player rosters to 50 displayed rows with full-roster search and preserves fast server switching.
-- Prevents server-scoped settings, MOTD drafts, player lists, whitelist entries, and late native responses from crossing a server-selection boundary.
-- Keeps long sidebar names readable without shrinking their status indicator, restores capability-driven player controls for modpack servers, and adds locally cropped player-head fallbacks.
-- Adds a safe **Upload World** creation path for folders and ZIP archives with bounded inspection, one-time native authority, transactional copying, source revalidation, and source preservation.
-- Reorganizes installed-modpack identity, runtime requirements, updates, ownership, recovery, and exact provider evidence into distinct readable sections.
-- Clarifies LAN, router, firewall, and outside-in states; adds evidence-based server-health cards and a local searchable help center without turning local checks into public-reachability claims.
-- Removes retired native creation scaffolding and stale review scripts, hardens packaged identity checks, and disables default WebView script dialogs.
+- Refines the dark interface throughout creation, server pages, settings, sharing, and content browsing. Compact layouts keep long names, release choices, player actions, and console controls readable.
+- Separates installed-pack details, runtime requirements, recovery, and a read-only mod inventory. File editing keeps unsaved drafts and ignores late responses after navigation.
+- Adds a private CurseForge application-service integration: configured builds use the hosted application key without distributing it to users. Exact release identity, author restrictions, size checks, and hashes remain enforced.
+- Removes repeated metadata requests within each CurseForge catalog operation and prevents dedicated server archives from appearing as client-pack releases.
+- Selects Java 25 for calendar-year Minecraft releases, validates managed runtime architecture, and falls back from an unavailable official JRE to its matching JDK. Historical loader selections use exact official checksum metadata.
+- Hardens router setup and cleanup across UPnP, PCP, and NAT-PMP. Lost replies remain visible as uncertain state; they never become a false claim that a port is closed or permission to delete another application's mapping.
+- Preserves existing datapacks when an install is rejected, restores prior content after persistence failures, and refuses folder junctions during bounded inventory scans.
+- Removes repeated whole-server storage scans from dashboard refreshes and keeps console, file, and content work bounded.
+- Strengthens release checks for keyless build identity, consumer-package contents, and upgrades from the previous stable installer. Existing worlds and application data remain preserved.

@@ -34,7 +34,11 @@ $knownFalsePositiveFingerprints = @(
     # An immutable historical test fixture: a generated 64-hex certification token, never a provider key.
     'e6f0acb36ffb3e2ee6874d5debc87f0078187913:tests/ChunkPilot.UnitTests/CertificationUpdateFaultInjectorTests.cs:generic-api-key:8',
     # An immutable CURRENT-GATE line containing the prior live-API Git commit, not credential material.
-    'bb43bea6b0af3d96b1f5f82acc0dbdacc72e73e7:docs/CURRENT-GATE.md:generic-api-key:11'
+    'bb43bea6b0af3d96b1f5f82acc0dbdacc72e73e7:docs/CURRENT-GATE.md:generic-api-key:11',
+    # Immutable fake-router tests use the literal 0123456789ABCDEF01234567 as a 12-byte PCP nonce.
+    # These exact test lines are not application credentials or live mapping authority.
+    '3c9b9c8f49a97c41cfd21e9927e9eb86e1312f86:tests/ChunkPilot.IntegrationTests/RouterMappingRealRouterSequenceIntegrationTests.cs:generic-api-key:569',
+    '3c9b9c8f49a97c41cfd21e9927e9eb86e1312f86:tests/ChunkPilot.UnitTests/RouterMapping/PcpMappingProviderTests.cs:generic-api-key:278'
 )
 $knownFalsePositives = @($findings | Where-Object Fingerprint -In $knownFalsePositiveFingerprints)
 $unexpectedFindings = @($findings | Where-Object Fingerprint -NotIn $knownFalsePositiveFingerprints)
@@ -77,7 +81,7 @@ if ($trackedText.Count -ne 0) { throw "Private or user-specific marker remains i
 
 $large = @($blobs | Where-Object Bytes -ge 1MB | Sort-Object Bytes -Descending |
     Select-Object Bytes, Oid, Path)
-$ignored = @(git -C $repoRoot status --ignored --short)
+$ignored = @(git -C $repoRoot status --ignored=matching --short)
 $result = [PSCustomObject]@{
     Revision = (& git -C $repoRoot rev-parse $Revision).Trim()
     GitleaksVersion = (& $gitleaks version).Trim()

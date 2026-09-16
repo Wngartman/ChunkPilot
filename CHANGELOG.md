@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### 1.0.1 reliability and interface polish
+
+- Refined shared controls, responsive layouts, dialogs, focus states, and server workspace presentation.
+  Hardened navigation against malformed snapshot replies without discarding the app shell.
+- Removed automatic recursive server-folder size scans from dashboard sampling.
+- Bounded Java discovery, cancelled exact-owned probe descendants, validated runtime architecture, and
+  added Java 25 selection plus an official JDK fallback when no JRE is published.
+- Added on-demand checksum verification for an exact older Forge or NeoForge installer rather than
+  downloading integrity metadata for every historical build.
+- Fixed failed datapack installation cleanup deleting a pre-existing destination. Folder imports reject
+  junction traversal; modern datapack format ranges preserve unknown-version compatibility honestly.
+- Kept uncertain router cleanup pending, validated PCP response identities, bounded UPnP responses,
+  and rejected deletion replies that still report an active lease.
+
 ### Private CurseForge application access
 
 - Added an optional server-side CurseForge service so service-enabled builds need no end-user API key.
@@ -10,8 +24,8 @@
   configured service while preserving official identity, hash verification and author restrictions.
 - Added bounded streaming, cancellation, secret-echo protection, per-client throttling and globally
   coordinated quotas. Service configuration is not presented as proof of live availability.
-- Deployment and clean-install live acceptance remain pending. Published 1.0.0 is unchanged and still
-  uses optional personal-key setup; no public service endpoint is enabled by this source change.
+- Deployed the private service for acceptance testing. Live keyless exact metadata works; large-file
+  capacity and clean-install runtime acceptance remain pending. Published 1.0.0 is unchanged.
 
 ## 1.0.0 - 2026-09-14
 
