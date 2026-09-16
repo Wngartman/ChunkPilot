@@ -12,6 +12,8 @@
   replacement characters, and live-log reads remain bounded when files grow.
 - Kept backup controls consistent during create, verify, and restore operations, and fixed console
   scrolling so viewing older output does not snap back to the newest line.
+- Blocked creation and settings submission while custom memory is invalid. Memory fields now preserve
+  exact values, respect regional decimal separators, and match the server's 512 MB minimum.
 - Removed automatic recursive server-folder size scans from dashboard sampling.
 - Bounded Java discovery, cancelled exact-owned probe descendants, validated runtime architecture, and
   added Java 25 selection plus an official JDK fallback when no JRE is published.
