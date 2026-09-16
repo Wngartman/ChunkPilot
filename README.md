@@ -47,10 +47,11 @@ The binaries are currently unsigned, so Windows SmartScreen may show a warning. 
 | Modpacks | Modrinth and configured CurseForge browsing, exact provider links, `.mrpack`, server-pack ZIP, and generic archive import. |
 | Historical Minecraft | Automatic setup requires an official server artifact, verifiable integrity, compatible Java, and a known managed launcher. Unsupported versions remain unavailable; supported original-file imports are offered separately. |
 
-Published 1.0.0 uses an optional personal CurseForge key, entered through **Settings → Set up CurseForge**
-and protected by Windows. The application-service integration on this branch keeps ChunkPilot's key on
-the backend and requires no key from users. A fresh small-pack install, restart, backup, and restore
-passed acceptance. Large-download capacity remains pending; the service is not activated in the published release.
+CurseForge in 1.0.1 uses an optional personal API key, entered through **Settings → Set up CurseForge**
+and protected by Windows. The private application-service integration keeps ChunkPilot's key on the
+backend and requires no key from users. Its small-pack install, restart, backup, restore, update, and
+rollback checks passed, but large-download hosting capacity is not ready. That service is not activated
+in this release.
 Author download restrictions apply to both routes. See [CurseForge access](docs/architecture/CURSEFORGE-CREDENTIAL-DELIVERY.md).
 Terraria remains an engineering foundation and is not offered as a supported server type.
 

@@ -4,7 +4,7 @@ Status date: 2026-09-15
 
 ## Production decision
 
-**Published 1.0.0 uses personal setup. The private application service is deployed for acceptance testing.**
+**Public 1.0.1 retains personal setup. The private application service is deployed for acceptance testing, not activated in the release.**
 
 The service is live at `https://chunkpilot-curseforge-service.chunkpilot-reachability.workers.dev`.
 The owner's application key exists only in its encrypted Worker secret binding. Fresh native checks
@@ -13,7 +13,10 @@ file relationship successfully. A fresh no-key package also completed an officia
 (project 1172292, client 6110282, server 6110285; Minecraft 1.21.1/Fabric 0.16.10), two start/status/save-first
 stop cycles across separate Agent lifetimes, and clean process/listener teardown. A disposable copy then
 passed live backup, independent archive verification, safety-backed restore, and restored-server startup.
-This does not establish a complete large-pack installation or whole-pack update acceptance.
+A subsequent candidate completed the official 6110282/6110285 to 6211453/6211455 whole-pack update,
+updated-server startup/status/save-stop, verified rollback, and rolled-back startup/status/save-stop.
+Rollback preserved the checked world/mod/config files, original memory/runtime settings, and user-added
+sentinels. This does not establish a complete large-pack installation or universal pack compatibility.
 
 Workers Free terminated representative ATM10 downloads with `exceededCpu`; partial files were rejected
 by length/hash verification. The production configuration requests a 60-second CPU ceiling and needs
@@ -21,7 +24,7 @@ Workers Paid, which starts at $5/month plus possible usage charges. No billing c
 development task. A temporary Free-plan deployment supports metadata and the verified small-pack case while the owner
 decides on hosting capacity. It must not be described as large-pack certified.
 
-The published 1.0.0 public-client model uses optional personal setup: the user enters their own approved
+The 1.0.1 public-client model retains optional personal setup: the user enters their own approved
 CurseForge API access in a native password window. ChunkPilot validates it against the official API and
 stores it with Windows DPAPI CurrentUser protection. Settings > General > Set up CurseForge is always
 reachable; unavailable CurseForge discovery also offers the same entry. This does not distribute the
@@ -40,7 +43,7 @@ An extractable key in a public Windows executable would disclose it to end users
 Protecting that key does not mean every end user needs a separate key. The requested model is a private
 application backend: users request CurseForge operations through ChunkPilot, and only the backend
 authenticates to the official API/CDN. No application key, encrypted copy, or recoverable bootstrap secret
-is delivered to their PC. The existing released build does not implement this automatic access.
+is delivered to their PC. The integration is implemented, but the public release does not activate it.
 
 The official terms and application-guidance pages were rechecked on 2026-09-15. Their displayed
 modification dates and relevant restrictions remain the same. Successful native developer-key requests,

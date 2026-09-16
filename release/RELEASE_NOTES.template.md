@@ -28,7 +28,7 @@ version is **1.0.1**; Windows uses numeric installer version **1.3.2** to keep u
 
 - Windows x64 only. Automated Windows checks do not certify every Windows version, router, or hardware configuration.
 - The installer and executables are unsigned, so SmartScreen may warn.
-- CurseForge requires each user to configure their own approved API key through native setup. No shared developer key is shipped, and author download restrictions remain enforced.
+- CurseForge requires each user to configure their own approved API key through native setup. The private application-service integration is not activated in this build while large-download hosting capacity remains unresolved. No shared key is shipped, and author download restrictions remain enforced.
 - Some historical Minecraft versions have no current official server artifact and require an original user-supplied ZIP or JAR.
 - Router, firewall, CGNAT, and outside-in behavior varies by network and still requires acceptance on the actual machine.
 

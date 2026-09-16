@@ -1,8 +1,8 @@
 # Changelog
 
-## Unreleased
+## 1.0.1 - 2026-09-15
 
-### 1.0.1 reliability and interface polish
+### Reliability and interface polish
 
 - Refined shared controls, responsive layouts, dialogs, focus states, and server workspace presentation.
   Hardened navigation against malformed snapshot replies without discarding the app shell.
@@ -38,8 +38,11 @@
   coordinated quotas. Service configuration is not presented as proof of live availability.
 - Deployed the private service for acceptance testing. A fresh keyless small-pack installation passed
   two start/status/save-stop cycles across Agent lifetimes. A disposable copy passed verified live
-  backup, safety-backed restore, and restored-server startup. Large-file capacity and whole-pack
-  update acceptance remain pending. Published 1.0.0 is unchanged.
+  backup, safety-backed restore, and restored-server startup. A real whole-pack update and verified
+  rollback both passed startup, status, save, and stop checks while preserving user-added files.
+- Public 1.0.1 retains personal-key setup. The application service is not activated in this release:
+  large-file delivery exceeded the hosting plan's CPU allowance and paid capacity is not enabled.
+  The previous 1.0.0 release remains unchanged.
 
 ## 1.0.0 - 2026-09-14
 
