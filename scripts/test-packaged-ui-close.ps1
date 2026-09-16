@@ -24,20 +24,65 @@ $script:Result = [ordered]@{
 }
 $script:Failures = [Collections.Generic.List[string]]::new()
 
+if (-not ('ChunkPilotPackagedUiIdentity' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+using Microsoft.Win32.SafeHandles;
+public static class ChunkPilotPackagedUiIdentity {
+    [StructLayout(LayoutKind.Sequential)] private struct BasicInformation {
+        public IntPtr Reserved1, Peb, Reserved2, Reserved3;
+        public UIntPtr ProcessId, ParentProcessId;
+    }
+    [DllImport("kernel32.dll", SetLastError=true)] [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetProcessTimes(SafeProcessHandle process, out long creation, out long exit, out long kernel, out long user);
+    [DllImport("kernel32.dll", EntryPoint="QueryFullProcessImageNameW", CharSet=CharSet.Unicode, SetLastError=true)]
+    [return: MarshalAs(UnmanagedType.Bool)] private static extern bool QueryFullProcessImageName(SafeProcessHandle process, int flags, StringBuilder image, ref int size);
+    [DllImport("ntdll.dll")] private static extern int NtQueryInformationProcess(SafeProcessHandle process, int kind, out BasicInformation info, int size, out int returned);
+    [DllImport("kernel32.dll", SetLastError=true)] [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetNamedPipeServerProcessId(SafePipeHandle pipe, out uint processId);
+    public static long[] Times(SafeProcessHandle process) {
+        long creation, exit, kernel, user;
+        if (!GetProcessTimes(process,out creation,out exit,out kernel,out user) || creation <= 0)
+            throw new InvalidOperationException("The exact process creation/exit identity could not be read.");
+        return new long[] { creation, exit };
+    }
+    public static string Image(SafeProcessHandle process) {
+        var image = new StringBuilder(32768); int size = image.Capacity;
+        if (!QueryFullProcessImageName(process,0,image,ref size)) throw new InvalidOperationException("The exact process image could not be read.");
+        return image.ToString();
+    }
+    public static int Parent(SafeProcessHandle process) {
+        BasicInformation info; int returned;
+        if (NtQueryInformationProcess(process,0,out info,Marshal.SizeOf(typeof(BasicInformation)),out returned) != 0)
+            throw new InvalidOperationException("The exact process parent could not be read.");
+        return checked((int)info.ParentProcessId.ToUInt64());
+    }
+    public static int PipeServer(SafePipeHandle pipe) {
+        uint id;
+        if (!GetNamedPipeServerProcessId(pipe,out id) || id == 0) throw new InvalidOperationException("The exact Agent pipe server could not be read.");
+        return checked((int)id);
+    }
+}
+'@
+}
+
 function Assert-Condition([bool]$Condition, [string]$Message) {
     if (-not $Condition) { throw $Message }
 }
 
 function Wait-Until([scriptblock]$Condition, [int]$TimeoutMilliseconds, [string]$Description) {
-    $deadline = [DateTimeOffset]::UtcNow.AddMilliseconds($TimeoutMilliseconds)
-    while ([DateTimeOffset]::UtcNow -lt $deadline) {
+    $waitClock = [Diagnostics.Stopwatch]::StartNew()
+    while ($waitClock.ElapsedMilliseconds -lt $TimeoutMilliseconds) {
         if (& $Condition) { return $true }
         Start-Sleep -Milliseconds $script:PollIntervalMilliseconds
     }
     throw "Timed out after $TimeoutMilliseconds ms waiting for $Description."
 }
 
-function Invoke-AgentRequest([string]$PipeName, [string]$Operation, [int]$ConnectTimeoutMilliseconds = 1000) {
+function Invoke-AgentRequest([string]$PipeName, [string]$Operation, [int]$ConnectTimeoutMilliseconds = 1000,
+    [Diagnostics.Process]$ExpectedProcess = $null, $ExpectedIdentity = $null) {
     $pipe = [IO.Pipes.NamedPipeClientStream]::new(
         ".", $PipeName, [IO.Pipes.PipeDirection]::InOut,
         [IO.Pipes.PipeOptions]::Asynchronous -bor [IO.Pipes.PipeOptions]::CurrentUserOnly)
@@ -45,6 +90,13 @@ function Invoke-AgentRequest([string]$PipeName, [string]$Operation, [int]$Connec
     $writer = $null
     try {
         $pipe.Connect($ConnectTimeoutMilliseconds)
+        if ($ExpectedProcess) {
+            $times = [ChunkPilotPackagedUiIdentity]::Times($ExpectedProcess.SafeHandle)
+            if ($null -eq $ExpectedIdentity -or $times[0] -ne $ExpectedIdentity.RawCreationFileTime -or $times[1] -ne 0 -or
+                [ChunkPilotPackagedUiIdentity]::PipeServer($pipe.SafePipeHandle) -ne $ExpectedProcess.Id) {
+                throw 'The connected pipe does not belong to the exact held Agent process.'
+            }
+        }
         $writer = [IO.StreamWriter]::new($pipe, [Text.UTF8Encoding]::new($false), 65536, $true)
         $writer.AutoFlush = $true
         $reader = [IO.StreamReader]::new($pipe, [Text.UTF8Encoding]::new($false), $false, 65536, $true)
@@ -53,17 +105,21 @@ function Invoke-AgentRequest([string]$PipeName, [string]$Operation, [int]$Connec
             operation = $Operation
             payload = @{}
         } | ConvertTo-Json -Compress -Depth 5
-        $writer.WriteLine($request)
-        $line = $reader.ReadLine()
+        $write = $writer.WriteLineAsync($request)
+        if (-not $write.Wait(1000)) { throw "Agent request write timed out for $Operation." }
+        $read = $reader.ReadLineAsync()
+        if (-not $read.Wait(1000)) { throw "Agent response timed out for $Operation." }
+        $line = $read.GetAwaiter().GetResult()
         if ([string]::IsNullOrWhiteSpace($line)) { throw "Agent returned an empty response to $Operation." }
         $response = $line | ConvertFrom-Json
         if (-not $response.success) { throw "Agent rejected ${Operation}: $($response.error)" }
         return $response.payload
     }
     finally {
-        if ($reader) { $reader.Dispose() }
-        if ($writer) { $writer.Dispose() }
+        # Abort any timed-out asynchronous IO before disposing stream wrappers.
         $pipe.Dispose()
+        if ($reader) { try { $reader.Dispose() } catch { } }
+        if ($writer) { try { $writer.Dispose() } catch { } }
     }
 }
 
@@ -77,17 +133,82 @@ function Wait-ForAgent([string]$PipeName, [int]$TimeoutMilliseconds, [string]$De
     } $TimeoutMilliseconds $Description | Out-Null
 }
 
-function Get-ProcessIdentity([int]$ProcessId) {
-    $process = Get-CimInstance Win32_Process -Filter "ProcessId = $ProcessId" -ErrorAction SilentlyContinue
-    if ($null -eq $process) { return $null }
+function Get-ProcessIdentity([Diagnostics.Process]$Process) {
+    $handle = $Process.SafeHandle
+    $times = [ChunkPilotPackagedUiIdentity]::Times($handle)
     [PSCustomObject]@{
-        ProcessId = [int]$process.ProcessId
-        ParentProcessId = [int]$process.ParentProcessId
-        CreationDate = [datetime]$process.CreationDate
-        ExecutablePath = $process.ExecutablePath
-        WorkingDirectory = $process.CommandLine
-        CommandLine = $process.CommandLine
+        ProcessId = $Process.Id
+        ParentProcessId = [ChunkPilotPackagedUiIdentity]::Parent($handle)
+        RawCreationFileTime = $times[0]
+        RawExitFileTime = $times[1]
+        ExecutablePath = [ChunkPilotPackagedUiIdentity]::Image($handle)
     }
+}
+
+function Initialize-IsolatedEnvironment([Diagnostics.ProcessStartInfo]$Info, [string]$DataRoot, [string]$InstanceId) {
+    $Info.Environment['CHUNKPILOT_DATA_ROOT'] = $DataRoot
+    $Info.Environment['CHUNKPILOT_MANAGED_SERVERS_ROOT'] = Join-Path $DataRoot 'servers'
+    $Info.Environment['CHUNKPILOT_INSTANCE_ID'] = $InstanceId
+    [void]$Info.Environment.Remove('CHUNKPILOT_CURSEFORGE_KEY_FILE')
+    [void]$Info.Environment.Remove('CHUNKPILOT_REACHABILITY_PROBE_URL')
+    foreach ($variable in @('APPDATA','LOCALAPPDATA','TEMP','TMP')) {
+        $directory = Join-Path $DataRoot $variable.ToLowerInvariant()
+        [IO.Directory]::CreateDirectory($directory) | Out-Null
+        $Info.Environment[$variable] = $directory
+    }
+    $Info.Environment['DOTNET_BUNDLE_EXTRACT_BASE_DIR'] = Join-Path $DataRoot 'bundle'
+}
+
+function Get-ExactTargetAgent([string]$PipeName, [Diagnostics.Process]$App, $AppIdentity, [string]$ExpectedAgentPath) {
+    $pipe = [IO.Pipes.NamedPipeClientStream]::new('.', $PipeName, [IO.Pipes.PipeDirection]::InOut,
+        [IO.Pipes.PipeOptions]::Asynchronous -bor [IO.Pipes.PipeOptions]::CurrentUserOnly)
+    $candidate = $null
+    try {
+        $pipe.Connect(1000)
+        $serverId = [ChunkPilotPackagedUiIdentity]::PipeServer($pipe.SafePipeHandle)
+        $candidate = [Diagnostics.Process]::GetProcessById($serverId)
+        $identity = Get-ProcessIdentity $candidate
+        $parentTimes = [ChunkPilotPackagedUiIdentity]::Times($App.SafeHandle)
+        if ($identity.RawExitFileTime -ne 0 -or $identity.ParentProcessId -ne $App.Id -or
+            $parentTimes[0] -ne $AppIdentity.RawCreationFileTime -or $parentTimes[1] -ne 0 -or
+            $identity.RawCreationFileTime -lt $parentTimes[0] -or
+            $identity.ExecutablePath -ine $ExpectedAgentPath -or
+            [ChunkPilotPackagedUiIdentity]::PipeServer($pipe.SafePipeHandle) -ne $serverId) {
+            throw 'The connected Agent could not be proved as a live exact child of the held App process.'
+        }
+        $result = [pscustomobject]@{ Process = $candidate; Identity = $identity }
+        $candidate = $null
+        return $result
+    }
+    finally { if ($candidate) { $candidate.Dispose() }; $pipe.Dispose() }
+}
+
+function Test-ExactProcessExited([Diagnostics.Process]$Process, $Identity) {
+    if ($null -eq $Process) { return $true }
+    if ($null -eq $Identity) { return $false }
+    try {
+        $times = [ChunkPilotPackagedUiIdentity]::Times($Process.SafeHandle)
+        return $times[0] -eq $Identity.RawCreationFileTime -and $times[1] -gt 0
+    }
+    catch { return $false }
+}
+
+function Stop-ExactOwnedProcess([Diagnostics.Process]$Process, $Identity, [string]$Description) {
+    if ($null -eq $Process) { return $true }
+    if (Test-ExactProcessExited $Process $Identity) { return $true }
+    if ($null -eq $Identity) {
+        $script:Failures.Add("$Description ownership is unproved; process and root retained.")
+        return $false
+    }
+    try {
+        $times = [ChunkPilotPackagedUiIdentity]::Times($Process.SafeHandle)
+        if ($times[0] -ne $Identity.RawCreationFileTime) { throw 'Held process creation identity changed.' }
+        if ($times[1] -eq 0) { $Process.Kill() }
+        if (-not $Process.WaitForExit($script:AgentShutdownTimeoutMilliseconds)) { throw 'Exact process exit exceeded the cleanup deadline.' }
+        if (-not (Test-ExactProcessExited $Process $Identity)) { throw 'Exact process exit could not be proved.' }
+        return $true
+    }
+    catch { $script:Failures.Add("$Description cleanup failed; root retained: $($_.Exception.Message)"); return $false }
 }
 
 function Start-IsolatedAgent([string]$AgentPath, [string]$DataRoot, [string]$InstanceId) {
@@ -96,9 +217,7 @@ function Start-IsolatedAgent([string]$AgentPath, [string]$DataRoot, [string]$Ins
     $info.WorkingDirectory = Split-Path -Parent $AgentPath
     $info.UseShellExecute = $false
     $info.CreateNoWindow = $true
-    $info.Environment["CHUNKPILOT_DATA_ROOT"] = $DataRoot
-    $info.Environment["CHUNKPILOT_INSTANCE_ID"] = $InstanceId
-    $info.Environment["CHUNKPILOT_CURSEFORGE_KEY_FILE"] = Join-Path $DataRoot ".missing-curseforge-api-key"
+    Initialize-IsolatedEnvironment $info $DataRoot $InstanceId
     $process = [Diagnostics.Process]::Start($info)
     if ($null -eq $process) { throw "Windows did not start the unrelated isolated Agent." }
     return $process
@@ -106,13 +225,16 @@ function Start-IsolatedAgent([string]$AgentPath, [string]$DataRoot, [string]$Ins
 
 function Remove-TemporaryRoot([string]$Path) {
     $fullPath = [IO.Path]::GetFullPath($Path)
-    $tempPath = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
-    if (-not $fullPath.StartsWith($tempPath, [StringComparison]::OrdinalIgnoreCase) -or
-        -not ([IO.Path]::GetFileName($fullPath).StartsWith("ChunkPilot-packaged-ui-close-", [StringComparison]::OrdinalIgnoreCase))) {
+    $tempPath = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd([IO.Path]::DirectorySeparatorChar)
+    if (-not [string]::Equals([IO.Path]::GetDirectoryName($fullPath), $tempPath, [StringComparison]::OrdinalIgnoreCase) -or
+        [IO.Path]::GetFileName($fullPath) -notmatch '^ChunkPilot-packaged-ui-close-(target|unrelated)-[a-f0-9]{32}$') {
         throw "Refusing to remove a path outside this script's validated temporary-root pattern: $fullPath"
     }
     for ($attempt = 0; $attempt -lt 50; $attempt++) {
         if (-not (Test-Path -LiteralPath $fullPath)) { return $true }
+        if (((Get-Item -LiteralPath $fullPath -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw 'Refusing to remove a temporary root that became a reparse point.'
+        }
         try {
             Remove-Item -LiteralPath $fullPath -Recurse -Force -ErrorAction Stop
         }
@@ -144,6 +266,7 @@ $unrelatedAgent = $null
 $targetAgent = $null
 $appIdentity = $null
 $targetAgentIdentity = $null
+$unrelatedAgentIdentity = $null
 
 try {
     Assert-Condition (Test-Path -LiteralPath $appPath) "Published portable App was not found: $appPath"
@@ -157,28 +280,20 @@ try {
 
     New-Item -ItemType Directory -Path $targetRoot, $unrelatedRoot -Force | Out-Null
     $unrelatedAgent = Start-IsolatedAgent $agentPath $unrelatedRoot $unrelatedInstanceId
+    $unrelatedAgentIdentity = Get-ProcessIdentity $unrelatedAgent
+    Assert-Condition ($unrelatedAgentIdentity.ExecutablePath -ieq $agentPath -and $unrelatedAgentIdentity.RawExitFileTime -eq 0) 'The unrelated Agent does not match the live packaged process.'
     Wait-ForAgent $unrelatedPipeName $script:AgentStartupTimeoutMilliseconds "the unrelated isolated Agent pipe"
 
     $appInfo = [Diagnostics.ProcessStartInfo]::new()
     $appInfo.FileName = $appPath
     $appInfo.WorkingDirectory = Split-Path -Parent $appPath
     $appInfo.UseShellExecute = $false
-    $appInfo.Environment["CHUNKPILOT_DATA_ROOT"] = $targetRoot
-    $appInfo.Environment["CHUNKPILOT_INSTANCE_ID"] = $targetInstanceId
-    $appInfo.Environment["CHUNKPILOT_CURSEFORGE_KEY_FILE"] = Join-Path $targetRoot ".missing-curseforge-api-key"
+    Initialize-IsolatedEnvironment $appInfo $targetRoot $targetInstanceId
     $app = [Diagnostics.Process]::Start($appInfo)
     Assert-Condition ($null -ne $app) "Windows did not start the packaged App."
     $script:Result.AppLaunched = $true
-    Wait-Until {
-        $candidate = Get-ProcessIdentity $app.Id
-        if ($null -eq $candidate) { return $false }
-        if ([string]::IsNullOrWhiteSpace($candidate.ExecutablePath)) { return $false }
-        $script:appIdentity = $candidate
-        return [string]::Equals(
-            [IO.Path]::GetFullPath($candidate.ExecutablePath),
-            [IO.Path]::GetFullPath($appPath),
-            [StringComparison]::OrdinalIgnoreCase)
-    } $script:AppStartupTimeoutMilliseconds "the packaged App process identity" | Out-Null
+    $appIdentity = Get-ProcessIdentity $app
+    Assert-Condition ($appIdentity.ExecutablePath -ieq $appPath -and $appIdentity.RawExitFileTime -eq 0) 'The App does not match the live packaged process.'
 
     Assert-Condition ($app.WaitForInputIdle($script:AppStartupTimeoutMilliseconds)) "Packaged App did not reach input idle."
     Wait-Until {
@@ -188,31 +303,18 @@ try {
     $script:Result.MainWindowDetected = $true
     Wait-ForAgent $targetPipeName $script:AgentStartupTimeoutMilliseconds "the target isolated Agent pipe"
 
-    Wait-Until {
-        $candidate = Get-CimInstance Win32_Process | Where-Object {
-            $_.ParentProcessId -eq $app.Id -and $_.ExecutablePath -eq $agentPath -and
-            $_.CommandLine -match 'ChunkPilot\.Agent\.exe'
-        } | Select-Object -First 1
-        if ($candidate) {
-            $script:targetAgentIdentity = [PSCustomObject]@{
-                ProcessId = [int]$candidate.ProcessId
-                ParentProcessId = [int]$candidate.ParentProcessId
-                CreationDate = [datetime]$candidate.CreationDate
-                ExecutablePath = $candidate.ExecutablePath
-                CommandLine = $candidate.CommandLine
-            }
-            $script:targetAgent = Get-Process -Id $candidate.ProcessId -ErrorAction Stop
-            return $true
-        }
-        return $false
-    } $script:AgentStartupTimeoutMilliseconds "the target Agent identity" | Out-Null
-    Assert-Condition ($targetAgentIdentity.ParentProcessId -eq $app.Id -and $targetAgentIdentity.ExecutablePath -eq $agentPath) "Target Agent identity does not match the App parent and packaged Agent path."
+    $targetProof = Get-ExactTargetAgent $targetPipeName $app $appIdentity $agentPath
+    $targetAgent = $targetProof.Process
+    $targetAgentIdentity = $targetProof.Identity
 
     $stopwatch = [Diagnostics.Stopwatch]::StartNew()
     $script:Result.WmCloseSent = $app.CloseMainWindow()
     Assert-Condition $script:Result.WmCloseSent "Process.CloseMainWindow did not send WM_CLOSE to the packaged App."
     Start-Sleep -Milliseconds 50
-    $null = $app.CloseMainWindow()
+    try { $null = $app.CloseMainWindow() }
+    catch [InvalidOperationException] {
+        if (-not (Test-ExactProcessExited $app $appIdentity)) { throw }
+    }
     Assert-Condition ($app.WaitForExit($script:UiExitTimeoutMilliseconds)) "Packaged App did not exit within $script:UiExitTimeoutMilliseconds ms after WM_CLOSE."
     $stopwatch.Stop()
     $script:Result.UiExitDurationMilliseconds = [math]::Round($stopwatch.Elapsed.TotalMilliseconds, 0)
@@ -220,20 +322,16 @@ try {
     Assert-Condition ($stopwatch.ElapsedMilliseconds -lt $script:UiExitTimeoutMilliseconds) "WM_CLOSE took $($stopwatch.ElapsedMilliseconds) ms."
 
     Wait-Until {
-        $candidate = Get-CimInstance Win32_Process -Filter "ProcessId = $($targetAgentIdentity.ProcessId)" -ErrorAction SilentlyContinue
-        return $null -eq $candidate -or [datetime]$candidate.CreationDate -ne $targetAgentIdentity.CreationDate
+        return Test-ExactProcessExited $targetAgent $targetAgentIdentity
     } $script:AgentShutdownTimeoutMilliseconds "the intended target Agent shutdown" | Out-Null
     $script:Result.TargetAgentExitResult = $true
 
-    $unrelatedAgent.Refresh()
-    Assert-Condition (-not $unrelatedAgent.HasExited) "The unrelated isolated Agent exited during target App shutdown."
-    $null = Invoke-AgentRequest $unrelatedPipeName "Ping"
+    $unrelatedTimes = [ChunkPilotPackagedUiIdentity]::Times($unrelatedAgent.SafeHandle)
+    Assert-Condition ($unrelatedTimes[0] -eq $unrelatedAgentIdentity.RawCreationFileTime -and $unrelatedTimes[1] -eq 0) "The unrelated isolated Agent exited during target App shutdown."
+    $null = Invoke-AgentRequest $unrelatedPipeName 'Ping' -ExpectedProcess $unrelatedAgent -ExpectedIdentity $unrelatedAgentIdentity
     $script:Result.UnrelatedAgentSurvivalResult = $true
 
-    $leftover = Get-CimInstance Win32_Process -Filter "ProcessId = $($appIdentity.ProcessId)" -ErrorAction SilentlyContinue
-    $script:Result.InvisibleUiProcessCount = if ($leftover -and
-        [datetime]$leftover.CreationDate -eq $appIdentity.CreationDate -and
-        $leftover.ExecutablePath -eq $appIdentity.ExecutablePath) { 1 } else { 0 }
+    $script:Result.InvisibleUiProcessCount = if (Test-ExactProcessExited $app $appIdentity) { 0 } else { 1 }
     Assert-Condition ($script:Result.InvisibleUiProcessCount -eq 0) "An invisible target UI process remains after WM_CLOSE."
 
     $script:Result.OverallPass = $true
@@ -242,38 +340,35 @@ catch {
     $script:Failures.Add($_.Exception.Message)
 }
 finally {
-    $fallbackTargetAgentIds = @()
-    if ($app) {
-        $fallbackTargetAgentIds = @(Get-CimInstance Win32_Process | Where-Object {
-            $_.ParentProcessId -eq $app.Id -and $_.ExecutablePath -eq $agentPath -and
-            $_.CommandLine -match 'ChunkPilot\.Agent\.exe'
-        } | ForEach-Object { [int]$_.ProcessId })
-    }
-    if ($app -and -not $app.HasExited) {
-        $app.Kill()
-        $app.WaitForExit()
-    }
-    if ($targetAgent -and -not $targetAgent.HasExited) {
-        $targetAgent.Kill()
-        $targetAgent.WaitForExit()
-    }
-    foreach ($fallbackTargetAgentId in $fallbackTargetAgentIds) {
-        $fallbackTargetAgent = Get-Process -Id $fallbackTargetAgentId -ErrorAction SilentlyContinue
-        if ($fallbackTargetAgent -and -not $fallbackTargetAgent.HasExited) {
-            $fallbackTargetAgent.Kill()
-            $fallbackTargetAgent.WaitForExit()
+    # Cleanup never reopens a PID. Missing identity is retained failure evidence,
+    # not permission to terminate a discovered process or remove its data root.
+    if ($app -and $appIdentity -and -not $targetAgent) {
+        # An early window-startup failure may still have created an Agent. The
+        # same exact pipe/held-parent proof is allowed once before the App exits.
+        try {
+            $targetProof = Get-ExactTargetAgent $targetPipeName $app $appIdentity $agentPath
+            $targetAgent = $targetProof.Process
+            $targetAgentIdentity = $targetProof.Identity
         }
+        catch { }
     }
-    if ($unrelatedAgent -and -not $unrelatedAgent.HasExited) {
-        try { $null = Invoke-AgentRequest $unrelatedPipeName "ShutdownAgent" } catch { }
-        if (-not $unrelatedAgent.WaitForExit($script:AgentShutdownTimeoutMilliseconds)) {
-            $unrelatedAgent.Kill()
-            $unrelatedAgent.WaitForExit()
+    $appExited = Stop-ExactOwnedProcess $app $appIdentity 'Target App'
+    $targetAgentExited = Stop-ExactOwnedProcess $targetAgent $targetAgentIdentity 'Target Agent'
+    $targetOwnershipComplete = $null -eq $app -or $null -ne $targetAgentIdentity
+    if (-not $targetOwnershipComplete) { $script:Failures.Add('The target Agent was never proved; its possible process and temporary root are retained.') }
+    if ($unrelatedAgent -and -not (Test-ExactProcessExited $unrelatedAgent $unrelatedAgentIdentity)) {
+        try {
+            $null = Invoke-AgentRequest $unrelatedPipeName 'ShutdownAgent' -ExpectedProcess $unrelatedAgent -ExpectedIdentity $unrelatedAgentIdentity
+            $null = $unrelatedAgent.WaitForExit($script:AgentShutdownTimeoutMilliseconds)
         }
+        catch { }
     }
+    $unrelatedExited = Stop-ExactOwnedProcess $unrelatedAgent $unrelatedAgentIdentity 'Unrelated isolated Agent'
     try {
-        $targetClean = Remove-TemporaryRoot $targetRoot
-        $unrelatedClean = Remove-TemporaryRoot $unrelatedRoot
+        $targetClean = $false
+        $unrelatedClean = $false
+        if ($appExited -and $targetAgentExited -and $targetOwnershipComplete) { $targetClean = Remove-TemporaryRoot $targetRoot }
+        if ($unrelatedExited) { $unrelatedClean = Remove-TemporaryRoot $unrelatedRoot }
         $script:Result.TemporaryRootCleanupResult = $targetClean -and $unrelatedClean
         if (-not $script:Result.TemporaryRootCleanupResult) { $script:Failures.Add("One or more script-created temporary roots remain.") }
     }
@@ -283,6 +378,7 @@ finally {
     $script:Result["TargetAgentProcessId"] = if ($targetAgentIdentity) { $targetAgentIdentity.ProcessId } else { $null }
     $script:Result["UnrelatedAgentProcessId"] = if ($unrelatedAgent) { $unrelatedAgent.Id } else { $null }
     $script:Result["TemporaryRoots"] = @($targetRoot, $unrelatedRoot)
+    foreach ($process in @($app, $targetAgent, $unrelatedAgent)) { if ($process) { $process.Dispose() } }
     $script:Result["Failures"] = @($script:Failures)
     $script:Result.OverallPass = $script:Result.OverallPass -and
         $script:Result.TemporaryRootCleanupResult -and
