@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using ChunkPilot.Core;
 using Microsoft.Data.Sqlite;
@@ -552,6 +553,36 @@ public sealed class ChunkPilotStore : IAsyncDisposable
             if (backup is not null)
                 results.Add(backup);
         }
+        return results;
+    }
+
+    /// <summary>
+    /// Projects persisted recovery-point evidence without loading backup histories or opening archives.
+    /// BackupService commits records only after finalization; verification changes and retention/deletion
+    /// therefore become visible on the next dashboard refresh, including after an Agent restart.
+    /// </summary>
+    public async Task<IReadOnlyDictionary<Guid, DateTimeOffset>> GetLatestVerifiedBackupTimesAsync(
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = await OpenAsync(cancellationToken).ConfigureAwait(false);
+        await using var command = connection.CreateCommand();
+        // One grouped result per registered server, using the existing server/creation index.
+        // Defensively reject incomplete references and inconsistent embedded server identities.
+        command.CommandText = """
+            SELECT b.server_id, MAX(b.created_utc)
+            FROM backups AS b
+            INNER JOIN servers AS s ON s.id = b.server_id
+            WHERE json_extract(b.json, '$.verified') = 1
+              AND json_extract(b.json, '$.serverId') = b.server_id COLLATE NOCASE
+              AND length(trim(json_extract(b.json, '$.archivePath'))) > 0
+              AND lower(substr(json_extract(b.json, '$.archivePath'), -8)) <> '.partial'
+            GROUP BY b.server_id
+            """;
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        var results = new Dictionary<Guid, DateTimeOffset>();
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            results.Add(Guid.Parse(reader.GetString(0)), DateTimeOffset.Parse(reader.GetString(1),
+                CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal));
         return results;
     }
 

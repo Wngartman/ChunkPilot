@@ -185,7 +185,12 @@ public sealed class ServerSupervisor : IAsyncDisposable
     {
         foreach (var server in servers.Values)
             await server.RefreshConnectionEvidenceAsync(cancellationToken).ConfigureAwait(false);
-        var snapshots = servers.Values.Select(server => server.Snapshot()).ToArray();
+        var latestVerifiedBackups = await store.GetLatestVerifiedBackupTimesAsync(cancellationToken).ConfigureAwait(false);
+        var snapshots = servers.Values.Select(server => server.Snapshot() with
+        {
+            // Persisted verification is authoritative, not this Agent lifetime's last backup command.
+            LastBackupAt = latestVerifiedBackups.TryGetValue(server.Definition.Id, out var createdAt) ? createdAt : null
+        }).ToArray();
         var schedules = await store.GetSchedulesAsync(cancellationToken).ConfigureAwait(false);
         var networkConfigurations = await store.GetNetworkConfigurationsAsync(cancellationToken).ConfigureAwait(false);
         var routerMappings = await store.GetRouterMappingsAsync(cancellationToken).ConfigureAwait(false);
