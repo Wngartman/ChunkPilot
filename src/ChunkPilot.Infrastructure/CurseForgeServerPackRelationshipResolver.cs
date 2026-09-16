@@ -9,7 +9,9 @@ namespace ChunkPilot.Infrastructure;
 /// server packs as ordinary additional files: those have alternateFileId/parentProjectFileId,
 /// but may have isServerPack=false and no serverPackFileId. Never search by nearby ID or name.
 /// </summary>
-internal sealed partial class CurseForgeServerPackRelationshipResolver(CurseForgeApiClient api)
+internal sealed partial class CurseForgeServerPackRelationshipResolver(
+    CurseForgeApiClient api,
+    Func<string, string, CancellationToken, Task<JsonElement>>? resolveExactFile = null)
 {
     public async Task<string> ResolveAsync(string projectId, JsonElement client,
         CancellationToken cancellationToken = default)
@@ -25,10 +27,9 @@ internal sealed partial class CurseForgeServerPackRelationshipResolver(CurseForg
         // its request, and let preflight reject changed IDs before contacting a new target.
         if (direct.Length > 0) return selected;
 
-        using var document = await api.GetJsonAsync(
-            $"/v1/mods/{Uri.EscapeDataString(projectId)}/files/{selected}", cancellationToken).ConfigureAwait(false);
-        if (!document.RootElement.TryGetProperty("data", out var file))
-            throw new InvalidDataException("CurseForge returned no exact additional-file identity.");
+        var file = resolveExactFile is not null
+            ? await resolveExactFile(projectId, selected, cancellationToken).ConfigureAwait(false)
+            : await ReadExactFileAsync(projectId, selected, cancellationToken).ConfigureAwait(false);
         ValidateLinkedFile(projectId, clientId, selected, file);
 
         // The forward link is authoritative even if the optional reverse field is absent.
@@ -38,6 +39,16 @@ internal sealed partial class CurseForgeServerPackRelationshipResolver(CurseForg
             ServerPackLabel().IsMatch(CurseForgeCatalogProvider.Text(file, "fileName")) ||
             ServerPackLabel().IsMatch(CurseForgeCatalogProvider.Text(file, "displayName"));
         return labelledServer ? selected : "";
+    }
+
+    private async Task<JsonElement> ReadExactFileAsync(string projectId, string selected,
+        CancellationToken cancellationToken)
+    {
+        using var document = await api.GetJsonAsync(
+            $"/v1/mods/{Uri.EscapeDataString(projectId)}/files/{selected}", cancellationToken).ConfigureAwait(false);
+        if (!document.RootElement.TryGetProperty("data", out var file))
+            throw new InvalidDataException("CurseForge returned no exact additional-file identity.");
+        return file.Clone();
     }
 
     internal static void ValidateLinkedFile(string projectId, string clientId, string selected, JsonElement file)

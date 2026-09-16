@@ -1283,10 +1283,8 @@ public sealed class CurseForgeCatalogProvider : IGuidedCatalogProvider, IPaginat
                     $"/v1/mods/{Uri.EscapeDataString(projectId)}/files/{fileId}", cancellationToken)
                     .ConfigureAwait(false);
                 var file = RequireObject(exact.RootElement, "data", "exact file").Clone();
-                if (Number(file, "modId") is { } parentId &&
-                    !parentId.ToString(System.Globalization.CultureInfo.InvariantCulture)
-                        .Equals(projectId, StringComparison.Ordinal))
-                    return null;
+                ValidateExactFileIdentity(projectId,
+                    fileId.ToString(System.Globalization.CultureInfo.InvariantCulture), file);
                 files = [file];
             }
             else
@@ -1326,13 +1324,53 @@ public sealed class CurseForgeCatalogProvider : IGuidedCatalogProvider, IPaginat
             ? latest.EnumerateArray().Select(file => file.Clone()).Take(20).ToArray()
             : []);
         var versions = new List<CatalogVersion>();
+        // Deliberately scoped to this one resolution. The file inventory already carries exact
+        // metadata; a linked additional file and its final server route must use the same snapshot.
+        // Nothing survives into a later user operation or replaces native creation preflight.
+        var metadata = new Dictionary<(string Project, string File), JsonElement>();
+        foreach (var file in files)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var fileId = Text(file, "id");
+            ValidateExactFileIdentity(projectId, fileId, file);
+            if (metadata.TryGetValue((projectId, fileId), out var previous) && !JsonElement.DeepEquals(previous, file))
+                throw new InvalidDataException("CurseForge returned contradictory metadata for the same exact file.");
+            metadata[(projectId, fileId)] = file;
+        }
+
+        async Task<JsonElement> ResolveExactFileAsync(string requestedProject, string requestedFile,
+            CancellationToken token)
+        {
+            token.ThrowIfCancellationRequested();
+            if (!requestedProject.Equals(projectId, StringComparison.Ordinal) ||
+                !long.TryParse(requestedFile, System.Globalization.NumberStyles.None,
+                    System.Globalization.CultureInfo.InvariantCulture, out var id) || id <= 0)
+                throw new InvalidDataException("The CurseForge file request has no exact project/file identity.");
+            if (metadata.TryGetValue((requestedProject, requestedFile), out var known))
+                return known;
+            using var document = await api.GetJsonAsync(
+                $"/v1/mods/{Uri.EscapeDataString(requestedProject)}/files/{Uri.EscapeDataString(requestedFile)}",
+                token).ConfigureAwait(false);
+            var resolved = RequireObject(document.RootElement, "data", "exact file");
+            ValidateExactFileIdentity(requestedProject, requestedFile, resolved);
+            var owned = resolved.Clone();
+            metadata[(requestedProject, requestedFile)] = owned;
+            return owned;
+        }
+
+        var relationships = new CurseForgeServerPackRelationshipResolver(api, ResolveExactFileAsync);
+        var visitedClients = new HashSet<string>(StringComparer.Ordinal);
         foreach (var clientFile in files)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (!FileAvailable(clientFile)) continue;
-            // Additional files are not separately selectable client releases.
-            if (Number(clientFile, "parentProjectFileId") is > 0) continue;
+            // A dedicated server archive is not a selectable client manifest, even when the
+            // optional reverse parent field is absent. Do not offer it as a generated candidate.
+            if (Number(clientFile, "parentProjectFileId") is > 0 ||
+                clientFile.TryGetProperty("isServerPack", out var serverFlag) && serverFlag.ValueKind == JsonValueKind.True ||
+                !visitedClients.Add(Text(clientFile, "id"))) continue;
             var parsed = ParseClientFile(clientFile, query);
-            var relatedServerId = await new CurseForgeServerPackRelationshipResolver(api)
+            var relatedServerId = await relationships
                 .ResolveAsync(projectId, clientFile, cancellationToken).ConfigureAwait(false);
             var candidate = await ResolveClientPackFileAsync(
                 projectId, parsed with { ServerPackFileId = relatedServerId }, clientFile, cancellationToken).ConfigureAwait(false);
@@ -1348,8 +1386,10 @@ public sealed class CurseForgeCatalogProvider : IGuidedCatalogProvider, IPaginat
                 });
                 continue;
             }
+            var serverFile = await ResolveExactFileAsync(projectId, candidate.ServerPackFileId, cancellationToken)
+                .ConfigureAwait(false);
             versions.Add(await ResolveServerPackFileAsync(
-                projectId, candidate, cancellationToken).ConfigureAwait(false));
+                projectId, candidate, serverFile, cancellationToken).ConfigureAwait(false));
         }
 
         var support = versions.Any(version => version.HasServerPackage)
@@ -1452,12 +1492,9 @@ public sealed class CurseForgeCatalogProvider : IGuidedCatalogProvider, IPaginat
     private async Task<CatalogVersion> ResolveServerPackFileAsync(
         string projectId,
         CatalogVersion client,
+        JsonElement file,
         CancellationToken cancellationToken)
     {
-        using var document = await api.GetJsonAsync(
-            $"/v1/mods/{Uri.EscapeDataString(projectId)}/files/{Uri.EscapeDataString(client.ServerPackFileId)}",
-            cancellationToken).ConfigureAwait(false);
-        var file = RequireObject(document.RootElement, "data", "server-pack file");
         CurseForgeServerPackRelationshipResolver.ValidateLinkedFile(projectId, client.ClientFileId, client.ServerPackFileId, file);
         if (!FileAvailable(file)) return client with
         {
@@ -1531,6 +1568,14 @@ public sealed class CurseForgeCatalogProvider : IGuidedCatalogProvider, IPaginat
             ClientSizeBytes = size,
             CanGenerateServerCandidate = canGenerate
         };
+    }
+
+    private static void ValidateExactFileIdentity(string projectId, string fileId, JsonElement file)
+    {
+        if (Number(file, "id") is not > 0 ||
+            !Text(file, "id").Equals(fileId, StringComparison.Ordinal) ||
+            !Text(file, "modId").Equals(projectId, StringComparison.Ordinal))
+            throw new InvalidDataException("CurseForge returned a different exact project or file identity.");
     }
 
     private static JsonElement RequireArray(JsonElement root, string property, string label)
