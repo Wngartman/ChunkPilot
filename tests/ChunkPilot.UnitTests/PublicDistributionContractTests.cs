@@ -4,6 +4,19 @@ public sealed class PublicDistributionContractTests
 {
     private static readonly string Root = RepositoryRoot();
 
+    [Theory]
+    [InlineData("npm run typecheck", "WebUI typecheck failed.")]
+    [InlineData("npm run lint", "WebUI lint failed.")]
+    [InlineData("npm test -- --run", "WebUI tests failed.")]
+    [InlineData("npm run build", "WebUI build failed.")]
+    public void Development_validation_stops_after_each_failed_native_command(string command, string failure)
+    {
+        var source = File.ReadAllText(Path.Combine(Root, ".github", "workflows", "development-validation.yml"))
+            .Replace("\r\n", "\n", StringComparison.Ordinal);
+        Assert.Contains(command + "\n          if ($LASTEXITCODE -ne 0) { throw '" + failure + "' }",
+            source, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void Import_dialog_has_no_development_machine_special_case()
     {

@@ -39,9 +39,13 @@ jobs:
         working-directory: src/ChunkPilot.WebUi
         run: |
           npm run typecheck
+          if ($LASTEXITCODE -ne 0) { throw 'WebUI typecheck failed.' }
           npm run lint
+          if ($LASTEXITCODE -ne 0) { throw 'WebUI lint failed.' }
           npm test -- --run
+          if ($LASTEXITCODE -ne 0) { throw 'WebUI tests failed.' }
           npm run build
+          if ($LASTEXITCODE -ne 0) { throw 'WebUI build failed.' }
       - name: Validate public documentation
         shell: pwsh
         run: ./scripts/test-public-docs.ps1
