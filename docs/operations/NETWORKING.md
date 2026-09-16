@@ -25,10 +25,12 @@ Modes:
 - **This computer only**: no router/firewall change.
 - **Home network**: use LAN IPv4 and allow a scoped firewall rule only if wanted.
 - **Direct internet** (port forwarding): Java normally uses TCP; Bedrock normally uses UDP. ChunkPilot can ask the router to forward the server's own port to this computer, on request and after confirmation — see below. A local listening test is not proof of public reachability.
-- **Official tunnel**: optional provider-controlled process and assigned address. ChunkPilot remains usable without it.
 - **Configure later**: the server remains local.
 
-A private/shared WAN address may indicate CGNAT; the safe next step is to ask the ISP or use a reviewed tunnel.
+External tunnels and private networks must be configured and verified separately. ChunkPilot does not
+currently install or manage those services; a native tunnel integration is not a shipped connection mode.
+A private/shared WAN address may indicate CGNAT; the safe next step is to ask the ISP or consider one of
+those separately configured alternatives.
 
 ## WebUI presentation mapping
 

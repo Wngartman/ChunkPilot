@@ -80,7 +80,8 @@ Fabric and NeoForge capability profiles replace Plugins with Mods. The shared ad
 
 Client requirements are retained from provider and archive metadata and appear in mod detail and
 friend-facing context. Unknown evidence stays Unknown. ChunkPilot does not use `/reload`, execute a
-JAR to inspect it, scrape providers, or offer CurseForge in this phase.
+JAR to inspect it, or scrape providers. CurseForge mod operations use the native exact-identity and
+authorization boundaries documented in [provider behavior](PROVIDERS.md).
 
 ## Pack-platform boundary
 
@@ -88,5 +89,6 @@ JAR to inspect it, scrape providers, or offer CurseForge in this phase.
 NeoForge, Forge, Quilt, unknown, and conflicting metadata. Any mod-loader requirement or mod JAR
 prevents Paper eligibility. Hybrid Paper/mod-loader servers are unsupported. Modrinth `.mrpack`
 creation and whole-release updates use these same exact loader strategies; see
-[MODPACKS.md](MODPACKS.md). CurseForge creation and legacy packs without redistributable official
-server artifacts remain open; exact stable campaigns for the four typed modern loaders are complete.
+[MODPACKS.md](MODPACKS.md) for Modrinth and supported CurseForge creation paths. Legacy packs without
+an authorized, integrity-verifiable server-artifact path remain unavailable. Exact stable campaigns
+for the four typed modern loaders are complete.

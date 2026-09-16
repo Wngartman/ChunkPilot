@@ -6,8 +6,10 @@ These are confirmed gaps, not simulated features:
 - The authorized isolated Vanilla campaign is complete and its identity-bound evidence is embedded. Seven exact historical development builds remain unavailable because they failed bootstrap, readiness, or clean stop; 67 entries have no official Mojang server artifact. ChunkPilot does not substitute unofficial binaries.
 - CurseForge discovery, exact links, official server-pack creation, supportable generated candidates,
   local manifest import, whole-pack updates, and mod Content operations are wired through the native
-  bridge. Public builds still cannot activate the provider until direct desktop application-credential
-  delivery is authorized; no ordinary user API-key field or placeholder success state is shown.
+  bridge. Published 1.0.0 supports optional personal-key setup in a native password window; React never
+  receives the key. Service-enabled builds need no end-user key, but public application-service
+  activation remains subject to deployment acceptance. See
+  [credential delivery](../architecture/CURSEFORGE-CREDENTIAL-DELIVERY.md).
 - Modrinth exposes all-time/follows/newest/updated ordering. ChunkPilot has not accumulated local
   7/30/365-day popularity snapshots, so period trends are explicitly unavailable rather than inferred.
 - A locally selected `.mrpack` is integrity-bound and installable, but cannot receive provider
