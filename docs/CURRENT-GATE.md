@@ -1,5 +1,72 @@
 # Current ChunkPilot Gate
 
+## 1.0.1 candidate gate — September 15, 2026
+
+Branch: `codex/1.0-readiness-20260915`. Tested candidate:
+`b3483022ef7b805693aded1eaafd6ef4f17e0870`. Product **1.0.1**, Windows numeric version
+**1.3.2**, database schema **6**, creation journal shape **2**. This candidate was built from a
+clean tree with the explicit public CurseForge service endpoint. The public release decision is
+instead an **empty endpoint with personal-key setup**, unless explicit paid-capacity approval
+changes that decision before the final freeze. Candidate service evidence is not proof of the
+final public build, publication or public keyless-service activation.
+
+### Completed checks
+
+| Gate | Result |
+| --- | --- |
+| Frontend tests, typecheck, lint and production build | 342 passed; checks passed |
+| Full native unit suite | 2,295 passed; no failures or skips |
+| Full native integration suite | 523 passed; no failures; one file-symbolic-link privilege skip |
+| CurseForge service suite | 106 passed |
+| Dependency restore, framework-dependent and self-contained publish, portable staging, installer build | Passed; zero compiler warnings/errors |
+| Isolated packaged Agent smoke | 15 checks; zero errors; clean exit; ApplicationService mode and no personal credential |
+
+The unsigned candidate artifacts are under `artifacts/release/v1.0.1`. The independent audit
+matched all 27 portable ZIP entries and all 26 shipped-file SBOM hashes; there were no missing,
+extra or mismatched files. The SPDX SBOM has 194 dependency records, including the build/test
+graph—not 194 shipped runtime libraries. Public signature paths are package-relative; no
+prohibited consumer files or selected private-path/credential markers were found. The portable
+README covers both service-enabled and personal-key builds. Installer execution, upgrade and
+automated packaged UI-close checks remain hosted-runner gates, not local checks claimed here.
+
+### Real workflow evidence and open gates
+
+- Earlier exact package `377917e` completed a fresh official small-pack case
+  **1172292 / 6110282 / 6110285** in about 61 seconds: two Agent lifetimes without a personal
+  credential, real Java initial/restart readiness, loopback Minecraft status, save/stop and
+  complete owned-process/listener cleanup. This is not a public-network or GUI-creation claim.
+- A separate isolated-copy backup/restore workflow verified the automatic pre-restore backup,
+  matched 204 restored file hashes, restarted the restored server, checked loopback status and
+  saved/stopped it cleanly. All 208 retained baseline files and the original report were unchanged.
+  These earlier workflow results do not independently certify every later binary.
+- Exact candidate `b348302` applied the official small-pack update from client/server
+  **6110282 / 6110285** to **6211453 / 6211455**. Updated Java startup, loopback Minecraft status
+  and save-first stop passed. Rollback verified 101 world/mod/configuration/settings files,
+  including 16 world files and 21 mods, and preserved three sentinels. The old runtime and RAM
+  settings were restored; rolled-back startup, status and save-first stop passed. All 208 original
+  files and eight protected evidence files remained unchanged. Exact-owned Agent/Java exit and
+  port 25585 cleanup passed.
+- Both earlier failed update-audit reports remain retained: the first exposed the missing exact
+  game-version filter, fixed before candidate B; the second stopped after a successful update
+  because the harness rejected a legitimate canonical managed-Java path change. The corrected
+  harness continued from the verified applied state and completed the runtime/rollback checks.
+- Physical candidate B inspection with a fresh Agent showed the persisted last-backup date and
+  verified recovery point before opening Backups, then showed both verified backup records.
+  After rollback, **Check pack release** resolved provider names and offered client release
+  **6211453**. Normal Alt+F4 closed App and Agent; TCP and UDP port 25585 were absent.
+- Large-archive service delivery remains blocked by the observed Cloudflare Workers Free CPU
+  limit. No billing change or public keyless activation is claimed. The selected personal-key
+  public build still needs its own final build and release gates. Small-pack success is not blanket
+  large-pack, loader, router, Windows-version or low-end-hardware certification.
+
+Current build evidence: `logs/readiness-candidate-b-publish.log`,
+`logs/readiness-candidate-b-package.log`, and `logs/readiness-candidate-b-agent-smoke.json`.
+Runtime evidence is retained under `artifacts/readiness-small-runtime/evidence` and
+`artifacts/readiness-backup-review/evidence`, including the successful
+`pack-update-runtime-continuation.json` and both earlier failed reports. These local evidence
+directories are ignored. The September 14 record below is preserved historical evidence, not
+the current release status.
+
 ## 1.0 release gate — September 14, 2026
 
 Branch: `codex/release-readiness-2026-09-14`. Product version **1.0.0**; Windows numeric version

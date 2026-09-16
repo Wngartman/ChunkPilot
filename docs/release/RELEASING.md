@@ -24,15 +24,23 @@ From clean public `main`:
 
 ```powershell
 .\scripts\publish-release.ps1 `
-    -Version 1.3.0-alpha.5 `
-    -Supersedes v1.3.0-alpha.4
+    -Version 1.0.1 `
+    -PreviousRelease v1.0.0
 ```
 
-The example above is the historical Alpha 5 publication. For a new release, first set the exact source
-version, then pass that new version and the actual prior release to test. The command rejects a dirty
-or non-main tree, stale public main, reused tag/release, or unknown superseded release. It dispatches
-`.github/workflows/release.yml` with the full public-main SHA, watches that exact run, then independently
-redownloads and verifies the public assets.
+Use `PreviousRelease` to test the actual prior installer without changing that stable release's
+notes, tag or assets. `Supersedes` is a separate, optional prerelease-only choice: it adds a
+superseded notice to the explicitly named prior prerelease. Never use it for stable `v1.0.0`.
+
+The command rejects a dirty or non-main tree, stale public main, a reused tag/release, and an
+unknown previous or superseded release. It dispatches `.github/workflows/release.yml` with the
+full public-main SHA, watches that exact run, then independently redownloads and verifies the
+public assets.
+
+`-CurseForgeServiceEndpoint` is optional and accepts only a public HTTPS service origin, never
+a credential. Supply it only after service acceptance and the owner's capacity/activation
+decision. Omitting it produces the personal-key build; this example does not activate keyless
+service delivery.
 
 ## Validation tiers
 
@@ -53,14 +61,14 @@ The Release workflow:
 9. audits public source/history, documentation links, and whitespace;
 10. uploads one internal workflow payload bound to the tag and commit;
 11. rechecks public `main`, creates the exact annotated tag, and publishes those same bytes;
-12. redownloads all four public assets, verifies their hashes and embedded build identity, marks the previous prerelease superseded, and records a concise baseline.
+12. redownloads all four public assets, verifies their hashes and embedded build identity, optionally marks an explicitly named prior prerelease superseded, and records a concise baseline.
 
 ## Public assets
 
-- `ChunkPilot-Setup-v1.3.0-alpha.N.exe`
-- `ChunkPilot-Portable-v1.3.0-alpha.N-win-x64.zip`
+- `ChunkPilot-Setup-v1.0.1.exe`
+- `ChunkPilot-Portable-v1.0.1-win-x64.zip`
 - `SHA256SUMS.txt`
-- `ChunkPilot-Release-Metadata-v1.3.0-alpha.N.zip`
+- `ChunkPilot-Release-Metadata-v1.0.1.zip`
 
 The metadata ZIP contains `ChunkPilot-SBOM.spdx.json`, `THIRD-PARTY-NOTICES.txt`, `build-manifest.json`, and `provenance.json`.
 
