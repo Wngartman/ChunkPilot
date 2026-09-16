@@ -5,6 +5,7 @@ export function useConsoleFollow(alignToEnd: () => void) {
   const [following, setFollowing] = useState(true);
   const current = useRef(true);
   const manualPause = useRef(false);
+  const waitingToLeaveEnd = useRef(false);
   const align = useRef(alignToEnd);
   align.current = alignToEnd;
   const frame = useRef(0);
@@ -37,6 +38,7 @@ export function useConsoleFollow(alignToEnd: () => void) {
 
   const pauseForUser = useCallback(() => {
     current.current = false;
+    waitingToLeaveEnd.current = true;
     setFollowing(false);
     cancel();
   }, [cancel]);
@@ -47,6 +49,7 @@ export function useConsoleFollow(alignToEnd: () => void) {
       pauseForUser();
     } else {
       manualPause.current = false;
+      waitingToLeaveEnd.current = false;
       current.current = true;
       setFollowing(true);
       scheduleFollow();
@@ -58,8 +61,13 @@ export function useConsoleFollow(alignToEnd: () => void) {
     // Explicit wheel/key/touch upward input cancels settling synchronously instead.
     if (settling.current) return;
     const atEnd = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 24;
-    if (!atEnd) pauseForUser();
-    else if (!manualPause.current && !current.current) {
+    if (!atEnd) {
+      if (current.current) pauseForUser();
+      waitingToLeaveEnd.current = false;
+    }
+    // Wheel/key input arrives before the browser performs its default scroll. A layout
+    // scroll still at the end must not undo that pause before the user has moved away.
+    else if (!manualPause.current && !waitingToLeaveEnd.current && !current.current) {
       current.current = true;
       setFollowing(true);
       scheduleFollow();

@@ -55,3 +55,53 @@ it('follows same-count buffer appends and late measured height, but an upward wh
   expect(virtual.scrollToIndex).not.toHaveBeenCalled();
   expect(screen.getByRole('button', { name: 'Resume following console' }).getAttribute('aria-pressed')).toBe('false');
 });
+
+it('keeps an upward wheel paused through the initial at-bottom scroll event and resumes only after a real return', () => {
+  const current = useAppStore.getState().snapshot!;
+  render(<NavigationGuardProvider><ServerWorkspace serverId={current.servers[0].id} /></NavigationGuardProvider>);
+  flushFrame(); flushFrame(); virtual.scrollToIndex.mockClear();
+  const viewport = screen.getByRole('region', { name: 'Console output' });
+  Object.defineProperties(viewport, {
+    scrollHeight: { configurable: true, value: 600 },
+    clientHeight: { configurable: true, value: 100 },
+    scrollTop: { configurable: true, writable: true, value: 500 }
+  });
+  fireEvent.wheel(viewport, { deltaY: -100 });
+  fireEvent.scroll(viewport);
+  flushFrame();
+  expect(virtual.scrollToIndex).not.toHaveBeenCalled();
+  expect(screen.getByRole('button', { name: 'Resume following console' }).getAttribute('aria-pressed')).toBe('false');
+  viewport.scrollTop = 360;
+  fireEvent.scroll(viewport);
+  virtual.size = 700;
+  act(() => useAppStore.setState({ snapshot: { ...current, revision: current.revision + 1 } }));
+  flushFrame();
+  expect(virtual.scrollToIndex).not.toHaveBeenCalled();
+  viewport.scrollTop = 500;
+  fireEvent.scroll(viewport);
+  flushFrame();
+  expect(virtual.scrollToIndex).toHaveBeenCalledOnce();
+  expect(screen.getByRole('button', { name: 'Pause following console' }).getAttribute('aria-pressed')).toBe('true');
+});
+
+it('lets a scrollbar or text-selection pointer cancel queued following without a wheel event', () => {
+  const current = useAppStore.getState().snapshot!;
+  render(<NavigationGuardProvider><ServerWorkspace serverId={current.servers[0].id} /></NavigationGuardProvider>);
+  flushFrame(); flushFrame(); virtual.scrollToIndex.mockClear();
+  const viewport = screen.getByRole('region', { name: 'Console output' });
+  Object.defineProperties(viewport, {
+    scrollHeight: { configurable: true, value: 600 },
+    clientHeight: { configurable: true, value: 100 },
+    scrollTop: { configurable: true, writable: true, value: 500 }
+  });
+  virtual.size = 700;
+  act(() => useAppStore.setState({ snapshot: { ...current, revision: current.revision + 1 } }));
+  // jsdom does not implement PointerEvent; dispatch the equivalent primary-button payload.
+  fireEvent(viewport, new MouseEvent('pointerdown', { bubbles: true, button: 0 }));
+  fireEvent.scroll(viewport);
+  viewport.scrollTop = 360;
+  fireEvent.scroll(viewport);
+  flushFrame();
+  expect(virtual.scrollToIndex).not.toHaveBeenCalled();
+  expect(screen.getByRole('button', { name: 'Resume following console' }).getAttribute('aria-pressed')).toBe('false');
+});

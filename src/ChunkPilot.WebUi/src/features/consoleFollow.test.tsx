@@ -60,6 +60,23 @@ it('lets upward user input cancel measurement settling and resumes only when the
   expect(align).toHaveBeenCalledOnce();
 });
 
+it('does not undo an upward-input pause on the still-at-bottom event before default scrolling moves away', () => {
+  const align = vi.fn();
+  const { result } = renderHook(() => useConsoleFollow(align));
+  act(() => { result.current.scheduleFollow(); result.current.pauseForUser(); });
+  act(() => result.current.observeScroll({ scrollHeight: 400, scrollTop: 320, clientHeight: 80 }));
+  act(() => result.current.scheduleFollow());
+  flushFrame();
+  expect(result.current.following).toBe(false);
+  expect(align).not.toHaveBeenCalled();
+  act(() => result.current.observeScroll({ scrollHeight: 400, scrollTop: 200, clientHeight: 80 }));
+  expect(result.current.following).toBe(false);
+  act(() => result.current.observeScroll({ scrollHeight: 400, scrollTop: 320, clientHeight: 80 }));
+  flushFrame();
+  expect(result.current.following).toBe(true);
+  expect(align).toHaveBeenCalledOnce();
+});
+
 it('cancels both pending alignment and settle frames on unmount', () => {
   const align = vi.fn();
   const view = renderHook(() => useConsoleFollow(align));

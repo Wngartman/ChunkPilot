@@ -1,6 +1,5 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { initializeBridge, WebViewBridge, type BridgeAdapter } from '../bridge/client';
-import { FixtureBridge } from '../fixtures/catalog';
 import { isFixtureMode } from '../fixtures/mode';
 import { useAppStore } from '../state/store';
 import { EmptyState } from '../design-system/Primitives';
@@ -16,9 +15,13 @@ const ServerWorkspace = lazy(() => import('../features/ServerWorkspace').then(mo
 const SettingsPage = lazy(() => import('../features/SettingsPage').then(module => ({ default: module.SettingsPage })));
 const CreateServerPage = lazy(() => import('../features/CreateServer').then(module => ({ default: module.CreateServerPage })));
 
-function createBridge(): BridgeAdapter {
+async function createBridge(): Promise<BridgeAdapter> {
   const fixture = new URLSearchParams(window.location.search).get('fixture');
-  return fixture && isFixtureMode() ? new FixtureBridge(fixture) : new WebViewBridge();
+  if (fixture && isFixtureMode()) {
+    const { FixtureBridge } = await import('../fixtures/catalog');
+    return new FixtureBridge(fixture);
+  }
+  return new WebViewBridge();
 }
 
 export default function App() {
@@ -39,25 +42,27 @@ function AppContent() {
   const [initializationError, setInitializationError] = useState('');
   const initialized = useAppStore(state => state.snapshot !== null);
   const snapshot = useAppStore(state => state.snapshot);
-  const bridge = useMemo(createBridge, []);
   const setBridge = useAppStore(state => state.setBridge);
   const applySnapshot = useAppStore(state => state.applySnapshot);
   const consumeEvent = useAppStore(state => state.consumeEvent);
   const navigate = useGuardedNavigation();
   useEffect(() => {
-    setBridge(bridge);
-    const unsubscribe = bridge.subscribe(consumeEvent);
-    void initializeBridge(bridge).then(applySnapshot).catch(error => setInitializationError(error instanceof Error ? error.message : 'ChunkPilot could not initialize the WebUI.'));
-    return () => { unsubscribe(); bridge.dispose(); };
-  }, [bridge, setBridge, applySnapshot, consumeEvent]);
-  useEffect(() => {
-    if (!initialized) return;
-    const timer = window.setTimeout(() => {
-      // Optional warming must not create an unhandled rejection if a bundled view cannot load.
-      void Promise.all([import('../features/ServerWorkspace'), import('../features/SettingsPage'), import('../features/CreateServer')]).catch(() => undefined);
-    }, 50);
-    return () => window.clearTimeout(timer);
-  }, [initialized]);
+    let active = true;
+    let bridge: BridgeAdapter | undefined;
+    let unsubscribe: (() => void) | undefined;
+    void createBridge().then(async adapter => {
+      // A fixture chunk can finish loading after this view has already closed.
+      if (!active) { adapter.dispose(); return; }
+      bridge = adapter;
+      setBridge(adapter);
+      unsubscribe = adapter.subscribe(consumeEvent);
+      const initial = await initializeBridge(adapter);
+      if (active) applySnapshot(initial);
+    }).catch(error => {
+      if (active) setInitializationError(error instanceof Error ? error.message : 'ChunkPilot could not initialize the WebUI.');
+    });
+    return () => { active = false; unsubscribe?.(); bridge?.dispose(); };
+  }, [setBridge, applySnapshot, consumeEvent]);
   useEffect(() => {
     const query = new URLSearchParams(window.location.search);
     if (!isFixtureMode() || !query.has('profile') || !('PerformanceObserver' in window)) return;
