@@ -165,6 +165,41 @@ public sealed class ReleaseVersionContractTests
         Assert.Contains("Assert-ReleaseSignaturePolicy -Status ([string]$signature.Status)", source, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void Packaged_agent_access_attestation_uses_exact_local_session_and_no_personal_key()
+    {
+        var source = File.ReadAllText(Path.Combine(Root(), "scripts", "smoke-portable.ps1"));
+        Assert.Contains("GetProcessTimes(GetCurrentProcess(), out creation", source, StringComparison.Ordinal);
+        Assert.Contains("Invoke-AgentRequest 'RegisterUiSession'", source, StringComparison.Ordinal);
+        Assert.Contains("Invoke-AgentRequest 'GetCurseForgeAccess'", source, StringComparison.Ordinal);
+        Assert.Contains("capability = $registration.sessionCapability", source, StringComparison.Ordinal);
+        Assert.Contains("if ($CurseForgeServiceEndpoint) { 'ApplicationService' } else { 'Unavailable' }", source, StringComparison.Ordinal);
+        Assert.Contains("$access.hasPersonalCredential -isnot [bool]", source, StringComparison.Ordinal);
+        Assert.Contains("$access.canAccess -ne [bool]$CurseForgeServiceEndpoint", source, StringComparison.Ordinal);
+        Assert.Contains("Environment.Remove('CHUNKPILOT_CURSEFORGE_KEY_FILE')", source, StringComparison.Ordinal);
+        Assert.Contains("$read.Wait(10000)", source, StringComparison.Ordinal);
+        Assert.Contains("$agent.Kill()", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("$agent.Kill($true)", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("Invoke-WebRequest", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("ResolveCatalog", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Workflow_carries_public_endpoint_through_both_smokes_and_public_provenance()
+    {
+        var workflow = File.ReadAllText(Path.Combine(Root(), ".github", "workflows", "release.yml"));
+        foreach (var script in new[] { "smoke-portable.ps1", "test-portable-package.ps1", "package-release.ps1" })
+        {
+            var line = Assert.Single(workflow.Split('\n'), line => line.Contains("run: ./scripts/" + script, StringComparison.Ordinal));
+            Assert.Contains("-CurseForgeServiceEndpoint $env:CURSEFORGE_SERVICE_ENDPOINT", line, StringComparison.Ordinal);
+        }
+        var portable = File.ReadAllText(Path.Combine(Root(), "scripts", "test-portable-package.ps1"));
+        Assert.Contains("-PortableRoot $testRoot -CurseForgeServiceEndpoint $CurseForgeServiceEndpoint", portable, StringComparison.Ordinal);
+        var package = File.ReadAllText(Path.Combine(Root(), "scripts", "package-release.ps1"));
+        Assert.Equal(2, Regex.Count(package, "CurseForgeServiceEndpoint = \\$CurseForgeServiceEndpoint",
+            RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)));
+    }
+
     private static string Root()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

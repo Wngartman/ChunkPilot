@@ -1,7 +1,9 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)]
-    [string]$PortableZip
+    [string]$PortableZip,
+    [ValidatePattern('\A(?:|https://[a-z0-9-]+(?:\.[a-z0-9-]+)+(?::443)?/?)\z')]
+    [string]$CurseForgeServiceEndpoint = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -28,7 +30,7 @@ try {
     })
     if ($prohibited.Count -ne 0) { throw "Portable package contains prohibited development/server files: $($prohibited.Name -join ', ')" }
 
-    $agent = & (Join-Path $repoRoot 'scripts\smoke-portable.ps1') -PortableRoot $testRoot
+    $agent = & (Join-Path $repoRoot 'scripts\smoke-portable.ps1') -PortableRoot $testRoot -CurseForgeServiceEndpoint $CurseForgeServiceEndpoint
     if ($agent.AgentExitCode -ne 0 -or $agent.SelfTestErrors -ne 0 -or -not $agent.DatabaseCreated) {
         throw 'Portable Agent self-test failed.'
     }

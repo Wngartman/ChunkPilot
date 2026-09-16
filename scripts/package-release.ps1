@@ -2,10 +2,21 @@
 param(
     [Parameter(Mandatory)]
     [ValidatePattern('\Av(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(alpha|beta|rc)\.[1-9][0-9]*)?\z')]
-    [string]$ReleaseTag
+    [string]$ReleaseTag,
+    [ValidatePattern('\A(?:|https://[a-z0-9-]+(?:\.[a-z0-9-]+)+(?::443)?/?)\z')]
+    [string]$CurseForgeServiceEndpoint = ''
 )
 
 $ErrorActionPreference = 'Stop'
+if ($CurseForgeServiceEndpoint) {
+    $serviceUri = [Uri]$CurseForgeServiceEndpoint
+    if ($serviceUri.IsLoopback -or $serviceUri.HostNameType -ne [UriHostNameType]::Dns -or
+        $serviceUri.IdnHost.EndsWith('.localhost', [StringComparison]::OrdinalIgnoreCase) -or
+        $serviceUri.IdnHost.EndsWith('.local', [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'CurseForgeServiceEndpoint must be a public HTTPS DNS origin, not a local service.'
+    }
+    $CurseForgeServiceEndpoint = $serviceUri.AbsoluteUri.TrimEnd('/') + '/'
+}
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $artifactsRoot = Join-Path $repoRoot 'artifacts'
 $selfContained = Join-Path $artifactsRoot 'self-contained-win-x64'
@@ -135,6 +146,7 @@ $build = [PSCustomObject]@{
     ProductVersion = $productVersion
     ReleaseTag = $ReleaseTag
     GitSha = $commit
+    CurseForgeServiceEndpoint = $CurseForgeServiceEndpoint
     SourceCommitTimeUtc = $commitTime.UtcDateTime.ToString('yyyy-MM-ddTHH:mm:ssZ')
     PackagingTimeUtc = [DateTimeOffset]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
     DatabaseSchema = 6
@@ -154,6 +166,7 @@ $provenanceDocument = [PSCustomObject]@{
     Repository = 'https://github.com/Wngartman/ChunkPilot'
     Commit = $commit
     Tag = $ReleaseTag
+    CurseForgeServiceEndpoint = $CurseForgeServiceEndpoint
     Builder = if ($env:GITHUB_ACTIONS -eq 'true') { 'GitHub Actions' } else { 'Local release verification' }
     WorkflowRun = if ($env:GITHUB_RUN_ID) { "https://github.com/Wngartman/ChunkPilot/actions/runs/$env:GITHUB_RUN_ID" } else { $null }
     DependencyEvidence = @('SPDX 2.2 SBOM', 'locked npm graph', 'restored NuGet graph', 'third-party notices')

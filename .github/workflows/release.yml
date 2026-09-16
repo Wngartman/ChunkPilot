@@ -164,7 +164,7 @@ jobs:
 
       - name: Test packaged Agent
         shell: pwsh
-        run: ./scripts/smoke-portable.ps1 -PortableRoot ./artifacts/portable-test
+        run: ./scripts/smoke-portable.ps1 -PortableRoot ./artifacts/portable-test -CurseForgeServiceEndpoint $env:CURSEFORGE_SERVICE_ENDPOINT
 
       - name: Test packaged default UI close
         shell: pwsh
@@ -172,11 +172,11 @@ jobs:
 
       - name: Assemble checksums, metadata, notes, and release manifest
         shell: pwsh
-        run: ./scripts/package-release.ps1 -ReleaseTag $env:RELEASE_TAG
+        run: ./scripts/package-release.ps1 -ReleaseTag $env:RELEASE_TAG -CurseForgeServiceEndpoint $env:CURSEFORGE_SERVICE_ENDPOINT
 
       - name: Test portable ZIP from a clean extraction
         shell: pwsh
-        run: ./scripts/test-portable-package.ps1 -PortableZip "./artifacts/release/$env:RELEASE_TAG/ChunkPilot-Portable-$env:RELEASE_TAG-win-x64.zip"
+        run: ./scripts/test-portable-package.ps1 -PortableZip "./artifacts/release/$env:RELEASE_TAG/ChunkPilot-Portable-$env:RELEASE_TAG-win-x64.zip" -CurseForgeServiceEndpoint $env:CURSEFORGE_SERVICE_ENDPOINT
 
       - name: Download previous release installer for upgrade testing
         if: inputs.previous_release != '' || inputs.supersedes != ''

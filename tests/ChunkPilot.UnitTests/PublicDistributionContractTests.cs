@@ -221,7 +221,7 @@ public sealed class PublicDistributionContractTests
         Assert.Contains("WebView2|CurrentProfile", portable, StringComparison.Ordinal);
         Assert.Contains("\\.secrets?", portable, StringComparison.Ordinal);
         Assert.Contains("CHUNKPILOT_CURSEFORGE_KEY_FILE", portableSmoke, StringComparison.Ordinal);
-        Assert.Contains(".missing-curseforge-api-key", portableSmoke, StringComparison.Ordinal);
+        Assert.Contains("Environment.Remove('CHUNKPILOT_CURSEFORGE_KEY_FILE')", portableSmoke, StringComparison.Ordinal);
         Assert.Contains("CHUNKPILOT_CURSEFORGE_KEY_FILE", packagedClose, StringComparison.Ordinal);
         Assert.Contains(".missing-curseforge-api-key", packagedClose, StringComparison.Ordinal);
         Assert.DoesNotContain("SetCurseForgeApiKey", pipe, StringComparison.Ordinal);
