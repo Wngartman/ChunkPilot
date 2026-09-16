@@ -28,9 +28,10 @@ public sealed class AgentManagedLoaderCreationGateway
         ManagedLoaderPlatform platform,
         string minecraftVersion,
         bool forceRefresh,
+        string? loaderVersion = null,
         CancellationToken cancellationToken = default) =>
         client.SendAsync<ManagedLoaderBuildCatalog>(Operations.Builds,
-            new ManagedLoaderBuildsRequest(platform, minecraftVersion, forceRefresh), cancellationToken);
+            new ManagedLoaderBuildsRequest(platform, minecraftVersion, forceRefresh, loaderVersion), cancellationToken);
 
     public async Task<Guid> BeginAsync(
         ManagedLoaderCreationPlan plan,

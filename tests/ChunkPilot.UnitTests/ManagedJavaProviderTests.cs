@@ -36,6 +36,31 @@ public sealed class ManagedJavaProviderTests
         Assert.Equal(2, handler.RequestCount);
     }
 
+    [Fact]
+    public async Task Missing_JRE_HTTP_404_uses_the_official_JDK_without_falling_back_on_provider_outages()
+    {
+        var handler = new StubHandler(request =>
+            request.RequestUri!.Query.Contains("image_type=jre", StringComparison.Ordinal)
+                ? new HttpResponseMessage(HttpStatusCode.NotFound)
+                : Json(Package("jdk-16.zip")));
+        var package = await new AdoptiumTemurinProvider(new HttpClient(handler)).ResolveAsync(16);
+        Assert.Equal("jdk-16.zip", package.FileName);
+        Assert.Equal(2, handler.RequestCount);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.TooManyRequests)]
+    [InlineData(HttpStatusCode.Unauthorized)]
+    [InlineData(HttpStatusCode.InternalServerError)]
+    public async Task Provider_failure_is_not_disguised_as_a_missing_historical_runtime(HttpStatusCode status)
+    {
+        var handler = new StubHandler(_ => new HttpResponseMessage(status));
+        var error = await Assert.ThrowsAsync<HttpRequestException>(() =>
+            new AdoptiumTemurinProvider(new HttpClient(handler)).ResolveAsync(16));
+        Assert.Equal(status, error.StatusCode);
+        Assert.Equal(1, handler.RequestCount);
+    }
+
     private static string Package(string fileName) => JsonSerializer.Serialize(new[]
     {
         new

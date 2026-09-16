@@ -27,6 +27,23 @@ public sealed class LegacyServerArtifactTests : IDisposable
     }
 
     [Fact]
+    public async Task Inspector_distinguishes_an_official_hash_mismatch_from_missing_identity()
+    {
+        var path = CreateJar("hash-mismatch.jar", serverClass: true);
+        var inspector = new LegacyServerArtifactInspector();
+
+        var mismatch = await inspector.InspectAsync(path, "1.7.10", new string('0', 40));
+        var match = await inspector.InspectAsync(path, "1.7.10", mismatch.Sha1.ToUpperInvariant());
+
+        Assert.False(mismatch.MatchesOfficialHash);
+        Assert.Contains("does not match", mismatch.IdentityEvidence, StringComparison.Ordinal);
+        Assert.DoesNotContain("no official", mismatch.IdentityEvidence, StringComparison.OrdinalIgnoreCase);
+        Assert.True(match.MatchesOfficialHash);
+        Assert.Equal(mismatch.Sha256, match.Sha256);
+        Assert.Equal(new FileInfo(path).Length, match.SizeBytes);
+    }
+
+    [Fact]
     public async Task Inspector_rejects_a_client_or_malformed_jar()
     {
         var path = CreateJar("client.jar", serverClass: false);

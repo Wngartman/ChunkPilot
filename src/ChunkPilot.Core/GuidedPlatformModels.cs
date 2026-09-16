@@ -798,13 +798,18 @@ public static class JavaRuntimePolicy
             return 8;
         if (!Version.TryParse(NormalizeMinecraftVersion(version), out var parsed))
             return null;
+        // Java Edition adopted calendar versioning in 2026. Mojang's 26.1 technical notes
+        // explicitly require Java 25; comparing 26.x with the old 1.x family selects Java 21.
+        // Do not extrapolate that requirement into an unannounced future calendar year.
+        if (parsed.Major != 1)
+            return parsed.Major == 26 && parsed.Minor >= 1 ? 25 : null;
         if (parsed >= new Version(1, 20, 5))
             return 21;
         if (parsed >= new Version(1, 18))
             return 17;
         if (parsed >= new Version(1, 17))
             return 16;
-        return parsed.Major == 1 ? 8 : null;
+        return 8;
     }
 
     public static int JavaMajorForClassFile(ushort classMajor) =>

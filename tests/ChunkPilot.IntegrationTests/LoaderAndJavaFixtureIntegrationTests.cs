@@ -151,6 +151,23 @@ public sealed class LoaderAndJavaFixtureIntegrationTests : IDisposable
     }
 
     [Fact(Timeout = 30_000)]
+    public async Task Wrong_Java_major_is_rejected_before_runtime_activation_or_registration()
+    {
+        var archive = BuildRuntimeArchive(); // The synthetic executable reports Java 21.
+        var paths = new AppDataPaths(Path.Combine(root, "wrong-major-data"));
+        await using var store = new ChunkPilotStore(paths);
+        await store.InitializeAsync();
+        using var http = new HttpClient(new BytesHandler(archive));
+        var service = new ManagedJavaRuntimeService(paths, store,
+            new FixtureJavaProvider(Convert.ToHexString(SHA256.HashData(archive))), http);
+        var error = await Assert.ThrowsAsync<InvalidDataException>(() => service.InstallAsync(8));
+        Assert.Contains("64-bit Java 8", error.Message, StringComparison.Ordinal);
+        Assert.Empty(await store.GetManagedJavaRuntimesAsync());
+        Assert.Empty(Directory.EnumerateDirectories(paths.ManagedJava));
+        Assert.Empty(Directory.EnumerateFiles(paths.Staging));
+    }
+
+    [Fact(Timeout = 30_000)]
     public async Task Beginner_Vanilla_flow_installs_managed_Java_and_exact_server_release()
     {
         var runtimeArchive = BuildRuntimeArchive();
@@ -356,8 +373,12 @@ public sealed class LoaderAndJavaFixtureIntegrationTests : IDisposable
             Path.Combine(serverRoot, "plugins", "Geyser-Spigot", "config.yml")));
     }
 
-    [Fact(Timeout = 30_000)]
-    public async Task Datapack_and_resource_pack_changes_are_validated_backed_up_and_persisted()
+    [Theory(Timeout = 30_000)]
+    [InlineData("1.21.1", "\"pack_format\":48")]
+    [InlineData("26.1", "\"min_format\":[101,1],\"max_format\":101")]
+    [InlineData("26.3", "\"min_format\":121,\"max_format\":121")]
+    public async Task Datapack_and_resource_pack_changes_are_validated_backed_up_and_persisted(
+        string minecraftVersion, string packFormatFields)
     {
         var serverRoot = Path.Combine(root, "pack-content-server");
         var world = Path.Combine(serverRoot, "world");
@@ -370,7 +391,7 @@ public sealed class LoaderAndJavaFixtureIntegrationTests : IDisposable
         Directory.CreateDirectory(source);
         await File.WriteAllTextAsync(
             Path.Combine(source, "pack.mcmeta"),
-            """{"pack":{"pack_format":48,"description":"fixture"}}""");
+            "{\"pack\":{" + packFormatFields + ",\"description\":\"fixture\"}}");
         var paths = new AppDataPaths(Path.Combine(root, "pack-content-data"));
         await using var store = new ChunkPilotStore(paths);
         await store.InitializeAsync();
@@ -387,7 +408,7 @@ public sealed class LoaderAndJavaFixtureIntegrationTests : IDisposable
             Id = Guid.NewGuid(),
             Name = "Pack Content Fixture",
             RootPath = serverRoot,
-            MinecraftVersion = "1.21.1"
+            MinecraftVersion = minecraftVersion
         };
         var installed = await service.InstallAsync(
             definition,

@@ -131,25 +131,14 @@ public sealed partial class JavaDiscoveryService
             return new JavaRuntimeInfo { Path = path, Source = source, Exists = false, Compatibility = "Executable not found" };
         try
         {
-            using var process = new Process
+            var start = new ProcessStartInfo
             {
-                StartInfo = new ProcessStartInfo
-                {
-                    FileName = path,
-                    Arguments = "-version",
-                    UseShellExecute = false,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    CreateNoWindow = true
-                }
+                FileName = path,
+                WorkingDirectory = Path.GetDirectoryName(path)!
             };
-            ChildProcessEnvironmentPolicy.Apply(process.StartInfo);
-            CurseForgeCredentialEnvironment.RemoveFromChild(process.StartInfo);
-            process.Start();
-            var stdout = process.StandardOutput.ReadToEndAsync(cancellationToken);
-            var stderr = process.StandardError.ReadToEndAsync(cancellationToken);
-            await process.WaitForExitAsync(cancellationToken).WaitAsync(TimeSpan.FromSeconds(8), cancellationToken).ConfigureAwait(false);
-            var output = (await stderr.ConfigureAwait(false)) + "\n" + (await stdout.ConfigureAwait(false));
+            start.ArgumentList.Add("-version");
+            var result = await JavaProcessProbe.RunAsync(start, TimeSpan.FromSeconds(8), cancellationToken).ConfigureAwait(false);
+            var output = result.Error + "\n" + result.Output;
             var version = VersionOutputRegex().Match(output).Groups["version"].Value;
             var vendor = output.Contains("OpenJDK", StringComparison.OrdinalIgnoreCase) ? "OpenJDK-compatible" :
                 output.Contains("Oracle", StringComparison.OrdinalIgnoreCase) ? "Oracle" : "Unknown";
@@ -166,7 +155,7 @@ public sealed partial class JavaDiscoveryService
                 Compatibility = architecture == "x86" ? "32-bit Java is not recommended for modern or large servers." : "Compatibility depends on the server/modpack."
             };
         }
-        catch (Exception exception) when (exception is InvalidOperationException or IOException or TimeoutException)
+        catch (Exception exception) when (exception is InvalidOperationException or IOException or TimeoutException or System.ComponentModel.Win32Exception)
         {
             return new JavaRuntimeInfo
             {

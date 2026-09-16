@@ -485,9 +485,13 @@ public sealed class AgentPipeServer
             case "ManagedLoaderBuilds":
             {
                 var input = Deserialize<ManagedLoaderBuildsRequest>(request);
+                var catalog = input.LoaderVersion is null
+                    ? await loaderCatalog.GetBuildsAsync(input.Platform, input.MinecraftVersion,
+                        input.ForceRefresh, cancellationToken).ConfigureAwait(false)
+                    : await loaderCatalog.ResolveBuildAsync(input.Platform, input.MinecraftVersion,
+                        input.LoaderVersion, input.ForceRefresh, cancellationToken).ConfigureAwait(false);
                 return JsonSerializer.SerializeToElement(
-                    await loaderCatalog.GetBuildsAsync(input.Platform, input.MinecraftVersion,
-                        input.ForceRefresh, cancellationToken).ConfigureAwait(false), ProtocolJson.Options);
+                    catalog, ProtocolJson.Options);
             }
             case "BeginManagedLoaderCreation":
             {

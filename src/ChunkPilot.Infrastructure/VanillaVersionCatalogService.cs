@@ -197,11 +197,10 @@ public sealed class VanillaVersionCatalogService
 
     internal static bool CachedDerivedProfilesAreComplete(VanillaVersionOption option)
     {
-        var javaCanNowResolve = option.RequiredJavaMajor is null or < 8 &&
-            (JavaRuntimePolicy.TryRequiredMajorForMinecraft(option.VersionId) is >= 8 ||
-             option.ReleaseKind == MinecraftReleaseKind.Snapshot &&
-             option.ReleaseTime is { } publishedAt &&
-             publishedAt < new DateTimeOffset(2014, 1, 1, 0, 0, 0, TimeSpan.Zero));
+        var derivedJava = ResolvePolicyJava(option);
+        var javaCanNowResolve = option.JavaRequirementSource == JavaRequirementSource.ChunkPilotPolicy
+            ? option.RequiredJavaMajor != derivedJava
+            : option.RequiredJavaMajor is null or < 8 && derivedJava is >= 8;
         var launchCanNowResolve = !option.LaunchProfile.IsResolved &&
             MinecraftLaunchProfileResolver.Resolve(option.VersionId, option.ReleaseKind, option.ReleaseTime).IsResolved;
         return !javaCanNowResolve && !launchCanNowResolve;
@@ -211,13 +210,9 @@ public sealed class VanillaVersionCatalogService
     {
         var java = option.RequiredJavaMajor;
         var javaSource = option.JavaRequirementSource;
-        if (java is null or < 8)
+        if (java is null or < 8 || javaSource == JavaRequirementSource.ChunkPilotPolicy)
         {
-            java = JavaRuntimePolicy.TryRequiredMajorForMinecraft(option.VersionId);
-            if (java is null && option.ReleaseKind == MinecraftReleaseKind.Snapshot &&
-                option.ReleaseTime is { } publishedAt &&
-                publishedAt < new DateTimeOffset(2014, 1, 1, 0, 0, 0, TimeSpan.Zero))
-                java = 8;
+            java = ResolvePolicyJava(option);
             if (java is >= 8) javaSource = JavaRequirementSource.ChunkPilotPolicy;
         }
         var launch = option.LaunchProfile.IsResolved
@@ -229,6 +224,16 @@ public sealed class VanillaVersionCatalogService
             JavaRequirementSource = javaSource,
             LaunchProfile = launch
         };
+    }
+
+    private static int? ResolvePolicyJava(VanillaVersionOption option)
+    {
+        var java = JavaRuntimePolicy.TryRequiredMajorForMinecraft(option.VersionId);
+        return java is null && option.ReleaseKind == MinecraftReleaseKind.Snapshot &&
+               option.ReleaseTime is { } publishedAt &&
+               publishedAt < new DateTimeOffset(2014, 1, 1, 0, 0, 0, TimeSpan.Zero)
+            ? 8
+            : java;
     }
 
     private async Task<VanillaVersionOption> ResolveAsync(
@@ -453,7 +458,9 @@ public sealed class VanillaVersionCatalogService
     private static VanillaVersionCatalog Project(VanillaVersionCatalog catalog, bool includeSnapshots)
     {
         var options = catalog.Options
-            .Select(option => Reassess(option, catalog.ManifestLatestReleaseId))
+            // Re-evaluate local policy even when offline or the provider metadata hash is unchanged.
+            // Official Mojang Java requirements remain authoritative and are never rewritten here.
+            .Select(option => Reassess(RehydrateDerivedProfiles(option), catalog.ManifestLatestReleaseId))
             .ToArray();
         var reassessed = catalog with
         {

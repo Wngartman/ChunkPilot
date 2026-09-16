@@ -133,12 +133,26 @@ public sealed class Release13GuidedPlatformTests : IDisposable
 
     [Theory]
     [InlineData("1.16.5", 8)]
+    [InlineData("1.7.10", 8)]
+    [InlineData("1.12.2", 8)]
     [InlineData("1.17.1", 16)]
     [InlineData("1.20.4", 17)]
     [InlineData("1.20.5", 21)]
     [InlineData("1.21.1", 21)]
+    [InlineData("26.1", 25)]
+    [InlineData("26.2", 25)]
+    [InlineData("26.3", 25)]
+    [InlineData("26.1-snapshot-1", 25)]
     public void Java_requirement_tracks_Minecraft(string minecraft, int java) =>
         Assert.Equal(java, JavaRuntimePolicy.RequiredMajorForMinecraft(minecraft));
+
+    [Theory]
+    [InlineData("27.1")]
+    [InlineData("9.9.9")]
+    [InlineData("unknown")]
+    [InlineData("26.0")]
+    public void Java_support_policy_does_not_invent_requirements_for_unknown_release_families(string version) =>
+        Assert.Null(JavaRuntimePolicy.TryRequiredMajorForMinecraft(version));
 
     [Fact]
     public void Java_selection_rejects_32_bit_and_uses_absolute_compatible_runtime()

@@ -2452,7 +2452,13 @@ public partial class WebUiWindow : Window
             throw new ArgumentException("Select a supported managed-loader platform.");
         var versionId = RequiredString(parameters, "versionId", 64);
         var forceRefresh = parameters["forceRefresh"]?.GetValue<bool?>() ?? false;
-        var catalog = await loaderCreation.GetBuildsAsync(platform, versionId, forceRefresh).ConfigureAwait(true);
+        var loaderVersion = parameters.ContainsKey("loaderVersion")
+            ? RequiredString(parameters, "loaderVersion", 64)
+            : null;
+        if (loaderVersion is not null && platform is not (ManagedLoaderPlatform.Forge or ManagedLoaderPlatform.NeoForge))
+            throw new ArgumentException("Focused installer verification is available for Forge and NeoForge.");
+        var catalog = await loaderCreation.GetBuildsAsync(platform, versionId, forceRefresh,
+            loaderVersion: loaderVersion).ConfigureAwait(true);
         loaderBuildCatalogs[LoaderCatalogKey(platform, versionId)] = catalog;
         return JsonSerializer.SerializeToNode(new
         {
@@ -2481,6 +2487,7 @@ public partial class WebUiWindow : Window
                 channel = build.Channel.ToString(),
                 sizeBytes = build.ArtifactSizeBytes,
                 hasIntegrityMetadata = build.HasProviderIntegrity,
+                canResolveIntegrity = ManagedLoaderCatalogService.CanResolveIntegrity(build),
                 selectable = build.IsSelectable,
                 support = build.SupportTier.ToString(),
                 certification = build.Certification,
@@ -2902,7 +2909,8 @@ public partial class WebUiWindow : Window
         var key = LoaderCatalogKey(platform, versionId);
         if (!loaderBuildCatalogs.TryGetValue(key, out var builds))
         {
-            builds = await loaderCreation.GetBuildsAsync(platform, versionId, false, cancellationToken).ConfigureAwait(true);
+            builds = await loaderCreation.GetBuildsAsync(platform, versionId, false,
+                cancellationToken: cancellationToken).ConfigureAwait(true);
             loaderBuildCatalogs[key] = builds;
         }
         var build = builds.Builds.FirstOrDefault(option => option.IsSelectable &&

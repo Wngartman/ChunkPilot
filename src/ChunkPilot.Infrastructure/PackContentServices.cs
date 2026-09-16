@@ -51,6 +51,7 @@ public sealed class DatapackManagementService
         Directory.CreateDirectory(staging);
         string? target = null;
         string? recovered = null;
+        var activated = false;
         try
         {
             var sourceName = SafeName(
@@ -87,6 +88,7 @@ public sealed class DatapackManagementService
                 File.Move(staged, target);
             else
                 Directory.Move(staged, target);
+            activated = true;
             var sha256 = ContentHash(target);
             var relative = Path.GetRelativePath(server.RootPath, target);
             var item = new DatapackInventoryItem
@@ -108,10 +110,15 @@ public sealed class DatapackManagementService
         {
             if (target is not null)
             {
-                if (File.Exists(target))
-                    File.Delete(target);
-                else if (Directory.Exists(target))
-                    Directory.Delete(target, true);
+                // A rejected collision or failed move never owned the existing destination.
+                // Roll back only the content this operation actually activated.
+                if (activated)
+                {
+                    if (File.Exists(target))
+                        File.Delete(target);
+                    else if (Directory.Exists(target))
+                        Directory.Delete(target, true);
+                }
                 if (recovered is not null)
                 {
                     if (File.Exists(recovered))
@@ -210,21 +217,18 @@ public sealed class DatapackManagementService
         string destination,
         CancellationToken cancellationToken)
     {
+        CreationStagingSafety.EnsureNoReparseTraversal(source);
+        var inventory = BoundedServerFileInventory.Capture(source, maximumEntries: 50_000,
+            cancellationToken: cancellationToken);
         Directory.CreateDirectory(destination);
-        foreach (var directory in Directory.EnumerateDirectories(
-                     source, "*", SearchOption.AllDirectories))
+        foreach (var file in inventory.Files)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            Directory.CreateDirectory(Path.Combine(
-                destination, Path.GetRelativePath(source, directory)));
-        }
-        foreach (var file in Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories))
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var target = Path.Combine(destination, Path.GetRelativePath(source, file));
+            BoundedServerFileInventory.ValidateUnchanged(file);
+            var target = Path.Combine(destination, file.RelativePath);
             Directory.CreateDirectory(Path.GetDirectoryName(target)!);
             await using var input = new FileStream(
-                file, FileMode.Open, FileAccess.Read, FileShare.Read, 81_920,
+                file.FullPath, FileMode.Open, FileAccess.Read, FileShare.Read, 81_920,
                 FileOptions.Asynchronous | FileOptions.SequentialScan);
             await using var output = new FileStream(
                 target, FileMode.CreateNew, FileAccess.Write, FileShare.None, 81_920,

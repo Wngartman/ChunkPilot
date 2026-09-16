@@ -29,9 +29,14 @@ public sealed class LegacyServerArtifactInspector
         var hasManifest = false;
         var hasServerClass = false;
         var classEntries = 0;
-        await using (var stream = new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.Read,
-                         128 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan))
-        using (var archive = new ZipArchive(stream, ZipArchiveMode.Read, leaveOpen: false))
+        // Keep one read-only handle through inspection and both identity hashes. A writer must not
+        // replace the artifact between those stages and give us evidence about different files.
+        await using var stream = new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.Read,
+            128 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
+        var sizeBytes = stream.Length;
+        if (sizeBytes is <= 0 or > MaximumBytes)
+            throw new InvalidDataException("The selected server JAR changed size before inspection.");
+        using (var archive = new ZipArchive(stream, ZipArchiveMode.Read, leaveOpen: true))
         {
             if (archive.Entries.Count is <= 0 or > MaximumEntries)
                 throw new InvalidDataException($"The selected JAR has an invalid or excessive entry count ({archive.Entries.Count:N0}).");
@@ -50,31 +55,28 @@ public sealed class LegacyServerArtifactInspector
             throw new InvalidDataException(
                 "This JAR does not contain the manifest and dedicated-server classes ChunkPilot expects. Client JARs are not accepted.");
 
-        string sha1;
-        string sha256;
-        await using (var stream = new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.Read,
-                         128 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan))
-        {
+        stream.Position = 0;
 #pragma warning disable CA5350 // SHA-1 is computed only to compare with Mojang's historical artifact identity.
-            sha1 = Convert.ToHexString(await SHA1.HashDataAsync(stream, cancellationToken).ConfigureAwait(false)).ToLowerInvariant();
+        var sha1 = Convert.ToHexString(await SHA1.HashDataAsync(stream, cancellationToken).ConfigureAwait(false)).ToLowerInvariant();
 #pragma warning restore CA5350
-        }
-        await using (var stream = new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.Read,
-                         128 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan))
-            sha256 = Convert.ToHexString(await SHA256.HashDataAsync(stream, cancellationToken).ConfigureAwait(false)).ToLowerInvariant();
-        var officialMatch = officialSha1.Length == 40 && sha1.Equals(officialSha1, StringComparison.OrdinalIgnoreCase);
+        stream.Position = 0;
+        var sha256 = Convert.ToHexString(await SHA256.HashDataAsync(stream, cancellationToken).ConfigureAwait(false)).ToLowerInvariant();
+        var officialHashAvailable = officialSha1.Length == 40 && officialSha1.All(Uri.IsHexDigit);
+        var officialMatch = officialHashAvailable && sha1.Equals(officialSha1, StringComparison.OrdinalIgnoreCase);
         return new UserSuppliedServerArtifact
         {
             NativePath = fullPath,
             FileName = info.Name,
             MinecraftVersion = minecraftVersion,
-            SizeBytes = info.Length,
+            SizeBytes = sizeBytes,
             Sha1 = sha1,
             Sha256 = sha256,
             MatchesOfficialHash = officialMatch,
             IdentityEvidence = officialMatch
                 ? "The selected file matches Mojang's official SHA-1 for this exact dedicated-server artifact."
-                : "Mojang publishes no official server hash for this target. The file remains user-supplied and must pass isolated runtime validation."
+                : officialHashAvailable
+                    ? "The selected file does not match Mojang's official server hash for this target. Its exact version is unverified; it remains user-supplied and must pass isolated runtime validation."
+                    : "No official server hash was available for this target. The file remains user-supplied and must pass isolated runtime validation."
         };
     }
 }

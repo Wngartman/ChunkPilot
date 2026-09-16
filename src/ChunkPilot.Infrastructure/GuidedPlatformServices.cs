@@ -177,8 +177,10 @@ public sealed record DatapackInspection(
     CompatibilityState Compatibility,
     string Detail);
 
-public sealed class DatapackService
+public sealed partial class DatapackService
 {
+    public const int MaximumMetadataBytes = 1024 * 1024;
+
     public DatapackInspection Inspect(string path, string minecraftVersion)
     {
         JsonDocument? document = null;
@@ -186,20 +188,31 @@ public sealed class DatapackService
         {
             if (Directory.Exists(path))
             {
+                CreationStagingSafety.EnsureNoReparseTraversal(path);
                 var metadata = Path.Combine(path, "pack.mcmeta");
                 if (!File.Exists(metadata))
                     return Invalid("pack.mcmeta is missing.");
-                document = JsonDocument.Parse(File.ReadAllText(metadata, Encoding.UTF8));
+                if ((File.GetAttributes(metadata) & FileAttributes.ReparsePoint) != 0)
+                    return Invalid("pack.mcmeta must be a regular file, not a link or reparse point.");
+                using var stream = File.OpenRead(metadata);
+                document = ReadBoundedMetadata(stream);
             }
             else if (File.Exists(path) &&
                      Path.GetExtension(path).Equals(".zip", StringComparison.OrdinalIgnoreCase))
             {
+                CreationStagingSafety.EnsureNoReparseTraversal(Path.GetDirectoryName(Path.GetFullPath(path))!);
+                if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
+                    return Invalid("Choose a regular datapack ZIP, not a link or reparse point.");
                 using var archive = ZipFile.OpenRead(path);
+                if (archive.Entries.Count > 50_000)
+                    return Invalid("The datapack ZIP contains too many entries to inspect safely.");
                 var metadata = archive.GetEntry("pack.mcmeta");
                 if (metadata is null)
                     return Invalid("pack.mcmeta is missing from the ZIP root.");
+                if (metadata.Length > MaximumMetadataBytes)
+                    return Invalid("pack.mcmeta exceeds the 1 MB metadata limit.");
                 using var stream = metadata.Open();
-                document = JsonDocument.Parse(stream);
+                document = ReadBoundedMetadata(stream);
             }
             else
             {
@@ -207,24 +220,11 @@ public sealed class DatapackService
             }
 
             using (document)
-            {
-                var pack = document.RootElement.GetProperty("pack");
-                var format = pack.GetProperty("pack_format").GetInt32();
-                var description = pack.TryGetProperty("description", out var value)
-                    ? value.ValueKind == JsonValueKind.String ? value.GetString() ?? "" : value.ToString()
-                    : "";
-                var expected = ExpectedPackFormat(minecraftVersion);
-                var compatibility = expected == 0 ? CompatibilityState.Unknown :
-                    format == expected ? CompatibilityState.Compatible :
-                    Math.Abs(format - expected) <= 1 ? CompatibilityState.LikelyCompatible :
-                    CompatibilityState.Incompatible;
-                return new DatapackInspection(true, format, description, compatibility,
-                    expected == 0
-                        ? "Minecraft version is unknown; review pack format manually."
-                        : $"Pack format {format}; expected {expected} for {minecraftVersion}.");
-            }
+                return InspectMetadata(document.RootElement.GetProperty("pack"), minecraftVersion);
         }
-        catch (Exception exception) when (exception is IOException or InvalidDataException or JsonException or KeyNotFoundException)
+        catch (Exception exception) when (exception is IOException or InvalidDataException or JsonException or
+                                             KeyNotFoundException or InvalidOperationException or FormatException or
+                                             UnauthorizedAccessException)
         {
             document?.Dispose();
             return Invalid(exception.Message);
@@ -234,26 +234,21 @@ public sealed class DatapackService
     private static DatapackInspection Invalid(string detail) =>
         new(false, 0, "", CompatibilityState.Incompatible, detail);
 
-    private static int ExpectedPackFormat(string version)
+    private static JsonDocument ReadBoundedMetadata(Stream stream)
     {
-        if (!Version.TryParse(version.Split('-')[0], out var parsed))
-            return 0;
-        if (parsed >= new Version(1, 21, 11)) return 94;
-        if (parsed >= new Version(1, 21, 9)) return 88;
-        if (parsed >= new Version(1, 21, 7)) return 81;
-        if (parsed >= new Version(1, 21, 6)) return 80;
-        if (parsed >= new Version(1, 21, 5)) return 71;
-        if (parsed >= new Version(1, 21, 4)) return 61;
-        if (parsed >= new Version(1, 21, 2)) return 57;
-        if (parsed >= new Version(1, 21)) return 48;
-        if (parsed >= new Version(1, 20, 5)) return 41;
-        if (parsed >= new Version(1, 20, 3)) return 26;
-        if (parsed >= new Version(1, 20, 2)) return 18;
-        if (parsed >= new Version(1, 20)) return 15;
-        if (parsed >= new Version(1, 19, 4)) return 12;
-        if (parsed >= new Version(1, 19)) return 10;
-        if (parsed >= new Version(1, 18, 2)) return 9;
-        return 0;
+        if (stream.CanSeek && stream.Length > MaximumMetadataBytes)
+            throw new InvalidDataException("pack.mcmeta exceeds the 1 MB metadata limit.");
+        using var retained = new MemoryStream();
+        var buffer = new byte[8_192];
+        int read;
+        while ((read = stream.Read(buffer, 0, buffer.Length)) > 0)
+        {
+            if (retained.Length + read > MaximumMetadataBytes)
+                throw new InvalidDataException("pack.mcmeta exceeds the 1 MB metadata limit.");
+            retained.Write(buffer, 0, read);
+        }
+        retained.Position = 0;
+        return JsonDocument.Parse(retained);
     }
 }
 
@@ -1668,10 +1663,21 @@ public sealed class AdoptiumTemurinProvider : HttpCatalogProvider, IManagedJavaP
         // managed java.exe runtime. Prefer the smaller JRE and fall back only when it does not exist.
         foreach (var imageType in new[] { "jre", "jdk" })
         {
-            using var document = await GetJsonAsync(
-                $"https://api.adoptium.net/v3/assets/latest/{majorVersion}/hotspot" +
-                $"?architecture=x64&heap_size=normal&image_type={imageType}&jvm_impl=hotspot&os=windows&vendor=eclipse",
-                cancellationToken).ConfigureAwait(false);
+            JsonDocument document;
+            try
+            {
+                document = await GetJsonAsync(
+                    $"https://api.adoptium.net/v3/assets/latest/{majorVersion}/hotspot" +
+                    $"?architecture=x64&heap_size=normal&image_type={imageType}&jvm_impl=hotspot&os=windows&vendor=eclipse",
+                    cancellationToken).ConfigureAwait(false);
+            }
+            catch (HttpRequestException exception) when (exception.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                // A missing image can be reported as either [] or HTTP 404. Authentication,
+                // throttling and service failures must not be mistaken for an absent JRE.
+                continue;
+            }
+            using var responseDocument = document;
             var release = document.RootElement.EnumerateArray().FirstOrDefault();
             if (release.ValueKind == JsonValueKind.Undefined)
                 continue;
@@ -1729,6 +1735,7 @@ public sealed class ManagedJavaRuntimeService
             var existingJava = FindJava(finalRoot);
             var existing = await InspectAsync(existingJava, true, finalRoot, package, cancellationToken)
                 .ConfigureAwait(false);
+            RequireHealthyRuntime(existing, majorVersion);
             await store.UpsertManagedJavaRuntimeAsync(existing, cancellationToken).ConfigureAwait(false);
             return existing;
         }
@@ -1751,6 +1758,7 @@ public sealed class ManagedJavaRuntimeService
             var java = FindJava(staging);
             var inspected = await InspectAsync(java, true, finalRoot, package, cancellationToken)
                 .ConfigureAwait(false);
+            RequireHealthyRuntime(inspected, majorVersion);
             var wrapper = SingleWrapperDirectory(staging);
             if (wrapper is not null)
             {
@@ -1840,21 +1848,14 @@ public sealed class ManagedJavaRuntimeService
         };
         start.ArgumentList.Add("-XshowSettings:properties");
         start.ArgumentList.Add("-version");
-        ChildProcessEnvironmentPolicy.Apply(start);
-        CurseForgeCredentialEnvironment.RemoveFromChild(start);
-        using var process = Process.Start(start) ??
-                            throw new InvalidOperationException("Windows did not start the Java health check.");
-        var outputTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
-        var errorTask = process.StandardError.ReadToEndAsync(cancellationToken);
-        await process.WaitForExitAsync(cancellationToken).WaitAsync(TimeSpan.FromSeconds(15), cancellationToken)
+        var result = await JavaProcessProbe.RunAsync(start, TimeSpan.FromSeconds(15), cancellationToken)
             .ConfigureAwait(false);
-        var output = await outputTask.ConfigureAwait(false) + Environment.NewLine +
-                     await errorTask.ConfigureAwait(false);
+        var output = result.Output + Environment.NewLine + result.Error;
         var architecture = output.Contains("sun.arch.data.model = 64", StringComparison.OrdinalIgnoreCase) ||
                            output.Contains("64-Bit", StringComparison.OrdinalIgnoreCase)
             ? "x64" : output.Contains("32-Bit", StringComparison.OrdinalIgnoreCase) ? "x86" : "Unknown";
         var major = ParseJavaMajor(output);
-        var healthy = process.ExitCode == 0 && major > 0 && architecture != "x86";
+        var healthy = result.ExitCode == 0 && major == package.MajorVersion && architecture == "x64";
         return new ManagedJavaRuntime
         {
             Vendor = output.Contains("Temurin", StringComparison.OrdinalIgnoreCase) ||
@@ -1883,6 +1884,12 @@ public sealed class ManagedJavaRuntimeService
         var start = index + marker.Length;
         var digits = new string(output.Skip(start).TakeWhile(char.IsDigit).ToArray());
         return int.TryParse(digits, out var major) ? major : 0;
+    }
+
+    private static void RequireHealthyRuntime(ManagedJavaRuntime runtime, int expectedMajor)
+    {
+        if (runtime.Health != RuntimeHealth.Healthy || runtime.MajorVersion != expectedMajor)
+            throw new InvalidDataException($"The downloaded runtime did not prove a healthy 64-bit Java {expectedMajor} executable. It was not activated.");
     }
 
     private static string FindJava(string root) =>

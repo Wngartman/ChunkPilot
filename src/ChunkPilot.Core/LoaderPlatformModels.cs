@@ -332,6 +332,7 @@ public sealed record ManagedLoaderCatalogRequest(ManagedLoaderPlatform Platform,
 public sealed record ManagedLoaderBuildsRequest(
     ManagedLoaderPlatform Platform,
     string MinecraftVersion,
-    bool ForceRefresh = false);
+    bool ForceRefresh = false,
+    string? LoaderVersion = null);
 public sealed record BeginManagedLoaderCreationRequest(ManagedLoaderCreationPlan Plan);
 public sealed record ManagedLoaderCreationsResult(IReadOnlyList<InstallOperationSnapshot> Operations);

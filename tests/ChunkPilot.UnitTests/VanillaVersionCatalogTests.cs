@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text;
+using System.Text.Json;
 using ChunkPilot.Core;
 using ChunkPilot.Infrastructure;
 
@@ -160,6 +161,39 @@ public sealed class VanillaVersionCatalogTests : IDisposable
 
         Assert.False(VanillaVersionCatalogService.CachedDerivedProfilesAreComplete(stale));
         Assert.True(VanillaVersionCatalogService.CachedDerivedProfilesAreComplete(complete));
+    }
+
+    [Fact]
+    public async Task Cached_Java_policy_is_repaired_offline_without_overriding_official_requirements()
+    {
+        var paths = new AppDataPaths(root);
+        Directory.CreateDirectory(paths.CatalogCache);
+        var policy = new VanillaVersionOption
+        {
+            VersionId = "26.2", ReleaseKind = MinecraftReleaseKind.Release,
+            RequiredJavaMajor = 21, JavaRequirementSource = JavaRequirementSource.ChunkPilotPolicy
+        };
+        var official = policy with
+        {
+            VersionId = "26.3", RequiredJavaMajor = 26,
+            JavaRequirementSource = JavaRequirementSource.OfficialMetadata
+        };
+        var catalog = new VanillaVersionCatalog
+        {
+            Options = [policy, official], RetrievedUtc = DateTimeOffset.UtcNow, ProviderAvailable = true
+        };
+        await File.WriteAllTextAsync(Path.Combine(paths.CatalogCache, "vanilla-version-catalog.json"),
+            JsonSerializer.Serialize(new { schemaVersion = 3, catalog }, ProtocolJson.Options));
+        var handler = new StubHandler(_ => throw new HttpRequestException("offline"));
+        var service = new VanillaVersionCatalogService(paths, new HttpClient(handler));
+
+        var cached = await service.GetCatalogAsync();
+
+        Assert.True(cached.IsFromCache);
+        Assert.Equal(0, handler.RequestCount);
+        Assert.Equal(25, Assert.Single(cached.Options, option => option.VersionId == "26.2").RequiredJavaMajor);
+        Assert.Equal(26, Assert.Single(cached.Options, option => option.VersionId == "26.3").RequiredJavaMajor);
+        Assert.False(VanillaVersionCatalogService.CachedDerivedProfilesAreComplete(policy));
     }
 
     [Fact]
