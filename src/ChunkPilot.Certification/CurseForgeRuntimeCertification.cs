@@ -218,7 +218,10 @@ internal sealed record CertificationLifecycleEvidence(
     string State,
     bool Success,
     string Detail,
-    double ElapsedMilliseconds);
+    double ElapsedMilliseconds)
+{
+    public string Cycle { get; init; } = "";
+}
 
 internal sealed record CertificationConnectionEvidence
 {
@@ -1516,8 +1519,11 @@ internal sealed partial class CurseForgeRuntimeCertificationSession(
         });
         var serverId = creation.Result.Definition.Id;
         report.ServerId = serverId;
-        await ExerciseLifecycleAsync(options, report, serverId, cancellationToken).ConfigureAwait(false);
-        _ = await VerifyCertifiedPostconditionsAsync(options, report, serverId, cancellationToken)
+        await ExerciseFreshOfficialLifecyclesAsync(
+                report,
+                token => ExerciseLifecycleAsync(options, report, serverId, token),
+                token => VerifyCertifiedPostconditionsAsync(options, report, serverId, token),
+                cancellationToken)
             .ConfigureAwait(false);
         report.Success = true;
     }
@@ -1909,9 +1915,7 @@ internal sealed partial class CurseForgeRuntimeCertificationSession(
                 : "Complete owned TCP and UDP endpoint process identity was not proven."
         };
         report.CleanupPostconditions = postconditions;
-        var passed = inactive && processCaptured && processExited && portAbsent &&
-                     partials.Length == 0 && noUnsafeStagingResidue &&
-                     listenerPidOwnershipVerified;
+        var passed = ServerStoppedPostconditionsPassed(postconditions);
         report.CertifiedTaskServerCleanupSucceeded = passed;
         watch.Stop();
         report.Steps.Add(new CertificationStepEvidence
@@ -1930,6 +1934,14 @@ internal sealed partial class CurseForgeRuntimeCertificationSession(
     }
 
     internal static bool TaskServerCleanupPassed(
+        CertificationCleanupPostconditionsEvidence? postconditions) =>
+        ServerStoppedPostconditionsPassed(postconditions) && postconditions is
+        {
+            ExactOwnedAgentTreeExited: true,
+            ExactOwnedAgentExitCodeZero: true
+        };
+
+    internal static bool ServerStoppedPostconditionsPassed(
         CertificationCleanupPostconditionsEvidence? postconditions) => postconditions is
     {
         TaskServerInactive: true,
@@ -1938,9 +1950,7 @@ internal sealed partial class CurseForgeRuntimeCertificationSession(
         PortListenerAbsent: true,
         NoPartialArtifacts: true,
         NoUnsafeStagingResidue: true,
-        ListenerPidOwnershipVerified: true,
-        ExactOwnedAgentTreeExited: true,
-        ExactOwnedAgentExitCodeZero: true
+        ListenerPidOwnershipVerified: true
     };
 
     internal static bool CanonicalStagingContainsOnlyTerminalLogs(
