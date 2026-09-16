@@ -1161,23 +1161,28 @@ function ServerSettingsPage({ server, initialCategory }: { server: ServerSummary
   const [stagedIconEdit, setStagedIconEdit] = useState<IconEdit | null>(null);
   const [saving, setSaving] = useState(false);
   const [editorReset, setEditorReset] = useState(0);
+  const [maximumMemoryValid, setMaximumMemoryValid] = useState(true);
+  const [initialMemoryValid, setInitialMemoryValid] = useState(true);
   useEffect(() => setCategory(initialCategory), [initialCategory]);
   const dirtySettings = JSON.stringify(draft) !== JSON.stringify(baseline);
-  const dirty = dirtySettings || stagedIcon !== null;
+  const dirty = dirtySettings || stagedIcon !== null || !maximumMemoryValid || !initialMemoryValid;
   useEffect(() => {
     if (!dirty && authoritative) { setBaseline(authoritative); setDraft({ ...authoritative }); }
   }, [authoritative, dirty]);
   const discard = useCallback(() => {
     if (!baseline) return;
     setDraft({ ...baseline }); setStagedIcon(null); setStagedIconEdit(null); setEditorReset(value => value + 1);
+    setMaximumMemoryValid(true); setInitialMemoryValid(true);
   }, [baseline]);
   useUnsavedChangesGuard(dirty, discard, 'Your server icon, MOTD, or settings changes have not been saved.');
   if (!draft || !baseline) return <EmptyState title="Settings unavailable" detail="Settings have not loaded for this server." />;
   const categories = ['Appearance', 'General', 'Gameplay', 'Resources', 'Connectivity'];
   const update = <K extends keyof typeof draft>(key: K, value: (typeof draft)[K]) => setDraft(valueDraft => valueDraft ? { ...valueDraft, [key]: value } : valueDraft);
   const motdError = validateMotd(draft.motd);
+  const memoryError = !maximumMemoryValid || !initialMemoryValid || draft.minimumRamMb < 512 || draft.minimumRamMb > draft.maximumRamMb
+    ? 'Fix the memory values in Resources before saving.' : null;
   const save = async () => {
-    if (motdError) return;
+    if (motdError || memoryError) return;
     setSaving(true);
     try {
       await command('settings.saveServer', { ...draft, serverId: server.id, iconPngBase64: stagedIconEdit ? null : stagedIcon?.split(',', 2)[1] ?? null, ...(stagedIconEdit ? { iconEdit: stagedIconEdit } : {}) });
@@ -1190,10 +1195,10 @@ function ServerSettingsPage({ server, initialCategory }: { server: ServerSummary
     {category === 'Appearance' ? <div className={appearance.appearanceStack}><section className={appearance.appearancePanel}><div className={appearance.appearanceIntro}><div><h2>Server appearance</h2><p>Your icon and message in Minecraft’s server list. Preview changes before saving.</p></div><StatusBadge tone={server.state === 'Running' && draft.motd !== baseline.motd ? 'warning' : 'neutral'}>{server.state === 'Running' && draft.motd !== baseline.motd ? 'Restart required' : 'Vanilla server list'}</StatusBadge></div><IconCropEditor serverId={server.id} serverName={server.name} savedIconUrl={server.iconUrl} stagedIconUrl={stagedIcon} resetToken={editorReset} onStagedIcon={(value, edit) => { setStagedIcon(value); setStagedIconEdit(edit ?? null); }} /><MotdEditor serverName={draft.name} serverIconUrl={stagedIcon ?? server.iconUrl} savedRaw={baseline.motd} resetToken={editorReset} onChange={value => update('motd', value)} /></section></div> : <section className={styles.settingsForm}>
       {category === 'General' && <><Setting label="Server name" detail="Changes the display name only, not your folder or world."><div className={page.actions}><TextInput value={draft.name} readOnly /><Button onClick={() => void command('servers.rename', { serverId: server.id })}>Rename</Button></div></Setting><Setting label="Server port" detail="Changing the port does not create firewall or router access."><TextInput type="number" min={1} max={65535} value={draft.port} onChange={event => update('port', Number(event.target.value))} /></Setting></>}
       {category === 'Gameplay' && <><Setting label="Maximum players" detail="The slot limit reported by the server."><TextInput type="number" min={1} max={1000} value={draft.maximumPlayers} onChange={event => update('maximumPlayers', Number(event.target.value))} /></Setting><Setting label="Difficulty" detail="Applied through server.properties and may require restart."><SelectInput aria-label="Difficulty" value={draft.difficulty} onChange={event => update('difficulty', event.target.value)}>{!['peaceful', 'easy', 'normal', 'hard'].includes(draft.difficulty) && <option value={draft.difficulty}>Custom value: {draft.difficulty || '(empty)'}</option>}<option value="peaceful">Peaceful</option><option value="easy">Easy</option><option value="normal">Normal</option><option value="hard">Hard</option></SelectInput></Setting><Setting label="Player versus player" detail="Allow players to damage one another."><Toggle label="Player versus player" value={draft.pvp} onChange={value => update('pvp', value)} /></Setting></>}
-      {category === 'Resources' && <><Setting label="Memory" detail="Most small Vanilla servers run well with 2–4 GB. Choose a preset or enter an exact amount."><MemoryControl valueMib={draft.maximumRamMb} onChange={value => update('maximumRamMb', value)} hostTotalBytes={useAppStore.getState().snapshot?.host.totalMemoryBytes} ariaLabel="Maximum server memory" /></Setting><Setting label="Advanced" detail="Initial memory controls Java's starting heap. It must not exceed maximum memory."><details className={styles.resourceAdvanced}><summary>Initial memory</summary><MemoryControl valueMib={draft.minimumRamMb} onChange={value => update('minimumRamMb', value)} hostTotalBytes={null} ariaLabel="Initial server memory" minimumMib={256} maximumMib={draft.maximumRamMb} /></details></Setting></>}
+      {category === 'Resources' && <><Setting label="Memory" detail="Most small Vanilla servers run well with 2–4 GB. Choose a preset or enter an exact amount."><MemoryControl key={`maximum-${editorReset}`} valueMib={draft.maximumRamMb} onChange={value => update('maximumRamMb', value)} onValidityChange={setMaximumMemoryValid} hostTotalBytes={useAppStore.getState().snapshot?.host.totalMemoryBytes} ariaLabel="Maximum server memory" /></Setting><Setting label="Advanced" detail="Initial memory controls Java's starting heap. It must not exceed maximum memory."><details className={styles.resourceAdvanced}><summary>Initial memory</summary><MemoryControl key={`initial-${editorReset}`} valueMib={draft.minimumRamMb} onChange={value => update('minimumRamMb', value)} onValidityChange={setInitialMemoryValid} hostTotalBytes={null} ariaLabel="Initial server memory" minimumMib={512} maximumMib={draft.maximumRamMb} /></details></Setting></>}
       {category === 'Connectivity' && <ConnectivitySettings server={server} />}
     </section>}
-    {dirty && <div className={styles.sticky} role="status"><span>{motdError ?? (server.state === 'Running' && draft.motd !== baseline.motd ? 'Unsaved changes · restart required for MOTD' : 'Unsaved server settings')}</span><div className={page.actions}><Button disabled={saving} onClick={discard}>Discard</Button><Button variant="primary" disabled={saving || Boolean(motdError)} onClick={() => void save()}>{saving ? 'Saving…' : 'Save changes'}</Button></div></div>}
+    {dirty && <div className={styles.sticky} role="status"><span>{motdError ?? memoryError ?? (server.state === 'Running' && draft.motd !== baseline.motd ? 'Unsaved changes · restart required for MOTD' : 'Unsaved server settings')}</span><div className={page.actions}><Button disabled={saving} onClick={discard}>Discard</Button><Button variant="primary" disabled={saving || Boolean(motdError) || Boolean(memoryError)} onClick={() => void save()}>{saving ? 'Saving…' : 'Save changes'}</Button></div></div>}
   </div></div>;
 }
 

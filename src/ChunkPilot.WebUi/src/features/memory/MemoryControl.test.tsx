@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { MemoryControl } from './MemoryControl';
 
@@ -51,5 +52,45 @@ describe('Memory control', () => {
     expect((option as HTMLOptionElement).value).toBe('10240');
     fireEvent.change(screen.getByLabelText('Memory'), { target: { value: '10240' } });
     expect(changed).toHaveBeenLastCalledWith(10240);
+  });
+
+  it('reports invalid input immediately and clears it on preset selection', () => {
+    const valid = vi.fn();
+    const changed = vi.fn();
+    render(<MemoryControl valueMib={4096} onChange={changed} onValidityChange={valid} />);
+    fireEvent.change(screen.getByLabelText('Memory'), { target: { value: 'custom' } });
+    fireEvent.change(screen.getByLabelText('Custom memory in gigabytes'), { target: { value: '1,5' } });
+    expect(valid).toHaveBeenLastCalledWith(false);
+    expect(changed).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText('Memory'), { target: { value: '2048' } });
+    expect(valid).toHaveBeenLastCalledWith(true);
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('keeps typed custom text while synchronizing the latest valid numeric value', () => {
+    const saved = vi.fn();
+    function Controlled() {
+      const [value, setValue] = useState(4096);
+      return <><MemoryControl valueMib={value} onChange={setValue} /><button onClick={() => saved(value)}>Save</button></>;
+    }
+    render(<Controlled />);
+    fireEvent.change(screen.getByLabelText('Memory'), { target: { value: 'custom' } });
+    fireEvent.change(screen.getByLabelText('Custom memory in gigabytes'), { target: { value: '3.1416' } });
+    expect((screen.getByLabelText('Custom memory in gigabytes') as HTMLInputElement).value).toBe('3.1416');
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    expect(saved).toHaveBeenLastCalledWith(3217);
+    fireEvent.blur(screen.getByLabelText('Custom memory in gigabytes'));
+    fireEvent.blur(screen.getByLabelText('Custom memory in gigabytes'));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    expect(saved).toHaveBeenLastCalledWith(3217);
+  });
+
+  it('revalidates an unchanged value when its maximum bound shrinks', () => {
+    const valid = vi.fn();
+    const view = render(<MemoryControl valueMib={2048} onChange={() => undefined} onValidityChange={valid} maximumMib={4096} />);
+    expect(valid).toHaveBeenLastCalledWith(true);
+    view.rerender(<MemoryControl valueMib={2048} onChange={() => undefined} onValidityChange={valid} maximumMib={1024} />);
+    expect(valid).toHaveBeenLastCalledWith(false);
+    expect(screen.getByRole('alert').textContent).toContain('cannot exceed');
   });
 });
